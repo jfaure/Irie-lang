@@ -1,0 +1,9 @@
+sapin : Int -> [String]
+sapin n = using J::
+  let base  = (6 + [0..n]) ^ 2 // 2 - 11 : A Int {shape=n}
+      stars = base + (\n -> _2 * [0..n])@0 $ (-4) [0..n]
+      trunk = 1 + 2 * 1 + (n-1) // 2
+      addOffset : A Int {shape=n} -> A Int {shape=[n 2]}
+      addOffset line = (\x->stitch x x) $ (last base // 2) - (line // 2)
+  in addOffset stars `choose` " *"
+     , [n 2] `shape` addOffset trunk `choose` " |"

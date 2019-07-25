@@ -1,0 +1,168 @@
+-- module Prelude where
+
+type String = [Char]
+data () = _.() deriving Eq, Ord, Bounded, Enum, Read, Show
+
+-- specialization for sets over n of (List n e)
+data Maybe a    = Nothing | Just a deriving (Eq, Ord, Read, Show)
+data Either a b = Left a | Right b deriving (Eq, Ord, Read, Show)
+
+-- A Function is a Stack of types - the compiler will create functions for all instances of this class
+type Stack -- need to forward declare this
+data ^Function : Stack ^a where
+  Stack.Cons = (->) : ^a -> ^b -> ^c <= Function c
+
+-----------
+-- Lists --
+-----------
+
+-- The whole point is to let the constraint solver decide
+type List ?n e
+  = forall ^a n. Nat n &
+    (a <= Array n e | Stack n e | Seq e)
+  => (a n) e | a e
+  where
+    -- Common things that all lists must implement
+    size : (List n e) -> Nat = 'n -- bring the size down to value level
+    calcSize : (List n e) -> Nat
+    map : (a->b) -> (List n a) -> (List n b)
+    data Cost -- in List:: namespace
+      = CP Nat -- Polynomial complexity
+  instances
+    Functor::fmap 0
+    Foldable::fold -- associative fold
+
+data Array n e <= Nat n where
+  List.Empty : Array e 0
+  List.(,) : Array e n -> Array e m -> Array e (n + m)
+
+data Stack n e where
+  List.Empty : Stack e
+  Cons : e -> Stack e
+
+-- Lists with index function
+-- if size is Nothing, it's infinite
+data Seq n e f <= Nat n where
+  ti : Nat -> e -- term n
+  ti i = f i
+
+-- Prelude List
+map : (a->b) -> n[a] -> n[b]
+(,) : n[a] -> m[a] -> (n+m)[a]
+filter : (a->Bool) -> n[a] -> m[a] <= (n<=m)
+concat : t [a] -> [a] <= Foldable t
+concatMap : (a->[b]) -> t a -> [b] <= Foldable t
+head : n[a] -> a <= n>0
+last : n[a] -> a <= n>0
+tail : n[a] -> (n-1)[a] <= n>0
+init : n[a] -> (n-1)[a] <= n>0
+null : n[a] -> Bool
+length : n[a] -> Nat
+calcLength : [a] -> Nat
+(.) : [a] -> Nat -> a
+foldl : (b->a->b) -> b -> t a -> b <= Foldable t
+foldl1 : (a->a->a) -> t a -> a
+scanl : (b->a->b) -> b -> n[a] -> n[b]
+scanl1 : (a->a->a) -> n[a] -> n[a]
+foldr : (a->b->b) -> b -> t a -> b
+foldr1 : (a->a->a) -> t a -> a
+scanr : (a->b->b) -> b -> n[a] -> n[b]
+scanr1 : (a->a->a) -> n[a] -> n[a]
+iterate : (a->a) -> a -> Seq a
+repeat : a -> Seq a
+replicate : (n:Nat) -> a -> n[a]
+cycle : [a]->[a]
+take : (n:Nat) -> m[a] -> (m-n)[a]
+drop : (n:Nat) -> m[a] -> (m-n)[a]
+splitAt : (n:Nat) -> t[a] -> n[a] ; (t-n)[a]
+takeWhile : (a->Bool) -> n[a] -> m[a] <= m<=n
+dropWhile : (a->Bool) -> n[a] -> m[a] <= m<=n
+span : (a->Bool) -> t[a] -> n[a];m[a] <= n+m==t
+break : (a->Bool) -> t[a] -> n[a];m[a] <= n+m==t
+lines : (in:String) -> n[String] <= in.n < n
+words : String -> [String]
+unlines : [String] -> String
+unwords : [String] -> String
+reverse : n[a] -> n[a] <= n < Inf
+and : t Bool -> Bool <= Foldable t -- and shortcircuitable !
+or : t Bool -> Bool <= Foldable t -- and shortcircuitable !
+any : (a->Bool) -> t a -> Bool <= Foldable t -- and shortcircuitable !
+all f = any (not << f) -- this way it's shortcircuitable
+elem : a -> t a -> Bool <= Foldable t & Eq a
+notElem = not elem
+lookup : a -> [a;b] -> Maybe b
+-- zip below
+
+------------------------
+-- Standard functions --
+------------------------
+
+(;) = _.(;) : a -> b -> a;b -- tuple
+f (>>) g = \x -> g (f x) : (b->c) -> (a->c) -> a -> c
+f (<<) g = \x -> f (g x) : (a->c) -> (b->c) -> a -> c
+id x = x : a -> a
+f ($) x = f x : (a->b) -> a -> b -- application operator
+
+until : (a->Bool) -> (a->a) -> a -> a
+until p f x = if p x then x else until p f (f x)
+
+-- variable arity zipWith
+zipWith : %Function f
+       => f -> map (\%argTy -> %[argTy]) f
+zipWith f = go
+  where go a = a
+        go [a] [b] = f a b
+        go [a0 a1] [b0 b1] = f a0 b0 , go a1 b1
+        go a b c = go (go a b) c
+
+printf : (String _len) -> _ -> String
+printf formatString = conPrintf formatString
+  where conPrintf ('%' , b , r) = doFmt b >> conPrintf r
+        conPrintf (b , l) = (b,) >> doFmt l
+        doFmt = \case
+          'd' -> show : Int -> String
+          's' -> id : String -> String
+
+class Functor f where
+  fmap :: (a->b) -> f a -> f b
+-- should satisfy `fmap id == id` and `fmap (f @ g) == fmap f @ fmap g`
+
+class Applicative f <= Functor f where
+  (<*>) : f (a->b) -> f a -> f b
+  (*>)  : f a -> f b -> f b
+  liftA2 : (a->b->c) -> f a -> f b -> f c
+  Pure : b -> a b
+
+-- Note return, (>>), liftM, liftA, ap are all scrapped
+-- use the equivalent functor/applicative versions.
+class Monad m <= Applicative m where
+  (>>=) : m a -> (a->m b) -> m b
+  join  : m (m a) -> m a
+  -- fail   : String -> m a -- mistake probably
+
+sequence  : Applicative m => [m a] -> m [a]
+sequence_ : Applicative m => [m a] -> m ()
+mapM      : Monad m => (a -> m b) -> [a] -> m [b]
+mapM_     : Monad m => (a -> m b) -> [a] -> m ()
+(=<<) = flip (>>=)
+
+instance Functor IO where
+  fmap f x = x >>= (pure << f)
+instance Applicative IO where
+  pure  = returnIO
+  (*>)  = thenIO
+  (<*>) = ap
+instance Monad IO where
+  (>>=) = bindIO
+  fail s = failIO s
+instance Alternative IO where
+  empty = failIO "mzero"
+
+returnIO :: a -> IO a
+returnIO = IO $ \s->(s;x)
+bindIO : IO a -> (a->IO b) -> IO b
+bindIO (IO m) k = IO (\s->case m s of (new_s a) -> unIO (k a) new_s)
+thenIO : IO a -> IO b -> IO b
+thenIO (IO m) k = IO (\s->case m s of (new_s, _) -> unIO k new_s
+unIO : IO a -> (State# RealWorld -> (State# RealWorld, a))
+unIO (IO a) = a

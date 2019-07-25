@@ -1,0 +1,24 @@
+-- The prefix is a little tricky to handle
+-- when a dir is opened, append "|-- " to prefix,
+-- and remove the previous "--"
+-- the last entry in a dir is   "`-- "
+-- when a dir is closed, remove the "|-- "
+tree : String -> IO ()
+tree rootPath = puts rootPath *> subTree "|-- " rootPath where
+  subTree : (String where size >= 4) -> String -> IO ()
+  subTree prefix path =
+    let (entries;last) = Dir::entries path >>= filter (\e->e.0 != '.') . splitAt -1
+        inDirPrefix = dropTail 3 prefix , "   " -- "|   "
+        endDirPrefix = dropTail 4 prefix , "`-- " -- prefix . set -4 '`'
+        handleEntry prefix entry = puts (prefix , File::basename entry)
+                                   *> subTree (prefix , "|-- ") entry
+    in entries . each (\e -> handleEntry inDirPrefix e)
+       *> handleEntry endDirPrefix last
+
+main : Int -> [String] -> IO ()
+main ac [] = tree =<< Dir::pwd
+main ac av = mapM_ tree av
+
+-- Requires:
+-- File::basename : String->String
+-- Dir::entries   : IO [String]
