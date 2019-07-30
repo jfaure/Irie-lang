@@ -2,10 +2,14 @@
 
 type String = [Char]
 data () = _.() deriving Eq, Ord, Bounded, Enum, Read, Show
+data Maybe a    = Nothing | Just a deriving Eq & Ord & Read & Show
+data Either a b = Left a | Right b deriving Eq & Ord & Read & Show
 
--- specialization for sets over n of (List n e)
-data Maybe a    = Nothing | Just a deriving (Eq, Ord, Read, Show)
-data Either a b = Left a | Right b deriving (Eq, Ord, Read, Show)
+kind MonoType
+kind PolyType
+kind ListType
+: (&) : t1 -> t2 -> PolyType
+: (|) : t1 -> t2 -> t3
 
 -- A Function is a Stack of types - the compiler will create functions for all instances of this class
 type Stack -- need to forward declare this

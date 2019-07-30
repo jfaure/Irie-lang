@@ -1,2 +1,6 @@
+type Num = Int n | Double
+
+(+) : Num -> Num -> Num
+
 f : Int
 f a = a + b

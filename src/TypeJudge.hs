@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewTypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module TypeJudge where
 import Core as C
 
@@ -33,4 +33,4 @@ judgeTopBind nm e =
   case typed info of
     TyUnknown -> infer
     TyBoxed t -> infer
-    vanilla   -> check
+    vanillaTy -> check vanillaTy

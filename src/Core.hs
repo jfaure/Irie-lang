@@ -2,6 +2,7 @@ module Core where
 import qualified LLVM.AST.Type
 import qualified LLVM.AST (Operand, Type)
 import Data.Vector
+import Data.Map
 
 -- Core Language
 -- recall: ParseSyn >> CoreExpr >> STG codegen
@@ -9,30 +10,25 @@ import Data.Vector
 -- Type checking in the presence of higher rank types can be undecidable !
 -- dependent types are an additional source of undecidability
 
-data CoreModule = CoreModule
- { env :: Env
- , binds :: Data.Vector CoreExpr
+data CoreModule = CoreModule {
+   env      :: Env -- info for all bound entities (type/name etc..)
+ , topBinds :: Data.Vector CoreExpr -- local bindings (name and rhs)
+
+ -- how to infer a polytype when multiple monotypes are available
+ , defaults :: Data.Map PolyType MonoType
  }
-type Name       = Int -- indx into envTypes
-type Constraint = Int -- indx into envClasses
-data Info = Info -- entity info (anything except class)
- { named :: (Maybe String)
- , typed :: Type
- , universe :: Int -- val/type/kind/sort/...
- }
--- note. universe: although (because?) dependent types mean plenty of overlap,
---   we need to be aware of the origin of entities
 
 -- to instantiate monotypes from constrainted polytypes
 --   1. check default declarations
 --   2. filter all known monotypes (!)
--- constraints are just names, to use to match with function types
 type Env = Env
- { envTypes   :: Vector Info  -- monoTypes (includes forall a. a)
+ { envBinds   :: Vector Entity  -- monoTypes (includes forall a. a)
  }
-data Class = Class
- { constraint :: Constraint
- , classBinds ::  [Name] -- functions in the class
+
+data Entity = Entity -- entity info
+ { named :: (Maybe String)
+ , typed :: Type
+ , universe :: Int -- val/type/kind/sort/...
  }
 
 data CoreExpr
@@ -41,7 +37,7 @@ data CoreExpr
  | App Expr Expr
  | Let Binds Expr
  | Case Expr [Alt]
- | TypeExpr Type -- dependent types. this promotes entites to the 'universe' above
+ | TypeExpr Type -- dependent types
 -- | Subsume CoreExpr CoreExpr -- (~cast) questionnable if useful before STG
 
 data Binds = Bind Name CoreExpr
@@ -94,19 +90,21 @@ data Literal -- same as in ParseSyntax (we haven't finished type inference yet)
 -- 'p' types have no toplevel foralls, but may contain polytypes
 -- Boxed (inferred) types are stratified in exactly the same way
 -- Note: boxes are not nested, so we track it during type judging
+type MonoType = LLVM.AST.Type
+type PolyType = Forall
 data Type
- = TyMono LLVM.AST.Type -- monotypes 't'
- | TyPoly Forall   -- constrained polytypes 'p', 's'
+ = TyMono MonoType -- monotypes 't'
+ | TyPoly PolyType -- constrained polytypes 'p', 's'
 
- | TyArrow [Type] -- ~ function
- | TySum   [Type]
+ | TyArrow [Type]  -- ~ function (also TySum sumtype alternatives)
  | TyProd  [Type]
 
  | TyExpr CoreExpr -- dependent types
+
  | TyBoxed Type    -- inferred type (temporary annotation)
- | TyUnknown       -- no user type annotation
+ | TyUnknown       -- default state for an expression - we need to infer it
 
 data Forall
- = ForallAnd [Constraint] -- & constraints
- | ForallOr  [Constraint] -- | constraints
- | ForallAny -- basically an opaque monotype eg. len : [a]->Int
+ = ForallAnd [Type] -- & constraints
+ | ForallOr  [Type] -- | constraints
+ | ForallAny -- essentially same as an opaque monotype (eg. len : [a]->Int)
