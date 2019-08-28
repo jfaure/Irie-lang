@@ -25,6 +25,7 @@ dependencies:
   # - llvm-hs >= 8.0.0
 - parser-combinators
 - megaparsec > 7.0
+- transformers
 - vector
 - haskeline
 - optparse-applicative
@@ -40,7 +41,7 @@ executables:
   plop-exe:
     source-dirs:   src
     main:          Main.hs
-    ghc-options:  -threaded
+    ghc-options:  -threaded -fdefer-typed-holes -XPartialTypeSignatures
     #    dependencies: plop
 
 tests:

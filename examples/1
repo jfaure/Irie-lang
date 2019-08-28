@@ -1,6 +1,8 @@
-type Num = Int n | Double
+type Num = Int | Double
+default Num Int
 
 (+) : Num -> Num -> Num
+-- infix 6 (+)
 
 f : Int
 f a = a + b

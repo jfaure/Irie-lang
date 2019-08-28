@@ -1,7 +1,3 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-module TypeJudge where
-import Core as C
-
 -- Type judgements: checking and inferring
 -- The goal is to prepare for codegen
 --   * evaluate (static) dependent types
@@ -13,24 +9,26 @@ import Core as C
 --  | check all functions are total
 --  | do nothing (risk segfaults/weird behavior)
 
--- the monad for type judgements, it just contains the module
-newtype JudgeMonad = JudgeMonad { unJM :: CoreModule)
-  deriving (Functor, Alternative, Applicative, Monad, MonadPlus)
+-- {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+module TypeJudge where
+import CoreSyn as C
 
-instance Applicative JM where
-  fmap f (JM mod) = JM (f mod)
+import Data.Vector
+import qualified Data.Map as M
+import Control.Monad
+import Control.Applicative
 
-judgeModule :: CoreModule -> CoreModule
-judgeModule (CoreModule env binds) =
-  imapM (judgeBind) binds
-
+--judgeModule :: CoreModule -> CoreModule
+--judgeModule (CoreModule env binds) =
+--  imapM judgeBind binds
+--
 -- Judging
 -- upwards   is inference
 -- downwards is checking
-judgeTopBind :: Name -> CoreExpr -> CoreExpr
-judgeTopBind nm e =
-  let info = env ! nm in
-  case typed info of
-    TyUnknown -> infer
-    TyBoxed t -> infer
-    vanillaTy -> check vanillaTy
+--judgeTopBind :: Name -> CoreExpr -> CoreExpr
+--judgeTopBind nm e =
+--  let info = env ! nm in
+--  case typed info of
+--    TyUnknown -> infer
+--    TyBoxed t -> infer
+--    vanillaTy -> check vanillaTy
