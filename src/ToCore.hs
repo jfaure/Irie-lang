@@ -1,4 +1,5 @@
 -- convert parse tree to core
+
 -- * names become integers (Human names and other info are in a Vector)
 -- * the context must make it clear if something is a type or expr
 --   so we never confuse the type/val namespaces. basically:
@@ -18,6 +19,7 @@ import qualified Data.Vector as V
 import qualified Data.Map as M
 import qualified LLVM.AST
 import qualified LLVM.AST.Constant as C
+import qualified Data.Text as T
 
 import Debug.Trace
 
@@ -38,67 +40,79 @@ convTy (P.TyExpr e) = _ -- TyExpr $ expr2Core e
 convTy (P.TyTyped a b) = _
 convTy (P.TyUnknown) = TyUnknown
 
+pName2txt (P.UnQual (P.Ident s)) = T.pack s
+
 parseTree2Core :: P.Module -> CoreModule
 parseTree2Core parsedDecls = CoreModule V.empty V.empty M.empty --dataDecls topExprs defaults
   where
-  decls = parsedDecls
+  decls = V.fromList parsedDecls
 
   -- data declarations -> we need a type and corresponding list of constructors
   -- these may return a type that subsumes the data's type (GADTS)
-  datas = V.fromList $ filter isData decls :: V.Vector P.Decl
+  datas = V.filter isData decls :: V.Vector P.Decl
   hTypeNames = getDataHName <$> datas
     where getDataHName (P.TypeAlias nm _) = nm
           getDataHName (P.DataDecl nm _ _) = nm
   -- this function allows us to convert forward type references to their int name
-  lookupTyHName hNm = V.findIndex (==hNm) hTypeNames
+  lookupTyHName hNm = case V.findIndex (==hNm) hTypeNames of { Just n -> n ; _ -> error "name lookup fail" }
 
-  constructors = V.concat constructorLists :: ExprMap
-  (types, constructorLists) = V.foldl' doData V.empty datas
-  doData :: P.Decl -> [(Entity, ExprMap)] -> [(Entity, ExprMap)]
-  doData (P.TypeAlias hNm ty) acc = (entity,consList) : acc
-    where entity = (Entity (Just hNm2) (convTy ty) uniType)
-          hNm2 = case hNm of { P.UnQual n -> n }
+  dataEntities = V.imap doData datas
+  doData :: int -> P.Decl -> (Entity, ExprMap)
+  doData acc (P.TypeAlias pName ty) = (entity,consList) : acc
+    where entity = (Entity (Just hNm) (convTy ty) uniType)
+  	  hNm = (\(P.Ident h) -> h) $ pName
           consList = []
-  doData (P.DataDecl hNm kind qCons) acc = (entity, consList) : acc
+  doData acc (P.DataDecl hNm kind qCons) = (entity, consList) : acc
     where entity = (Entity (Just hNm) dataTy uniType)
-          dataTy = convTy ty
-          consList = getCon <$> qCosn
+          --dataTy = convTy ty
+          dataTy = TyUnknown
+          consList = getCon <$> qCons
           getCon :: Type -> P.ConDecl -> (Entity, CoreExpr)
-          getCon dataTy (P.ConDecl hNm types) = Entity (Just nm) (TyArrow (types ++ dataTy))
+          getCon dataTy (P.ConDecl hNm types) = Entity (Just hNm) (TyArrow (types ++ dataTy))
           getCon dataTy (P.InfixConDecl tyA hNm tyB) = _
           getCon dataTy (P.GadtDecl hNm kind tyVars fields) = _
 
   defaults = M.empty -- map doDefault (filter isDefault decls)
 
   -- we have already generated the constructors, so they have priority when naming entities
-  topBinds = V.fromList $ V.filter isFunBind decls :: V.Vector P.Decl
+  topBinds = V.fromList $ V.filter isFunBind (V.fromList decls) :: V.Vector P.Decl
   topSigs  = filter isSig decls
-  lookupSig hNm = findIndex (elem hNm) topSigs
+  lookupSig hNm = V.findIndex (elem hNm) topSigs
   -- get all hnames (so we can handle forward references)
-  hNameMap = (extractHName <$> topBinds) :: V.Vector HName
-  lookupHName hNm = findIndex (==hNm) hNameMap
+  hNameMap = (extractHNames topBinds) :: V.Vector HName
+    where extractHNames ((P.FunBind matches) : rem) = (match2Hnm<$>matches) : extractHNames rem
+          extractHNames (_:rem) = extractHNames rem
+          extractHNames [] = []
+          match2Hnm (P.Match nm pats rhs) = nm
+          match2Hnm (P.InfixMatch pat nm pats rhs) = nm
+  lookupHName :: T.Text -> Int
+  lookupHName hNm = V.findIndex (==hNm) hNameMap
 
   getFnHName :: [P.Match] -> HName
   getFnHName m = case head m of
-    P.Match hnm _ _ -> hnm
-    P.InfixMatch _ hnm _ _ -> hnm
+    P.Match hnm _ _ -> parseName2Text hnm
+    P.InfixMatch _ hnm _ _ -> parseName2Text hnm
   topExpr :: V.Vector P.Decl -> ExprMap -- Vector (Entity, CoreExpr)
   topExpr = V.imap doExpr topBinds
   doExpr :: Int -> P.Decl -> (Entity, CoreExpr)
-  doExpr nm (P.FunBind matches) = (e, cExp)
+  doExpr nm f@(P.FunBind matches) = (e, cExp)
     where
     hNm = getFnHName f
     e = Entity (Just hNm) ty uniTerm
     ty = lookupSig hNm
-    cExp = Case args alts
-      where getPrefixMatch (P.InfixMatch p1 nm ps rhs) = P.Match nm (p1:ps) rhs
+    cExp = Case e alts
+      where 
+            args = []
+	    getPrefixMatch (P.InfixMatch p1 nm ps rhs) = P.Match nm (p1:ps) rhs
             getPrefixMatch m = m
             -- Function matches:
             -- many patterns do not result in a variable binding
             alts = match2CaseAlt <$> doInfix <$> matches
+            doInfix x@P.Match{} = x
+            doInfix (P.InfixMatch pat nm pats rhs) = P.Match nm (pat:pats) rhs
             match2CaseAlt (P.Match hNm pats (P.UnGuardedRhs exp)) =
-              let namedVars = (\(PVar hNm) -> hNm) <$> pats -- TODO other patterns
-                  rhs = expr2Core namedVars exp
+              let namedVars = V.fromList $ (\(PVar hNm) -> hNm) <$> pat2Core <$> pats -- TODO other patterns
+                  rhs = expr2Core [] exp --[namedVars] exp
               in BFn (length pats) rhs
 
   -- predicates for filtering
@@ -108,9 +122,15 @@ parseTree2Core parsedDecls = CoreModule V.empty V.empty M.empty --dataDecls topE
   isSig = \case { P.TypeSigDecl{}->True ; _->False }
   isDefault = \case { P.DefaultDecl{}->True ; _->False }
 
+exprLookupName :: [V.Vector HName] -> _ -> Name
+exprLookupName (names : rest) hNm = case vFind names of { Nothing -> exprLookupName rest hNm ; Just x -> x }
+  where vFind = V.findIndex (==hNm)
+
+parseName2Text = \case { (P.Ident h) -> T.pack h }
+
 expr2Core :: [V.Vector HName] -> P.PExp -> CoreExpr
-expr2Core hNames (P.Var nm) = Var nm
-expr2Core hNames (P.Con nm) = Var nm
+expr2Core hNames (P.Var (P.UnQual nm)) = Var $ exprLookupName hNames $ parseName2Text nm
+expr2Core hNames (P.Con (P.UnQual nm)) = Var $ exprLookupName hNames $ parseName2Text nm
 expr2Core hNames (P.Lit l)  = Lit $ literal2Core l
 expr2Core hNames (P.Infix nm) = _
 expr2Core hNames (P.App f args) = handlePrecedence f args
