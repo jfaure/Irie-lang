@@ -1,11 +1,14 @@
 -- Core Language
 -- recall: ParseSyn >> CoreExpr >> STG codegen
 -- The language for type judgements: checking and inferring
--- Type checking in the presence of higher rank types can be undecidable !
--- dependent types are an additional source of undecidability
+--
+-- !! Important points about Core:
+-- No free variables. they're moved to explicit funcion arguments
+-- No lambdas or anonymous type annotations: they're given a unique name and let bound
+-- Maintain source/origin annotations for producing error messages
 
--- to instantiate monotypes from constrainted polytypes
---   filter all matching monotypes and check default declarations
+-- Type checking in the presence of higher rank / dependent types can be undecidable !
+
 {-# LANGUAGE StandaloneDeriving #-}
 module CoreSyn where
 
@@ -20,26 +23,44 @@ type NameMap = Vector
 type HName   = T.Text -- human readable name
 
 type TypeMap = NameMap Entity
-type ExprMap = NameMap (Entity, Binding)
-data Binding 
- = BExp CoreExpr
- | BFn Int CoreExpr -- arity used by function match
--- it might be different to it's alleged type,
--- and besides partial matches are permitted
+type ExprMap = NameMap Binding
+
+-- Binding: save the number of args brought into scope
+data Binding = Binding {
+   arity :: Int
+ , expr  :: CoreExpr
+ , info  :: Entity
+}
 
 data CoreModule = CoreModule {
-   typeAlias :: TypeMap -- all named types (incl types of data)
- , topExprs  :: ExprMap -- top level incl constructors
- , defaults  :: Map PolyType MonoType -- eg. default Num Int
+   types    :: TypeMap -- all named types (incl types of data)
+ , topExprs :: ExprMap -- top level incl constructors
+ , defaults :: Map PolyType MonoType -- eg. default Num Int
  }
 
 -- an entity = info about an expression
 data Entity = Entity -- entity info
  { named    :: Maybe HName
  , typed    :: Type
- , universe :: Int -- val/type/kind/sort/...
- -- src :: Maybe srcLoc
+ , universe :: Int -- term/type/kind/sort/...
+-- , userSource :: Maybe SourceEntity
  }
+-- info about something introduced by user
+data SourceEntity = SourceEntity {
+ , origin :: UserOrigin
+ , src :: Maybe srcLoc
+}
+data UserOrigin = FreeVar | LocalArg | Global
+
+-- type check environment
+data TCEnvState = TCEnvState {
+   mod :: CoreModule
+ , localBindings :: [V.Vector Entity]
+}
+newtype TCEnv a = TCEnv { unTCEnv :: State TCEnvState a }
+  deriving
+ (Functor, Alternative, Applicative, Monad, MonadState
+ , MonadPlus)
 
 uniTerm : uniType : uniKind : uniSort : _ = [0..] :: [Int]
 
@@ -47,7 +68,7 @@ data CoreExpr
  = Var Name
  | Lit Literal
  | App CoreExpr [CoreExpr]
- | Let [(Name, CoreExpr)] CoreExpr
+ | Let [Binding] CoreExpr
  | Case CoreExpr [(Pat, CoreExpr)]
  | TypeExpr Type -- dependent types
 
@@ -60,30 +81,45 @@ data Literal
  | LlvmLit  LLVM.AST.Operand -- anything else
  | Con -- constructors are considered literals because they're opaque
 
--- algebraic data is up to stg, so leave it as is
-data MonoType = MonoTyLlvm LLVM.AST.Type | MonoTyData SumData
-type PolyType = Forall
+-----------
+-- Types --
+-----------
+type UserType = Type -- user supplied type annotation
 data Type
  = TyRef Name
 
  | TyMono MonoType -- monotypes 't'
  | TyPoly PolyType -- constrained polytypes 'p', 's'
 
- | TyArrow [Type]  -- ~ function (Sum and Product types ?)
+ -- types with kind 'function', incl. Sum/Product constructors
+ | TyArrow [Type] Type 
 
  | TyExpr CoreExpr -- dependent type
 
- | TyBoxed Type    -- inferred type (temporary annotation)
- | TyUnknown       -- default for an expression (probably rm this)
+ -- a request that this type be inferred
+ | TyUnknown
 
+ -- type check failed on this type: it can't be trusted,
+ -- but we can skip it and check the rest of the program
+ | TyBroken
+
+-- algebraic data is up to stg
+-- Core only needs the GADT style types of constructors
+data MonoType
+ = MonoTyLlvm LLVM.AST.Type
+ | MonoTyData SumData
 data SumData     = SumData          [ProductData]
 data ProductData = ProductData Name [Type]
 
+type PolyType = Forall
 data Forall
  = ForallAnd [Type] -- & constraints
  | ForallOr  [Type] -- | constraints
  | ForallAny        -- Void =~ an opaque monotype
 
+deriving instance EQ SumData
+deriving instance EQ ProductData
+deriving instance EQ MonoType
 -----------
 -- Types --
 -----------
