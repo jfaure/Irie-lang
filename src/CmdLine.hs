@@ -6,6 +6,7 @@ import Data.Semigroup ((<>))
 
 data CmdLine = CmdLine
   { emitParseTree :: Bool
+  , emitParseCore :: Bool
   , emitCore      :: Bool
   , emitStg       :: Bool
   , emitLlvm      :: Bool
@@ -20,6 +21,9 @@ cmdLineDecls = CmdLine
   <$> switch (long "emit-parsetree"
           <> short 'p'
           <> help "Output program parse tree")
+  <*> switch (long "emit-parse-core"
+          <> short 'P'
+          <> help "Output core")
   <*> switch (long "emit-core"
           <> short 'c'
           <> help "Output core")

@@ -89,6 +89,7 @@ data PExp
  | Let Binds PExp
  | MultiIf [(PExp, PExp)] -- ghc accepts [GuardedRhs]
  | Case PExp [Alt]
+ | LambdaCase [Alt] -- function for case of
  | Do [Stmt]
  | MDo [Stmt]
  | List [PExp]

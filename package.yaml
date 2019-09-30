@@ -41,8 +41,17 @@ executables:
   plop-exe:
     source-dirs:   src
     main:          Main.hs
-    ghc-options:  -threaded -fdefer-typed-holes -XPartialTypeSignatures
-    #    dependencies: plop
+    ghc-options:  -threaded -fdefer-typed-holes -dynamic
+    default-extensions:
+    - ScopedTypeVariables
+    - LambdaCase
+    - MultiWayIf
+    - RankNTypes
+    - FlexibleContexts
+#   - GADTs
+    - PolyKinds
+    - DataKinds
+   #    dependencies: plop
 
 tests:
   plop-test:

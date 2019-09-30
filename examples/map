@@ -1,0 +1,6 @@
+data List = Nothing | Cons Int List
+
+map : (Int -> Int) -> List -> List
+map f = \case
+  Nothing -> Nothing
+  Cons a b -> Cons (f a) (map f b)

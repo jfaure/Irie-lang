@@ -16,10 +16,10 @@
 -- * 'Boxes' contain outer structure of checked info, inner structure is inferred.
 --   So a box denotes the border between check/inferred information.
 --
--- Note on notation:
+-- Notation:
 -- t is a monotype
--- s is a polytype (no top level foralls)
--- p is a polytype with top level foralls
+-- s is a polytype
+-- p is a polytype with no top level foralls
 -- |s| is the boxed type s
 -- s' is a boxy type (contains boxes) also note. boxes are never nested
 --
@@ -40,6 +40,9 @@
 -- SMono: s<=|s|
 --
 
+{-# LANGUAGE LambdaCase, MultiWayIf, ScopedTypeVariables #-}
+{-# OPTIONS -fdefer-typed-holes #-}
+{-# OPTIONS -Wno-typed-holes #-}
 module TypeJudge where
 import CoreSyn as C
 
@@ -47,87 +50,145 @@ import qualified Data.Vector as V
 import qualified Data.Map as M
 import Control.Monad
 import Control.Applicative
+import Control.Monad.Trans.State.Strict
+
+import qualified LLVM.AST.Constant as LC
+import qualified LLVM.AST as L
+import Debug.Trace
+d = trace
+
+--m :: IO ()
+--m = putStrLn (ppCoreExpr e1) *> print (judgeModule m)
+--  where i32_0 = Lit $ LlvmLit $ L.ConstantOperand $ LC.Int 32 4
+--        i1_1 =  Lit $ LlvmLit $ L.ConstantOperand $ LC.Int 1 1
+--        defaultEntity = Entity Nothing TyUnknown 0
+--
+--        l1 = LBind [1] e1 defaultEntity
+--        e1 = App (Var 1) [i1_1]
+--
+--        locals = V.fromList [LArg defaultEntity]
+--
+--        t = TyArrow [TyArrow [TyVar $ T.pack "ls"] (TyVar 1)] (TyVar 1) -- (a->b)->b
+--        m = CoreModule V.empty (V.singleton l1) locals M.empty
 
 judgeModule :: CoreModule -> CoreModule
-judgeModule cm =
-  runState (unTCEnv $ go <* (TCEnvState cm []))
-  where go = imapM judgeBind binds
+judgeModule cm = handleErrors $ execState go $ TCEnvState cm []
+  where go = V.mapM judgeBind (topExprs cm)
+        handleErrors :: TCEnvState -> CoreModule
+          = \st -> case errors st of
+          [] -> coreModule st
+          errs -> error $ show errs
+
+judgeBind :: Binding -> TCEnv Type = \case
+  LBind args e info -> judgeExpr e (typed info)
+  LArg a -> pure TyUnknown
 
 -- type judgements
--- notice the 'Maybe UserType'
--- this supports a mixture of inference and checking
-judgeExpr :: CoreExpr -> Maybe UserType -> TCEnv Type
-judgeExpr expr userType =
-  let maybeUnify ty = case userType of
-         Nothing -> ty
-         Just uTy -> case subsumes uTy ty of
-           True -> ty
-           False -> error "failed to unify"
-  in case expr of
+-- a UserType of TyUnknown needs to be inferred. otherwise check against it.
+-- * Inference at Variables
+-- * Generalisation at let bindings
+judgeExpr :: CoreExpr -> UserType -> TCEnv Type
+ = \got expected ->
+  let checkOrInfer :: Type -> TCEnv Type
+      checkOrInfer got = pure $ case expected of
+          TyUnknown -> got
+          ty -> case subsume got expected of
+              True -> got
+              False -> error ("failed to subsume: " ++ show got)
+      lookupVar :: Name -> TCEnv Binding
+      lookupVar n = get >>= \env ->
+          let top = topExprs $ coreModule env
+              loc = localBindings $ coreModule env
+              l = V.length top
+              isOk = \case
+                Just x -> x
+                Nothing -> error (show n ++ "\n" ++ show top ++ "\n" ++ show loc)
+          in pure $ isOk $ case compare n l of
+          LT -> top V.!? n
+          _  -> loc V.!? (n - l)
+--    deRefVar :: CoreExpr -> TCEnv CoreExpr = \case
+--        Var nm -> case lookupVar nm of
+--            b@LBind{} -> expr b
+--            l@LArg -> Var nm
+--        e -> pure e
+  in checkOrInfer =<< case got of
 -- VAR rule: lookup type in environement
-  Var nm -> maybeUnify $ lookupType nm
-  Lit l  -> maybeUnify $ typeOfLiteral l
+  Var nm -> typed . info <$> lookupVar nm
+  Lit l  -> pure $ typeOfLiteral l
+  WildCard -> pure $ case expected of
+      TyUnknown -> TyPoly ForallAny -- cannot infer more
+      ty        -> ty -- assume expected type is ok
 
--- APP expr has the type of the rightmost arrow, as long as we can unify argtypes
+-- APP expr: unify argTypes and remove left arrows from app expresssion
+-- TODO PAP
   App fn args -> do
-    fnTy <- judgeExpr e1
-    actualArgTys <- judgeExpr <$> args
-    case fnTy of
-      TyArrow expectedArgTys retTy -> if all $ zipWith unify expectedTys actualTys
-        then pure retTy
+    --fn <- deRefVar fn'
+    --args <- mapM deRefVar args'
+    judgeExpr fn expected >>= \case
+      TyArrow eArgs eRet -> zipWithM judgeExpr args eArgs >>= \judged ->
+        if all id $ zipWith subsume judged eArgs
+        then pure eRet
         else error "cannot unify function arguments"
-      _ -> error "cannot call non function"
+      _ -> error ("cannot call non function: " ++ show fn)
 
--- Let-I: also ABS1/ABS2: lambda abstractions
--- 1. we hope to check/infer using (only) the body of a binding
---    ABS1: lambda abstractions have type: args -> retType
--- 2. failing that, we have to look at it's use-sites.
---    ABS2: infer arg and ret types seperately
-  Let bindings inExpr -> mapM_ addBinding bindings >>= judgeExpr inExpr
-    where
-      addBinding :: (Name, CoreExpr, userTy) -> TCEnv Type
-      addBinding b@(Binding arity expr userTy) = do
-        tcEnvAddLocals arity
-        -- ABS1: to judge (\x->t):s1'->s2'
-        -- we need x:s1 and |-poly t:s2' and s1'~|s1|
-        -- ABS2: judge x and t seperately (probably dispatching to ABS1)
-        judgeExpr userTy expr
-        got <- tcEnvRemoveLocals arity
-
+-- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
+  Let binds inExpr -> mapM_ judgeBind binds *> judgeExpr inExpr expected
 
 -- case: verify all alts subsume a type
-  Case ofExpr alts ->
-    let tys = mapM (\(pat, expr) -> judgeExpr expr) alts
-    in head alts
+  SwitchCase ofExpr alts ->
+    let tys = mapM (\(pat, expr) -> judgeExpr expr expected) alts
+    in head <$> tys
 
-
--- check compatibility between vanilla type and a boxy type
--- 2 'flavors': 
---   t1<=t2 subsumption
---   t1~t2 boxy matching: necessary if we want to apply SBOXY: |s|<=s' iff |s|~s'
-subsume :: Type -> Type -> TCEnv Bool
--- is expected>=got ? alternatively, is 'got' acceptable as an 'expected'
-subsume expected got = case expected of
-  TyRef a -> case got of { TyRef b -> a==b ; _ -> False }
-  TyMono a -> case got of
-    TyMono b -> a == b -- MONO
-    TyPoly b -> vanillaSubsume a b
-    TyBoxed b -> -- BMONO -- MEQ1
-  TyPolo polyTy ->
-  TyArrow argsA retA -> case expected of
-    TyArrow argsB retB -> -- F1 and F2
-      case boxyMatch argsA argsB && subsume retA retB of
-        True -> True -- F1
-        False -> if all isBoxed <$> argsB && isBoxed retB
-                 then -- F2 (push boxes and try again)
-                 else False
+-----------------
+-- Subsumption --
+-----------------
+-- t1 <= t2 ? is a vanilla type acceptable in the context of a (boxy) type
+-- 'expected' is a vanilla type, 'got' is boxy
+subsume :: Type -> Type -> Bool
+subsume got exp = case exp of
+  TyVar exp' -> _
+  TyMono exp' -> case got of
+    TyMono got' -> subsumeMM got' exp'
+    TyPoly got' -> subsumePM got' exp'
+    a -> error ("subsume: unexpected type: " ++ show a)
+  TyPoly exp' -> case got of
+    TyMono got' -> subsumeMP got' exp'
+    TyPoly got' -> subsumePP got' exp'
+    a -> error ("subsume: unexpected type: " ++ show a)
+  TyArrow argsA retA -> case got of
+    TyArrow argsB retB -> subsume retA retB
+                          && all id (zipWith subsume argsA argsB)
+    TyPoly ForallAny -> True
     _ -> False
-  TyBoxed ty -> case got of
-    TyBoxed g -> -- BBEQ
-  TyExpr -> _ -- we must resolve this dependent type to check it
+  TyExpr _ -> _
+  TyUnknown -> _ -- assume 'got' is the right type?
 
-  where name2Type :: Name -> TCEnv Type
+subsumeMM :: MonoType -> MonoType -> Bool
+subsumeMM (MonoTyLlvm t) (MonoTyLlvm t2) = t == t2
+subsumeMM (MonoTyData n _) (MonoTyData n2 _) = n == n2
+subsumeMM _ _ = False
 
--- check if a monotype is acceptable in the context of a polytype
-vanillaSubsume :: Type -> Type -> TCEnv Bool
-vanillaSubsume expected got =
+subsumeMP :: MonoType -> PolyType -> Bool
+ = \_ _ -> False
+
+subsumePM :: PolyType -> MonoType -> Bool
+ = \got exp -> case got of
+  ForallAny -> True
+  ForallAnd tys -> all (\x -> subsume x (TyMono exp)) tys
+  ForallOr  tys -> any (\x -> subsume x (TyMono exp)) tys
+
+subsumePP :: PolyType -> PolyType -> Bool
+ = \got exp ->
+  let f = _ -- hasAnyBy subsume . flip subsume exp
+  in case got of
+  ForallAny -> True
+  ForallAnd tys -> _ --all $ f <$> tys
+  ForallOr  tys -> _ -- any $ f <$> tys
+
+hasAnyBy :: (a->a->Bool) -> [a] -> [a] -> Bool
+hasAnyBy _ [] _ = False
+hasAnyBy _ _ [] = False
+hasAnyBy f search (x:xs) = any (f x) search || hasAnyBy f search xs
+
+localState :: State s a -> State s a
+localState f = get >>= \s -> f <* put s

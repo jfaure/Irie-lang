@@ -8,7 +8,7 @@
 -- * (resolve infix apps (including precedence)) n. do this in seperate pass
 -- * desugar PExpr to CoreExpr
 
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase, ScopedTypeVariables, MultiWayIf #-}
 module ToCore
 where
 
@@ -16,150 +16,255 @@ import CoreSyn
 import qualified ParseSyntax as P
 
 import qualified Data.Vector as V
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified LLVM.AST
 import qualified LLVM.AST.Constant as C
 import qualified Data.Text as T
+import Control.Monad.Trans.State.Strict
+
+import GHC.Exts (groupWith)
+import Data.Char (ord)
+import Control.Monad (zipWithM)
+import Control.Applicative ((<|>))
 
 import Debug.Trace
 
 -- conversion state is necessary when converting variables to integers
+type ToCoreEnv a = State ConvState a
 data ConvState = ConvState {
-   nameCount :: Name
- , nameMap   :: M.Map HName Entity -- recall entity = (Maybe Name); Type; Universe
+   nameCount     :: Name
+ , localHNames   :: M.Map HName Name -- bindings
+ , localTypeVars :: M.Map HName Name -- flexible type vars
+ , localBinds    :: V.Vector Binding
+ , toCoreErrors  :: [ToCoreErrors]
 }
+type ToCoreErrors = String
 
 convTy :: P.Type -> Type
-convTy (P.TyLlvm l) = TyMono (MonoTyLlvm l)
-convTy (P.TyForall (P.ForallAnd f)) = TyPoly $ ForallAnd $ map convTy f
-convTy (P.TyForall (P.ForallOr f)) = TyPoly $ ForallOr $ map convTy f
-convTy (P.TyForall (P.ForallAny)) = TyPoly $ ForallAny
-convTy (P.TyName n) = _ -- TyRef f
-convTy (P.TyArrow tys) = TyArrow $ map convTy tys
-convTy (P.TyExpr e) = _ -- TyExpr $ expr2Core e
-convTy (P.TyTyped a b) = _
-convTy (P.TyUnknown) = TyUnknown
+ = \case
+  P.TyLlvm l                 -> TyMono (MonoTyLlvm l)
+  P.TyForall (P.ForallAnd f) -> TyPoly $ ForallAnd $ map convTy f
+  P.TyForall (P.ForallOr f)  -> TyPoly $ ForallOr $ map convTy f
+  P.TyForall (P.ForallAny)   -> TyPoly $ ForallAny
+  P.TyName n                 -> TyVar $ pName2Text n
+  P.TyArrow tys'             ->
+    let tys = convTy <$> tys'
+        args = init tys
+        retTy = last tys
+    in TyArrow args retTy
+  P.TyExpr e                 -> _ -- TyExpr $ expr2Core e
+  P.TyTyped a b              -> _
+  P.TyUnknown                -> TyUnknown
 
-pName2txt (P.UnQual (P.Ident s)) = T.pack s
+pName2Text = \case
+  P.Ident h -> T.pack h
+  P.Symbol s -> T.pack s
+pQName2Text (P.UnQual (P.Ident s)) = T.pack s
 
 parseTree2Core :: P.Module -> CoreModule
-parseTree2Core parsedDecls = CoreModule V.empty V.empty M.empty --dataDecls topExprs defaults
+parseTree2Core parsedTree' = CoreModule
+  { types         = dataEntities
+  , topExprs      = topBinds
+  , localBindings = localBinds'
+  , defaults      = defaults
+  }
   where
-  decls = V.fromList parsedDecls
+  parsedTree  = V.fromList parsedTree'
+  -------------------------
+  -- Sort the parseDecls --
+  -------------------------
+  p_TypeAlias = V.filter ((0==) . judge) parsedTree
+  p_Datas     = V.filter ((1==) . judge) parsedTree
+  p_TopBinds  = V.filter ((2==) . judge) parsedTree
+  p_TopSigs   = V.filter ((3==) . judge) parsedTree
+  p_defaults  = V.filter ((4==) . judge) parsedTree
+  -- grouped = V.fromList <$> groupWith judge parsedTree
+  judge :: P.Decl -> Int = \case
+    P.TypeAlias{}   -> 0
+    P.DataDecl{}    -> 1
+    P.FunBind{}     -> 2
+    P.TypeSigDecl{} -> 3
+    _               -> 4 -- P.DefaultDecl{}
 
-  -- data declarations -> we need a type and corresponding list of constructors
-  -- these may return a type that subsumes the data's type (GADTS)
-  datas = V.filter isData decls :: V.Vector P.Decl
-  hTypeNames = getDataHName <$> datas
-    where getDataHName (P.TypeAlias nm _) = nm
-          getDataHName (P.DataDecl nm _ _) = nm
-  -- this function allows us to convert forward type references to their int name
-  lookupTyHName hNm = case V.findIndex (==hNm) hTypeNames of { Just n -> n ; _ -> error "name lookup fail" }
+  ----------------------
+  -- Lookup functions --
+  ----------------------
+  -- global human name Maps
+  freshName :: ToCoreEnv Name = do
+    n <- gets nameCount
+    modify (\x->x{nameCount = n+1})
+    pure n
 
-  dataEntities = V.imap doData datas
-  doData :: int -> P.Decl -> (Entity, ExprMap)
-  doData acc (P.TypeAlias pName ty) = (entity,consList) : acc
-    where entity = (Entity (Just hNm) (convTy ty) uniType)
-  	  hNm = (\(P.Ident h) -> h) $ pName
-          consList = []
-  doData acc (P.DataDecl hNm kind qCons) = (entity, consList) : acc
-    where entity = (Entity (Just hNm) dataTy uniType)
-          --dataTy = convTy ty
-          dataTy = TyUnknown
-          consList = getCon <$> qCons
-          getCon :: Type -> P.ConDecl -> (Entity, CoreExpr)
-          getCon dataTy (P.ConDecl hNm types) = Entity (Just hNm) (TyArrow (types ++ dataTy))
-          getCon dataTy (P.InfixConDecl tyA hNm tyB) = _
-          getCon dataTy (P.GadtDecl hNm kind tyVars fields) = _
+  hNSigMap :: M.Map T.Text Type = foldl f M.empty p_TopSigs
+    where f mp (P.TypeSigDecl nms ty) =
+            foldl (\m k->M.insert (pName2Text k) (convTy ty) m) mp nms
+  hNGTypeMap = (getDataHName<$>p_Datas) V.++ (getAliasHName<$>p_TypeAlias)
+    where getDataHName (P.DataDecl nm _ _)   = pName2Text nm
+          getAliasHName = \case P.TypeAlias nm _ -> pName2Text nm
+  hNGBindMap = extractHName <$> p_TopBinds
+    where extractHName = \case
+              P.FunBind matches -> head $ (pName2Text . match2Hnm) <$> matches
+          match2Hnm = \case
+              P.Match nm pats rhs -> nm
+              P.InfixMatch pat nm pats rhs -> nm
 
-  defaults = M.empty -- map doDefault (filter isDefault decls)
+  -- HNm->Nm functions
+  findGTyHName :: T.Text->Maybe Name = \hNm -> V.findIndex (==hNm) hNGTypeMap
+  findGHName :: T.Text->Maybe Name =  \hNm -> V.findIndex (==hNm) hNGBindMap
+  -- findSig  = \nm -> V.findIndex (\) p_TopSigs
 
-  -- we have already generated the constructors, so they have priority when naming entities
-  topBinds = V.fromList $ V.filter isFunBind (V.fromList decls) :: V.Vector P.Decl
-  topSigs  = filter isSig decls
-  lookupSig hNm = V.findIndex (elem hNm) topSigs
-  -- get all hnames (so we can handle forward references)
-  hNameMap = (extractHNames topBinds) :: V.Vector HName
-    where extractHNames ((P.FunBind matches) : rem) = (match2Hnm<$>matches) : extractHNames rem
-          extractHNames (_:rem) = extractHNames rem
-          extractHNames [] = []
-          match2Hnm (P.Match nm pats rhs) = nm
-          match2Hnm (P.InfixMatch pat nm pats rhs) = nm
-  lookupHName :: T.Text -> Int
-  lookupHName hNm = V.findIndex (==hNm) hNameMap
+  --lookupGTy :: Name->Type = \nm -> hNGTypeMap V.! nm
+  lookupTy :: Name->TypeMap->Entity = \nm typeMap -> typeMap V.! nm
+  lookupBind :: Name->BindMap->BindMap->Binding
+   = \nm globalMap localMap -> case compare nm (V.length localMap) of
+       LT -> globalMap V.! nm
+       _  -> localMap V.! (nm-V.length localMap) 
 
-  getFnHName :: [P.Match] -> HName
-  getFnHName m = case head m of
-    P.Match hnm _ _ -> parseName2Text hnm
-    P.InfixMatch _ hnm _ _ -> parseName2Text hnm
-  topExpr :: V.Vector P.Decl -> ExprMap -- Vector (Entity, CoreExpr)
-  topExpr = V.imap doExpr topBinds
-  doExpr :: Int -> P.Decl -> (Entity, CoreExpr)
-  doExpr nm f@(P.FunBind matches) = (e, cExp)
-    where
-    hNm = getFnHName f
-    e = Entity (Just hNm) ty uniTerm
-    ty = lookupSig hNm
-    cExp = Case e alts
-      where 
-            args = []
-	    getPrefixMatch (P.InfixMatch p1 nm ps rhs) = P.Match nm (p1:ps) rhs
-            getPrefixMatch m = m
-            -- Function matches:
-            -- many patterns do not result in a variable binding
-            alts = match2CaseAlt <$> doInfix <$> matches
-            doInfix x@P.Match{} = x
-            doInfix (P.InfixMatch pat nm pats rhs) = P.Match nm (pat:pats) rhs
-            match2CaseAlt (P.Match hNm pats (P.UnGuardedRhs exp)) =
-              let namedVars = V.fromList $ (\(PVar hNm) -> hNm) <$> pat2Core <$> pats -- TODO other patterns
-                  rhs = expr2Core [] exp --[namedVars] exp
-              in BFn (length pats) rhs
+  -- ToCoreEnv functions
+  findSig :: T.Text -> Maybe Type = \hNm -> M.lookup hNm hNSigMap
+  findHName :: T.Text -> ToCoreEnv (Maybe Name) =
+    \hNm -> gets localHNames >>= \localNames ->
+      pure ((localNames M.!? hNm) <|> (findGHName hNm))
+  addHName :: T.Text -> Name -> ToCoreEnv () =
+    \hNm nm -> modify (\x->x{localHNames = M.insert hNm nm (localHNames x)})
 
-  -- predicates for filtering
-  isData, isFunBind, isDefault :: P.Decl -> Bool
-  isData = \case { P.TypeAlias{}->True ; P.DataDecl{}->True ; _->False }
-  isFunBind = \case { P.FunBind{}->True ; _->False }
-  isSig = \case { P.TypeSigDecl{}->True ; _->False }
-  isDefault = \case { P.DefaultDecl{}->True ; _->False }
+  addLocal :: Name -> Binding -> ToCoreEnv Name =
+    \iNm bind -> do
+      modify (\x->x{localBinds=V.snoc (localBinds x) bind })
+      pure iNm
 
-exprLookupName :: [V.Vector HName] -> _ -> Name
-exprLookupName (names : rest) hNm = case vFind names of { Nothing -> exprLookupName rest hNm ; Just x -> x }
-  where vFind = V.findIndex (==hNm)
+  ----------
+  -- Data --
+  ----------
+  -- For each data declaration we need:
+  --  * TypeName of the data
+  --  * GATD style constructor list (term level)
+  -- since constructors are handled before topBinds, they get the first names
+  (dataEntities, consLists) = V.unzip $ V.imap doData p_Datas
+  constructors = V.foldl (V.++) V.empty consLists
+  doData :: Name -> P.Decl -> (Entity, V.Vector Binding)
+    = \nm -> \case
+      P.TypeAlias pName ty -> (entity, consList)
+        where entity = Entity (Just hNm) (convTy ty) uniType
+              hNm = pName2Text pName
+              consList = V.empty -- no constructors for this
+      P.DataDecl pName kind qCons -> (entity, consList)
+        where hNm = pName2Text pName
+              entity = Entity (Just hNm) dataTy uniType
+              dataTy = TyUnknown -- qCons2MonoType
+              consList = (getCon dataTy . ignoreTyVars) <$> V.fromList qCons
+              ignoreTyVars (P.QualConDecl vars condecls) = condecls
+              getCon :: Type -> P.ConDecl -> Binding
+                = \dataTy -> \case
+                P.ConDecl hNm types -> LCon ty
+                  where nm = Just $ pName2Text hNm
+                        ty = TyArrow (convTy<$>types) dataTy
+                P.InfixConDecl tyA hNm tyB -> _
+                P.GadtDecl hNm kind tyVars fields -> _
 
-parseName2Text = \case { (P.Ident h) -> T.pack h }
+  defaults = M.empty -- map doDefault p_defaults
 
-expr2Core :: [V.Vector HName] -> P.PExp -> CoreExpr
-expr2Core hNames (P.Var (P.UnQual nm)) = Var $ exprLookupName hNames $ parseName2Text nm
-expr2Core hNames (P.Con (P.UnQual nm)) = Var $ exprLookupName hNames $ parseName2Text nm
-expr2Core hNames (P.Lit l)  = Lit $ literal2Core l
-expr2Core hNames (P.Infix nm) = _
-expr2Core hNames (P.App f args) = handlePrecedence f args
-  where handlePrecedence f args = App (expr2Core hNames f) (expr2Core hNames <$> args)
-expr2Core hNames (P.Lambda f args) = _
-expr2Core hNames (P.MultiIf alts) = _
-expr2Core hNames (P.Case e alts) = _
-expr2Core hNames (P.Do stmts) = _ -- exprToCore $ foldr1 desugarStmt stmts
- -- suboptimal.. should use the name number corresponding to ">>" and ">>=" for this.
---  where desugarStmt (P.Qualifier a) (P.Qualifier b) = App (Var (P.Symbol ">>")) [a, b]
-expr2Core hNames (P.MDo stmts) = _
-expr2Core hNames (P.List f) = _
-expr2Core hNames (P.TypeSig e ty) = _
-expr2Core hNames (P.AsPat nm pat) = _
-expr2Core hNames (P.WildCard) = _
-expr2Core hNames (P.TypeExp ty) = _
-expr2Core hNames (P.Typed t e) = _
+  --------------
+  -- Bindings --
+  --------------
+  -- topBinds = constructors and top function binds
+  -- localBinds is a [Vector Binding] of all local bindings in the module
+  topBinds = constructors V.++ topBinds' :: V.Vector Binding
+  (ConvState totalNames _ _ localBinds' errors) = endState
+  (topBinds', endState) = runState (V.imapM doExpr p_TopBinds) convState
+   where convState = ConvState
+           { nameCount = V.length p_TopBinds + V.length constructors
+           , localHNames    = M.empty
+           , localTypeVars  = M.empty
+           , localBinds     = V.empty
+           , toCoreErrors   = []
+           }
 
-pat2Core :: P.Pat -> Pat
-pat2Core (P.PVar n) = _ -- PVar 1
-pat2Core (P.PLit l) = PLit $ literal2Core l
---pat2Core (P.PInfixApp p1 n ps) = pat2Core (P.PApp n ((pat2Core p1):(pat2Core ps):[]))
-pat2Core (P.PApp qNm ps) = _
-pat2Core (P.PTuple p) = PTuple (pat2Core <$> p)
-pat2Core (P.PList ps) = _
-pat2Core (P.PWildCard) = PWildCard
+  -- doExpr add local bindings to the state and return top bindings
+  -- also add errors to the state
+  -- ! does P.Match{hNm} match the one in bindMap ?
+  doExpr :: Int -> P.Decl -> ToCoreEnv Binding
+   = \nm' f@(P.FunBind matches) ->
+    let nm = nm' + V.length constructors
+        ty = case findSig $ (\(P.Match hNm _ _)->pName2Text hNm) $ (head matches) of
+          Nothing -> TyUnknown
+          Just t -> t
+    in case matches of
+        [match] -> match2LBind match ty
+        other -> error "please use 'case' expressions"
 
-literal2Core :: P.Literal -> Literal
-literal2Core (P.Char c) = _ -- LlvmLit $ LLVM.AST.ConstantOperand $ C.Int 8 $ fromInteger c
---literal2Core (P.String c) = String c
---literal2Core (P.Int c) = Int c
---literal2Core (P.Frac c) = Frac c
+  -- P.Case PExp [Alt]
+  -- Alt Pat Rhs
+  -- Convert to case. (expr2Core (P.Case) can optimize it.)
+  match2LBind :: P.Match -> Type -> ToCoreEnv Binding = \m ty ->
+    let getPatList = \case
+            P.Match nm pats rhs -> (nm, pats, rhs)
+            P.InfixMatch p1 nm ps rhs -> (nm, (p1:ps), rhs)
+        (fNm, pats, rhs) = getPatList m
+        mkLArgs :: Name -> P.Pat -> ToCoreEnv Binding = \iNm pat -> do
+          hNmMaybe <- case pat of
+              P.PVar hNm -> let h = pName2Text hNm
+                            in addHName h iNm *> pure (Just h)
+              _          -> pure Nothing
+
+          -- TODO use the known type !!
+          let bind = LArg $ Entity hNmMaybe TyUnknown 0
+          addLocal iNm bind
+          pure bind
+
+        unExpr (P.UnGuardedRhs e) = e
+        fEntity = Entity (Just $ pName2Text fNm) ty uniTerm
+    in do
+    iNames <- mapM (\_->freshName) pats
+    zipWithM mkLArgs iNames pats
+    expr <- expr2Core $ unExpr rhs
+    pure $ LBind iNames expr fEntity
+
+  expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
+    P.Var (P.UnQual hNm)-> findHName (pName2Text hNm) >>= \case
+      Just n -> pure $ Var n
+      Nothing -> do
+         error ("expr2Core: not in scope: " ++ show hNm)
+    P.Con pNm-> expr2Core (P.Var pNm) -- same as Var
+    P.Lit l -> pure $ Lit $ literal2Core l
+    P.Infix nm -> expr2Core (P.Var nm)
+    P.App f args -> handlePrecedence f args
+      where handlePrecedence f args = App <$> expr2Core f
+                                      <*> mapM expr2Core args
+    P.Let binds exp -> _
+    P.MultiIf _ -> _
+    P.Lambda f args -> _
+    P.MultiIf alts -> _
+    P.Case e alts -> _
+    P.Do stmts -> _  -- exprToCore $ foldr1 desugarStmt stmts
+   -- suboptimal.. should use the name number corresponding to ">>" and ">>->" for this.
+  --  where desugarStmt (P.Qualifier a) (P.Qualifier b) -> App (Var (P.Symbol ">>")) [a, b]
+    P.MDo stmts -> _
+    P.List f -> _
+    P.TypeSig e ty -> _
+    P.AsPat nm pat -> _
+    P.WildCard -> pure WildCard
+    P.TypeExp ty -> _
+    P.Typed t e -> _
+
+  pat2Core :: P.Pat -> ToCoreEnv CoreExpr = \case
+    P.PVar hNm -> findHName (pName2Text hNm) >>= \case
+        Nothing -> error "internal pattern error"
+        Just n -> pure $ Var n
+    P.PLit l -> pure $ Lit $ literal2Core l
+    P.PInfixApp p1 n ps -> do
+       a <- pat2Core p1
+       b <- pat2Core ps
+       pat2Core $ P.PApp n (p1:[ps])
+    P.PApp qNm ps -> _
+    P.PTuple p -> _
+    P.PList ps -> _
+    P.PWildCard -> _
+
+literal2Core :: P.Literal -> Literal =
+  let mkLit = LlvmLit . LLVM.AST.ConstantOperand
+  in mkLit . \case
+  P.Char c   -> C.Int 8 $ toInteger $ ord c
+  P.Int c    -> C.Int 32 $ c
+  P.String c -> _ -- String c
+  P.Frac c   -> _

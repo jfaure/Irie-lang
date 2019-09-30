@@ -5,15 +5,15 @@
 -- when a dir is closed, remove the "|-- "
 tree : String -> IO ()
 tree rootPath = puts rootPath *> subTree "|-- " rootPath where
-  subTree : String -> String -> IO ()
-  subTree prefix path iff prefix.count >= 4 =
-    let (entries;last) = Dir::entries path >>= filter (\e->e.0 != '.') . splitAt -1
-        inDirPrefix = dropTail 3 prefix , "   " -- "|   "
+  subTree : (prefix : String | prefix.count>=4) -> String -> IO ()
+   = \prefix path -> do
+    (entries;last) <- Dir::entries path >>= filter (\e->e.0 != '.') . splitAt -1
+    let inDirPrefix = dropTail 3 prefix , "   " -- "|   "
         endDirPrefix = dropTail 4 prefix , "`-- " -- prefix . set -4 '`'
         handleEntry prefix entry = puts (prefix , File::basename entry)
                                    *> subTree (prefix , "|-- ") entry
-    in entries . each (handleEntry inDirPrefix)
-       *> handleEntry endDirPrefix last
+    entries . each (handleEntry inDirPrefix)
+    *> handleEntry endDirPrefix last
 
 main : Int -> [String] -> IO ()
 main ac [] = tree =<< Dir::pwd
