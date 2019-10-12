@@ -1,4 +1,4 @@
--- CoreUtils: 
+-- CoreUtils:
 --  * lookup INames
 --  * prettyprint
 
@@ -7,10 +7,8 @@ module CoreUtils where
 import CoreSyn
 import qualified Data.Vector as V
 
-lookupBinding :: IName -> CoreModule -> Binding
- = \n cm -> (bindings cm) V.! n     
+lookupBinding :: IName -> ExprMap -> Binding
+ = \n binds -> binds V.! n
 
-lookupType :: IName -> CoreModule -> Type
- = \n cm -> 
- let bind = lookupBinding n cm
- in typed $ info bind
+lookupType :: IName -> ExprMap -> Type
+ = \n binds -> typed $ info $ lookupBinding n binds

@@ -59,9 +59,7 @@ convTy :: P.Type -> ToCoreEnv Type
       Nothing ->  error ("unknown typeName: " ++ show hNm)
   P.TyArrow tys'             -> do
     tys <- mapM convTy tys'
-    let args = init tys
-        retTy = last tys
-    pure $ TyArrow args retTy
+    pure $ TyArrow tys
   P.TyExpr e                 -> _ -- TyExpr $ expr2Core e
   P.TyTyped a b              -> _
   P.TyUnknown                -> pure TyUnknown
@@ -99,7 +97,7 @@ data2Bindings (P.DataDecl pName kind qCons) dataTy = do
       ignoreTyVars (P.QualConDecl vars condecls) = condecls
       con2Bind (P.ConDecl qNm types) = do
           tys <- mapM convTy types
-          let ty = TyArrow tys dataTy
+          let ty = TyArrow (tys ++ [dataTy])
           pure $ LCon $ Entity (Just (pName2Text qNm)) ty uniTerm
   let doCon = con2Bind . unInfix . ignoreTyVars
       constructors = mapM doCon (V.fromList qCons)
@@ -186,7 +184,7 @@ parseTree2Core parsedTree' = CoreModule
 
   -- Setup ToCoreEnv
   convState = ConvState
-    { nameCount      = V.length p_TopBinds -- + V.length constructors
+    { nameCount      = 0 --V.length p_TopBinds -- + V.length constructors
     , hNames         = M.empty
 --  , typeHNames     = M.empty
 
@@ -198,12 +196,11 @@ parseTree2Core parsedTree' = CoreModule
     -- register the hnames for constructors - we need to do this after
     -- giving a name to all the constructor types
     (dataTys, cons) <- getTypesAndCons p_Datas
-    mapM (\(LCon (Entity (Just hNm) _ _ )) -> freshName >>= addHName hNm) cons
+    V.imapM (\i (LCon (Entity (Just hNm) _ _ )) -> addHName hNm i) cons
 
     -- 2. type signatures
     -- super important is to reserve the lower names for top bindings
     -- (so we can directly index the top bind_map later)
-    modify (\x->x{nameCount = nameCount x + V.length p_TopBinds})
     let f (P.TypeSigDecl nms ty) mp = convTy ty >>= \t ->
             pure $ foldr (\k m->M.insert (pName2Text k) t m) mp nms
     hNSigMap <- foldrM f M.empty p_TopSigs -- :: ToCoreEnv (M.Map T.Text Type)
@@ -219,8 +216,10 @@ parseTree2Core parsedTree' = CoreModule
               ty = case findSig hNm of
                   Nothing -> TyUnknown
                   Just t -> t
-          addHName hNm iNm
+          addHName hNm (iNm + V.length cons)
           pure (match, ty)
+    -- TODO why the -1 ?! it's apparently necessary
+    modify (\x->x{nameCount = V.length p_TopBinds + V.length cons})
     (matches, tys) <- V.unzip <$> V.imapM registerBinds p_TopBinds
     fnBinds <- V.zipWithM match2LBind matches tys
 

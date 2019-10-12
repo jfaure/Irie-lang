@@ -2,10 +2,14 @@
 -- recall: ParseSyn >> CoreExpr >> STG codegen
 -- The language for type judgements: checking and inferring
 --
--- !! Important points about Core:
--- No local variables: all vars have a unique name (Int)
--- No free variables. only explicit funcion arguments
--- No lambdas/anonymous type annotations: Let-bind them.
+-- ParseSyn vs Core
+-- > no local variables
+-- > all vars have a unique name
+-- > no free variables (explicit function arguments)
+-- > all entities are annotated with a type (can be TyUnknown)
+-- - ultimately stg must have only monotypes
+--
+-- despite dependent types, core seperates terms and types
 -- source/origin annotations (for error msgs)
 
 {-# LANGUAGE StandaloneDeriving, DeriveFunctor, GeneralisedNewtypeDeriving, LambdaCase, ScopedTypeVariables #-}
@@ -80,7 +84,7 @@ data CoreExpr
  | Lit Literal
  | Instr PrimInstr [CoreExpr]
  | App CoreExpr [CoreExpr]
- | Let [Binding] CoreExpr
+ | Let [Binding] CoreExpr -- there are no bindings in core..?
  | SwitchCase CoreExpr [(Literal, CoreExpr)]
  | DataCase CoreExpr
             [(IName, [IName], CoreExpr)] -- Con [args] -> expr
@@ -105,7 +109,7 @@ data Type
 
  | TyMono MonoType -- monotypes 't'
  | TyPoly PolyType -- constrained polytypes 'p', 's'
- | TyArrow [Type] Type -- Kind 'function' incl. Sum/Product cons
+ | TyArrow [Type]  -- Kind 'function' incl. Sum/Product cons
 
  | TyExpr CoreExpr -- dependent type
 
@@ -194,35 +198,45 @@ ppType :: Type -> String = \case
    MonoTyData nm -> "data." ++ show nm
 
  TyPoly p -> show p
- TyArrow args ty -> "(" ++ (concat $ DL.intersperse " -> " 
-                                   (ppType <$> (args ++ [ty]))) ++ ")"
+ TyArrow tys -> "(" ++ (concat $ DL.intersperse " -> " 
+                                (ppType <$> tys)) ++ ")"
  TyExpr coreExpr -> _
  TyUnknown -> "TyUnknown"
  TyBroken  -> "tyBroken"
 
-ppCoreExpr :: CoreExpr -> String = \case
- Var n -> "var" ++ show n
+ppCoreExpr :: (IName -> String) -> CoreExpr -> String = \deref -> let ppCoreExpr' = ppCoreExpr deref in \case
+ Var n -> {- show n ++-} deref n
  Lit l -> show l
- App f args -> ppCoreExpr f ++" "++ show (ppCoreExpr <$> args)
- Let binds e -> "let "++ppBinds binds++"in "++ ppCoreExpr e
- SwitchCase c alts -> "case " ++ ppCoreExpr c ++ show alts
- DataCase c alts -> "case " ++ ppCoreExpr c ++ " " ++ show alts
+ App f args -> ppCoreExpr' f ++" "++ concat (DL.intersperse " " ((\x -> "(" ++ ppCoreExpr' x ++ ")" ) <$> args))
+ Let binds e -> _ --"let "++ppBinds (\x->Nothing) binds++"in "++ ppCoreExpr e
+ SwitchCase c alts -> "case " ++ ppCoreExpr' c ++ show alts
+ DataCase c alts -> "case " ++ ppCoreExpr' c ++ " of" ++ "\n" ++ (concat $ DL.intersperse "\n" $ (ppDataAlt deref)<$> alts)
  TypeExpr ty -> show ty
  l -> show l
 
-ppBinds :: [Binding] -> String = concatMap (ppBind "\n   ")
-ppBind indent b = indent ++ case b of
+ppDataAlt :: (IName -> String) -> (IName, [IName], CoreExpr) -> String
+ppDataAlt deref (con, args, ret) = 
+ deref con ++
+ (concatMap (\x -> " " ++ (deref x)) args) ++ " -> " ++ 
+ ppCoreExpr deref ret
+
+ppBinds :: [Binding] -> (IName -> String) -> String
+ = \l f -> concatMap (ppBind f "\n   ") l
+ppBind f indent b = indent ++ case b of
   LBind args e entity -> "(" ++ case named entity of
      { Just nm -> show nm ; Nothing -> "\\" }
     ++ " " ++ show args 
     ++ " : " ++ ppType (typed entity) ++ ")"
-    ++ indent ++ "  = " ++ ppCoreExpr e
+    ++ indent ++ "  = " ++ ppCoreExpr f e
   LArg a -> "larg: " ++ ppEntity a
   LCon a -> "lcon: " ++ ppEntity a
 
 ppCoreModule :: CoreModule -> String
  = \(CoreModule typeMap bindings defaults)
-  -> "bindings: " ++ concat ((ppBind "\n  ") <$> bindings)
+  -> let f i = case named $ info $ (bindings V.! i) of
+           Just x -> T.unpack x
+           Nothing-> "_"
+     in "bindings: " ++ concat ((ppBind f "\n  ") <$> bindings)
       ++ "\n\n" ++ "types: " ++ show typeMap
       ++ "\n\n" ++ "defaults: " ++ show defaults
 
