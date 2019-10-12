@@ -21,6 +21,7 @@ import Control.Applicative
 
 import qualified Data.Vector as V
 import qualified Data.Text as T
+import qualified Data.List as DL -- intersperse
 
 type Name    = Int -- deprec
 
@@ -36,22 +37,25 @@ type BindMap = NameMap Binding
 -- since all vars get a unique name, we need this for locals,
 -- note. top binds/data are always in scope, so no need.
 data Binding
--- Normal let binding (with info)
+-- let bindings assigned to a coreExpr
  = LBind {
-   args  :: [Name] -- the unique Names for this function
+   args  :: [Name] -- the unique arg Names used by 'expr'
  , expr  :: CoreExpr
  , info  :: Entity -- !
  }
--- Function arg (no expr, but we need to judge it's type)
+-- vars coming into scope (via lambda or case expr)
  | LArg { info :: Entity }
--- Term level GADT constructor (Type is a TyArrow)
- | LCon { conTypes :: Type }
+-- Term level GADT constructor (Type is known)
+ | LCon { info :: Entity }
 
+-- ? does type judging ever create new bindings ?
+-- algData should perhaps not exist (merge into bindings)
 data CoreModule = CoreModule {
-   types         :: TypeMap -- all named types (incl data)
- , topExprs      :: ExprMap -- top level binds incl constructors
- , localBindings :: ExprMap -- all other variables in module
- , defaults      :: Map PolyType MonoType -- eg. default Num Int
+   algData  :: TypeMap -- named types (data, aliases)
+ , bindings :: ExprMap -- incl. constructors and locals
+ , defaults :: Map PolyType MonoType -- eg. default Num Int
+ --, hNameMap :: Data.Map HName IName -- lookup table
+ -- may be useful in the interpreter
  }
 
 -- an entity = info about an expression
@@ -59,42 +63,36 @@ data Entity = Entity -- entity info
  { named    :: Maybe HName
  , typed    :: Type -- also terms (in a type context)
  , universe :: Int -- term/type/kind/sort/...
--- , userSource :: Maybe SourceEntity
+-- , source :: Maybe SourceEntity
  }
--- info about something introduced by user
---data SourceEntity = SourceEntity {
---   origin :: UserOrigin
--- , src :: Maybe srcLoc
---}
---data UserOrigin = FreeVar | LocalArg | Global
 
--- type check environment
-data TCEnvState = TCEnvState {
-   coreModule :: CoreModule
- , errors :: [TCError]
-}
-type TCEnv a = State TCEnvState a
+-- source info
+-- how much info do we care about ?
+-- like depth inside bindings, freevars etc..
+--data SourceEntity = SourceEntity 
+-- { src :: Maybe srcLoc
+-- }
 
 uniTerm : uniType : uniKind : uniSort : _ = [0..] :: [Int]
 
 data CoreExpr
  = Var Name
  | Lit Literal
- | Instr Primitive
+ | Instr PrimInstr [CoreExpr]
  | App CoreExpr [CoreExpr]
  | Let [Binding] CoreExpr
  | SwitchCase CoreExpr [(Literal, CoreExpr)]
  | DataCase CoreExpr
-            [(Name, [Name], CoreExpr)] -- Con [args] -> expr
+            [(IName, [IName], CoreExpr)] -- Con [args] -> expr
  | TypeExpr Type -- dependent types
  | WildCard
 
--- Prim: cannot use llvm Instructions because of typing issues
--- eg. (+) : Num a => a->a->a (or even more complicated)
--- vs FAdd,Add that take LLVM.AST.Operands (and flags).
-data Primitive
- = Add | Sub | Mul | Div
- deriving Show
+-- Prim: types (and signatures) are richer than llvm primitives
+-- so we delay the conversion to STG
+-- TODO where are the type signatures ?
+-- TODO special constructors for primitive types ? tuple/array..
+data PrimInstr = Add  | Sub  | Mul  | Div
+               | Fadd | FSub | FMul | FDiv
 
 data Literal
  = ExternFn LLVM.AST.Operand -- can use LLVM..typeOf on it
@@ -103,7 +101,7 @@ data Literal
 ----------- Types -- ---------
 type UserType = Type -- user supplied type annotation
 data Type
- = TyVar HName
+ = TyVar IName
 
  | TyMono MonoType -- monotypes 't'
  | TyPoly PolyType -- constrained polytypes 'p', 's'
@@ -112,14 +110,13 @@ data Type
  | TyExpr CoreExpr -- dependent type
 
  | TyUnknown -- needs to be inferred - the so-called boxy type.
- | TyBroken -- typecheck error: skip and continue
+ | TyBroken -- typecheck couldn't infer a coherent type
 
--- data is up to stg, Core only knows GADT style Con types
+-- Note. data is up to stg, Core only needs GADT type sigs
 data MonoType
  = MonoTyLlvm LLVM.AST.Type
- | MonoTyData Name SumData
-data SumData     = SumData [ProductData]
-data ProductData = ProductData Name [Type]
+ | MonoTyData IName
+ | MonoTyClass -- ?!
 
 type PolyType = Forall
 data Forall
@@ -163,11 +160,10 @@ data Forall
 -- Boxed (inferred) types are stratified in exactly the same way
 -- Note: boxes are not nested, so we track it during type judging
 
+deriving instance Show PrimInstr
 deriving instance Show Forall
 deriving instance Show Binding
 deriving instance Show MonoType
-deriving instance Show SumData
-deriving instance Show ProductData
 deriving instance Show Type
 instance Show Literal where
   show (LlvmLit (LLVM.AST.ConstantOperand (LC.Int bits val))) =
@@ -189,24 +185,49 @@ data TCError
  = UnifyFail { expected :: Entity, got :: Entity}
  deriving (Show)
 
+ppType :: Type -> String = \case
+ TyVar nm -> "$" ++ show nm
+ TyMono m -> case m of
+   MonoTyLlvm lty -> case lty of
+     LLVM.AST.IntegerType n -> "int" ++ show n
+     other -> show other
+   MonoTyData nm -> "data." ++ show nm
+
+ TyPoly p -> show p
+ TyArrow args ty -> "(" ++ (concat $ DL.intersperse " -> " 
+                                   (ppType <$> (args ++ [ty]))) ++ ")"
+ TyExpr coreExpr -> _
+ TyUnknown -> "TyUnknown"
+ TyBroken  -> "tyBroken"
+
 ppCoreExpr :: CoreExpr -> String = \case
  Var n -> "var" ++ show n
  Lit l -> show l
- App f args -> ppCoreExpr f ++" $ "++ show (ppCoreExpr <$> args)
+ App f args -> ppCoreExpr f ++" "++ show (ppCoreExpr <$> args)
  Let binds e -> "let "++ppBinds binds++"in "++ ppCoreExpr e
  SwitchCase c alts -> "case " ++ ppCoreExpr c ++ show alts
+ DataCase c alts -> "case " ++ ppCoreExpr c ++ " " ++ show alts
  TypeExpr ty -> show ty
  l -> show l
 
-ppBinds :: [Binding] -> String = concatMap (ppBind "   ")
-ppBind indent = \case
-  LBind args e entity -> "\\" ++ show args 
-    ++ "(" ++ show entity ++ ") -> " ++ ppCoreExpr e ++ "\n"
-  LArg a -> show a
+ppBinds :: [Binding] -> String = concatMap (ppBind "\n   ")
+ppBind indent b = indent ++ case b of
+  LBind args e entity -> "(" ++ case named entity of
+     { Just nm -> show nm ; Nothing -> "\\" }
+    ++ " " ++ show args 
+    ++ " : " ++ ppType (typed entity) ++ ")"
+    ++ indent ++ "  = " ++ ppCoreExpr e
+  LArg a -> "larg: " ++ ppEntity a
+  LCon a -> "lcon: " ++ ppEntity a
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule typeMap topExprs localBindings defaults)
-  -> "top Binds: " ++ concatMap (ppBind "  ") topExprs
-      ++ "\n\n" ++ "local Binds: " ++ concatMap (ppBind "  ") localBindings
+ = \(CoreModule typeMap bindings defaults)
+  -> "bindings: " ++ concat ((ppBind "\n  ") <$> bindings)
       ++ "\n\n" ++ "types: " ++ show typeMap
       ++ "\n\n" ++ "defaults: " ++ show defaults
+
+ppEntity (Entity nm ty uni) = 
+  case nm of
+    Just nm -> show nm
+    Nothing -> "\\_"
+  ++ " : " ++ ppType ty ++ " (" ++ show uni ++ ")"

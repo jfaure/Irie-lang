@@ -1,24 +1,30 @@
-module CmdLine (CmdLine(..), parseCmdLine) --, cmdLineDefaults)
+module CmdLine (CmdLine(..), parseCmdLine, defaultCmdLine)
 where
 
 import Options.Applicative
 import Data.Semigroup ((<>))
 
 data CmdLine = CmdLine
-  { emitParseTree :: Bool
-  , emitParseCore :: Bool
-  , emitCore      :: Bool
-  , emitStg       :: Bool
-  , emitLlvm      :: Bool
+  { emitSourceFile :: Bool
+  , emitParseTree  :: Bool
+  , emitParseCore  :: Bool
+  , emitCore       :: Bool
+  , emitStg        :: Bool
+  , emitLlvm       :: Bool
 
-  , jit           :: Bool
-  , optlevel      :: Word
-  , files         :: [String]
+  , jit            :: Bool
+  , optlevel       :: Word
+  , files          :: [String]
   } deriving (Show)
+
+defaultCmdLine = CmdLine False False False False False False False 0 []
 
 cmdLineDecls :: Parser CmdLine
 cmdLineDecls = CmdLine
-  <$> switch (long "emit-parsetree"
+  <$> switch (long "emit-sourceFile"
+          <> short 'S'
+          <> help "Output program source")
+  <*> switch (long "emit-parsetree"
           <> short 'p'
           <> help "Output program parse tree")
   <*> switch (long "emit-parse-core"

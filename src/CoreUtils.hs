@@ -1,14 +1,16 @@
--- CoreUtils: pretty printing core
+-- CoreUtils: 
+--  * lookup INames
+--  * prettyprint
 
 module CoreUtils where
 
---import CoreSyn
+import CoreSyn
+import qualified Data.Vector as V
 
---ppCoreModule :: CoreModule -> IO ()
---ppCoreModule m = ppCoreExpr <$> topBinds m
---
---ppCoreExpr :: CoreExpr -> IO ()
---ppCoreExpr (Var n) = print n
---ppCoreExpr (Lit l) = print l
---ppCoreExpr (App a b) = ppCoreExpr a
---                     *> print "(" *> ppCoreExpr b *> print ")"
+lookupBinding :: IName -> CoreModule -> Binding
+ = \n cm -> (bindings cm) V.! n     
+
+lookupType :: IName -> CoreModule -> Type
+ = \n cm -> 
+ let bind = lookupBinding n cm
+ in typed $ info bind

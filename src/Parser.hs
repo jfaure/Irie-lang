@@ -200,6 +200,7 @@ pExp :: Parser PExp
         <|> (Infix . UnQual <$> pInfix)
         <|> doExpr <|> mdoExpr
         <|> Lit <$> literal <|> someName
+        <|> parens pExp
 
   someName = dbg "someName" $ do Con . UnQual <$> uIden
          <|> Var . UnQual <$> lIden
@@ -218,6 +219,7 @@ pExp :: Parser PExp
     binds <- BDecls <$> indentedItems ref lvl scn decl (reserved "in")
     reserved "in"
     p <- pExp
+    put ref -- restore indent
     return (Let binds p)
   multiIf = normalIf <|> do
     reserved "if"
@@ -232,7 +234,16 @@ pExp :: Parser PExp
       subIf = (,) <$ reservedOp "|" <*> pExp
               <* reservedOp "=" <*> pExp
 
-  caseExpr = Case <$ reserved "case" <*> pExp <* reserved "of" <*> many alt
+  caseExpr = do
+    reserved "case"
+    scrut <- pExp <* reserved "of"
+    ref <- get
+    scn
+    lvl <- L.indentLevel
+    put lvl
+    alts <- indentedItems ref lvl scn alt (fail "_") -- no end condition
+    put ref
+    pure $ Case scrut alts
   typeSig e = reserved ":" *> pType >>= \t -> return (TypeSig e t)
   typeExp = TypeExp <$> pType
   asPat = AsPat <$> lIden <* reservedOp "@" <*> pat
@@ -253,7 +264,7 @@ pat :: Parser Pat
 
 pType :: Parser Type -- must be a type (eg. after ':')
  = dbg "ptype" $ do
- try forall <|> try tyArrow <|> singleType -- <|> parens pType
+ try forall <|> try tyArrow <|> singleType <|> parens pType
  where tyArrow = TyArrow <$> dbg "arrow" (singleType `sepBy2` symbol "->")
 
 singleType :: Parser Type

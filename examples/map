@@ -1,6 +1,6 @@
-data List = Nothing | Cons Int List
+data Stack a = Nil | Cons a Stack
 
-map : (Int -> Int) -> List -> List
-map f = \case
-  Nothing -> Nothing
-  Cons a b -> Cons (f a) (map f b)
+map : (a -> b) -> Stack a -> Stack b
+map f l = case l of
+  Cons a xs -> Cons (f x) (map f a)
+  Nil    -> Nil

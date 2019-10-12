@@ -66,7 +66,7 @@ data Type
 
  | TyExpr PExp -- dependent type
 
- | TyTyped Type Type -- user gave a kind
+ | TyTyped Type Type -- user gave a 'Kind' annotation
  | TyUnknown
 
 data Forall

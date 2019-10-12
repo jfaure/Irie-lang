@@ -38,6 +38,7 @@ doProgText flags fName progText =
       core   = parseTree2Core <$> parseTree
       judged = judgeModule <$> core
   in if
+  | emitSourceFile flags-> putStrLn =<< readFile fName
   | emitParseTree flags -> mapM_ print =<< parseTree
   | emitParseCore flags -> putStrLn . ppCoreModule =<< core
   | emitCore flags      -> print =<< judged
