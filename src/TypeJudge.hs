@@ -44,8 +44,8 @@ import qualified LLVM.AST.Constant as LC
 import qualified LLVM.AST as L
 import Debug.Trace
 
---dump :: TCEnv a
-dump = gets (traceId . ppCoreModule . coreModule)
+dump :: TCEnv ()
+dump = traceM =<< gets (ppCoreModule . coreModule)
 
 -- ! the type of bindings needs to be updated as
 -- type information is discovered
@@ -71,13 +71,15 @@ lookupBindM :: IName -> TCEnv Binding
 lookupTypeM :: IName -> TCEnv Type
   = \n -> CU.lookupType n    <$> gets (bindings . coreModule)
 lookupHNameM :: IName -> TCEnv (Maybe HName)
-  = \n -> named . info . CU.lookupBinding n <$> gets (bindings .coreModule)
+  = \n -> named . info . CU.lookupBinding n 
+          <$> gets (bindings . coreModule)
 updateBindTy :: IName -> Type -> TCEnv ()
   = \n ty -> 
    let doUpdate cm =
         let binds = bindings cm
-            ty = CU.lookupBinding n binds
-            binds' = V.modify (\v->MV.write v n ty) binds
+            b = CU.lookupBinding n binds
+            b' = b { info = (info b) { typed=ty } }
+            binds' = V.modify (\v->MV.write v n b') binds
         in cm { bindings=binds' }
    in modify (\x->x{ coreModule = doUpdate (coreModule x) })
 
@@ -85,10 +87,13 @@ updateBindTy :: IName -> Type -> TCEnv ()
 judgeBind :: CoreModule -> Binding -> TCEnv Type = \cm -> \case
   LArg i -> pure $ typed i
   LCon i -> pure $ typed i
-  LBind args e info -> let t = typed info in traceShow args $ case t of
+  LBind args e info -> let t = typed info in case t of
     TyArrow tys -> case length args + 1 /= length tys of
-      True -> error ("arity mismatch: " ++ show (named info) ++ show args ++ ": " ++ show tys)
-      False -> zipWithM_ updateBindTy args tys *> dump *> judgeExpr e t cm
+      True -> error ("arity mismatch: " ++ 
+                    show (named info) ++ show args ++ ": " ++ show tys)
+      False -> zipWithM_ updateBindTy args tys -- *> dump
+               -- note expected type of the expression is the function ret-type!
+               *> judgeExpr e (last tys) cm
     -- this being a function, we need to update
     -- arguments with known type information
     _ -> judgeExpr e t cm
@@ -141,12 +146,13 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
         fillBoxes boxy TyUnknown = boxy -- pure inference case
         fillBoxes boxy known = case unVar boxy of
           TyUnknown -> known
-          TyArrow tys -> known -- cancer
-          todo -> error ("found boxy type: " ++ show todo)
+          TyArrow tys -> known -- ok ?!
+          t -> known
     in do
-      newTy <- fillBoxes expected . typed . info <$> lookupBindM nm
-      hNm <- \case { Just h->h; _->T.pack ""} <$> lookupHNameM nm
-      traceM (show hNm ++ show nm ++ ": " ++ ppType newTy)
+      bindTy <- typed . info <$> lookupBindM nm
+      let newTy = fillBoxes bindTy expected
+      --hNm <- T.unpack . \case { Just h->h; _->T.pack ""} <$> lookupHNameM nm
+      --traceM (hNm ++ "(" ++ show nm ++ "): " ++ ppType newTy)
       updateBindTy nm newTy
       pure newTy
 
@@ -154,14 +160,13 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
   -- TODO PAP, also check arities match
   -- polymorphic instantiation ?
   App fn args -> do
-    --fn <- deRefVar fn'
-    --args <- mapM deRefVar args'
-    judgeExpr' fn expected >>= \case
+    judgeExpr' fn TyUnknown >>= \case
       TyArrow tys -> zipWithM judgeExpr' args (init tys) >>= \judged ->
         if all id $ zipWith subsume' judged tys
         then pure (last tys)
         else error "cannot unify function arguments"
-      _ -> error ("cannot call non function: " ++ show fn)
+      TyUnknown -> error ("failed to infer function type: "++show fn)
+      t -> error ("cannot call non function: "++show fn++" : "++show t)
 
   -- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
   Let binds inExpr -> mapM_ (judgeBind cm) binds
@@ -180,9 +185,10 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
   DataCase ofExpr alts -> do
     scrutTy <- judgeExpr' ofExpr TyUnknown
     exprTys <- mapM (\(_,_,expr) -> judgeExpr' expr expected) alts
-    patTys  <- mapM (\(con,args,_) ->
-                      judgeExpr' (App (Var con) (Var <$> args)) expected)
-                    alts
+    patTys  <- mapM (\(con,args,_) -> case args of
+        [] -> judgeExpr' (Var con) expected
+        _  -> judgeExpr' (App (Var con) (Var <$> args)) expected
+      ) alts
     let patsOk = all (\g -> subsume' g scrutTy)  patTys
         altsOk = all (\g -> subsume' g expected) exprTys
     pure $ if patsOk && altsOk then expected else TyBroken
@@ -199,11 +205,11 @@ subsume :: Type -> Type -> (Type -> Type) -> Bool
 subsume got exp unVar = subsume' got exp
   where
   -- local subsume with freeVar TyVarLookupFn
-  subsume' got' exp' =
-    let got = unVar got'
-        exp = unVar exp'
+  subsume' gotV expV =
+    let got = unVar gotV
+        exp = unVar expV
     in case exp of
-    TyVar n -> error "internel error: tyvar wasn't dereferenced"
+    TyVar n -> error ("internal error: tyvar wasn't dereferenced: " ++ show n)
     TyMono exp' -> case got of
       TyMono got' -> subsumeMM got' exp'
       TyPoly got' -> subsumePM got' exp'

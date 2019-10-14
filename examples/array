@@ -1,0 +1,26 @@
+-- right associative type constructor for fixed array (n*e)
+-- note. the type n*e is known by the compiler (so it can produce llvm arrays)
+(*) : (n:Int) -> e -> n*e
+instance Stack n*e where
+  Cons = (*)
+  Nil  = e
+
+rule forall a. a <=> []*a -- atoms and arrays of rank 0 are exactly equivalent
+
+data Bounds = upper ; lower
+
+type Vector = n*e
+type Matrix = n*m*e = (n, m) * e -- (*) creates the shape for us
+type Tensor = [Int] * e -- general rank n tensor (the rank is the length of the list)
+
+-- one dimension
+build g = g (:) []
+foldr k z (build g) := g k z
+
+-- rank modifier (creates a new verb with specified ranks)
+-- multiple arity version ?
+(@) : ([a]->[b]) -> [Int] -> ([a]->[b])
+
+-- zip is simply join at rank just below
+zip : [ta] -> [tb] -> zipped
+zip = ,@ _1 _1

@@ -67,7 +67,6 @@ type Nat*e <= [e]
   (.=) : Nat*e -> Nat -> e -> Nat*e
   (,)  : n1*e -> n2*e -> (n1+n2) * e
 
-
 -- Prelude lists
 -- = Nat*e          -- llvm array
 -- | Stack e        -- linked list

@@ -5,6 +5,7 @@
 -- * desugar PExpr to CoreExpr
 
 {-# LANGUAGE LambdaCase, ScopedTypeVariables, MultiWayIf #-}
+{-# OPTIONS -fdefer-typed-holes -Wno-typed-holes #-}
 module ToCore
 where
 
@@ -39,23 +40,24 @@ data ConvState = ConvState {
 }
 type ToCoreErrors = String
 
--- incomplete function
+-- incomplete function ?
 pName2Text = \case
   P.Ident h -> T.pack h
   P.Symbol s -> T.pack s
 pQName2Text (P.UnQual (P.Ident s)) = T.pack s
 
+-- the only legitimate TyVars are data + tyAliases
 -- convTy requires TCEnv monad to handle type variables
 convTy :: P.Type -> ToCoreEnv Type
  = \case
   P.TyLlvm l                 -> pure $ TyMono (MonoTyLlvm l)
-  P.TyForall (P.ForallAnd f) -> pure . TyPoly . ForallAnd =<< mapM convTy f
-  P.TyForall (P.ForallOr f)  -> pure . TyPoly . ForallOr  =<< mapM convTy f
+  P.TyForall (P.ForallAnd f) -> pure . TyPoly . ForallAnd=<<mapM convTy f
+  P.TyForall (P.ForallOr f)  -> pure . TyPoly . ForallOr =<<mapM convTy f
   P.TyForall (P.ForallAny)   -> pure $ TyPoly $ ForallAny
   P.TyName n                 -> do
     let hNm = pName2Text n -- TODO add name
     findHName hNm >>= \case
-      Just iNm -> pure (TyVar iNm)
+      Just iNm -> pure (TyMono (MonoTyData iNm))
       Nothing ->  error ("unknown typeName: " ++ show hNm)
   P.TyArrow tys'             -> do
     tys <- mapM convTy tys'
@@ -70,7 +72,7 @@ convTy :: P.Type -> ToCoreEnv Type
 -- For each data declaration we need:
 --  * TypeName of the data
 --  * GATD style constructor list (term level)
--- since constructors are handled before topBinds, they get the first names
+-- since constructors are handled before topBinds, they get first names
 -- ! this assumes it has naming priority [0..], so it must be first !
 getTypesAndCons :: V.Vector P.Decl
   -> ToCoreEnv (V.Vector Entity, V.Vector Binding)
@@ -83,7 +85,8 @@ getTypesAndCons datas = do
 
   -- do top level names first (they may be used out of order/recursively)
   typeEntities <- V.imapM (registerData) datas
-  consLists <- V.zipWithM (\d e -> data2Bindings d (typed e)) datas typeEntities
+  consLists <- V.zipWithM (\d e -> data2Bindings d (typed e))
+                          datas typeEntities
   let cons = V.foldl (V.++) V.empty consLists
   pure (typeEntities, cons)
 
@@ -270,7 +273,7 @@ parseTree2Core parsedTree' = CoreModule
     P.App f args -> handlePrecedence f args
       where handlePrecedence f args = App <$> expr2Core f
                                       <*> mapM expr2Core args
-    P.Let binds exp -> _
+    P.Let binds exp -> _ -- TODO maybe completely unnecessary
     P.Lambda f args -> _
       -- addLocal i (LBind args expr (Entity (Just hNm) TyUnknown 0)))
     P.MultiIf alts -> _ -- a SwitchCase on 'True' value

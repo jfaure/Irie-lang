@@ -22,7 +22,7 @@ data Name -- variables (incl constructors and symbols)
 type QOp = QName
 type Op = Name
 
-data Literal = Char Char | String String | Int Integer | Frac Rational
+data Literal = Char Char | Int Integer | Frac Rational | String String
 
 -- top level
 type Module = [Decl]
