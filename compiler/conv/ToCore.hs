@@ -29,7 +29,7 @@ import Debug.Trace
 -- conversion state is necessary when converting variables to integers
 type ToCoreEnv a = State ConvState a
 data ConvState = ConvState {
-   nameCount     :: Name
+   nameCount     :: IName
 
   -- local/global name maps
  , hNames        :: M.Map HName IName
@@ -47,6 +47,7 @@ pName2Text = \case
 pQName2Text (P.UnQual (P.Ident s)) = T.pack s
 
 -- the only legitimate TyVars are data + tyAliases
+-- other tyVars are arguments of type functions
 -- convTy requires TCEnv monad to handle type variables
 convTy :: P.Type -> ToCoreEnv Type
  = \case
@@ -55,9 +56,10 @@ convTy :: P.Type -> ToCoreEnv Type
   P.TyForall (P.ForallOr f)  -> pure . TyPoly . ForallOr =<<mapM convTy f
   P.TyForall (P.ForallAny)   -> pure $ TyPoly $ ForallAny
   P.TyName n                 -> do
-    let hNm = pName2Text n -- TODO add name
+  -- A TyName is either an alias or a data !
+    let hNm = pName2Text n
     findHName hNm >>= \case
-      Just iNm -> pure (TyMono (MonoTyData iNm))
+      Just iNm -> pure $ TyAlias iNm
       Nothing ->  error ("unknown typeName: " ++ show hNm)
   P.TyArrow tys'             -> do
     tys <- mapM convTy tys'
@@ -77,18 +79,31 @@ convTy :: P.Type -> ToCoreEnv Type
 getTypesAndCons :: V.Vector P.Decl
   -> ToCoreEnv (V.Vector Entity, V.Vector Binding)
 getTypesAndCons datas = do
+  -- type/data names may be used out of order/recursively
+  -- Note we must update the TypeMap with dataNames, since convTy
+  -- will otherwise assume it's a typeAlias
   let registerData :: IName -> P.Decl -> ToCoreEnv Entity
       registerData iNm (P.DataDecl qNm kind cons) = do
           let hNm = pName2Text qNm
           addHName hNm iNm
-          pure $ Entity (Just hNm) (TyMono (MonoTyData iNm)) uniType
+          -- we add the type as soon as we generate the constructors
+          pure $ Entity (Just hNm) TyUnknown uniType
 
-  -- do top level names first (they may be used out of order/recursively)
-  typeEntities <- V.imapM (registerData) datas
+  namedTypeEntities <- V.imapM (registerData) datas
   consLists <- V.zipWithM (\d e -> data2Bindings d (typed e))
-                          datas typeEntities
+                          datas namedTypeEntities
+
+  -- add type info to the dataEntites (list of gadt cons)
+  let makeDataType (Entity dataHNmMaybe _ u) cons =
+          let getConTy (LCon (Entity conHNm ty u')) = (getNm conHNm, ty)
+              tys = V.toList $ getConTy <$> cons
+              getNm = \case { Just x -> x ; Nothing -> error "unnamed data" }
+              dataHNm = getNm dataHNmMaybe
+          in  Entity dataHNmMaybe (TyMono (MonoTyData dataHNm tys)) u
+      dataEntities = V.zipWith makeDataType namedTypeEntities consLists
+
   let cons = V.foldl (V.++) V.empty consLists
-  pure (typeEntities, cons)
+  pure (dataEntities, cons)
 
 -- return all constructors for the data
 data2Bindings :: P.Decl -> Type -> ToCoreEnv (V.Vector Binding)
@@ -100,7 +115,7 @@ data2Bindings (P.DataDecl pName kind qCons) dataTy = do
       ignoreTyVars (P.QualConDecl vars condecls) = condecls
       con2Bind (P.ConDecl qNm types) = do
           tys <- mapM convTy types
-          let ty = TyArrow (tys ++ [dataTy])
+          let ty = TyArrow tys
           pure $ LCon $ Entity (Just (pName2Text qNm)) ty uniTerm
   let doCon = con2Bind . unInfix . ignoreTyVars
       constructors = mapM doCon (V.fromList qCons)
@@ -122,14 +137,14 @@ lookupBind :: IName->BindMap->BindMap->Binding
      _  -> localMap V.! (nm-V.length localMap) 
 
 -- ToCoreEnv functions
-findHName :: HName -> ToCoreEnv (Maybe Name) =
+findHName :: HName -> ToCoreEnv (Maybe IName) =
   \hNm -> gets hNames >>= \localNames ->
     pure (localNames M.!? hNm) -- <|> (findGHName hNm))
-addHName :: T.Text -> Name -> ToCoreEnv () =
+addHName :: T.Text -> IName -> ToCoreEnv () =
 -- TODO use M.insertlookupWithkey to restore squashed values later !
   \hNm nm -> modify (\x->x{hNames = M.insert hNm nm (hNames x)})
 
-addLocal :: IName -> Binding -> ToCoreEnv Name =
+addLocal :: IName -> Binding -> ToCoreEnv IName =
   \iNm bind -> do
     modify (\x->x{localBinds=V.snoc (localBinds x) bind })
     pure iNm
@@ -166,7 +181,7 @@ parseTree2Core parsedTree' = CoreModule
   -- Lookup functions --
   ----------------------
   -- global human name Maps
-  freshName :: ToCoreEnv Name = do
+  freshName :: ToCoreEnv IName = do
     n <- gets nameCount
     modify (\x->x{nameCount = n+1})
     pure n
@@ -182,8 +197,8 @@ parseTree2Core parsedTree' = CoreModule
               P.InfixMatch pat nm pats rhs -> nm
 
   -- HNm->Nm functions
-  findGTyHName :: T.Text->Maybe Name = \hNm -> V.findIndex (==hNm) hNGTypeMap
-  findGHName :: T.Text->Maybe Name =  \hNm -> V.findIndex (==hNm) hNGBindMap
+  findGTyHName :: T.Text->Maybe IName = \hNm -> V.findIndex (==hNm) hNGTypeMap
+  findGHName :: T.Text->Maybe IName =  \hNm -> V.findIndex (==hNm) hNGBindMap
 
   -- Setup ToCoreEnv
   convState = ConvState
@@ -243,7 +258,7 @@ parseTree2Core parsedTree' = CoreModule
             P.Match nm pats rhs -> (nm, pats, rhs)
             P.InfixMatch p1 nm ps rhs -> (nm, (p1:ps), rhs)
         (fNm, pats, rhs) = getPatList m
-        mkLArgs :: Name -> P.Pat -> ToCoreEnv Binding = \iNm pat -> do
+        mkLArgs :: IName -> P.Pat -> ToCoreEnv Binding = \iNm pat -> do
           hNmMaybe <- case pat of
               P.PVar hNm -> let h = pName2Text hNm
                             in addHName h iNm *> pure (Just h)
@@ -284,7 +299,7 @@ parseTree2Core parsedTree' = CoreModule
 
       -- dataCase: all alts have type (Name [Name] expr)
       -- then it's a data decomposition
-      let alts2DataCase :: ToCoreEnv [Maybe (Name, [Name], CoreExpr)]
+      let alts2DataCase :: ToCoreEnv [Maybe (IName, [IName], CoreExpr)]
             = mapM go alts
           varOrNothing (P.PVar n) = Just (pName2Text n)
           varOrNothing _          = Nothing
@@ -342,9 +357,8 @@ parseTree2Core parsedTree' = CoreModule
     other -> other
 
 literal2Core :: P.Literal -> Literal =
-  let mkLit = LlvmLit . LLVM.AST.ConstantOperand
-      mkChar c = C.Int 8 $ toInteger $ ord c 
-  in mkLit . \case
+  let mkChar c = C.Int 8 $ toInteger $ ord c 
+  in LlvmLit . \case
   P.Char c   -> mkChar c
   P.Int i    -> C.Int 32 $ i
   P.String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar <$> s)

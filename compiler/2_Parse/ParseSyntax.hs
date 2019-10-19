@@ -1,11 +1,9 @@
 -- Parser expresssions
--- Note. Syntax for the desugared language
 -- vs Core:
 -- - no state (qnames/typeclasses...)
 -- - PSyn has infix operators
 -- - PSyn delays figuring out applications/infix applications
 
-{-# LANGUAGE StandaloneDeriving #-}
 module ParseSyntax where -- import qualified as PSyn
 
 import qualified Data.Text as T
@@ -15,7 +13,7 @@ import qualified LLVM.AST
 data QName
  = QName [Name] Name
  | UnQual Name
- | ExprHole -- _
+ | ExprHole --
 data Name -- variables (incl constructors and symbols)
  = Ident  String -- varid/conid
  | Symbol String -- varsym/consym
@@ -25,15 +23,20 @@ type Op = Name
 data Literal = Char Char | Int Integer | Frac Rational | String String
 
 -- top level
+-- data Module { 
+--    mName    :: Name
+--  , contents :: Decl.DataDecl -- modules are functors, namespaced in a data
+--  }
 type Module = [Decl]
 data Decl
  = TypeAlias     Name Type
  | DataDecl      Name Kind [QualConDecl] --incl GADTS
+ | TypeFun       Name [Name] PExp -- CoreExpr.TyExpr TODO
+
+ | TypeSigDecl   [Name] Type
+ | FunBind       [Match]  -- TODO scoped type variables ?
 
  | InfixDecl     Assoc (Maybe Integer) [Op] --info for infix operators
- | TypeSigDecl   [Name] Type
- | FunBind       [Match]
-
  | DefaultDecl   Type Type -- eg: default Num Integer
 
 -- associativity of infix/infixr/infixl decls
@@ -42,12 +45,14 @@ newtype Binds = BDecls [Decl] -- let or where clauses
 data Match -- clauses of a function binding
  = Match Name [Pat] Rhs
  | InfixMatch Pat Name [Pat] Rhs
+ | TypeMatch Name Rhs -- f : Int->Float = cast -- TODO
 
-data QualConDecl = QualConDecl TyVars {- => -} ConDecl
+-- TODO parse `data` as a type ? that would give us type functions etc..
+data QualConDecl = QualConDecl TyVars ConDecl
 data ConDecl -- data constructor
  = ConDecl Name [Type]
  | InfixConDecl Type Name Type
- | GadtDecl Name Kind TyVars {- => -} [FieldDecl]
+ | GadtDecl Name Kind TyVars [FieldDecl]
 data FieldDecl = FieldDecl Name Type
 
 data Rhs
@@ -56,18 +61,24 @@ data Rhs
 data GuardedRhs = GuardedRhs [Stmt] PExp
 
 type Kind = Type
+-- note. Types may be parsed as TyFunction if they take arguments
 data Type
  = TyLlvm LLVM.AST.Type
  | TyForall Forall
- | TyName Name
- | TyVar Name -- type alias or variable `data T a = ...`
+
+ | TyName Name    -- alias / data name / binding (TyExpr)
+ | TyVar  Name    -- introduced by TyFunction
 
  | TyArrow [Type] -- function
 
- | TyExpr PExp -- dependent type
+ -- data. GADT style is used exclusively
+ | TyRecord Name [(Name, [Type])]
+ | TyData   Name [Type]
+ | TyInfixData Type Name Type
 
- | TyTyped Type Type -- user gave a 'Kind' annotation
- | TyUnknown
+ | TyExpr PExp       -- type functions (maybe dependent on values)
+ | TyTyped Type Type -- user gave a 'Kind' annotation (are all kinds types ?)
+ | TyUnknown         -- including '_' type given / no type sig
 
 data Forall
  = ForallAnd [Type] -- & constraints

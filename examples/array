@@ -1,26 +1,70 @@
+module ArrayThoughts
+where
+
 -- right associative type constructor for fixed array (n*e)
 -- note. the type n*e is known by the compiler (so it can produce llvm arrays)
-(*) : (n:Int) -> e -> n*e
-instance Stack n*e where
-  Cons = (*)
-  Nil  = e
+-- TODO is this ok ? Nil is a different type then the rest of the stack
+instance Stack n*e where -- note Stack.cons is right associative (like  *)
+  Cons = (*) : (n:Int) -> e -> n*e
+  Nil  = e -- so []*e = e
 
-rule forall a. a <=> []*a -- atoms and arrays of rank 0 are exactly equivalent
-
-data Bounds = upper ; lower
+data Bound Num where
+  -- TODO this syntax
+  Num -> Num -> ( (><) | (=><) | (><=) | (=><=) )
 
 type Vector = n*e
 type Matrix = n*m*e = (n, m) * e -- (*) creates the shape for us
-type Tensor = [Int] * e -- general rank n tensor (the rank is the length of the list)
-
--- one dimension
-build g = g (:) []
-foldr k z (build g) := g k z
+type Tensor = [Nat] * e -- general rank n tensor (the rank is the length of the list)
+type @ a = Tensor a
 
 -- rank modifier (creates a new verb with specified ranks)
 -- multiple arity version ?
 (@) : ([a]->[b]) -> [Int] -> ([a]->[b])
+(^) : (a->a) -> Int -> (a->a) -- general power function
+(f ^) = \case { 0 -> id ; f ^ n -> f (f ^ (n-1)) }
+-- TODO operator sections in patterns ?
 
--- zip is simply join at rank just below
-zip : [ta] -> [tb] -> zipped
-zip = ,@ _1 _1
+1 2 + 1 = 2 3
+1 1 * 2 _1 = 2 _1
+
+match1 : (a->b) -> @a -> @b
+match2 : (a->b->c) -> @a -> @b -> @c
+(@) = match
+(+) : Num -> Num -> Num
+(+) : Tensor -> Tensor -> Tensor = match2 (+) (0 0)
+
+-----------------
+-- zip problem --
+-----------------
+-- zip is (,) one rank below the tensor rank. it is also `zipWith (;)`
+-- TODO make (,) type polymorphic ? ie. it can make tuples too ?
+zip : @ta -> @tb -> @(ta , tb)
+zip = match2  (,) (_1 _1)
+zip = zipWith (,)
+
+-- repeat, map, zipWith, zipWith3 etc.
+-- inference on partial applications of (@$) is improbable
+-- This function is a sort of typesafe macro for generating the application functions
+(@$) : f = case f of
+  (a->b->c) -> zipWith f : @a -> @b -> @c
+  (a->b)    -> map f     : @a -> @b
+  retTy     -> repeat f  : @retTy
+
+-----------------
+-- foldr-Build --
+-----------------
+class RavelFuse -- fusing along the ravel (rank one)
+  build g = g (:) []
+  foldr k z (build g) := g k z
+  -- works very well for many lists
+  -- breaks at rank>1 (eg. zip etc..)
+
+-- TODO when does it make sense to call @ for the user ? always ?
+class TensorFuse where
+  foldr k z @ n = map^(n-1) $ (foldr k z) -- normal fold at an arbitrary depth on the tensor
+
+  foldr k z @ 2 = (foldr k z @)
+  idot a = (0..product a) `shape` a
+
+-- TODO irregular shapes (sum-types)?
+-- TODO BiFunctors.. NFunctors

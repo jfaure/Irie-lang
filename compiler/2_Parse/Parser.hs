@@ -35,20 +35,21 @@ dbg i = id
 --  end <- getPosition
 --  return $ f (Span (sourcePosToPos start) (sourcePosToPos end))
 
--- we need to remember indentation after parsing newlines
--- because we may parse many expressions on a line before it's relevant
+-- we need to save indentation in some expressions
+-- because we may parse many expressions on a line before it becomes relevant
 type Parser = (ParsecT Void T.Text (ST.State Pos))
 
 -----------
 -- Lexer --
 -----------
 -- A key convention: tokens should parse following whitespace
+-- `symbol` and `lexeme` do that
 -- so Parsers can assume no whitespace when they start.
 
 -- Space consumers: scn eats newlines, sc does not.
 lineComment = L.skipLineComment "--"
 blockComment = L.skipBlockComment "{-" "-}"
-scn :: Parser () -- space, newlines. return true if found newline
+scn :: Parser () -- space and newlines
   = L.space space1 lineComment blockComment
 sc :: Parser () -- space
   = L.space (void $ takeWhile1P Nothing f) lineComment blockComment
@@ -89,12 +90,11 @@ symbolName = Symbol <$> lexeme (some symbolChar)
 name = iden
 qName = lIden
 
+-- literals
 int    :: Parser Integer = lexeme L.decimal
 double :: Parser Double  = lexeme L.float
-
--- L.charLiteral handles escaped chars automatically (eg. \n)
-charLiteral :: Parser Char
-  = between (single '\'') (single '\'') L.charLiteral
+-- L.charLiteral handles escaped chars (eg. \n)
+charLiteral :: Parser Char = between (single '\'') (single '\'') L.charLiteral
 stringLiteral :: Parser String
   = char '\"' *> manyTill L.charLiteral (single '\"')
 
@@ -104,6 +104,7 @@ braces = between (symbol "{") (symbol "}")
 
 endLine = lexeme (single '\n')
 
+-- indentation shortcuts
 noIndent = L.nonIndented scn . lexeme
 iB = L.indentBlock scn
 saveIndent = L.indentLevel >>= put
@@ -111,6 +112,7 @@ saveIndent = L.indentLevel >>= put
 --sepBy2 :: Alternative m => m a -> m sep -> m [a]
 sepBy2 p sep = liftA2 (:) p (some (sep *> p))
 
+--debug functions
 dbgToEof = traceShowM =<< (getInput :: Parser T.Text)
 d = dbgToEof
 db x = traceShowM x *> traceM ": " *> d
@@ -265,23 +267,22 @@ pat :: Parser Pat
 pType :: Parser Type -- must be a type (eg. after ':')
  = dbg "ptype" $ do
  try forall <|> try tyArrow <|> singleType <|> parens pType
- where tyArrow = TyArrow <$> dbg "arrow" (singleType `sepBy2` symbol "->")
+   where
+   tyArrow = TyArrow <$> dbg "arrow" (singleType `sepBy2` symbol "->")
 
 singleType :: Parser Type
- = llvmTy <|> (TyVar <$> tyVar) <|> (TyName <$> uIden)
-          <|> lifted <|> unKnown <|> parens pType
+ = llvmTy <|> (TyName <$> uIden)
+          <|> unKnown <|> parens pType
   where
   llvmTy = TyLlvm <$> llvmType
-  lifted = fail "_"
   unKnown = TyUnknown <$ reserved "_"
 forall :: Parser Type
  = TyForall <$> (ForallAnd <$> try (singleType `sepBy2` symbol "&")
             <|> ForallOr  <$> singleType `sepBy2` symbol "|")
 
-tyVar :: Parser Name = lIden
-typeAnn :: Parser Type = reserved ":" *> pType <|> return TyUnknown
-llvmType :: Parser (LLVM.AST.Type)
- =
+tyVar    :: Parser Name = lIden
+typeAnn  :: Parser Type = reserved ":" *> pType <|> return TyUnknown
+llvmType :: Parser (LLVM.AST.Type) =
   let mkPtr x = PointerType x (AddrSpace 0)
   in lexeme (
          IntegerType 32 <$ symbol "Int"

@@ -21,8 +21,8 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
-- llvm-hs-pure >= 8.0.0
-  # - llvm-hs >= 8.0.0
+- llvm-hs-pure >= 9.0.0
+- llvm-hs >= 9.0.0
 - parser-combinators
 - megaparsec > 7.0
 - transformers
@@ -39,15 +39,26 @@ dependencies:
 
 executables:
   plop-exe:
-    source-dirs:   src
+    source-dirs:
+    - compiler/
+    - compiler/1_Main/
+    - compiler/2_Parse/
+    - compiler/3_Core/
+    - compiler/4_LFVM-STG/
+    - compiler/conv
+
     main:          Main.hs
     ghc-options:  -threaded -fdefer-typed-holes -dynamic
     default-extensions:
-    - ScopedTypeVariables
     - LambdaCase
+    - StandaloneDeriving
     - MultiWayIf
+    - PartialTypeSignatures
+    - ScopedTypeVariables
     - RankNTypes
     - FlexibleContexts
+    - TupleSections
+    - ConstraintKinds
 #   - GADTs
     - PolyKinds
     - DataKinds

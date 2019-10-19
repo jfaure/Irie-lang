@@ -68,8 +68,8 @@ judgeModule cm = handleErrors $ execState go $ TCEnvState cm []
 -- functions used by judgeBind and judgeExpr
 lookupBindM :: IName -> TCEnv Binding
   = \n -> CU.lookupBinding n <$> gets (bindings . coreModule)
-lookupTypeM :: IName -> TCEnv Type
-  = \n -> CU.lookupType n    <$> gets (bindings . coreModule)
+typeOfM :: IName -> TCEnv Type
+  = \n -> CU.typeOfBind n    <$> gets (bindings . coreModule)
 lookupHNameM :: IName -> TCEnv (Maybe HName)
   = \n -> named . info . CU.lookupBinding n 
           <$> gets (bindings . coreModule)
@@ -84,10 +84,12 @@ updateBindTy :: IName -> Type -> TCEnv ()
    in modify (\x->x{ coreModule = doUpdate (coreModule x) })
 
 -- Rule lambda: propagate known type sig information downwards
+-- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
 judgeBind :: CoreModule -> Binding -> TCEnv Type = \cm -> \case
   LArg i -> pure $ typed i
   LCon i -> pure $ typed i
   LBind args e info -> let t = typed info in case t of
+    -- TODO what about args on the left of '=' ?
     TyArrow tys -> case length args + 1 /= length tys of
       True -> error ("arity mismatch: " ++ 
                     show (named info) ++ show args ++ ": " ++ show tys)
@@ -104,10 +106,17 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
  = \got expected cm ->
  -- make a local pure tyVarLookupFn using tyvars at this point
  -- this is more convenient than a monadic version
-  flip CU.lookupType <$> gets (bindings . coreModule) 
-  >>= \tyVarLookupFn ->
+-- flip CU.lookupBinding <$> gets (algData . coreModule) 
+-- >>= \tyVarLookupFn ->
   let
-      unVar = \case { TyVar n -> tyVarLookupFn n ; t -> t }
+      unVar :: Type -> Type = \x ->
+        let checkLoop v seen = case v of
+                TyAlias n -> if n `elem` seen
+                  then error ("alias loop: " ++ show n)
+                  else checkLoop (typed $ CU.lookupType n (algData cm)) (n:seen)
+                t -> t  -- trivial case
+        in  checkLoop x []
+      --unAlias = \case { TyAlias n -> tyVarLookupFn n ; t -> t }
       subsume' a b = subsume a b unVar
       -- local shortcuts ommitting boilerplate arguments
       judgeExpr' got expected = judgeExpr got expected cm
@@ -152,7 +161,6 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       bindTy <- typed . info <$> lookupBindM nm
       let newTy = fillBoxes bindTy expected
       --hNm <- T.unpack . \case { Just h->h; _->T.pack ""} <$> lookupHNameM nm
-      --traceM (hNm ++ "(" ++ show nm ++ "): " ++ ppType newTy)
       updateBindTy nm newTy
       pure newTy
 
@@ -168,9 +176,8 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       TyUnknown -> error ("failed to infer function type: "++show fn)
       t -> error ("cannot call non function: "++show fn++" : "++show t)
 
-  -- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
-  Let binds inExpr -> mapM_ (judgeBind cm) binds
-                      *> judgeExpr' inExpr expected
+--Let binds inExpr -> mapM_ (judgeBind cm) binds
+--                    *> judgeExpr' inExpr expected
 
 ----------------------
 -- Case expressions --
@@ -200,7 +207,8 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
 -----------------
 -- t1 <= t2 ? is a vanilla type acceptable in the context of a (boxy) type
 -- 'expected' is a vanilla type, 'got' is boxy
--- This requires a lookup function to deref typevars
+-- note. boxy subsumption is not reflexive
+-- This requires a lookup function to deref typeAliases
 subsume :: Type -> Type -> (Type -> Type) -> Bool
 subsume got exp unVar = subsume' got exp
   where
@@ -209,7 +217,6 @@ subsume got exp unVar = subsume' got exp
     let got = unVar gotV
         exp = unVar expV
     in case exp of
-    TyVar n -> error ("internal error: tyvar wasn't dereferenced: " ++ show n)
     TyMono exp' -> case got of
       TyMono got' -> subsumeMM got' exp'
       TyPoly got' -> subsumePM got' exp'
@@ -219,15 +226,19 @@ subsume got exp unVar = subsume' got exp
       TyPoly got' -> subsumePP got' exp'
       a -> error ("subsume: unexpected type: " ++ show a)
     TyArrow tysExp -> case got of
-      TyArrow tysGot -> all id (zipWith subsume' tysGot tysExp)
+      TyArrow tysGot -> subsumeArrow tysGot tysExp
       TyPoly ForallAny -> True
       _ -> False
     TyExpr _ -> _
     TyUnknown -> True -- 'got' was inferred, so assume it's ok
+    other -> error ("panic: unexpected type: " ++ show other)
+
+  subsumeArrow :: [Type] -> [Type] -> Bool
+  subsumeArrow got exp = all id (zipWith subsume' got exp)
 
   subsumeMM :: MonoType -> MonoType -> Bool
   subsumeMM (MonoTyLlvm t) (MonoTyLlvm t2) = t == t2
-  subsumeMM (MonoTyData na) (MonoTyData nb) = na == nb
+  subsumeMM (MonoTyData n tysGot) (MonoTyData n2 tysExp) = n == n2
   subsumeMM _ _ = False
 
   subsumeMP :: MonoType -> PolyType -> Bool

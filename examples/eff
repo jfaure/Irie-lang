@@ -1,0 +1,13 @@
+
+[IO] = In & Out -- file operations
+       & Signal
+
+[] = Exit
+interface Exit = exit | error | panic | die
+
+interface Abort = aborting : Zero
+interface State S = get : S | Put : S -> ()
+
+-- tie these together ?
+interface Receive X = receive : X
+interface Send X    = send    : X -> Unit
