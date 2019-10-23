@@ -14,10 +14,7 @@
 
 module CoreSyn where
 
-import qualified LLVM.AST.Type
-import qualified LLVM.AST -- (Operand, Type, Instruction)
-import qualified LLVM.AST.Typed (typeOf)
-import LLVM.AST.Constant as LC
+import Prim
 import Data.Map.Strict
 import Control.Monad.State.Strict
 import Control.Applicative
@@ -31,16 +28,24 @@ type NameMap = V.Vector
 type HName   = T.Text -- human readable name
 
 type TypeMap = NameMap Entity
-type ExprMap = NameMap Binding
 type BindMap = NameMap Binding
 
+-- TODO how to fuse data across function calls ?
+--      call by value would change the type of intermediate functions
+--      so we must use a thunk
 -- TODO OCaml style modules
+-- note. algData is dataTypes     ++ aliases
+--       bindings is constructors ++ binds
 data CoreModule = CoreModule {
-   algData  :: TypeMap -- named types (data, aliases)
- , bindings :: ExprMap -- incl. constructors and locals
+   algData  :: TypeMap -- data ++ alias (in that order !)
+ , bindings :: BindMap -- incl. constructors and locals
  , defaults :: Map PolyType MonoType -- eg. default Num Int
- , tyFuns   :: V.Vector TypeFunction
- --, hNameMap :: Data.Map HName IName -- lookup table (for the interpreter)
+-- , tyFuns   :: V.Vector TypeFunction
+ -- , copied :: Map IName Int -- track variabes ref'd > 1
+
+ -- lookup table (for the interpreter)
+ --, hNameBinds :: Data.Map HName IName
+ --, hNameTypes
  }
 
 -- Binding: save argNames brought into scope
@@ -53,7 +58,7 @@ data Binding
  , expr  :: CoreExpr
  , info  :: Entity  -- hname, type, source
  }
--- vars coming into scope (via lambda or case expr)
+-- vars coming into scope (via lambda, case expr, and expr+typesig)
  | LArg { info :: Entity }
 -- Term level GADT constructor (Type is known)
  | LCon { info :: Entity }
@@ -76,44 +81,41 @@ uniTerm : uniType : uniKind : uniSort : _ = [0..] :: [Int]
 data CoreExpr
  = Var IName
  | Lit Literal
- | Instr PrimInstr [CoreExpr]
+ | Instr PrimInstr
  | App CoreExpr [CoreExpr]
+ -- TODO default case expressions ?
  | SwitchCase CoreExpr [(Literal, CoreExpr)]
  | DataCase CoreExpr
             [(IName, [IName], CoreExpr)] -- Con [args] -> expr
- | TypeExpr Type -- can only appear inside `TypeFunction`
- | WildCard
-
--- Prim: types (and signatures) are richer than llvm primitives
--- so we delay the conversion to STG
--- TODO where are the type signatures - Prim module perhaps ?
--- TODO special constructors for primitive types ? tuple/array..
-data PrimInstr = Add|Sub|Mul|Div|Fadd|FSub|FMul|FDiv
-
-data Literal
- = ExternFn LLVM.AST.Operand  -- can use LLVM..typeOf on it
- | LlvmLit  LC.Constant -- anything else
+ | TypeExpr Type -- as return of `TypeFunction`
+ | WildCard      -- TODO move to Literal
 
 ----------- Types -- ---------
 type UserType = Type -- user supplied type annotation
 data Type
  = TyAlias IName   -- aliases (esp. to MonoTyData)
 
- | TyMono MonoType -- monotypes 't'
- | TyPoly PolyType -- constrained polytypes 'p', 's'
+ | TyMono  MonoType -- monotypes 't'
+ | TyPoly  PolyType -- constrained polytypes 'p', 's'
  | TyArrow [Type]  -- Kind 'function' incl. Sum/Product cons
 
- | TyExpr TypeFunction -- incl. dependent types
+ | TyExpr  TypeFunction -- incl. dependent types
 
- | TyUnknown -- needs to be inferred - the so-called boxy type.
+ | TyUnknown -- needs to be inferred - the so-called box type.
  | TyBroken -- typecheck couldn't infer a coherent type
 
 -- Note. data is up to stg, Core only handles GADT-style sigs
 -- TODO subtypes, (.) accessor
--- note we store the hname directly in the MonoTyData
+-- ! These types cannot be instantiated with Polytypes
+-- they are polymorphic only as return types of TypeFunctions
+-- Note. coresyn datas save their own name,
+--       it's easier to convert to stg that way
 data MonoType
- = MonoTyLlvm LLVM.AST.Type
- | MonoTyData HName [(HName, Type)] -- self-name and Gadt constructors
+ = MonoTyPrim   PrimType
+ | MonoTyData   HName [(HName, [Type])] --TODO Type as tyArrow ?
+ -- TODO rm this and simply gen getters in tocore
+ | MonoTyRecord HName [(HName, [(HName, Type)])]
+ | MonoTyTuple  [Type]
  | MonoTyClass -- ?!
 
 type PolyType = Forall
@@ -124,9 +126,16 @@ data Forall -- typeclass & and | operations
 
 -- type functions: from trivial `data a = ..` to dependent types
 -- TODO kind functions, type matching, type classes, subtypes
-data TypeFunction = TypeFunction {
+-- If a TyDependent returns a new data,
+--   we must emit it as a TyFn during ToCore (to access constructors etc..)
+data TypeFunction
+ = TyDependent {
    tyArgs :: [IName]
- , tyExpr :: CoreExpr -- obviously must return a `TypeExpr`
+ , tyExpr :: CoreExpr -- : CoreExpr.TypeExpr
+ }
+ | TyTrivialFn { -- trivial case: App (Con n) (TypeExp e)
+   tyArgs :: [IName]
+ , tyVal  :: Type
  }
 
 ----------- Types -- --------- 
@@ -139,27 +148,17 @@ data TypeFunction = TypeFunction {
 -- neither is it transitive |s|~s and s~|s| but not |s|~|s|.
 -- similarly, boxy subsumption is neither reflexive nor transitive
 
-deriving instance Show PrimInstr
 deriving instance Show Forall
 deriving instance Show Binding
 deriving instance Show MonoType
 deriving instance Show Type
 deriving instance Show TypeFunction
-instance Show Literal where
-  show (LlvmLit (LC.Int bits val)) =
-    "(i"++show bits++show val++")"
-  show (LlvmLit f) = show f
-  show (ExternFn f) = show f
 deriving instance Show CoreExpr
 deriving instance Show Entity
 deriving instance Show CoreModule
 
 typeOfLiteral :: Literal -> Type
-typeOfLiteral l =
-  let go = TyMono . MonoTyLlvm . LLVM.AST.Typed.typeOf
-  in case l of
-  ExternFn f -> go f
-  LlvmLit l -> go (LLVM.AST.ConstantOperand l)
+typeOfLiteral l = TyUnknown
 
 data TCError
  = UnifyFail { expected :: Entity, got :: Entity}
@@ -168,8 +167,7 @@ data TCError
 ppType :: Type -> String = \case
  TyAlias nm -> "$" ++ show nm
  TyMono m -> case m of
-   MonoTyLlvm lty -> case lty of
-     LLVM.AST.IntegerType n -> "int" ++ show n
+   MonoTyPrim lty -> case lty of
      other -> show other
    MonoTyData nm cons -> "data.$" ++ show nm
 
@@ -205,21 +203,22 @@ ppBind f indent b = indent ++ case b of
      { Just nm -> show nm ; Nothing -> "\\" }
     ++ " " ++ show args 
     ++ " : " ++ ppType (typed entity)
-    ++ indent ++ "  = " ++ ppCoreExpr f "" e
+    ++ {-indent ++-} " = " ++ ppCoreExpr f "" e
   LArg a -> "larg: " ++ ppEntity a
   LCon a -> "lcon: " ++ ppEntity a
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule typeMap bindings defaults tyFuns)
-  -> "bindings: " ++ concat ((ppBind (bind2HName bindings) "\n") <$> bindings)
-      ++ "\n\n" ++ "types: " ++ (concatMap (\x->ppEntity x ++ "\n") typeMap)
-      ++ "\n\n" ++ "defaults: " ++ show defaults
-      ++ "\n\n" ++ "TyFuns: " ++ show tyFuns 
+ = \(CoreModule typeMap bindings defaults)
+  ->  "-- types --\n" ++ (concatMap (\x->ppEntity x ++ "\n") typeMap)
+      ++ "\n" ++ "-- defaults --\n" ++ show defaults
+
+      ++ "\n\n" ++ "-- bindings --"
+      ++ concat ((ppBind (bind2HName bindings) "\n") <$> bindings)
 
 -- function to convert a  binding to a stringname
 bind2HName bindings i = case named $ info $ (bindings V.! i) of
        Just x -> T.unpack x
-       Nothing-> "_"
+       Nothing-> "%" ++ show i
 
 ppCoreBinds :: CoreModule -> String
  = \cm

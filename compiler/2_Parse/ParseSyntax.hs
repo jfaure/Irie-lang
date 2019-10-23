@@ -1,4 +1,3 @@
--- Parser expresssions
 -- vs Core:
 -- - no state (qnames/typeclasses...)
 -- - PSyn has infix operators
@@ -6,9 +5,12 @@
 
 module ParseSyntax where -- import qualified as PSyn
 
+import Prim
 import qualified Data.Text as T
-import qualified LLVM.AST
 
+type Module = [Decl]
+
+-- TODO use bytestring for names?
 -- QName: qualified name: '::' namespace operator
 data QName
  = QName [Name] Name
@@ -20,22 +22,24 @@ data Name -- variables (incl constructors and symbols)
 type QOp = QName
 type Op = Name
 
-data Literal = Char Char | Int Integer | Frac Rational | String String
-
 -- top level
--- data Module { 
+-- data Module {
 --    mName    :: Name
 --  , contents :: Decl.DataDecl -- modules are functors, namespaced in a data
 --  }
-type Module = [Decl]
 data Decl
- = TypeAlias     Name Type
- | DataDecl      Name Kind [QualConDecl] --incl GADTS
- | TypeFun       Name [Name] PExp -- CoreExpr.TyExpr TODO
+ -- type decls 
+ -- newtype necessary for classes ?
+ = TypeAlias     Name Type        -- incl. data
+ | TypeFun       Name [Name] PExp
+ | TypeClass     Name [Decl]
+ | TypeClassInst Name Name [Decl] -- instance declaration
 
+ -- top bindings
  | TypeSigDecl   [Name] Type
  | FunBind       [Match]  -- TODO scoped type variables ?
 
+ -- auxilary decls
  | InfixDecl     Assoc (Maybe Integer) [Op] --info for infix operators
  | DefaultDecl   Type Type -- eg: default Num Integer
 
@@ -47,14 +51,6 @@ data Match -- clauses of a function binding
  | InfixMatch Pat Name [Pat] Rhs
  | TypeMatch Name Rhs -- f : Int->Float = cast -- TODO
 
--- TODO parse `data` as a type ? that would give us type functions etc..
-data QualConDecl = QualConDecl TyVars ConDecl
-data ConDecl -- data constructor
- = ConDecl Name [Type]
- | InfixConDecl Type Name Type
- | GadtDecl Name Kind TyVars [FieldDecl]
-data FieldDecl = FieldDecl Name Type
-
 data Rhs
  = UnGuardedRhs PExp
  | GuardedRhss [GuardedRhs]
@@ -63,54 +59,47 @@ data GuardedRhs = GuardedRhs [Stmt] PExp
 type Kind = Type
 -- note. Types may be parsed as TyFunction if they take arguments
 data Type
- = TyLlvm LLVM.AST.Type
+ = TyPrim PrimType -- primitive
  | TyForall Forall
 
  | TyName Name    -- alias / data name / binding (TyExpr)
  | TyVar  Name    -- introduced by TyFunction
 
- | TyArrow [Type] -- function
+ | TyArrow [Type] -- function type
 
- -- data. GADT style is used exclusively
- | TyRecord Name [(Name, [Type])]
- | TyData   Name [Type]
- | TyInfixData Type Name Type
+ -- GADTs
+ -- These must subsume Type so they can be returned by TyFunctions
+ | TyRecord [(Name, [(Name, Type)])]
+ | TyData   [(Name, [Type])]
+ | TyInfixData Type Name Type -- TODO
 
  | TyExpr PExp       -- type functions (maybe dependent on values)
  | TyTyped Type Type -- user gave a 'Kind' annotation (are all kinds types ?)
  | TyUnknown         -- including '_' type given / no type sig
+type DataDef = Type -- TyRecord, TyData, TyInfixData
 
 data Forall
  = ForallAnd [Type] -- & constraints
  | ForallOr  [Type] -- | constraints
- | ForallAny -- basically ~ an opaque monotype (eg. len : [a]->Int)
-
-type TyVars = [Name]
+ | ForallAny        -- existential type
 
 -- Parser Expressions
--- Note! we must defer parsing infix applications: we may not
--- have all user infix decls and precedences immediately
 data PExp
  = Var QName
  | Con QName
  | Lit Literal
- | Infix QName -- `name`
- | App PExp [PExp] -- extract infix apps from this later
+ | PrimOp PrimInstr
+ | Infix QName     -- `name`
+ | App PExp [PExp] -- extract infix apps from this during core2expr
  | Lambda [Pat] PExp
  | Let Binds PExp
  | MultiIf [(PExp, PExp)] -- ghc accepts [GuardedRhs]
  | Case PExp [Alt]
- | LambdaCase [Alt] -- function for case of
- | Do [Stmt]
- | MDo [Stmt]
- | List [PExp]
- | TypeSig PExp Type
+ | LambdaCase [Alt]
  | AsPat Name Pat
  | WildCard -- "_" as an expression
 
- -- first class types.
- -- if it depends on a runtime value, then it is a 'pi' type,
- | TypeExp Type
+ | TypeExp Type -- first class types.
  | Typed Type PExp -- user supplied type annotation
 
 data Alt = Alt Pat Rhs -- (Maybe Binds) -- case alternatives
@@ -135,15 +124,11 @@ deriving instance Show Decl
 deriving instance Show Assoc
 deriving instance Show Binds
 deriving instance Show Match 
-deriving instance Show QualConDecl
-deriving instance Show ConDecl 
-deriving instance Show FieldDecl
 deriving instance Show Rhs
 deriving instance Show GuardedRhs
 deriving instance Show Type
 deriving instance Show Forall
-deriving instance Show Literal
 deriving instance Show PExp
 deriving instance Show Alt
 deriving instance Show Pat
-deriving instance Show Stmt 
+deriving instance Show Stmt

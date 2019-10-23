@@ -83,13 +83,12 @@ updateBindTy :: IName -> Type -> TCEnv ()
         in cm { bindings=binds' }
    in modify (\x->x{ coreModule = doUpdate (coreModule x) })
 
--- Rule lambda: propagate known type sig information downwards
+-- Rule lambda: propagate (maybe partial) type annotations downwards
 -- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
 judgeBind :: CoreModule -> Binding -> TCEnv Type = \cm -> \case
   LArg i -> pure $ typed i
   LCon i -> pure $ typed i
   LBind args e info -> let t = typed info in case t of
-    -- TODO what about args on the left of '=' ?
     TyArrow tys -> case length args + 1 /= length tys of
       True -> error ("arity mismatch: " ++ 
                     show (named info) ++ show args ++ ": " ++ show tys)
@@ -145,8 +144,11 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
                               ++ "\nGot:      " ++ ppType got)
 
   in checkOrInfer <$> case got of
-  Lit l  -> pure $ typeOfLiteral l
-  WildCard -> pure expected -- maybe return forall a.a ?
+  Lit l    -> pure $ typeOfLiteral l -- a polytype TODO check
+  WildCard -> pure expected
+  Instr p  -> case expected of -- prims must be type annotated if used
+      TyUnknown -> error ("primitive has unknown type: " ++ show p)
+      t         -> pure expected
   Var nm ->
     -- 1. lookup type of the var in the environment
     -- 2. in checking mode, update env by filling var's boxes
@@ -202,6 +204,8 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
     -- TODO what if we don't know the expected type (in altsOK) ?
     -- use mostGeneralType probably
 
+  unexpected -> error ("panic: tyJudge: " ++ show unexpected)
+
 -----------------
 -- Subsumption --
 -----------------
@@ -237,7 +241,7 @@ subsume got exp unVar = subsume' got exp
   subsumeArrow got exp = all id (zipWith subsume' got exp)
 
   subsumeMM :: MonoType -> MonoType -> Bool
-  subsumeMM (MonoTyLlvm t) (MonoTyLlvm t2) = t == t2
+  subsumeMM (MonoTyPrim t) (MonoTyPrim t2) = t == t2
   subsumeMM (MonoTyData n tysGot) (MonoTyData n2 tysExp) = n == n2
   subsumeMM _ _ = False
 

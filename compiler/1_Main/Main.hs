@@ -22,8 +22,15 @@ main = parseCmdLine >>= \cmdLine ->
     [] -> repl cmdLine
     av -> mapM_ (doFile cmdLine) av
 
+prelude = ["Library/Prim.stg"]
+
+-- TODO modules
 doFile :: CmdLine -> FilePath -> IO ()
-doFile c fName = T.IO.readFile fName >>= doProgText c fName
+doFile c fName = do
+  preludes <- mapM T.IO.readFile prelude
+  let prelude = foldr T.append T.empty preludes :: T.Text
+  f <- T.IO.readFile fName
+  doProgText c fName (T.append prelude f)
 
 doProgText :: CmdLine -> FilePath -> T.Text -> IO ()
 doProgText flags fName progText =

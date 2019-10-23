@@ -51,6 +51,7 @@ executables:
     ghc-options:  -threaded -fdefer-typed-holes -dynamic
     default-extensions:
     - LambdaCase
+    - EmptyCase
     - StandaloneDeriving
     - MultiWayIf
     - PartialTypeSignatures
@@ -59,9 +60,10 @@ executables:
     - FlexibleContexts
     - TupleSections
     - ConstraintKinds
-#   - GADTs
-    - PolyKinds
-    - DataKinds
+#   - GADTs -- Parser.hs crashes ghc with this
+#   - PolyKinds
+#   - DataKinds
+    - RecursiveDo
    #    dependencies: plop
 
 tests:

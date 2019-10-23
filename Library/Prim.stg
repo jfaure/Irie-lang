@@ -1,0 +1,48 @@
+-- module Prim -- (sizeOfInt : #!Int 32)
+-- #! will directly parse an llvm type or llvm instruction
+
+type Int             = #!Int 32
+
+---- ! requires type functions
+--type Ptr e           = #!Ptr e
+--type (n:Nat) * eType = #!Array n eType
+-- #!Struct tyList -- takes a tuple of types.. scary
+
+type Nat = Int -- difference is we use unsigned instructions on it
+
+-- all float types use the same llvm instructions
+-- type Half      = #!Half
+type Float     = #!Float
+type Double    = #!Double
+-- type FP128     = #!FP128        -- 112 bit mantissa
+-- type PPC_FP128 = #!PPC_FP128 -- two 64-bits
+-- instances Frac [Half Float Double FP128 PPC_FP128]
+
+type IntOp2 = Int -> Int -> Int
+(+)  : IntOp2 = #!add
+(-)  : IntOp2 = #!sub
+(*)  : IntOp2 = #!mul
+(//) : IntOp2 = #!sdiv
+(/?) : IntOp2 = #!srem
+(==) : IntOp2 = #!icmp
+-- (/)  : Int -> Int -> Real = \x y -> (#!fptoui x) // (#!fptoui y)
+
+---- unsigned overloads for Nat
+--(//) : Nat -> Nat -> Nat = #!udiv
+--(/?) : Nat -> Nat -> Nat = #!urem
+
+--class Frac where
+--  type ROp2 = Real -> Real -> Real
+--  (+) : ROp2 = #!fadd
+--  (-) : ROp2 = #!fsub
+--  (*) : ROp2 = #!fmul
+--  (/) : ROp2 = #!fdiv
+--  (/?): ROp2 = #!frem
+--  (==): ROp2 = #!fcmp
+
+-- TODO tuples
+----------------------
+-- Array primitives --
+----------------------
+--(.) : n*e -> i -> e = \arr i -> #!atIndex arr i
+--(len) : n*e -> Nat = n

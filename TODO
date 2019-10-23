@@ -1,0 +1,35 @@
+# expr2Core
+  * typeclass
+  * GuardedRhs
+  * more patterns
+  * redesign toCore for localDecls (~ local modules ?)
+  * dont squash bindings
+  * subtyping - algData are also sum polytypes (of their subtypes)
+  * tuples
+  * records
+  * Case -> Case optimizations
+  * precedence (parser doesn't have all infix decls)
+
+# core2Stg
+  * tyFunctions (?) - we could reuse functions/structs for polymorphic data
+
+# typeJudge
+  * dependent types
+
+# parser
+  * linefolds
+  * GADT style parser
+  * pattern-match on (->)
+  * let-rec (?)
+
+# Prelude / dependent types
+  * fold-build
+  * fusion across functions ? composition fusion
+  * var-arity
+  * effects
+
+# LFVM
+  * track non-copyable data lifetime
+    * data passed to multiple functions:
+      if only one wants to modify it: give it ownership and execute last
+    * sudoku example - inplace modifcations, but will undo as stack unravels
