@@ -1,8 +1,10 @@
-class Num where
+class Num where {
   (+) : Num->Num->Num
   (-) : Num->Num->Num
+  }
 
 -- Int subsumes Num
-Int <= Num where
-  (+) = LLVM.instr "add"
-  (-) = LLVM.instr "sub"
+instance Num Int where {
+  (+) = #!add
+  (-) = #!sub
+  }

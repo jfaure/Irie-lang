@@ -32,6 +32,7 @@ dependencies:
 - text
 - bytestring
 - containers
+- unordered-containers
 - mtl
 
   # library:

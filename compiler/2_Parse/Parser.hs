@@ -166,9 +166,9 @@ decl :: Parser Decl -- top level
   -- TODO indentation
   pWhere        = reserved "where" *> scn
   typeClass     = reserved "class"    $> TypeClass <*>
-                  tyName <* pWhere <*> some decl
+                  tyName <* pWhere <*> between (symboln "{") (symboln "}") (some (decl <* scn))
   typeClassInst = reserved "instance" $> TypeClassInst <*>
-                  tyName <*> tyName <* pWhere <*> some decl
+                  tyName <*> tyName <* pWhere <*> between (symboln "{") (symboln "}") (some (decl <* scn))
 
   -- Flexible type vars are possible in type signatures
   -- Also dependent types..

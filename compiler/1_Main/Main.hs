@@ -28,14 +28,16 @@ prelude = ["Library/Prim.stg"]
 doFile :: CmdLine -> FilePath -> IO ()
 doFile c fName = do
   preludes <- mapM T.IO.readFile prelude
-  let prelude = foldr T.append T.empty preludes :: T.Text
+  let prelude = if noPrelude c
+                then T.empty
+                else foldr T.append T.empty preludes :: T.Text
   f <- T.IO.readFile fName
   doProgText c fName (T.append prelude f)
 
 doProgText :: CmdLine -> FilePath -> T.Text -> IO ()
 doProgText flags fName progText =
   case parseModule fName progText of
-          Left e  -> (putStrLn $ errorBundlePretty e) *> pure []
+          Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
           Right r -> pure r
   >>= \parseTree ->
   let core      = parseTree2Core parseTree

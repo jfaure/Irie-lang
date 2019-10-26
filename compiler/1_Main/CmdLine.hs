@@ -12,12 +12,14 @@ data CmdLine = CmdLine
   , emitStg        :: Bool
   , emitLlvm       :: Bool
 
+  , noPrelude      :: Bool
+
   , jit            :: Bool
   , optlevel       :: Word
   , files          :: [String]
   } deriving (Show)
 
-defaultCmdLine = CmdLine False False False False False False False 0 []
+defaultCmdLine = CmdLine False False False False False False False False 0 []
 
 cmdLineDecls :: Parser CmdLine
 cmdLineDecls = CmdLine
@@ -39,6 +41,11 @@ cmdLineDecls = CmdLine
   <*> switch (long "show-llvm"
           <> short 'l'
           <> help "Output llvm disassembly")
+
+  <*> switch (long "no-prelude"
+          <> short 'n'
+          <> help "don't import prelude implicitly")
+
   <*> switch (long "jit"
           <> short 'j'
           <> help "execute program in jit")

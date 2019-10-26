@@ -19,9 +19,10 @@ import Data.Map.Strict
 import Control.Monad.State.Strict
 import Control.Applicative
 
-import qualified Data.Vector as V
-import qualified Data.Text as T
-import qualified Data.List as DL -- intersperse
+import qualified Data.Vector        as V
+import qualified Data.Text          as T
+import qualified Data.List          as DL -- intersperse
+import qualified Data.IntMap.Strict as IM
 
 type IName   = Int
 type NameMap = V.Vector
@@ -30,22 +31,26 @@ type HName   = T.Text -- human readable name
 type TypeMap = NameMap Entity
 type BindMap = NameMap Binding
 
--- TODO how to fuse data across function calls ?
---      call by value would change the type of intermediate functions
---      so we must use a thunk
--- TODO OCaml style modules
 -- note. algData is dataTypes     ++ aliases
 --       bindings is constructors ++ binds
+type ClassFns = IM.IntMap Binding  -- indexed by polymorphic classFn's Iname
 data CoreModule = CoreModule {
-   algData  :: TypeMap -- data ++ alias (in that order !)
- , bindings :: BindMap -- incl. constructors and locals
- , defaults :: Map PolyType MonoType -- eg. default Num Int
--- , tyFuns   :: V.Vector TypeFunction
- -- , copied :: Map IName Int -- track variabes ref'd > 1
+ -- data and aliases
+   algData  :: TypeMap
+ -- binds incl. constructors, locals, and class Fns (not overloads!)
+ , bindings :: BindMap
+
+ -- typeclass resolution, indexed by the class polytype
+ , overLoads :: IM.IntMap ClassFns
+ -- typeclass resolution when multiple Monotypes are possible
+ , defaults  :: IM.IntMap MonoType -- eg. default Num Int
+
+-- , tyFuns :: V.Vector TypeFunction
+-- , copied :: Map IName Int -- track potentially copied data
 
  -- lookup table (for the interpreter)
  --, hNameBinds :: Data.Map HName IName
- --, hNameTypes
+ --, hNameTypes :: Data.Map HName IName
  }
 
 -- Binding: save argNames brought into scope
@@ -62,12 +67,12 @@ data Binding
  | LArg { info :: Entity }
 -- Term level GADT constructor (Type is known)
  | LCon { info :: Entity }
+ | LClass { info :: Entity } -- classFn declaration
 
 -- an entity = info about | coreExpr | fn arg | decon arg
 data Entity = Entity { -- entity info
    named    :: Maybe HName
  , typed    :: Type -- also terms (in a type context)
- , universe :: Int -- term/type/kind/sort/...
 -- , source :: Maybe SourceEntity
  }
 
@@ -75,8 +80,6 @@ data Entity = Entity { -- entity info
 --data SourceEntity = SourceEntity 
 -- { src :: Maybe srcLoc
 -- }
-
-uniTerm : uniType : uniKind : uniSort : _ = [0..] :: [Int]
 
 data CoreExpr
  = Var IName
@@ -208,7 +211,7 @@ ppBind f indent b = indent ++ case b of
   LCon a -> "lcon: " ++ ppEntity a
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule typeMap bindings defaults)
+ = \(CoreModule typeMap bindings classFns defaults)
   ->  "-- types --\n" ++ (concatMap (\x->ppEntity x ++ "\n") typeMap)
       ++ "\n" ++ "-- defaults --\n" ++ show defaults
 
@@ -226,7 +229,7 @@ ppCoreBinds :: CoreModule -> String
           top = V.filter (\case { LBind{} -> True ; _ -> False }) binds
       in concat ((ppBind (bind2HName binds) "\n") <$> top)
 
-ppEntity (Entity nm ty uni) = 
+ppEntity (Entity nm ty) = 
   case nm of
     Just nm -> show nm
     Nothing -> "\\_"

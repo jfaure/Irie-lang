@@ -27,7 +27,7 @@ import LLVM.AST.AddrSpace
 
 -- TODO filter all functions from CoreModule.bindings
 core2stg :: CoreModule -> StgModule
-core2stg (CoreModule algData coreBinds defaults)
+core2stg (CoreModule algData coreBinds classFns defaults)
  = StgModule stgData stgTypedefs stgBinds
   where
   (stgData, stgTypedefs) = convData algData
@@ -39,7 +39,7 @@ convData :: TypeMap -> (V.Vector StgData, V.Vector (StgId, StgType))
 convData tyMap = mkLists $ foldr f ([],[]) tyMap
   where
   mkLists (a,b) = (V.fromList a, V.fromList b)
-  f (Entity (Just hNm) rawTy _) (datas, aliases) = case convTy tyMap rawTy of
+  f (Entity (Just hNm) rawTy) (datas, aliases) = case convTy tyMap rawTy of
       StgAlgType d -> (d:datas, aliases)
       a            -> let nm = LLVM.AST.mkName (CU.hNm2Str hNm)
                       in (datas, (nm, a):aliases)
@@ -107,7 +107,6 @@ convExpr bindMap =
  -- TODO default case alt
  SwitchCase expr alts ->
     let convAlt (c, e) = (literal2Stg c, convExpr' e)
-        convAlt f = error ("unexpected extern function: " ++ show f)
     in StgCaseSwitch (convExpr' expr) Nothing (convAlt <$> alts)
  DataCase expr alts   -> -- [(IName, [IName], CoreExpr)]
     let convAlt (con, arg, e)

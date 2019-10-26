@@ -8,36 +8,35 @@ module ParseSyntax where -- import qualified as PSyn
 import Prim
 import qualified Data.Text as T
 
-type Module = [Decl]
-
 -- TODO use bytestring for names?
--- QName: qualified name: '::' namespace operator
-data QName
+data Name        -- variables (incl constructors and symbols)
+ = Ident  String -- varid/conid
+ | Symbol String -- varsym/consym
+data QName -- QName: qualified name: '::' namespace operator
  = QName [Name] Name
  | UnQual Name
  | ExprHole --
-data Name -- variables (incl constructors and symbols)
- = Ident  String -- varid/conid
- | Symbol String -- varsym/consym
-type QOp = QName
 type Op = Name
+type QOp = QName
 
--- top level
--- data Module {
---    mName    :: Name
---  , contents :: Decl.DataDecl -- modules are functors, namespaced in a data
---  }
+-- Modules are returned by typefunctions.. (trivial module ?)
+-- Note. modules subsume Type ! So they can returned by type functions
+type Module = [Decl]
+data Module' = Module {
+   mName    :: Name
+ , contents :: [Decl]
+ }
 data Decl
- -- type decls 
- -- newtype necessary for classes ?
- = TypeAlias     Name Type        -- incl. data
- | TypeFun       Name [Name] PExp
- | TypeClass     Name [Decl]
- | TypeClassInst Name Name [Decl] -- instance declaration
+ = Import        Type -- must return TyModule | TyExtern (maybe via TyFun)
+ -- type decls
+ | TypeAlias     Name Type        -- note. type includes data
+ | TypeFun       Name [Name] PExp -- TODO move this to Type
+ | TypeClass     Name [Decl]      -- haskell newtype ?
+ | TypeClassInst Name Name [Decl]
 
- -- top bindings
+ -- top bindings (seperate because sigs may be in sigModules)
  | TypeSigDecl   [Name] Type
- | FunBind       [Match]  -- TODO scoped type variables ?
+ | FunBind       [Match]
 
  -- auxilary decls
  | InfixDecl     Assoc (Maybe Integer) [Op] --info for infix operators
@@ -72,6 +71,7 @@ data Type
  | TyRecord [(Name, [(Name, Type)])]
  | TyData   [(Name, [Type])]
  | TyInfixData Type Name Type -- TODO
+ | TyModule Module
 
  | TyExpr PExp       -- type functions (maybe dependent on values)
  | TyTyped Type Type -- user gave a 'Kind' annotation (are all kinds types ?)
@@ -118,8 +118,9 @@ data Stmt -- in 'do' / in pattern guard
  | Qualifier PExp -- exp alone in do expr
  | LetStmt   Binds
 
+deriving instance Show Name
 deriving instance Show QName 
-deriving instance Show Name 
+deriving instance Show Module'
 deriving instance Show Decl
 deriving instance Show Assoc
 deriving instance Show Binds

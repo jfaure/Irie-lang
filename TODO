@@ -1,11 +1,15 @@
 # expr2Core
-  * typeclass
+  * separate tyHNames from hNames
+  * typeclass "trivial/class"
+  * subtyping - algData are also sum polytypes (of their subtypes)
+  * modules
+  * dont squash bindings
+  * tyFunctions
+
+  * tuples (anon product types)
+  * redesign toCore for localDecls (~ local modules ?)
   * GuardedRhs
   * more patterns
-  * redesign toCore for localDecls (~ local modules ?)
-  * dont squash bindings
-  * subtyping - algData are also sum polytypes (of their subtypes)
-  * tuples
   * records
   * Case -> Case optimizations
   * precedence (parser doesn't have all infix decls)
@@ -18,9 +22,10 @@
 
 # parser
   * linefolds
-  * GADT style parser
+  * GADT style
   * pattern-match on (->)
   * let-rec (?)
+  * source locations
 
 # Prelude / dependent types
   * fold-build
@@ -32,4 +37,7 @@
   * track non-copyable data lifetime
     * data passed to multiple functions:
       if only one wants to modify it: give it ownership and execute last
-    * sudoku example - inplace modifcations, but will undo as stack unravels
+    * sudoku example - inplace modifcations, that undo as stack unravels
+
+# General
+  * error message clarity

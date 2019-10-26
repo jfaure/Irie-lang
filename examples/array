@@ -50,6 +50,13 @@ zip = zipWith (,)
   (a->b)    -> map f     : @a -> @b
   retTy     -> repeat f  : @retTy
 
+
+-- note. data Nat * Type is a primitive llvm array
+mkArrow : n*Type -> Type -- mkArrow is a simple type function
+= \case
+  [A]      => A
+  (A , As) => A -> mkArrow (As)
+
 -----------------
 -- foldr-Build --
 -----------------
