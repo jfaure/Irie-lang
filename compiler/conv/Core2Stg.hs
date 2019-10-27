@@ -114,7 +114,7 @@ convExpr bindMap =
     in StgDataCase (convExpr' expr) Nothing (convAlt<$>alts)
 
  TypeExpr t           -> error "internal error: core2Stg: unexpected typeExpr"
- WildCard             -> _ -- means this binding should error if evaluated
+ WildCard             -> error "found hole" -- _ -- means this binding should error if evaluated
  Instr i -> error ("core2Stg: unsaturated primInstr" ++ show i)
 
 -- cancerous llvm-hs Name policy

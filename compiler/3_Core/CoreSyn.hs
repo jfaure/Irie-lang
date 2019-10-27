@@ -41,7 +41,7 @@ data CoreModule = CoreModule {
  , bindings :: BindMap
 
  -- typeclass resolution, indexed by the class polytype
- , overLoads :: IM.IntMap ClassFns
+ , overloads :: IM.IntMap ClassFns
  -- typeclass resolution when multiple Monotypes are possible
  , defaults  :: IM.IntMap MonoType -- eg. default Num Int
 

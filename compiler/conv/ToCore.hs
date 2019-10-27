@@ -22,6 +22,7 @@ import Data.List (partition)
 import Data.Foldable (foldrM)
 import Control.Monad (zipWithM)
 import Control.Applicative ((<|>))
+import Data.Functor
 
 import Debug.Trace
 
@@ -229,7 +230,7 @@ parseTree2Core :: P.Module -> CoreModule
 parseTree2Core parsedTree = CoreModule
   { algData       = dataTys -- data entites from 'data' declarations
   , bindings      = topBinds V.++ (localBinds endState)
-  , overLoads     = IM.empty
+  , overloads     = overloads
   , defaults      = IM.empty
   }
   where
@@ -265,79 +266,17 @@ parseTree2Core parsedTree = CoreModule
     , toCoreErrors   = []
     }
   -- toCoreM returns globals, types, locals
-  toCoreM :: ToCoreEnv (BindMap, TypeMap, BindMap) = do
+  toCoreM :: ToCoreEnv (BindMap, TypeMap, BindMap, IM.IntMap ClassFns) = do
     -- data ; tyFuns ; tySigs ; bindings
     -- 1. data
     -- gen the constructors and dataTys, and name the constructors
     (cons, dataTys) <- getTypesAndCons p_TyAlias
     V.imapM (\i (LCon (Entity (Just hNm) _ )) -> addHName hNm i) cons
-    let nameCount = V.length cons
+    let nameCount'   = V.length cons
+        tyNameCount' = V.length dataTys
+    modify (\x->x{tyNameCount = tyNameCount'})
+    (classDecls, classEntities, overloads) <- doTypeClasses p_TyClasses p_TyClassInsts
     -- modify (\x->x{nameCount = V.length cons})
-
-    -- 2.1 Typeclass top declarations
-    let partitionFns = partition $ \case {P.TypeSigDecl{}->True ;_-> False }
-        getClassSigs (P.TypeSigDecl nms sig) =
-          (\ty -> (\x->LClass$Entity (Just (pName2Text x)) ty)<$>nms)
-          <$> convTy sig
-        doClass :: (P.Decl) -> ToCoreEnv [Binding]
-        doClass (P.TypeClass nm decls) =
-            let (sigs, fnBinds) = partitionFns decls
-            in do 
-               if (length fnBinds > 0)
-               then error "default class decls unsupported"
-               else pure ()
-               i <- freshTyName
-               addTyHName (pName2Text nm) i
-               sigMap <- mkSigMap (V.fromList sigs)
-               let getSig = (\hNm -> M.lookup hNm sigMap)
-               -- TODO default class functions
-               -- getFns getSig (V.length dataTys) (V.fromList fnBinds)
-               concat <$> mapM getClassSigs sigs
-
-    -- top-level class bindings, we add these to the bindmap.
-    -- Instance functions are added to the 'OverLoads intmap'
-    -- These take polytypes; typeJudge will have to instantiate them.
-    classDecls <- V.fromList . concat <$> mapM doClass p_TyClasses
-
-    -- 2.1 TypeClass overloads/instances
-    -- TODO better validity checks
-    -- Plan is to fold over classInsts, checking validity along the way
-    -- We also need to update the typeclass PolyType every instance
-    let f :: P.Decl -> (M.Map IName Type, V.Vector Binding)
-          -> ToCoreEnv ((M.Map IName Type), V.Vector Binding)
-        f tcInst@(P.TypeClassInst clsNm instTyNm decls) (polyTypesMap, fns) =
-          let ok = check p_TyClasses tcInst
-              clsHNm = pName2Text clsNm
-              (sigs, fnBinds) = partitionFns decls
-              declsOk = not $ any (\case P.FunBind{}->False ; _ -> True) fnBinds
-              val = TyPoly (ForallOr [TyAlias 0])
-              addPoly (TyPoly (ForallOr tys)) t = (TyPoly (ForallOr (t:tys)))
-          in if not $ ok && declsOk
-          then error "bad instance decl"
-          else do
-          sigMap <- mkSigMap (V.fromList sigs)
-          let findInstSig :: HName -> Maybe Type = \hNm -> M.lookup hNm sigMap
-              findClassSig :: HName -> HName -> Maybe Type
-                = \fnName instTyNm -> Nothing -- TODO
-              getSig nm = findInstSig nm <|> findClassSig nm (pName2Text instTyNm)
-
-          fnBinds <- getFns getSig 0 (V.fromList fnBinds)
-          clsINm  <- (<$> findTyHName clsHNm) $ \case
-            Just h -> h
-            Nothing -> error ("instance for unknown class: " ++ show clsHNm)
-          let accFns = fnBinds V.++ fns
-              newMp = M.insertWith addPoly clsINm val polyTypesMap
-          pure (newMp, accFns)
-
-        check classes inst = True -- verify that inst satisfies the class decl (ie. only fn sigs, fn binds)
-
-    -- TODO we will have multiple function defs of different types, how to handle that ?
-    -- * we want to emit only class type sigs (where the classTy is a polytype of all implementations)
-    -- + a type function for each instance
-    --registerClassFns
-    (classTyMap, instFns) <- foldrM f (M.empty, V.empty) p_TyClassInsts
---  let classEntities = (\(hNm, ty) -> Entity (Just hNm) ty) <$> M.assocs classTyMap
-
     -- 3. type functions
     --    * dependent types are at this point simply converted via convExpr
     --    * trivial qualified data is recognized here
@@ -352,26 +291,130 @@ parseTree2Core parsedTree = CoreModule
             dependent -> TyDependent argNms <$> expr2Core expr
     typeFuns <- mapM doTypeFun p_TyFuns
 
-    -- 4. type signatures
-    hNSigMap <- mkSigMap p_TopSigs -- :: ToCoreEnv (M.Map T.Text Type)
-    let findTopSig :: HName -> Maybe Type = \hNm -> M.lookup hNm hNSigMap
-
+    -- TODO check iNames
     -- 5. expression bindings
     -- need to register all names first (for recursive references)
-    modify (\x->x{nameCount = V.length p_TopBinds + V.length cons})
+    hNSigMap <- mkSigMap p_TopSigs -- :: ToCoreEnv (M.Map T.Text Type)
+    let findTopSig :: HName -> Maybe Type = \hNm -> M.lookup hNm hNSigMap
+    -- modify (\x->x{nameCount = V.length p_TopBinds + V.length cons})
     fnBinds <- getFns findTopSig (V.length cons) p_TopBinds
 
     -- 6. join constructors with topExprs (and locals ?)
     -- locals may be functions we need to lift !
     -- ! the order is critical, it must match iNames !
     let topBinds = cons V.++ classDecls V.++ fnBinds
-    let tyEntities = dataTys
+        dataEntities = dataTys V.++ classEntities
+        tyEntities = dataEntities -- V.++ V.fromList classEntities
     locals <- gets localBinds
-    pure (topBinds, dataTys, locals)
+    pure (topBinds, tyEntities, locals, overloads)
 
-  ( (topBinds, dataTys, locals) ,
+  ( (topBinds, dataTys, locals, overloads) ,
     endState
     ) = runState toCoreM convState
+
+doTypeClasses :: _
+doTypeClasses p_TyClasses p_TyClassInsts = do
+  -- 2.1 Typeclass top declarations
+  let partitionFns = partition $ \case {P.TypeSigDecl{}->True ;_-> False }
+      getClassSigs (P.TypeSigDecl nms sig) =
+        (\ty -> (\x->LClass$Entity (Just (pName2Text x)) ty)<$>nms)
+        <$> convTy sig
+      doClass :: (P.Decl) -> ToCoreEnv [Binding]
+      doClass (P.TypeClass nm decls) =
+          let (sigs, fnBinds) = partitionFns decls
+              registerClassFn (P.TypeSigDecl nms sig) =
+                mapM (\h -> addHName (pName2Text h) =<< freshName) nms
+          in do 
+             if (length fnBinds > 0)
+             then error "default class decls unsupported"
+             else pure ()
+             -- register all names
+             addTyHName (pName2Text nm) =<< freshTyName
+             mapM registerClassFn sigs
+             -- collect class signatures
+             sigMap <- mkSigMap (V.fromList sigs)
+             let getSig = (\hNm -> M.lookup hNm sigMap)
+             -- TODO default class functions
+             -- getFns getSig (V.length dataTys) (V.fromList fnBinds)
+             concat <$> mapM getClassSigs sigs
+  -- top-level class bindings, we add these to the bindmap.
+  -- Instance functions are added to the 'OverLoads intmap'
+  -- These take polytypes; typeJudge will have to instantiate them.
+  classDecls <- V.fromList . concat <$> mapM doClass p_TyClasses
+    :: ToCoreEnv (V.Vector Binding)
+
+  -- 2.1 TypeClass overloads/instances
+  -- For each typeclass, we're constructing it's (poly)type, and collecting
+  -- it's overloads: We fold classInsts, and simultaneously check them.
+  -- We also need to update the typeclass PolyType every instance
+  let f :: P.Decl -> IM.IntMap (Type, IM.IntMap Binding)
+        -> ToCoreEnv (IM.IntMap (Type, IM.IntMap Binding))
+      f tcInst@(P.TypeClassInst clsNm instTyNm decls) classIMap =
+        let ok = check p_TyClasses tcInst
+            (clsHNm, instHNm) = (pName2Text clsNm, pName2Text instTyNm)
+            (sigs, fnBinds)   = partitionFns decls
+            declsOk = not $ any (\case P.FunBind{}->False ; _ -> True) fnBinds
+            -- verify that inst satisfies the class decl
+            check classes inst = True
+            addPoly (TyPoly (ForallOr tys)) t = (TyPoly (ForallOr (t:tys)))
+        in if not $ ok && declsOk -- TODO better validity checks
+        then error "bad instance decl"
+        else do
+
+        -- check names exist
+        clsINm  <- findTyHName clsHNm <&> \case
+          Just h -> h
+          Nothing -> error ("instance for unknown class: " ++ show clsHNm)
+        instINm  <- findTyHName instHNm <&> \case
+          Just h -> h
+          Nothing -> error ("instance for unknown class: " ++ show clsHNm)
+
+        -- get instance signatures
+        instSigMap <- mkSigMap (V.fromList sigs)
+        let findInstSig hNm = M.lookup hNm instSigMap
+            findClassSig :: HName -> HName -> Maybe Type
+              -- TODO generate signatures from classSigs (replace classNm)
+              = \fnName instTyNm -> Nothing
+            getSig nm = findInstSig nm -- <|> findClassSig nm instHNm
+        -- Generate instance overloads
+        -- we want to use classDecl iNames for our overloads
+        let genOverload (P.FunBind [match@(P.Match nm _ _)]) = do
+              let fName = pName2Text nm
+                  sig = case getSig fName of
+                      Nothing -> error ("no sig for instance: " ++ show nm)
+                      Just t  -> t
+              iNm <- findHName fName <&> \case -- lookup class fn
+                  Nothing -> error ("unknown class function: " ++ show fName)
+                  Just i  -> i
+              f <- match2LBind match sig
+              pure (iNm, f)
+        fnOverloads <- IM.fromList <$> mapM genOverload fnBinds
+
+        let polyTy = TyPoly (ForallOr [TyAlias instINm])
+            val = (polyTy, fnOverloads)
+            insertFn (ty', binds') (ty,binds)
+              = (addPoly ty' ty, binds' `IM.union` binds)
+            newMp = IM.insertWith insertFn clsINm val classIMap
+        pure newMp
+
+  -- The classIMap contains both the class polytypes and class overloads
+  classIMap <- foldrM f IM.empty p_TyClassInsts
+    :: ToCoreEnv (IM.IntMap (Type, IM.IntMap Binding))
+  let (classTys, overloadVector) = unzip $ IM.elems classIMap
+      toEntity i ty =
+          let ent = (\(LClass info) -> named info) $ classDecls V.! i 
+              hNm = case ent of
+                Nothing -> error "internal error: lost class typeName"
+                Just n -> n
+          in Entity (Just hNm) ty
+  tyNameCount <- gets tyNameCount
+      -- Results = class entities: The polytype associated with each class
+  let classEntities = V.imap toEntity (V.fromList classTys)
+      -- Overloads = all instance functions
+      -- Note. make sure the iNames are right, this is appended to cons
+      overloads = IM.fromAscList (zip [tyNameCount+1..] overloadVector)
+  pure (classDecls, classEntities, overloads)
+
 
 expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Var (P.UnQual hNm)-> findHName (pName2Text hNm) >>= \case
@@ -491,3 +534,5 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
       in doInfixPats $ P.PApp n (p1:[ps])
     P.PApp qNm ps -> P.PApp qNm (doInfixPats <$> ps)
     other -> other
+
+
