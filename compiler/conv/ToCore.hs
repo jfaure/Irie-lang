@@ -72,6 +72,7 @@ convTy :: P.Type -> ToCoreEnv Type
 ----------
 -- Data --
 ----------
+-- ! this assumes it is the first to name anything !
 getTypesAndCons :: V.Vector P.Decl -- .TypeAlias
   -> ToCoreEnv (V.Vector Binding, V.Vector Entity)
  = \datas ->
@@ -114,11 +115,12 @@ convData :: P.Decl -> ToCoreEnv (V.Vector Binding, Entity)
 --    pure (cons, polyEnt)
       pure (cons, ent)
 
+    -- Records: only difference is we also need to emit accessor functions
+--  P.TyRecord hNm fields->MonoTyRecord hNm (doSumAlt prodTyRecord <$> fields)
+
     -- simple alias
     t -> convTy t >>= \ty -> pure
       (V.empty, Entity (Just $ pName2Text aliasName) ty)
-
-  --P.TyRecord hNm fields->MonoTyRecord hNm (doSumAlt prodTyRecord <$> fields)
 
 -- getFns: generate bindings from a [P.Decl]
 -- both normal fns and typeclass funs use this
@@ -178,7 +180,7 @@ match2LBind :: P.Match -> Type -> ToCoreEnv Binding = \m fnSig ->
   pure $ LBind iNames expr fEntity
 
 mkSigMap :: V.Vector P.Decl -> ToCoreEnv (M.Map HName Type)
-mkSigMap sigs = 
+mkSigMap sigs =
     let f (P.TypeSigDecl nms ty) mp = convTy ty >>= \t ->
             pure $ foldr (\k m->M.insert (pName2Text k) t m) mp nms
     in foldrM f M.empty sigs
@@ -229,14 +231,18 @@ addLocal :: IName -> Binding -> ToCoreEnv IName =
 parseTree2Core :: P.Module -> CoreModule
 parseTree2Core parsedTree = CoreModule
   { algData       = dataTys -- data entites from 'data' declarations
-  , bindings      = topBinds V.++ (localBinds endState)
+  , bindings      = binds
+  , externs       = V.empty
   , overloads     = overloads
   , defaults      = IM.empty
   }
   where
-  -------------------------
-  -- Sort the parseDecls --
-  -------------------------
+  (binds, dataTys, overloads) = evalState toCoreM convState
+
+  --------------------------
+  -- Group the parseDecls --
+  --------------------------
+  -- Would be nice to have subtyping for this
   mapTuple8 z (a,b,c,d,e,f,g,h) = (z a,z b,z c,z d,z e,z f,z g,z h)
   (p_TyAlias, p_TyFuns, p_TyClasses, p_TyClassInsts
     , p_TopSigs, p_TopBinds, p_InfixBinds
@@ -265,54 +271,50 @@ parseTree2Core parsedTree = CoreModule
     , localBinds     = V.empty
     , toCoreErrors   = []
     }
-  -- toCoreM returns globals, types, locals
-  toCoreM :: ToCoreEnv (BindMap, TypeMap, BindMap, IM.IntMap ClassFns) = do
-    -- data ; tyFuns ; tySigs ; bindings
-    -- 1. data
-    -- gen the constructors and dataTys, and name the constructors
-    (cons, dataTys) <- getTypesAndCons p_TyAlias
+  -- :: topBindings ; typeDecls ; localBindings ; overloads
+  -- Note. types and binds vectors must be consistent with iNames
+  toCoreM :: ToCoreEnv (BindMap, TypeMap, IM.IntMap ClassFns) = do
+    -- 1. data: get the constructors and dataEntities (name + dataty)
+    (cons, dataEntities) <- getTypesAndCons p_TyAlias
     V.imapM (\i (LCon (Entity (Just hNm) _ )) -> addHName hNm i) cons
-    let nameCount'   = V.length cons
-        tyNameCount' = V.length dataTys
-    modify (\x->x{tyNameCount = tyNameCount'})
-    (classDecls, classEntities, overloads) <- doTypeClasses p_TyClasses p_TyClassInsts
-    -- modify (\x->x{nameCount = V.length cons})
-    -- 3. type functions
-    --    * dependent types are at this point simply converted via convExpr
-    --    * trivial qualified data is recognized here
-    --    TODO register the tyfun's name
-    let doTypeFun :: P.Decl -> ToCoreEnv TypeFunction
-        doTypeFun (P.TypeFun nm args expr) = mapM (\_->freshName) args
-            >>= \argNms -> case expr of
-            P.TypeExp ty -> --trivial type function
-                let hNm = pName2Text nm
-                in --registerHName hNm *>
-                   TyTrivialFn argNms <$> convTy ty
-            dependent -> TyDependent argNms <$> expr2Core expr
+    -- modify (\x->x{tyNameCount = tyNameCount})
+    modify (\x->x{nameCount = V.length cons})
+
+    -- 2. type functions:
+    --    2Core is easy, we let typeJudge deal with complications
     typeFuns <- mapM doTypeFun p_TyFuns
 
-    -- TODO check iNames
-    -- 5. expression bindings
+    -- 3. typeclasses
+    -- get: (classFn bindings, classTy polytypes, instance overloads)
+    -- note. classDecls includes local bindings (they must match iNames)
+    (classDecls, classEntities, overloads)
+      <- doTypeClasses p_TyClasses p_TyClassInsts
+      :: ToCoreEnv (V.Vector Binding, V.Vector Entity, IM.IntMap (ClassFns))
+
+    -- 4. expression bindings
     -- need to register all names first (for recursive references)
     hNSigMap <- mkSigMap p_TopSigs -- :: ToCoreEnv (M.Map T.Text Type)
     let findTopSig :: HName -> Maybe Type = \hNm -> M.lookup hNm hNSigMap
-    -- modify (\x->x{nameCount = V.length p_TopBinds + V.length cons})
     fnBinds <- getFns findTopSig (V.length cons) p_TopBinds
 
-    -- 6. join constructors with topExprs (and locals ?)
-    -- locals may be functions we need to lift !
-    -- ! the order is critical, it must match iNames !
-    let topBinds = cons V.++ classDecls V.++ fnBinds
-        dataEntities = dataTys V.++ classEntities
-        tyEntities = dataEntities -- V.++ V.fromList classEntities
-    locals <- gets localBinds
-    pure (topBinds, tyEntities, locals, overloads)
+    -- 5. Collect results
+    -- ! the resulting vectors must be consistent with all iNames !
+    let binds = cons V.++ classDecls V.++ fnBinds
+        tyEntities = dataEntities V.++ classEntities
+    pure (binds, tyEntities, overloads)
 
-  ( (topBinds, dataTys, locals, overloads) ,
-    endState
-    ) = runState toCoreM convState
+-- TODO register the tyfun's name
+doTypeFun :: P.Decl -> ToCoreEnv TypeFunction
+doTypeFun (P.TypeFun nm args expr) = mapM (\_->freshName) args
+    >>= \argNms -> case expr of
+    P.TypeExp ty -> --trivial type function
+        let hNm = pName2Text nm
+        in --registerHName hNm *>
+           TyTrivialFn argNms <$> convTy ty
+    dependent -> TyDependent argNms <$> expr2Core expr
 
-doTypeClasses :: _
+doTypeClasses :: V.Vector P.Decl -> V.Vector P.Decl
+ -> ToCoreEnv (V.Vector Binding, V.Vector Entity, IM.IntMap ClassFns)
 doTypeClasses p_TyClasses p_TyClassInsts = do
   -- 2.1 Typeclass top declarations
   let partitionFns = partition $ \case {P.TypeSigDecl{}->True ;_-> False }
@@ -324,7 +326,7 @@ doTypeClasses p_TyClasses p_TyClassInsts = do
           let (sigs, fnBinds) = partitionFns decls
               registerClassFn (P.TypeSigDecl nms sig) =
                 mapM (\h -> addHName (pName2Text h) =<< freshName) nms
-          in do 
+          in do
              if (length fnBinds > 0)
              then error "default class decls unsupported"
              else pure ()
@@ -402,7 +404,7 @@ doTypeClasses p_TyClasses p_TyClassInsts = do
     :: ToCoreEnv (IM.IntMap (Type, IM.IntMap Binding))
   let (classTys, overloadVector) = unzip $ IM.elems classIMap
       toEntity i ty =
-          let ent = (\(LClass info) -> named info) $ classDecls V.! i 
+          let ent = (\(LClass info) -> named info) $ classDecls V.! i
               hNm = case ent of
                 Nothing -> error "internal error: lost class typeName"
                 Just n -> n
@@ -414,7 +416,6 @@ doTypeClasses p_TyClasses p_TyClassInsts = do
       -- Note. make sure the iNames are right, this is appended to cons
       overloads = IM.fromAscList (zip [tyNameCount+1..] overloadVector)
   pure (classDecls, classEntities, overloads)
-
 
 expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Var (P.UnQual hNm)-> findHName (pName2Text hNm) >>= \case
@@ -475,7 +476,8 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Typed t e    -> do -- we name it so we can type annotate it
       iNm <- freshName
       ty <- convTy t
-      addLocal iNm (LArg (Entity Nothing ty))
+      expr <- expr2Core e
+      addLocal iNm (LBind [] expr (Entity Nothing ty))
       pure $ Var iNm
 
 -- getCaseAlts returns a partial constructor for a CoreExpr.*Case expression

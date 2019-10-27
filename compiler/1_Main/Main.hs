@@ -52,7 +52,7 @@ doProgText flags fName progText =
   | emitStg        flags -> putStrLn $ show stg
   | emitLlvm       flags -> LD.dumpModule llvmMod
   | jit            flags -> LD.runJIT (optlevel flags) llvmMod
-  | otherwise            -> putStrLn $ ppCoreBinds judged
+  | otherwise            -> putStrLn $ ppCoreModule judged -- ppCoreBinds judged
 
 repl :: CmdLine -> IO ()
 repl cmdLine = runInputT defaultSettings loop

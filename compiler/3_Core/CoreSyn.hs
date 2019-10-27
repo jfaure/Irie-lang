@@ -28,8 +28,9 @@ type IName   = Int
 type NameMap = V.Vector
 type HName   = T.Text -- human readable name
 
-type TypeMap = NameMap Entity
-type BindMap = NameMap Binding
+type TypeMap      = NameMap Entity
+type BindMap      = NameMap Binding
+type DefaultDecls = IM.IntMap MonoType
 
 -- note. algData is dataTypes     ++ aliases
 --       bindings is constructors ++ binds
@@ -39,6 +40,8 @@ data CoreModule = CoreModule {
    algData  :: TypeMap
  -- binds incl. constructors, locals, and class Fns (not overloads!)
  , bindings :: BindMap
+ -- extern declarations
+ , externs  :: TypeMap
 
  -- typeclass resolution, indexed by the class polytype's iName
  , overloads :: IM.IntMap ClassFns
@@ -212,7 +215,7 @@ ppBind f indent b = indent ++ case b of
   LClass a -> "lclass: " ++ ppEntity a
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule typeMap bindings overloads defaults)
+ = \(CoreModule typeMap bindings externs overloads defaults)
   ->  "-- types --\n" ++ (concatMap (\x->ppEntity x ++ "\n") typeMap)
       ++ "\n" ++ "-- defaults --\n" ++ show defaults
 

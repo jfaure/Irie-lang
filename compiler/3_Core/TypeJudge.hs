@@ -256,12 +256,13 @@ subsume got exp unVar = subsume' got exp
     ForallOr  tys -> any (\x -> subsume' x (TyMono exp)) tys
 
   subsumePP :: PolyType -> PolyType -> Bool
-   = \got exp ->
-    let f = _ -- hasAnyBy subsume . flip subsume exp
-    in case got of
+   = \got exp -> case got of
     ForallAny -> True
-    ForallAnd tys -> _ --all $ f <$> tys
-    ForallOr  tys -> _ -- any $ f <$> tys
+    ForallAnd gTys -> _ -- all $ f <$> tys
+    ForallOr  gTys -> case exp of
+      ForallAny -> False
+      ForallAnd eTys -> _
+      ForallOr  eTys -> hasAnyBy subsume' eTys gTys -- TODO check order
     where
 
     hasAnyBy :: (a->a->Bool) -> [a] -> [a] -> Bool

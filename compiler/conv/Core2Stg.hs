@@ -27,7 +27,7 @@ import LLVM.AST.AddrSpace
 
 -- TODO filter all functions from CoreModule.bindings
 core2stg :: CoreModule -> StgModule
-core2stg (CoreModule algData coreBinds classFns defaults)
+core2stg (CoreModule algData coreBinds externs overloads defaults)
  = StgModule stgData stgTypedefs stgBinds
   where
   (stgData, stgTypedefs) = convData algData
