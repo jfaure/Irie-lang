@@ -220,12 +220,3 @@ instance Monad IO where
   fail s = failIO s
 instance Alternative IO where
   empty = failIO "mzero"
-
-returnIO :: a -> IO a
-returnIO = IO $ \s->(s;x)
-bindIO : IO a -> (a->IO b) -> IO b
-bindIO (IO m) k = IO (\s->case m s of (new_s a) -> unIO (k a) new_s)
-thenIO : IO a -> IO b -> IO b
-thenIO (IO m) k = IO (\s->case m s of (new_s, _) -> unIO k new_s
-unIO : IO a -> (State# RealWorld -> (State# RealWorld, a))
-unIO (IO a) = a

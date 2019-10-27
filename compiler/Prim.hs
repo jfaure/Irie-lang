@@ -18,6 +18,8 @@ data PrimType
  | PrimFloat FloatTy
  | APInt -- arbitrary precision int
  | APFloat
+ | PrimArr PrimType
+ | PrimTuple [PrimType]
  | PtrTo PrimType
  | Extern [PrimType] -- only checked in llvm
  | ExternVA [PrimType]

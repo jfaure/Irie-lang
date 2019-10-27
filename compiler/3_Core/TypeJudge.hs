@@ -88,6 +88,7 @@ updateBindTy :: IName -> Type -> TCEnv ()
 judgeBind :: CoreModule -> Binding -> TCEnv Type = \cm -> \case
   LArg i -> pure $ typed i
   LCon i -> pure $ typed i
+  LClass i -> pure $ typed i
   LBind args e info -> let t = typed info in case t of
     TyArrow tys -> case length args + 1 /= length tys of
       True -> error ("arity mismatch: " ++ 

@@ -94,11 +94,11 @@ lIden, uIden, symbolName :: Parser Name
 lIden = lookAhead lowerChar *> iden -- variables
 uIden = lookAhead upperChar *> iden -- constructors / types
 name = iden
-infixName = symbolName <|> between (symbol "`") (symbol "`") lIden
+infixName = between (symbol "`") (symbol "`") lIden <|> symbolName
 qualifier = lIden <|> uIden -- not a symbol
-qName p = many (try (qualifier <* reservedOp ".")) >>= \case
+qName p = lexeme (many (try (qualifier <* reservedOp ".")) >>= \case
   []  -> UnQual <$> p
-  nms -> QName nms <$> p
+  nms -> QName nms <$> p)
 
 -- literals
 int    :: Parser Integer = lexeme L.decimal
@@ -189,14 +189,15 @@ decl :: Parser Decl -- top level
   defaultDecl = DefaultDecl <$ reserved "default"
                 <*> pType <*> pType
   match = (Match <$> (name <|> parens symbolName) <*> many (lexeme pat)
-      <|> InfixMatch <$> (lexeme pat) <*> symbolName <*> many (lexeme pat))
+      <|> InfixMatch <$> (lexeme pat) <*> infixName <*> many (lexeme pat))
       <*  reservedOp "=" <*> rhs
 
-literal :: Parser Literal
- =     Char   <$> charLiteral
-   <|> String <$> stringLiteral
-   <|> Int    <$> int
---      <|> Frac <*> rational
+-- needs to return an Exp so we can give the literal a polytype
+literalExp :: Parser PExp = lexeme $ do
+     Typed (TyPrim (PrimInt 8))           . Lit . Char   <$> charLiteral
+ <|> Typed (TyPrim (PrimArr (PrimInt 8))) . Lit . String <$> stringLiteral
+ <|> Typed (TyName (Ident "Num"))         . Lit . Frac . toRational <$> try L.float
+ <|> Typed (TyName (Ident "Num"))         . Lit . Int    <$> int
 
 binds :: Parser Binds = BDecls <$> many decl
 -- ref = reference indent level
@@ -213,23 +214,27 @@ indentedItems ref lvl scn p finished = go where
 -- don't save indent here, use the state indent saved by parseDecl
 pExp :: Parser PExp
   =   lambda <|> lambdaCase
-  <|> notFollowedBy app *> arg
+  <|> notFollowedBy app *> notFollowedBy infixApp *> arg
   <|> app -- must be tried before var (and must consume all it's args)
+  <|> infixApp
   <|> (parens pExp)
   where
   arg = letIn <|> multiIf <|> caseExpr
         <|> WildCard <$ reserved "_"
         <|> PrimOp <$> primInstr
-        <|> (Infix <$> qName pInfix)
         <|> doExpr <|> mdoExpr
-        <|> Lit <$> literal <|> someName
-        <|> parens pExp
-
+        <|> literalExp <|> someName
+        <|> opSection
+--        <|> parens pExp
+  opSection = fail ""
+  infixApp = try $ do
+      l <- arg
+      fnInfix <- Infix <$> qName infixName
+      r <- some arg
+      pure (App fnInfix (l:r))
   someName = dbg "someName" $ do Con . UnQual <$> uIden
          <|> Var <$> qName lIden
          <|> Var <$> try (qName (parens symbolName))
-  pInfix = between (char '`') (char '`') name
-       <|> symbolName
   app = App <$> someName <*> some arg
   lambda = Lambda <$ char '\\' <*> many pat <* symbol "->" <*> pExp
   lambdaCase = LambdaCase <$> (char '\\' <* reserved "case" *> many (alt <* scn))
@@ -279,7 +284,7 @@ alt :: Parser Alt = Alt <$> pat <* reserved "->" <*> rhs
 pat :: Parser Pat
  = dbg "pat" (
       PWildCard <$ reserved "_"
-  <|> PLit <$> literal
+--  <|> literalExp
   <|> PVar <$> dbg "patIden" lIden
   <|> PApp <$> (UnQual <$> uIden) <*> many pat -- constructor
 --    <|> PInfixApp <$> pat <*> (UnQual <$> lIden) <*> pat

@@ -92,6 +92,8 @@ data PExp
  | Infix QName     -- `name`
  | App PExp [PExp] -- extract infix apps from this during core2expr
  | Lambda [Pat] PExp
+ | SectionL PExp QName -- operator sections
+ | SectionR QName PExp
  | Let Binds PExp
  | MultiIf [(PExp, PExp)] -- ghc accepts [GuardedRhs]
  | Case PExp [Alt]

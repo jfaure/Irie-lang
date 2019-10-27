@@ -1,13 +1,11 @@
 # expr2Core
-  * separate tyHNames from hNames
   * typeclass "trivial/class"
   * subtyping - algData are also sum polytypes (of their subtypes)
   * modules
   * dont squash bindings
-  * tyFunctions
 
   * tuples (anon product types)
-  * redesign toCore for localDecls (~ local modules ?)
+  * What is allowed in a let binding ? atm it's [Decl]
   * GuardedRhs
   * more patterns
   * records
@@ -15,15 +13,16 @@
   * precedence (parser doesn't have all infix decls)
 
 # core2Stg
-  * tyFunctions (?) - we could reuse functions/structs for polymorphic data
+  * tyFunctions
 
 # typeJudge
   * dependent types
 
 # parser
+  * indent as Reader
+  * indented 'where', esp. class
   * linefolds
   * GADT style
-  * pattern-match on (->)
   * let-rec (?)
   * source locations
 

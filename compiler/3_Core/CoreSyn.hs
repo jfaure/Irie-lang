@@ -40,7 +40,7 @@ data CoreModule = CoreModule {
  -- binds incl. constructors, locals, and class Fns (not overloads!)
  , bindings :: BindMap
 
- -- typeclass resolution, indexed by the class polytype
+ -- typeclass resolution, indexed by the class polytype's iName
  , overloads :: IM.IntMap ClassFns
  -- typeclass resolution when multiple Monotypes are possible
  , defaults  :: IM.IntMap MonoType -- eg. default Num Int
@@ -209,14 +209,17 @@ ppBind f indent b = indent ++ case b of
     ++ {-indent ++-} " = " ++ ppCoreExpr f "" e
   LArg a -> "larg: " ++ ppEntity a
   LCon a -> "lcon: " ++ ppEntity a
+  LClass a -> "lclass: " ++ ppEntity a
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule typeMap bindings classFns defaults)
+ = \(CoreModule typeMap bindings overloads defaults)
   ->  "-- types --\n" ++ (concatMap (\x->ppEntity x ++ "\n") typeMap)
       ++ "\n" ++ "-- defaults --\n" ++ show defaults
 
       ++ "\n\n" ++ "-- bindings --"
       ++ concat ((ppBind (bind2HName bindings) "\n") <$> bindings)
+      ++ "\n\n" ++ "-- overloads --"
+      ++ "\n" ++ show overloads
 
 -- function to convert a  binding to a stringname
 bind2HName bindings i = case named $ info $ (bindings V.! i) of
