@@ -49,10 +49,11 @@ executables:
     - compiler/conv
 
     main:          Main.hs
-    ghc-options:  -threaded -fdefer-typed-holes -dynamic # -Wunused-imports -Wunused-binds
+    ghc-options:  -threaded -dynamic -fdefer-typed-holes -Wno-typed-holes # -Wunused-imports -Wunused-binds
     default-extensions:
     - LambdaCase
     - EmptyCase
+    - ViewPatterns
     - StandaloneDeriving
     - MultiWayIf
     - PartialTypeSignatures
@@ -61,10 +62,10 @@ executables:
     - FlexibleContexts
     - TupleSections
     - ConstraintKinds
-#   - GADTs -- Parser.hs crashes ghc with this
-#   - PolyKinds
-#   - DataKinds
     - RecursiveDo
+#   - PolyKinds
+#   - GADTs -- Parser.hs crashes ghc with this
+#   - DataKinds
    #    dependencies: plop
 
 tests:

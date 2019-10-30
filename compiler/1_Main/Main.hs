@@ -1,8 +1,7 @@
-{-# LANGUAGE LambdaCase, MultiWayIf, ScopedTypeVariables #-}
 import CmdLine
-import qualified ParseSyntax as P
+--import qualified ParseSyntax as P
 import CoreSyn
-import StgSyn
+--import StgSyn
 import Parser
 import ToCore
 import TypeJudge

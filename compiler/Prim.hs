@@ -9,6 +9,7 @@ data Literal
  = Char Char | Int Integer | Frac Rational | String String
  | Array Int [Literal] -- incl. tuples
  | TypedLit Literal    -- type is important and must be given for stg
+-- | WildCard            -- errors on evaluation
 
 -----------
 -- types --
@@ -21,8 +22,8 @@ data PrimType
  | PrimArr PrimType
  | PrimTuple [PrimType]
  | PtrTo PrimType
- | Extern [PrimType] -- only checked in llvm
- | ExternVA [PrimType]
+ | PrimExtern   [PrimType]
+ | PrimExternVA [PrimType]
 
 data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
 

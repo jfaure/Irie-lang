@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiWayIf, OverloadedStrings, ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Parser where
 
 import Prim
@@ -7,21 +7,16 @@ import ParseSyntax
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import Control.Monad.Combinators.Expr
 import Control.Monad (void)
 import Control.Applicative (liftA2)
 import Data.Void
 import Data.List (isInfixOf)
 import qualified Data.Text as T
-import qualified Data.Text.IO as T.IO
-import qualified Data.ByteString.Char8 as C -- so ghc realises char ~ Word8
+--import qualified Data.ByteString.Char8 as C -- so ghc realises char ~ Word8
 import Control.Monad.State.Strict as ST
-import Data.Char (isSymbol)
-import Text.Read(readMaybe)
-import Data.Maybe (isJust)
 
 import Debug.Trace
---import Text.Megaparsec.Debug
+-- import Text.Megaparsec.Debug
 dbg i = id
 
 ($>) = flip (<$) -- seems obtuse to import Data.Functor just for this
@@ -63,7 +58,7 @@ symboln = L.symbol scn . T.pack
 -- all symbol chars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 -- reserved: ():\{}"_'`.
 symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: String
-reservedOps = ["=","->","|","->",":", "#!", "."]
+reservedOps = ["=","->","|",":", "#!", "."]
 reservedNames = ["type", "data", "class", "extern", "externVarArg",
                  "let", "in", "case", "of", "_"]
 reservedName w = (lexeme . try) (string (T.pack w)
@@ -145,8 +140,11 @@ decl :: Parser Decl -- top level
   where
   parseDecl = typeAlias <|> infixDecl <|> defaultDecl <|>
     typeClass <|> typeClassInst <|>
+    extern <|>
     try funBind <|> typeSigDecl -- must try funBind first (typeSigDecl = _)
 
+  extern = Extern  <$reserved "extern"      <*> name<*reservedOp ":"<*>pType
+       <|> ExternVA<$reserved "externVarArg"<*> name<*reservedOp ":"<*>pType
   -- TODO GADT style parser ?
   typeAlias :: Parser Decl
   typeAlias = reserved "data" *> doData <|> reserved "type" *> doType
@@ -214,28 +212,34 @@ indentedItems ref lvl scn p finished = go where
 -- don't save indent here, use the state indent saved by parseDecl
 pExp :: Parser PExp
   =   lambda <|> lambdaCase
-  <|> notFollowedBy app *> notFollowedBy infixApp *> arg
-  <|> app -- must be tried before var (and must consume all it's args)
-  <|> infixApp
-  <|> (parens pExp)
+-- <|> notFollowedBy app *> arg -- notFollowedBy infixApp *> arg
+-- <|> app -- must be tried before var (and must consume all it's args)
+  <|> try app
+  <|> try infixApp
+  <|> arg
+  <|> dbg "parense" (parens pExp)
   where
   arg = letIn <|> multiIf <|> caseExpr
         <|> WildCard <$ reserved "_"
         <|> PrimOp <$> primInstr
-        <|> doExpr <|> mdoExpr
-        <|> literalExp <|> someName
-        <|> opSection
---        <|> parens pExp
-  opSection = fail ""
+--      <|> doExpr <|> mdoExpr
+        <|> try literalExp
+        <|> someName
+        <|> try opSection
+        <|> parens pExp
+  opSection = parens $ do
+    SectionL <$> try pExp <*> qName infixName
+    <|> SectionR <$> qName infixName <*> pExp
   infixApp = try $ do
       l <- arg
       fnInfix <- Infix <$> qName infixName
       r <- some arg
       pure (App fnInfix (l:r))
-  someName = dbg "someName" $ do Con . UnQual <$> uIden
-         <|> Var <$> qName lIden
-         <|> Var <$> try (qName (parens symbolName))
-  app = App <$> someName <*> some arg
+  someName = dbg "someName" $ do
+    Con . UnQual <$> uIden
+    <|> Var <$> qName lIden
+    <|> Var <$> try (qName (parens symbolName))
+  app = dbg "app" $ do App <$> someName <*> some arg
   lambda = Lambda <$ char '\\' <*> many pat <* symbol "->" <*> pExp
   lambdaCase = LambdaCase <$> (char '\\' <* reserved "case" *> many (alt <* scn))
   letIn = do
@@ -276,11 +280,11 @@ pExp :: Parser PExp
   typeSig e = reserved ":" *> pType >>= \t -> return (Typed t e)
   typeExp = TypeExp <$> pType
   asPat = AsPat <$> lIden <* reservedOp "@" <*> pat
-  doExpr = fail "_"
-  mdoExpr = fail "_"
+--doExpr = fail "_"
+--mdoExpr = fail "_"
 
 rhs :: Parser Rhs = UnGuardedRhs <$> dbg "rhs" pExp
-alt :: Parser Alt = Alt <$> pat <* reserved "->" <*> rhs
+alt :: Parser Alt = Alt <$> pat <* reservedOp "->" <*> rhs
 pat :: Parser Pat
  = dbg "pat" (
       PWildCard <$ reserved "_"
@@ -337,7 +341,7 @@ primType :: Parser PrimType = (<?> "prim Type") $
      <|> symbol "Double"   *> pure (PrimFloat DoubleTy)
      <|> symbol "CharPtr"  *> pure (PtrTo $ PrimInt 8)
      <|> reserved "ptr"    *> (PtrTo <$> primType)
-     <|> reserved "extern" $> Extern <*> primType `sepBy` symbol "->"
+--   <|> reserved "extern" $> Extern <*> primType `sepBy` symbol "->"
      )
 
 primInstr :: Parser PrimInstr

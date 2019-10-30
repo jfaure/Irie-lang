@@ -14,11 +14,10 @@ import LLVM.PassManager
 import LLVM.Transforms
 import LLVM.Analysis
 --import LLVM.Pretty (ppllvm)
-import qualified Data.Text.IO as T.IO
 import qualified Data.ByteString.Char8 as B
 
 --JIT
-import Data.Word
+--import Data.Word
 import LLVM.Target
 import LLVM.CodeModel
 import qualified LLVM.ExecutionEngine as EE

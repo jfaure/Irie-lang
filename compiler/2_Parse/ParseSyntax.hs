@@ -6,7 +6,6 @@
 module ParseSyntax where -- import qualified as PSyn
 
 import Prim
-import qualified Data.Text as T
 
 -- TODO use bytestring for names?
 data Name        -- variables (incl constructors and symbols)
@@ -26,6 +25,7 @@ data Module' = Module {
    mName    :: Name
  , contents :: [Decl]
  }
+
 data Decl
  = Import        Type -- must return TyModule | TyExtern (maybe via TyFun)
  -- type decls
@@ -35,6 +35,8 @@ data Decl
  | TypeClassInst Name Name [Decl]
 
  -- top bindings (seperate because sigs may be in sigModules)
+ | Extern        Name Type
+ | ExternVA      Name Type
  | TypeSigDecl   [Name] Type
  | FunBind       [Match]
 
@@ -49,13 +51,11 @@ data Match -- clauses of a function binding
  = Match Name [Pat] Rhs
  | InfixMatch Pat Name [Pat] Rhs
  | TypeMatch Name Rhs -- f : Int->Float = cast -- TODO
-
 data Rhs
  = UnGuardedRhs PExp
  | GuardedRhss [GuardedRhs]
 data GuardedRhs = GuardedRhs [Stmt] PExp
 
-type Kind = Type
 -- note. Types may be parsed as TyFunction if they take arguments
 data Type
  = TyPrim PrimType -- primitive
@@ -89,7 +89,7 @@ data PExp
  | Con QName
  | Lit Literal
  | PrimOp PrimInstr
- | Infix QName     -- `name`
+ | Infix QName     -- `name` or symbols
  | App PExp [PExp] -- extract infix apps from this during core2expr
  | Lambda [Pat] PExp
  | SectionL PExp QName -- operator sections

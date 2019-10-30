@@ -1,3 +1,5 @@
+type Float     = #!Float
+
 class Num where {
   (+) : Num->Num->Num
   (-) : Num->Num->Num

@@ -1,0 +1,2 @@
+extern puts : (#!CharPtr) -> Int
+externVarArg printf : (#!CharPtr) -> Int

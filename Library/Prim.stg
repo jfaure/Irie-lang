@@ -46,3 +46,6 @@ type IntOp2 = Int -> Int -> Int
 ----------------------
 --(.) : n*e -> i -> e = \arr i -> #!atIndex arr i
 --(len) : n*e -> Nat = n
+
+extern puts : (#!CharPtr) -> Int
+externVarArg printf : (#!CharPtr) -> Int

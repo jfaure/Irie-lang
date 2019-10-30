@@ -1,9 +1,10 @@
 # expr2Core
-  * typeclass "trivial/class"
   * subtyping - algData are also sum polytypes (of their subtypes)
   * modules
   * dont squash bindings
+  * use HashMap for String maps
 
+  * Let
   * tuples (anon product types)
   * What is allowed in a let binding ? atm it's [Decl]
   * GuardedRhs
@@ -14,11 +15,15 @@
 
 # core2Stg
   * tyFunctions
+  * polymorphic fns (boxed vs unboxed)
 
 # typeJudge
   * dependent types
+  * resolve polytypes (using classOverloads + default decls)
+  * partial type signatures
 
 # parser
+  * View patterns
   * indent as Reader
   * indented 'where', esp. class
   * linefolds

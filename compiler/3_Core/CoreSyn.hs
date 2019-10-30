@@ -15,9 +15,6 @@
 module CoreSyn where
 
 import Prim
-import Data.Map.Strict
-import Control.Monad.State.Strict
-import Control.Applicative
 
 import qualified Data.Vector        as V
 import qualified Data.Text          as T
@@ -35,16 +32,17 @@ type DefaultDecls = IM.IntMap MonoType
 -- note. algData is dataTypes     ++ aliases
 --       bindings is constructors ++ binds
 type ClassFns = IM.IntMap Binding  -- indexed by polymorphic classFn's Iname
+type ClassInsts = IM.IntMap ClassFns
+type ClassOverloads = IM.IntMap ClassInsts
 data CoreModule = CoreModule {
- -- data and aliases
-   algData  :: TypeMap
+   algData  :: TypeMap -- data and aliases
+
  -- binds incl. constructors, locals, and class Fns (not overloads!)
  , bindings :: BindMap
- -- extern declarations
- , externs  :: TypeMap
+ , externs  :: TypeMap -- extern declarations
 
  -- typeclass resolution, indexed by the class polytype's iName
- , overloads :: IM.IntMap ClassFns
+ , overloads :: ClassOverloads
  -- typeclass resolution when multiple Monotypes are possible
  , defaults  :: IM.IntMap MonoType -- eg. default Num Int
 
@@ -89,7 +87,6 @@ data CoreExpr
  | Lit Literal
  | Instr PrimInstr
  | App CoreExpr [CoreExpr]
- -- TODO default case expressions ?
  | SwitchCase CoreExpr [(Literal, CoreExpr)]
  | DataCase CoreExpr
             [(IName, [IName], CoreExpr)] -- Con [args] -> expr
@@ -119,7 +116,7 @@ data Type
 data MonoType
  = MonoTyPrim   PrimType
  | MonoTyData   HName [(HName, [Type])] --TODO Type as tyArrow ?
- -- TODO rm this and simply gen getters in tocore
+ -- TODO rm this and simply gen getters in tocore (and record updates ?)
  | MonoTyRecord HName [(HName, [(HName, Type)])]
  | MonoTyTuple  [Type]
  | MonoTyClass -- ?!
@@ -206,7 +203,7 @@ ppBinds :: [Binding] -> (IName -> String) -> String
  = \l f -> concatMap (ppBind f "\n   ") l
 ppBind f indent b = indent ++ case b of
   LBind args e entity -> case named entity of
-     { Just nm -> show nm ; Nothing -> "\\" }
+     { Just nm -> show nm ; Nothing -> "_" }
     ++ " " ++ show args 
     ++ " : " ++ ppType (typed entity)
     ++ {-indent ++-} " = " ++ ppCoreExpr f "" e
@@ -222,7 +219,11 @@ ppCoreModule :: CoreModule -> String
       ++ "\n\n" ++ "-- bindings --"
       ++ concat ((ppBind (bind2HName bindings) "\n") <$> bindings)
       ++ "\n\n" ++ "-- overloads --"
-      ++ "\n" ++ show overloads
+      ++ "\n" ++ DL.intercalate "\n" (ppClassOverloads <$> IM.elems overloads)
+      ++ "\n\n" ++ "-- externs --"
+      ++ "\n" ++ (concatMap (\x->ppEntity x ++ "\n") externs)
+
+ppClassOverloads overloads = DL.intercalate "\n" (show <$> IM.elems overloads)
 
 -- function to convert a  binding to a stringname
 bind2HName bindings i = case named $ info $ (bindings V.! i) of
@@ -238,5 +239,5 @@ ppCoreBinds :: CoreModule -> String
 ppEntity (Entity nm ty) = 
   case nm of
     Just nm -> show nm
-    Nothing -> "\\_"
+    Nothing -> "_"
   ++ " : " ++ ppType ty -- ++ " (" ++ show uni ++ ")"

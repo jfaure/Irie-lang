@@ -25,7 +25,6 @@
 --
 -- presumably let-bindings / type functions
 -- skolemization = remove existential quantifiers
-{-# OPTIONS -fdefer-typed-holes -Wno-typed-holes #-}
 module TypeJudge where
 import CoreSyn as C
 import qualified CoreUtils as CU
@@ -36,6 +35,7 @@ import Control.Monad.ST
 import qualified Data.Text as T -- for cancer purposes
 import qualified Data.Vector as V
 import qualified Data.Map as M
+import Data.Functor
 import Control.Monad
 import Control.Applicative
 import Control.Monad.Trans.State.Strict
@@ -88,7 +88,7 @@ updateBindTy :: IName -> Type -> TCEnv ()
 judgeBind :: CoreModule -> Binding -> TCEnv Type = \cm -> \case
   LArg i -> pure $ typed i
   LCon i -> pure $ typed i
-  LClass i -> pure $ typed i
+  LClass i -> pure $ traceShowId $ typed i
   LBind args e info -> let t = typed info in case t of
     TyArrow tys -> case length args + 1 /= length tys of
       True -> error ("arity mismatch: " ++ 
@@ -104,25 +104,11 @@ judgeBind :: CoreModule -> Binding -> TCEnv Type = \cm -> \case
 -- a UserType of TyUnknown needs to be inferred. otherwise check it.
 judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
  = \got expected cm ->
- -- make a local pure tyVarLookupFn using tyvars at this point
- -- this is more convenient than a monadic version
--- flip CU.lookupBinding <$> gets (algData . coreModule) 
--- >>= \tyVarLookupFn ->
   let
-      unVar :: Type -> Type = \x ->
-        let checkLoop v seen = case v of
-                TyAlias n -> if n `elem` seen
-                  then error ("alias loop: " ++ show n)
-                  else checkLoop (typed $ CU.lookupType n (algData cm)) (n:seen)
-                t -> t  -- trivial case
-        in  checkLoop x []
-      --unAlias = \case { TyAlias n -> tyVarLookupFn n ; t -> t }
-      subsume' a b = subsume a b unVar
       -- local shortcuts ommitting boilerplate arguments
+      unVar :: Type -> Type = CU.unVar (algData cm)
+      subsume' a b = subsume a b unVar
       judgeExpr' got expected = judgeExpr got expected cm
-      -- get a type lookup function from the state monad
-      --subsume' got expected = gets (bindings . coreModule) >>=
-      --  \binds -> pure $ subsume got expected (flip CU.lookupType binds)
 
       -- case expressions have the type of their most general alt
       mostGeneralType :: (IName -> Type) -> [Type] -> Maybe Type
@@ -145,6 +131,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
                               ++ "\nGot:      " ++ ppType got)
 
   in checkOrInfer <$> case got of
+
   Lit l    -> pure $ typeOfLiteral l -- a polytype TODO check
   WildCard -> pure expected
   Instr p  -> case expected of -- prims must be type annotated if used
@@ -170,8 +157,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
   -- APP expr: unify argTypes and remove left arrows from app expresssion
   -- TODO PAP, also check arities match
   -- polymorphic instantiation ?
-  App fn args -> do
-    judgeExpr' fn TyUnknown >>= \case
+  App fn args -> judgeExpr' fn TyUnknown <&> unVar >>= \case
       TyArrow tys -> zipWithM judgeExpr' args (init tys) >>= \judged ->
         if all id $ zipWith subsume' judged tys
         then pure (last tys)
