@@ -14,6 +14,7 @@ import Data.List (isInfixOf)
 import qualified Data.Text as T
 --import qualified Data.ByteString.Char8 as C -- so ghc realises char ~ Word8
 import Control.Monad.State.Strict as ST
+import Control.Monad.Reader
 
 import Debug.Trace
 -- import Text.Megaparsec.Debug
@@ -192,10 +193,10 @@ decl :: Parser Decl -- top level
 
 -- needs to return an Exp so we can give the literal a polytype
 literalExp :: Parser PExp = lexeme $ do
-     Typed (TyPrim (PrimInt 8))           . Lit . Char   <$> charLiteral
- <|> Typed (TyPrim (PrimArr (PrimInt 8))) . Lit . String <$> stringLiteral
- <|> Typed (TyName (Ident "Num"))         . Lit . Frac . toRational <$> try L.float
- <|> Typed (TyName (Ident "Num"))         . Lit . Int    <$> int
+     Lit . Char   <$> charLiteral
+ <|> Lit . String <$> stringLiteral
+ <|> Lit . Frac . toRational <$> try L.float
+ <|> Lit . Int    <$> int
 
 binds :: Parser Binds = BDecls <$> many decl
 -- ref = reference indent level
