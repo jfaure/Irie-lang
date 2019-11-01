@@ -7,6 +7,7 @@
 -- ? also type functions etc..
 module Core2Stg (core2stg)
 where
+import Debug.Trace
 
 import Prim
 import CoreSyn
@@ -45,6 +46,7 @@ convData :: TypeMap -> (V.Vector StgData, V.Vector (StgId, StgType))
 convData tyMap = mkLists $ foldr f ([],[]) tyMap
   where
   mkLists (a,b) = (V.fromList a, V.fromList b)
+  f (Entity (Just hNm) TyPoly{}) acc = acc -- don't conv polytypes
   f (Entity (Just hNm) rawTy) (datas, aliases) = case convTy tyMap rawTy of
       StgAlgType d -> (d:datas, aliases)
       a            -> let nm = LLVM.AST.mkName (CU.hNm2Str hNm)
@@ -68,6 +70,8 @@ convTy tyMap =
                        = StgProductType (mkStgId pNm) $ convTy' <$> tys
             sumData    = StgSumType (mkStgId dataNm) $ mkProdData <$> sumAlts
         in  StgAlgType sumData
+
+  TyExpr tyfun -> error ("dependent type: " ++ show tyfun)
 
   -- Note any other type is illegal at this point
   t -> error ("internal error: core2Stg: not a monotype: " ++ show t)
@@ -95,18 +99,26 @@ doBinds binds tyMap = V.fromList $ V.ifoldr f [] binds
 
 convExpr :: BindMap -> CoreExpr -> StgExpr
 convExpr bindMap =
- let lookup      = (bindMap V.!)
-     convExpr'   = convExpr bindMap
-     convName' i = convName i $ named $ info $ lookup i
+  let lookup      = (bindMap V.!)
+      convExpr'   = convExpr bindMap
+      convName' i = convName i $ named $ info $ lookup i
+      typeOf      = typed . info . lookup
  in \case
  Var nm                -> StgLit $ StgVarArg $ convName' nm
  Lit lit               -> StgLit $ StgConstArg $ literal2Stg lit
  App fn args           -> case fn of
-   (Var fId)    -> StgApp (convName' fId) (StgExprArg . convExpr' <$> args)
-   (Instr prim) -> case (convExpr' <$> args) of
-       [a, b] -> StgPrimOp $ StgPrimBinOp (prim2llvm prim) a b
-       _      -> error "unsupported arity for primInstr"
-   weirdFn -> error ("panic: core2Stg: not a function: " ++ show weirdFn)
+    (Var fId)    ->
+      let bind = lookup fId
+          instanciate = case bind of
+            b@(LClass i) -> traceShow i b
+            b            -> b
+      in  StgApp (convName' fId) (StgExprArg . convExpr' <$> traceShow instanciate args)
+ 
+    (Instr prim) -> case (convExpr' <$> args) of
+        [a, b] -> StgPrimOp $ StgPrimBinOp (prim2llvm prim) a b
+        _      -> error "unsupported arity for primInstr"
+ 
+    weirdFn -> error ("panic: core2Stg: not a function: " ++ show weirdFn)
  
 
  -- TODO default case alt

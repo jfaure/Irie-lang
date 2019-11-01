@@ -30,7 +30,7 @@ dbg i = id
 
 -- we need to save indentation in some expressions
 -- because we may parse many expressions on a line before it becomes relevant
-type Parser = (ParsecT Void T.Text (ST.State Pos))
+type Parser = (ParsecT Void T.Text (Reader Pos))
 
 -----------
 -- Lexer --
@@ -113,7 +113,8 @@ endLine = lexeme (single '\n')
 -- indentation shortcuts
 noIndent = L.nonIndented scn . lexeme
 iB = L.indentBlock scn
-saveIndent = L.indentLevel >>= put
+--saveIndent = L.indentLevel >>= put
+svIndent f = L.indentLevel >>= \s -> local (const s) f
 
 --sepBy2 :: Alternative m => m a -> m sep -> m [a]
 sepBy2 p sep = liftA2 (:) p (some (sep *> p))
@@ -131,13 +132,13 @@ parseModule :: FilePath -> T.Text
             -> Either (ParseErrorBundle T.Text Void) [Decl]
   = \nm txt ->
   let doParse = runParserT (between sc eof parseProg) nm txt
-  in evalState doParse (mkPos 0) -- start indent is 0
+  in runReader doParse (mkPos 0) -- start indent is 0
 
 parseProg :: Parser [Decl]
  = noIndent decl `sepEndBy` many endLine
 
 decl :: Parser Decl -- top level
- = saveIndent *> parseDecl
+ = svIndent parseDecl
   where
   parseDecl = typeAlias <|> infixDecl <|> defaultDecl <|>
     typeClass <|> typeClassInst <|>
@@ -152,8 +153,8 @@ decl :: Parser Decl -- top level
     where
     doData = defOrFun tyData -- "data" parses a tyData
     doType = defOrFun pType  -- "type" parses any alias (not data)
-    defOrFun pTy = try tyFun <|> tyDef pTy
-    tyFun =     TypeFun   <$> tyName <*> some tyVar <* symboln "=" <*> pExp
+    defOrFun pTy = try (tyFun (TypeExp <$> pTy)) <|> tyDef pTy
+    tyFun pTy = TypeFun   <$> tyName <*> some tyVar <* symboln "=" <*> pTy
     tyDef pTy = TypeAlias <$> tyName                <* symboln "=" <*> pTy
 
   infixDecl = let pInfix = reserved "infix"  $> AssocNone
@@ -210,7 +211,6 @@ indentedItems ref lvl scn p finished = go where
      | pos == lvl -> (:) <$> p <*> go
      | otherwise  -> L.incorrectIndent EQ lvl pos
 
--- don't save indent here, use the state indent saved by parseDecl
 pExp :: Parser PExp
   =   lambda <|> lambdaCase
 -- <|> notFollowedBy app *> arg -- notFollowedBy infixApp *> arg
@@ -218,7 +218,7 @@ pExp :: Parser PExp
   <|> try app
   <|> try infixApp
   <|> arg
-  <|> dbg "parense" (parens pExp)
+  <|> dbg "parens" (parens pExp)
   where
   arg = letIn <|> multiIf <|> caseExpr
         <|> WildCard <$ reserved "_"
@@ -245,15 +245,14 @@ pExp :: Parser PExp
   lambdaCase = LambdaCase <$> (char '\\' <* reserved "case" *> many (alt <* scn))
   letIn = do
     reserved "let"
-    ref <- get -- reference indentation
+    ref <- ask -- reference indentation
     scn
     lvl <- L.indentLevel
-    put lvl -- save this indent
-    binds <- BDecls <$> indentedItems ref lvl scn decl (reserved "in")
-    reserved "in"
-    p <- pExp
-    put ref -- restore indent
-    return (Let binds p)
+    local (const lvl) $ do -- save this indent
+      binds <- BDecls <$> indentedItems ref lvl scn decl (reserved "in")
+      reserved "in"
+      p <- pExp
+      return (Let binds p)
   -- it's assumed later that there is at least one if alt
   multiIf = normalIf <|> do
     reserved "if"
@@ -271,13 +270,12 @@ pExp :: Parser PExp
   caseExpr = do
     reserved "case"
     scrut <- pExp <* reserved "of"
-    ref <- get
+    ref <- ask
     scn
     lvl <- L.indentLevel
-    put lvl
-    alts <- indentedItems ref lvl scn alt (fail "_") -- no end condition
-    put ref
-    pure $ Case scrut alts
+    local (const lvl) $ do
+      alts <- indentedItems ref lvl scn alt (fail "_") -- no end condition
+      pure $ Case scrut alts
   typeSig e = reserved ":" *> pType >>= \t -> return (Typed t e)
   typeExp = TypeExp <$> pType
   asPat = AsPat <$> lIden <* reservedOp "@" <*> pat
@@ -301,14 +299,16 @@ pat :: Parser Pat
 typeAnn  :: Parser Type = reserved ":" *> pType <|> return TyUnknown
 pType :: Parser Type -- must be a type (eg. after ':')
  = dbg "ptype" $ do
- try forall <|> try tyArrow <|> singleType <|> parens pType
+ try tyApp <|> try forall <|> try tyArrow <|> singleType <|> parens pType
    where
-   tyArrow = TyArrow <$> dbg "arrow" (singleType `sepBy2` symbol "->")
+   tyApp   = dbg "app" $ do TyApp   <$> singleType <*> some singleType
+   tyArrow = TyArrow <$> dbg "arrow" (try tyApp <|> singleType) `sepBy2` symbol "->"
 
-singleType :: Parser Type
- = TyPrim <$> primType <|>
-   TyName <$> uIden    <|>
-   unKnown             <|>
+singleType :: Parser Type =
+   TyPrim    <$> primType <|>
+   TyName    <$> uIden    <|>
+   TyVar     <$> lIden    <|>
+   TyUnknown <$  reserved "_" <|>
    parens pType
   where
   unKnown = TyUnknown <$ reserved "_"
@@ -320,7 +320,7 @@ forall :: Parser Type
 -- Because to the left there be type functions..
 tyData :: Parser Type
  = fail "_" -- TyRecord <$> tyName <*> braces (some namedCon)
- <|> TyData      <$> ((,) <$> tyName <*> many singleType) `sepBy1` symboln "|"
+ <|> TyData      <$> ((,) <$> tyName <*> many singleType) `sepBy` symboln "|"
  <|> TyInfixData <$> singleType <*> infixName <*> singleType
   where
   namedCon = (,) <$> tyName <*> some (singleType)

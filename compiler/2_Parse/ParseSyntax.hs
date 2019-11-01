@@ -65,6 +65,7 @@ data Type
  | TyVar  Name    -- introduced by TyFunction
 
  | TyArrow [Type] -- function type
+ | TyApp Type [Type]
 
  -- GADTs
  -- These must subsume Type so they can be returned by TyFunctions

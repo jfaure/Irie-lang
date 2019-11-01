@@ -7,6 +7,6 @@ class Num where {
 
 -- Int subsumes Num
 instance Num Int where {
-  (+) = #!add
-  (-) = #!sub
+  (+) : Int->Int->Int= #!add
+  (-) : Int->Int->Int= #!sub
   }

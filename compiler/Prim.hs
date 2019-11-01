@@ -8,7 +8,6 @@ where
 data Literal
  = Char Char | Int Integer | Frac Rational | String String
  | Array Int [Literal] -- incl. tuples
- | TypedLit Literal    -- type is important and must be given for stg
 -- | WildCard            -- errors on evaluation
 
 -----------

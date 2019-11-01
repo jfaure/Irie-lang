@@ -4,6 +4,7 @@ import CoreSyn
 --import StgSyn
 import Parser
 import ToCore
+import PrettyCore
 import TypeJudge
 import Core2Stg
 import StgToLLVM (stgToIRTop)

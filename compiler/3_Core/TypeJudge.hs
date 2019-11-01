@@ -27,6 +27,7 @@
 -- skolemization = remove existential quantifiers
 module TypeJudge where
 import CoreSyn as C
+import PrettyCore
 import qualified CoreUtils as CU
 
 import qualified Data.Vector.Mutable as MV -- mutable vectors
@@ -47,8 +48,6 @@ import Debug.Trace
 dump :: TCEnv ()
 dump = traceM =<< gets (ppCoreModule . coreModule)
 
--- ! the type of bindings needs to be updated as
--- type information is discovered
 -- TODO use modifiable vector here!
 data TCEnvState = TCEnvState { -- type check environment
    coreModule :: CoreModule
@@ -59,7 +58,7 @@ type TCEnv a = State TCEnvState a
 
 judgeModule :: CoreModule -> CoreModule
 judgeModule cm = handleErrors $ execState go $ TCEnvState cm []
-  where go = V.mapM (judgeBind cm) (bindings cm)
+  where go = V.imapM (judgeBind cm) (bindings cm)
         handleErrors :: TCEnvState -> CoreModule
           = \st -> case errors st of
           [] -> coreModule st
@@ -73,6 +72,7 @@ typeOfM :: IName -> TCEnv Type
 lookupHNameM :: IName -> TCEnv (Maybe HName)
   = \n -> named . info . CU.lookupBinding n 
           <$> gets (bindings . coreModule)
+-- modify a binding's type annotation
 updateBindTy :: IName -> Type -> TCEnv ()
   = \n ty -> 
    let doUpdate cm =
@@ -85,20 +85,23 @@ updateBindTy :: IName -> Type -> TCEnv ()
 
 -- Rule lambda: propagate (maybe partial) type annotations downwards
 -- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
-judgeBind :: CoreModule -> Binding -> TCEnv Type = \cm -> \case
-  LArg i -> pure $ typed i
-  LCon i -> pure $ typed i
-  LClass i -> pure $ traceShowId $ typed i
+judgeBind :: CoreModule -> IName -> Binding -> TCEnv () = \cm bindINm -> \case
+  LArg    i -> pure () -- pure $ typed i
+  LCon    i -> pure () -- pure $ typed i
+  LClass  i -> pure () -- pure $ traceShowId $ typed i
+  LExtern i -> pure () -- pure $ typed i
   LBind args e info -> let t = typed info in case t of
-    TyArrow tys -> case length args + 1 /= length tys of
-      True -> error ("arity mismatch: " ++ 
+    expTy@(TyArrow tys) -> if length args + 1 /= length tys
+      then error ("arity mismatch: " ++ 
                     show (named info) ++ show args ++ ": " ++ show tys)
-      False -> zipWithM_ updateBindTy args tys -- *> dump
-               -- note expected type of the expression is the function ret-type!
-               *> judgeExpr e (last tys) cm
-    -- this being a function, we need to update
-    -- arguments with known type information
-    _ -> judgeExpr e t cm
+      else do
+        zipWithM updateBindTy args tys
+        retTy  <- judgeExpr e (last tys) cm
+        argTys <- mapM typeOfM args
+        let fnTy = TyArrow (argTys ++ [retTy])
+        updateBindTy bindINm fnTy
+
+    _ -> judgeExpr e t cm *> pure ()
 
 -- type judgements
 -- a UserType of TyUnknown needs to be inferred. otherwise check it.
@@ -111,11 +114,10 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       judgeExpr' got expected = judgeExpr got expected cm
 
       -- case expressions have the type of their most general alt
-      mostGeneralType :: (IName -> Type) -> [Type] -> Maybe Type
-       = \f ->
+      mostGeneralType :: [Type] -> Maybe Type =
        let mostGeneral :: Type -> Type -> Maybe Type = \t1 t2 ->
-            if | subsume' t1 t2 -> Just t2
-               | subsume' t2 t1 -> Just t1
+            if | subsume' t1 t2 -> Just t1
+               | subsume' t2 t1 -> Just t2
                | True           -> Nothing
        in foldr (\t1 t2 -> mostGeneral t1 =<< t2) (Just TyUnknown)
 
@@ -127,12 +129,12 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           _ -> case subsume' got expected of
               True -> got
               False -> error ("subsumption failure:"
-                              ++ "\nExpected: " ++ ppType expected
-                              ++ "\nGot:      " ++ ppType got)
+                              ++ "\nExpected: " ++ ppType' expected
+                              ++ "\nGot:      " ++ ppType' got)
 
   in checkOrInfer <$> case got of
 
-  Lit l    -> pure $ typeOfLiteral l -- a polytype TODO check
+  Lit l    -> pure $ expected
   WildCard -> pure expected
   Instr p  -> case expected of -- prims must be type annotated if used
       TyUnknown -> error ("primitive has unknown type: " ++ show p)
@@ -140,7 +142,6 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
   Var nm ->
     -- 1. lookup type of the var in the environment
     -- 2. in checking mode, update env by filling var's boxes
-    -- TODO expand
     let fillBoxes :: Type -> Type -> Type
         fillBoxes boxy TyUnknown = boxy -- pure inference case
         fillBoxes boxy known = case unVar boxy of
@@ -150,18 +151,18 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
     in do
       bindTy <- typed . info <$> lookupBindM nm
       let newTy = fillBoxes bindTy expected
-      --hNm <- T.unpack . \case { Just h->h; _->T.pack ""} <$> lookupHNameM nm
       updateBindTy nm newTy
       pure newTy
 
   -- APP expr: unify argTypes and remove left arrows from app expresssion
   -- TODO PAP, also check arities match
-  -- polymorphic instantiation ?
+  -- Typeclass resolution
   App fn args -> judgeExpr' fn TyUnknown <&> unVar >>= \case
       TyArrow tys -> zipWithM judgeExpr' args (init tys) >>= \judged ->
-        if all id $ zipWith subsume' judged tys
-        then pure (last tys)
-        else error "cannot unify function arguments"
+        if not $ all id $ zipWith subsume' judged tys
+        then error "cannot unify function arguments"
+        else do
+            pure (last tys)
       TyUnknown -> error ("failed to infer function type: "++show fn)
       t -> error ("cannot call non function: "++show fn++" : "++show t)
 
@@ -179,12 +180,17 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
 
 -- dataCase: good news is we know the exact type of constructors
   DataCase ofExpr alts -> do
-    scrutTy <- judgeExpr' ofExpr TyUnknown
     exprTys <- mapM (\(_,_,expr) -> judgeExpr' expr expected) alts
     patTys  <- mapM (\(con,args,_) -> case args of
         [] -> judgeExpr' (Var con) expected
         _  -> judgeExpr' (App (Var con) (Var <$> args)) expected
       ) alts
+
+    let expScrutTy = case mostGeneralType patTys of
+            Just t -> t
+            Nothing -> error "bad case pattern"
+    scrutTy <- judgeExpr' ofExpr expScrutTy
+
     let patsOk = all (\g -> subsume' g scrutTy)  patTys
         altsOk = all (\g -> subsume' g expected) exprTys
     pure $ if patsOk && altsOk then expected else TyBroken

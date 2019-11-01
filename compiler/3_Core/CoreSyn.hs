@@ -12,13 +12,13 @@
 -- despite dependent types, core seperates terms and types
 -- source/origin annotations (for error msgs)
 
-module CoreSyn where
+module CoreSyn
+where
 
 import Prim
 
 import qualified Data.Vector        as V
 import qualified Data.Text          as T
-import qualified Data.List          as DL -- intersperse
 import qualified Data.IntMap.Strict as IM
 
 type IName   = Int
@@ -31,15 +31,15 @@ type DefaultDecls = IM.IntMap MonoType
 
 -- note. algData is dataTypes     ++ aliases
 --       bindings is constructors ++ binds
-type ClassFns = IM.IntMap Binding  -- indexed by polymorphic classFn's Iname
-type ClassInsts = IM.IntMap ClassFns
+type ClassFns       = IM.IntMap Binding  -- indexed by polymorphic classFn's Iname
+type ClassInsts     = IM.IntMap ClassFns
 type ClassOverloads = IM.IntMap ClassInsts
-data CoreModule = CoreModule {
-   algData  :: TypeMap -- data and aliases
+data CoreModule     = CoreModule {
+   algData   :: TypeMap -- data and aliases
 
  -- binds incl. constructors, locals, and class Fns (not overloads!)
- , bindings :: BindMap
- , externs  :: TypeMap -- extern declarations
+ , bindings  :: BindMap
+ , externs   :: TypeMap -- extern declarations
 
  -- typeclass resolution, indexed by the class polytype's iName
  , overloads :: ClassOverloads
@@ -65,10 +65,11 @@ data Binding
  , info  :: Entity  -- hname, type, source
  }
 -- vars coming into scope (via lambda, case expr, and expr+typesig)
- | LArg { info :: Entity }
+ | LArg    { info :: Entity }
 -- Term level GADT constructor (Type is known)
- | LCon { info :: Entity }
- | LClass { info :: Entity } -- classFn declaration
+ | LCon    { info :: Entity }
+ | LExtern { info :: Entity }
+ | LClass  { info :: Entity } -- classFn declaration
 
 -- an entity = info about | coreExpr | fn arg | decon arg
 data Entity = Entity { -- entity info
@@ -118,6 +119,7 @@ data MonoType
  | MonoTyData   HName [(HName, [Type])] --TODO Type as tyArrow ?
  -- TODO rm this and simply gen getters in tocore (and record updates ?)
  | MonoTyRecord HName [(HName, [(HName, Type)])]
+ | MonoTyData'  IName [(IName, [Type])]
  | MonoTyTuple  [Type]
  | MonoTyClass -- ?!
 
@@ -160,84 +162,6 @@ deriving instance Show CoreExpr
 deriving instance Show Entity
 deriving instance Show CoreModule
 
-typeOfLiteral :: Literal -> Type
-typeOfLiteral l = TyUnknown
-
 data TCError
  = UnifyFail { expected :: Entity, got :: Entity}
  deriving (Show)
-
-ppType :: Type -> String = \case
- TyAlias nm -> "$" ++ show nm
- TyMono m -> case m of
-   MonoTyPrim lty -> case lty of
-     other -> show other
-   MonoTyData nm cons -> "data.$" ++ show nm
-
- TyPoly p -> show p
- TyArrow tys -> "(" ++ (concat $ DL.intersperse " -> " 
-                                (ppType <$> tys)) ++ ")"
- TyExpr coreExpr -> error "tyexpr"
- TyUnknown -> "TyUnknown"
- TyBroken  -> "tyBroken"
-
-ppCoreExpr :: (IName -> String) -> String -> CoreExpr -> String
- = \deref indent ->
- let ppCoreExpr' = ppCoreExpr deref indent
- in \e -> case e of
-  Var n -> {- show n ++-} deref n
-  Lit l -> show l
-  App f args -> ppCoreExpr' f ++" "++ concat (DL.intersperse " " ((\x -> "(" ++ ppCoreExpr' x ++ ")" ) <$> args))
-  -- Let binds e -> error "let in coreexpr" --"let "++ppBinds (\x->Nothing) binds++"in "++ ppCoreExpr e
-  SwitchCase c alts -> "case " ++ ppCoreExpr' c ++ show alts
-  DataCase c alts -> "case " ++ ppCoreExpr' c ++ " of" ++ "\n" ++ (concat $ DL.intersperse "\n" $ (ppDataAlt deref (indent++"  "))<$> alts)
-  TypeExpr ty -> show ty
-  l -> show l
-
-ppDataAlt :: (IName -> String) -> String -> (IName, [IName], CoreExpr) -> String
-ppDataAlt deref indent (con, args, ret) = indent ++
- deref con ++ (concatMap (\x -> " " ++ (deref x)) args) ++ " -> " ++ 
- ppCoreExpr deref (indent++"  ") ret
-
-ppBinds :: [Binding] -> (IName -> String) -> String
- = \l f -> concatMap (ppBind f "\n   ") l
-ppBind f indent b = indent ++ case b of
-  LBind args e entity -> case named entity of
-     { Just nm -> show nm ; Nothing -> "_" }
-    ++ " " ++ show args 
-    ++ " : " ++ ppType (typed entity)
-    ++ {-indent ++-} " = " ++ ppCoreExpr f "" e
-  LArg a -> "larg: " ++ ppEntity a
-  LCon a -> "lcon: " ++ ppEntity a
-  LClass a -> "lclass: " ++ ppEntity a
-
-ppCoreModule :: CoreModule -> String
- = \(CoreModule typeMap bindings externs overloads defaults)
-  ->  "-- types --\n" ++ (concatMap (\x->ppEntity x ++ "\n") typeMap)
-      ++ "\n" ++ "-- defaults --\n" ++ show defaults
-
-      ++ "\n\n" ++ "-- bindings --"
-      ++ concat ((ppBind (bind2HName bindings) "\n") <$> bindings)
-      ++ "\n\n" ++ "-- overloads --"
-      ++ "\n" ++ DL.intercalate "\n" (ppClassOverloads <$> IM.elems overloads)
-      ++ "\n\n" ++ "-- externs --"
-      ++ "\n" ++ (concatMap (\x->ppEntity x ++ "\n") externs)
-
-ppClassOverloads overloads = DL.intercalate "\n" (show <$> IM.elems overloads)
-
--- function to convert a  binding to a stringname
-bind2HName bindings i = case named $ info $ (bindings V.! i) of
-       Just x -> T.unpack x
-       Nothing-> "%" ++ show i
-
-ppCoreBinds :: CoreModule -> String
- = \cm
-   -> let binds = bindings cm
-          top = V.filter (\case { LBind{} -> True ; _ -> False }) binds
-      in concat ((ppBind (bind2HName binds) "\n") <$> top)
-
-ppEntity (Entity nm ty) = 
-  case nm of
-    Just nm -> show nm
-    Nothing -> "_"
-  ++ " : " ++ ppType ty -- ++ " (" ++ show uni ++ ")"
