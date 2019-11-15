@@ -1,8 +1,1 @@
-type Num = Int | Double
-default Num Int
-
-(+) : Int->Int->Int -- Num -> Num -> Num
-(+) = _
--- infix 6 (+)
-
 f a = ((+) a 713)

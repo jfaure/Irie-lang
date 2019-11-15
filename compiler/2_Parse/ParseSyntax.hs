@@ -59,7 +59,8 @@ data GuardedRhs = GuardedRhs [Stmt] PExp
 -- note. Types may be parsed as TyFunction if they take arguments
 data Type
  = TyPrim PrimType -- primitive
- | TyForall Forall
+ | TyPoly PolyType
+-- | TyQuant [Name] [Name] Type -- quantified (forall ::)
 
  | TyName Name    -- alias / data name / binding (TyExpr)
  | TyVar  Name    -- introduced by TyFunction
@@ -71,7 +72,7 @@ data Type
  -- These must subsume Type so they can be returned by TyFunctions
  | TyRecord [(Name, [(Name, Type)])]
  | TyData   [(Name, [Type])]
- | TyInfixData Type Name Type -- TODO
+ | TyInfixData Type Name Type
  | TyModule Module
 
  | TyExpr PExp       -- type functions (maybe dependent on values)
@@ -79,10 +80,10 @@ data Type
  | TyUnknown         -- including '_' type given / no type sig
 type DataDef = Type -- TyRecord, TyData, TyInfixData
 
-data Forall
- = ForallAnd [Type] -- & constraints
- | ForallOr  [Type] -- | constraints
- | ForallAny        -- existential type
+data PolyType
+ = PolyAnd   [Type] -- & constraints
+ | PolyUnion [Type] -- | constraints
+ | PolyAny          -- existential type
 
 -- Parser Expressions
 data PExp
@@ -94,7 +95,7 @@ data PExp
  | App PExp [PExp] -- extract infix apps from this during core2expr
  | Lambda [Pat] PExp
  | SectionL PExp QName -- operator sections
- | SectionR QName PExp
+ | SectionR QName PExp -- TODO unnecesary ?
  | Let Binds PExp
  | MultiIf [(PExp, PExp)] -- ghc accepts [GuardedRhs]
  | Case PExp [Alt]
@@ -131,7 +132,7 @@ deriving instance Show Match
 deriving instance Show Rhs
 deriving instance Show GuardedRhs
 deriving instance Show Type
-deriving instance Show Forall
+deriving instance Show PolyType
 deriving instance Show PExp
 deriving instance Show Alt
 deriving instance Show Pat

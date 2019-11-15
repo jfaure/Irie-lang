@@ -1,5 +1,6 @@
 -- Type judgements: checking and inferring
--- see https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/boxy-icfp.pdf
+-- http://pauillac.inria.fr/~remy/mlf/icfp.pdf
+-- https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/boxy-icfp.pdf
 
 -- The goal is to check and/or infer the types of all top level bindings
 -- (and the types (kinds) of the types.. etc)
@@ -7,25 +8,11 @@
 --   * type-check
 --   * inference: reduce every type to an llvm.AST.Type
 
--- Rules
--- Var: lets us increase the polymorphism of a term based on env info
--- App: (t a) has the type of the rightmost arrow (t and a's types must be known)
--- ABS1: a lambda abstraction has type (inputType -> returnType)
--- ABS2: make one box around the -> and try again (via ABS1)
--- Let-I : if let x=u in t, we have t has the same type as u
--- Let-S: same but with a user supplied type annotation for the binding
--- GEN : add some free type variables to a type judgment
---   (if they are neither in the environment nor inside boxes in the skolemized type)
+-- Inference can guess monotypes, but not polytypes
 
--- 1. Inference can guess monotypes, but should not guess polytypes
--- 2. Use locally known information at a function call to instantiate a
--- polymorphic function !
-
--- we may need to make fresh unification variables
---
--- presumably let-bindings / type functions
 -- skolemization = remove existential quantifiers
 module TypeJudge where
+import Prim
 import CoreSyn as C
 import PrettyCore
 import qualified CoreUtils as CU
@@ -85,7 +72,8 @@ updateBindTy :: IName -> Type -> TCEnv ()
 
 -- Rule lambda: propagate (maybe partial) type annotations downwards
 -- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
-judgeBind :: CoreModule -> IName -> Binding -> TCEnv () = \cm bindINm -> \case
+judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
+ = \cm bindINm -> \case
   LArg    i -> pure () -- pure $ typed i
   LCon    i -> pure () -- pure $ typed i
   LClass  i -> pure () -- pure $ traceShowId $ typed i
@@ -101,7 +89,9 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv () = \cm bindINm -> \case
         let fnTy = TyArrow (argTys ++ [retTy])
         updateBindTy bindINm fnTy
 
-    _ -> judgeExpr e t cm *> pure ()
+    t -> do
+        ty <- judgeExpr e t cm
+        updateBindTy bindINm ty
 
 -- type judgements
 -- a UserType of TyUnknown needs to be inferred. otherwise check it.
@@ -125,7 +115,9 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       -- ('got TyUnknown' fails to subsume)
       checkOrInfer :: Type -> Type
       checkOrInfer got = case expected of
-          TyUnknown -> got -- ok
+          TyUnknown -> case got of
+              TyUnknown -> error "failed to subsume"
+              got' -> got'
           _ -> case subsume' got expected of
               True -> got
               False -> error ("subsumption failure:"
@@ -157,12 +149,19 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
   -- APP expr: unify argTypes and remove left arrows from app expresssion
   -- TODO PAP, also check arities match
   -- Typeclass resolution
-  App fn args -> judgeExpr' fn TyUnknown <&> unVar >>= \case
-      TyArrow tys -> zipWithM judgeExpr' args (init tys) >>= \judged ->
-        if not $ all id $ zipWith subsume' judged tys
-        then error "cannot unify function arguments"
-        else do
-            pure (last tys)
+  App fn args -> 
+    let judgeApp tys = zipWithM judgeExpr' args (init tys)
+         >>= \judged ->
+         if not $ all id $ zipWith subsume' judged tys
+         then error "cannot unify function arguments"
+         else pure (last tys)
+    in judgeExpr' fn TyUnknown <&> unVar >>= \case
+      TyArrow tys -> judgeApp tys
+      TyMono (MonoTyPrim prim) ->
+        let toPrim = TyMono . MonoTyPrim
+        in case prim of
+          PrimExtern   etys -> judgeApp (toPrim <$> etys)
+          PrimExternVA etys -> judgeApp (toPrim <$> etys)
       TyUnknown -> error ("failed to infer function type: "++show fn)
       t -> error ("cannot call non function: "++show fn++" : "++show t)
 
@@ -191,9 +190,10 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
             Nothing -> error "bad case pattern"
     scrutTy <- judgeExpr' ofExpr expScrutTy
 
-    let patsOk = all (\g -> subsume' g scrutTy)  patTys
-        altsOk = all (\g -> subsume' g expected) exprTys
-    pure $ if patsOk && altsOk then expected else TyBroken
+    let patsOk = all (\got -> subsume' scrutTy got)  patTys
+        altsOk = all (\got -> subsume' got expected) exprTys
+    pure $ if patsOk && altsOk then expected
+           else error (if patsOk then "bad Alts" else "bad pats")
     -- TODO what if we don't know the expected type (in altsOK) ?
     -- use mostGeneralType probably
 
@@ -219,12 +219,12 @@ subsume got exp unVar = subsume' got exp
       TyPoly got' -> subsumePM got' exp'
       a -> error ("subsume: unexpected type: " ++ show a)
     TyPoly exp' -> case got of
-      TyMono got' -> subsumeMP got' exp'
-      TyPoly got' -> subsumePP got' exp'
+      TyMono got'  -> subsumeMP got' exp'
+      TyPoly got'  -> subsumePP got' exp'
       a -> error ("subsume: unexpected type: " ++ show a)
     TyArrow tysExp -> case got of
       TyArrow tysGot -> subsumeArrow tysGot tysExp
-      TyPoly ForallAny -> True
+      TyPoly PolyAny -> True
       _ -> False
     TyExpr _ -> _
     TyUnknown -> True -- 'got' was inferred, so assume it's ok
@@ -235,26 +235,31 @@ subsume got exp unVar = subsume' got exp
 
   subsumeMM :: MonoType -> MonoType -> Bool
   subsumeMM (MonoTyPrim t) (MonoTyPrim t2) = t == t2
-  subsumeMM (MonoTyData n tysGot) (MonoTyData n2 tysExp) = n == n2
-  subsumeMM _ _ = False
+  subsumeMM (MonoRigid r) (MonoRigid r2)   = r == r2
 
   subsumeMP :: MonoType -> PolyType -> Bool
-   = \_ _ -> False
+   = \got exp            -> case exp of
+    PolyAny              -> True
+    PolyConstrain tys    -> all (`subsume'` (TyMono got)) tys
+    PolyUnion  tys       -> any (`subsume'` (TyMono got)) tys
+    PolyData p _         -> subsumeMP got p
 
-  subsumePM :: PolyType -> MonoType -> Bool
-   = \got exp -> case got of
-    ForallAny -> True
-    ForallAnd tys -> all (\x -> subsume' x (TyMono exp)) tys
-    ForallOr  tys -> any (\x -> subsume' x (TyMono exp)) tys
+  subsumePM :: PolyType  -> MonoType -> Bool
+--subsumePM (PolyData p _) m@(MonoRigid r) = subsumeMP m p
+  subsumePM _ _ = False -- Everything else is invalid
 
-  subsumePP :: PolyType -> PolyType -> Bool
-   = \got exp -> case got of
-    ForallAny -> True
-    ForallAnd gTys -> _ -- all $ f <$> tys
-    ForallOr  gTys -> case exp of
-      ForallAny -> False
-      ForallAnd eTys -> _
-      ForallOr  eTys -> hasAnyBy subsume' eTys gTys -- TODO check order
+  subsumePP :: PolyType  -> PolyType -> Bool
+   = \got exp            -> case got of
+    PolyAny              -> True
+    PolyConstrain gTys   -> _ -- all $ f <$> tys
+    -- data: use the polytypes for subsumption
+    PolyData p1 _        -> case exp of
+      PolyData p2 _ -> subsumePP p1 p2
+      _             -> False
+    PolyUnion  gTys      -> case exp of
+      PolyAny            -> False
+      PolyConstrain eTys -> _
+      PolyUnion  eTys    -> hasAnyBy subsume' eTys gTys -- TODO check order
     where
 
     hasAnyBy :: (a->a->Bool) -> [a] -> [a] -> Bool

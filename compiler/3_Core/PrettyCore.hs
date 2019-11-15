@@ -15,14 +15,15 @@ ppType :: (IName -> String) -> Type -> String = \deref -> clCyan . \case
  TyMono m        -> case m of
    MonoTyPrim lty     -> case lty of
      other            -> show other
-   MonoTyData nm cons -> "data.$" ++ show nm
+   MonoRigid r        -> "rigid: " ++ show r ++ "(" ++ deref r ++ ")"
 
  TyPoly p        -> show p
- TyArrow tys     -> "(" ++ (concat $ DL.intersperse " -> "
+ TyArrow tys     -> clNormal ++ "(" ++ (concat $ DL.intersperse " -> "
                            (ppType deref <$> tys)) ++ ")"
  TyExpr coreExpr -> error "tyexpr"
  TyUnknown       -> "TyUnknown"
  TyBroken        -> "tyBroken"
+ other           -> "other: " ++ show other
 
 ppCoreExpr :: (IName -> String) -> (IName -> String)
            -> String -> CoreExpr -> String
@@ -104,3 +105,4 @@ clBlue    x = "\x1b[34m" ++ x ++ "\x1b[0m"
 clMagenta x = "\x1b[35m" ++ x ++ "\x1b[0m"
 clCyan    x = "\x1b[36m" ++ x ++ "\x1b[0m"
 clWhite   x = "\x1b[37m" ++ x ++ "\x1b[0m"
+clNormal = "\x1b[0m"

@@ -1,17 +1,22 @@
-# expr2Core
-  * subtyping - algData are also sum polytypes (of their subtypes)
-  * modules
-  * dont squash bindings
-  * use HashMap for String maps
+# !!
+  * Dependent types
+  * Typeclass instantiation
 
+# expr2Core
   * Let
+  * array prims
+  * modules
   * tuples (anon product types)
-  * What is allowed in a let binding ? atm it's [Decl]
-  * GuardedRhs
-  * more patterns
+
+  * TyRigid could be polytype
+  * multiparam typeclasses
+  * default typeclass signatures/decls
+  * fn overloads
   * records
+  * more patterns
   * Case -> Case optimizations
   * precedence (parser doesn't have all infix decls)
+  * risky implicit forall typevars ?
 
 # core2Stg
   * tyFunctions
@@ -20,11 +25,8 @@
 # typeJudge
   * dependent types
   * resolve polytypes (using classOverloads + default decls)
-  * partial type signatures
 
 # parser
-  * View patterns
-  * indent as Reader
   * indented 'where', esp. class
   * linefolds
   * GADT style
@@ -38,10 +40,15 @@
   * effects
 
 # LFVM
+  * Module level constraints ? to avoid name clashes
   * track non-copyable data lifetime
     * data passed to multiple functions:
       if only one wants to modify it: give it ownership and execute last
-    * sudoku example - inplace modifcations, that undo as stack unravels
+    * sudoku example - inplace modifications, that undo as stack unravels
 
 # General
   * error message clarity
+
+# Maybe
+  * View patterns (?)
+  * GuardedRhs

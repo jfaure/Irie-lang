@@ -34,6 +34,8 @@ type DefaultDecls = IM.IntMap MonoType
 type ClassFns       = IM.IntMap Binding  -- indexed by polymorphic classFn's Iname
 type ClassInsts     = IM.IntMap ClassFns
 type ClassOverloads = IM.IntMap ClassInsts
+
+type CoreModuleSig  = CoreModule -- difference is no lBinds are saved
 data CoreModule     = CoreModule {
    algData   :: TypeMap -- data and aliases
 
@@ -95,6 +97,7 @@ data CoreExpr
  | WildCard      -- TODO move to Literal
 
 ----------- Types -- ---------
+-- note. alias vs name:
 type UserType = Type -- user supplied type annotation
 data Type
  = TyAlias IName   -- aliases (esp. to MonoTyData)
@@ -108,31 +111,23 @@ data Type
  | TyUnknown -- needs to be inferred - the so-called box type.
  | TyBroken -- typecheck couldn't infer a coherent type
 
--- Note. data is up to stg, Core only handles GADT-style sigs
--- TODO subtypes, (.) accessor
--- ! These types cannot be instantiated with Polytypes
--- they are polymorphic only as return types of TypeFunctions
--- Note. coresyn datas save their own name,
---       it's easier to convert to stg that way
 data MonoType
  = MonoTyPrim   PrimType
- | MonoTyData   HName [(HName, [Type])] --TODO Type as tyArrow ?
- -- TODO rm this and simply gen getters in tocore (and record updates ?)
- | MonoTyRecord HName [(HName, [(HName, Type)])]
- | MonoTyData'  IName [(IName, [Type])]
- | MonoTyTuple  [Type]
- | MonoTyClass -- ?!
+ | MonoRigid    IName    -- rigid typeVars subsume by comparing INames
 
-type PolyType = Forall
-data Forall -- typeclass & and | operations
- = ForallAnd [Type] -- (&) multiple typeclass constraints
- | ForallOr  [Type] -- (|) union types (esp. type of typeclass)
- | ForallAny        -- Existential type (since typevars are flexible)
+data PolyType
+ = PolyConstrain  [Type] -- (&) multiple typeclass constraints
+ | PolyUnion      [Type] -- (|) union types (esp. type of typeclass)
+ | PolyAny               -- Existential type (flexible typevars)
+ -- Data is both a polytype (of it's alts) and a monotype
+ | PolyData PolyType DataDef
+
+-- Data saves bindMap names, since they're not in the typeMap
+data DataDef = DataDef HName [(HName, [Type])]
+-- | RecordDef HName [(HName, [(HName, Type)])]
+-- | TupleDef [Type]
 
 -- type functions: from trivial `data a = ..` to dependent types
--- TODO kind functions, type matching, type classes, subtypes
--- If a TyDependent returns a new data,
---   we must emit it as a TyFn during ToCore (to access constructors etc..)
 data TypeFunction
  = TyDependent {
    tyArgs :: [IName]
@@ -142,6 +137,7 @@ data TypeFunction
    tyArgs :: [IName]
  , tyVal  :: Type
  }
+ | TyApp Type [Type]
 
 ----------- Types -- --------- 
 -- type vars are flexible = arbitrary types rather than variables.
@@ -153,7 +149,8 @@ data TypeFunction
 -- neither is it transitive |s|~s and s~|s| but not |s|~|s|.
 -- similarly, boxy subsumption is neither reflexive nor transitive
 
-deriving instance Show Forall
+deriving instance Show PolyType
+deriving instance Show DataDef
 deriving instance Show Binding
 deriving instance Show MonoType
 deriving instance Show Type

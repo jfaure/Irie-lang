@@ -12,9 +12,10 @@ import Debug.Trace
 import Prim
 import CoreSyn
 import StgSyn
+import qualified CoreUtils as CU
 
 import Data.Char (ord)
-import qualified CoreUtils as CU
+import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified LLVM.AST as L -- (Operand, Instruction, Type, Name, mkName)
 import qualified LLVM.AST  -- (Operand, Instruction, Type, Name, mkName)
@@ -24,11 +25,12 @@ import qualified LLVM.AST.FloatingPointPredicate as FP
 import qualified LLVM.AST.Type as LT
 import qualified LLVM.AST.Float as LF
 import           LLVM.AST.AddrSpace
+import Data.List
 
 -- TODO filter all functions from CoreModule.bindings
 core2stg :: CoreModule -> StgModule
 core2stg (CoreModule algData coreBinds externs overloads defaults)
- = StgModule stgData stgTypedefs (stgBinds V.++ stgExterns)
+ = StgModule stgData (V.fromList stgTypedefs) stgExterns stgBinds
   where
   (stgData, stgTypedefs) = convData algData
   stgBinds               = doBinds coreBinds algData
@@ -42,34 +44,43 @@ doExtern tyMap iNm (Entity (Just nm) ty) =
 
 -- handle the algData TypeMap (NameMap Entity)
 -- This returns the TyAliases monotyDatas
-convData :: TypeMap -> (V.Vector StgData, V.Vector (StgId, StgType))
+convData :: TypeMap -> (V.Vector StgData, [(StgId, StgType)])
 convData tyMap = mkLists $ foldr f ([],[]) tyMap
   where
-  mkLists (a,b) = (V.fromList a, V.fromList b)
-  f (Entity (Just hNm) TyPoly{}) acc = acc -- don't conv polytypes
-  f (Entity (Just hNm) rawTy) (datas, aliases) = case convTy tyMap rawTy of
-      StgAlgType d -> (d:datas, aliases)
-      a            -> let nm = LLVM.AST.mkName (CU.hNm2Str hNm)
-                      in (datas, (nm, a):aliases)
+  mkLists (a,b) = (V.fromList a, b)
+  f (Entity (Just hNm) (TyMono (MonoRigid r))) (d, a) = (d,a)
+  f (Entity (Just hNm) (TyPoly (PolyData ty dataDef))) (datas, aliases)
+    = let (newData, subTys) = convDataDef tyMap dataDef
+      in  (newData : datas, subTys ++ aliases)
+  f (Entity _       TyPoly{}) acc = acc -- don't conv polytypes
+  f (Entity (Just hNm) rawTy) (datas, aliases) =
+      let ty = convTy tyMap rawTy
+          nm = LLVM.AST.mkName (CU.hNm2Str hNm)
+      in  (datas, (nm, ty):aliases)
+
+convDataDef :: TypeMap -> DataDef -> (StgData, [(StgId, StgType)])
+convDataDef tyMap (DataDef dataNm sumAlts) =
+  let deref = (tyMap V.!)
+      mkStgId = LLVM.AST.mkName . CU.hNm2Str
+      mkProdData (pNm, tys)
+        = StgProductType (mkStgId pNm) $ convTy tyMap <$> tys
+      sumTy = StgSumType (mkStgId dataNm) $ mkProdData <$> sumAlts
+      qual = dataNm `T.snoc` '.'
+      subAliases = (\(pNm, tys) -> mkStgId $ qual `T.append` pNm) <$> sumAlts
+  in  (sumTy, zip subAliases (repeat $ StgTypeAlias $ mkStgId dataNm))
 
 -- needs the TypeMap in order to deref types
 convTy :: TypeMap -> Type -> StgType
 convTy tyMap =
   let deref = (tyMap V.!)
       convTy' = convTy tyMap
+      mkAlias iNm = convName iNm (named $ deref iNm)
   in \case
-  TyAlias iNm         -> StgTypeAlias $ convName iNm (named $ deref iNm)
+  TyAlias iNm         -> StgTypeAlias $ mkAlias iNm
   TyArrow types       -> StgFnType (convTy' <$> types)
   TyMono m            -> case m of
-      MonoTyPrim prim -> StgLlvmType $ primTy2llvm prim
-
-      -- MonoTyData HName [(HName, [Type])]
-      MonoTyData dataNm sumAlts ->
-        let mkStgId nm = LLVM.AST.mkName $ CU.hNm2Str nm
-            mkProdData (pNm, tys)
-                       = StgProductType (mkStgId pNm) $ convTy' <$> tys
-            sumData    = StgSumType (mkStgId dataNm) $ mkProdData <$> sumAlts
-        in  StgAlgType sumData
+    MonoTyPrim prim -> StgLlvmType  $ primTy2llvm prim
+    MonoRigid  riNm -> StgTypeAlias $ mkAlias riNm
 
   TyExpr tyfun -> error ("dependent type: " ++ show tyfun)
 
@@ -119,7 +130,6 @@ convExpr bindMap =
         _      -> error "unsupported arity for primInstr"
  
     weirdFn -> error ("panic: core2Stg: not a function: " ++ show weirdFn)
- 
 
  -- TODO default case alt
  SwitchCase expr alts ->
@@ -138,7 +148,7 @@ convExpr bindMap =
 -- TODO name clashes ?
 convName :: IName -> Maybe HName -> StgId
 convName i = \case
-  Nothing -> LLVM.AST.mkName $ show i
+  Nothing -> LLVM.AST.UnName $ fromIntegral i
   Just h  -> LLVM.AST.mkName $ CU.hNm2Str h -- ++ show i
 
 -- TODO depends on the type of the Literal ?!

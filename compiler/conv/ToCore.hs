@@ -32,9 +32,10 @@ data ConvState = ConvState {
    nameCount     :: IName
  , tyNameCount   :: IName
 
- , hNames        :: M.Map HName IName
- , hTyNames      :: M.Map HName IName
+ , hNames        :: HM.HashMap HName IName
+ , hTyNames      :: HM.HashMap HName IName
 
+ , localTys      :: V.Vector Entity
  , localBinds    :: V.Vector Binding
  , toCoreErrors  :: [ToCoreErrors]
 }
@@ -46,44 +47,75 @@ pName2Text = \case
   P.Symbol s -> T.pack s
 pQName2Text (P.UnQual (P.Ident s)) = T.pack s
 
--- the only legitimate TyVars are data + tyAliases
--- other tyVars are arguments of type functions
--- this needs to be effectful to handle tyVar lookup errors
-convTy :: P.Type -> ToCoreEnv Type
- = \case
-  P.TyPrim t                 -> pure $ TyMono $ MonoTyPrim t
-  P.TyForall (P.ForallAnd f) -> pure . TyPoly . ForallAnd=<<mapM convTy f
-  P.TyForall (P.ForallOr f)  -> pure . TyPoly . ForallOr =<<mapM convTy f
-  P.TyForall (P.ForallAny)   -> pure $ TyPoly $ ForallAny
-  P.TyName n                 -> do
+------------
+-- ConvTy --
+------------
+data ConvTyError
+ = UnknownTy    HName
+ | UnknownTyVar HName
+ | UnexpectedTy P.Type
+
+-- Error handling is slightly different if the ty is in a type function
+convTy :: (HName -> Maybe IName) -> P.Type -> Either ConvTyError Type
+ = \findNm ->
+ let convTy' = convTy findNm
+ in \case
+  P.TyPrim t                -> Right$TyMono$MonoTyPrim t
+  P.TyPoly (P.PolyAnd   f)-> TyPoly . PolyConstrain <$> mapM convTy' f
+  P.TyPoly (P.PolyUnion f) -> TyPoly . PolyUnion     <$> mapM convTy' f
+  P.TyPoly (P.PolyAny)  -> Right$TyPoly$PolyAny
+  P.TyName n                ->
   -- A TyName is either an alias or a data !
-    let hNm = pName2Text n
-    findTyHName hNm >>= \case
-      Just iNm -> pure $ TyAlias iNm
-      Nothing ->  error ("unknown typeName: " ++ show hNm)
+    let hNm = pName2Text n in case findNm hNm of
+      Just iNm -> Right $ TyAlias iNm
+      Nothing ->  Left (UnknownTy hNm)
   -- TODO only in tyfunctions..
-  P.TyVar n   -> findHName (pName2Text n) >>= \case
-      Just iNm -> pure $ TyAlias iNm
-      Nothing  -> error ("typevar out of scope: " ++ show n)
-  P.TyArrow tys'             -> do
-    tys <- mapM convTy tys'
-    pure $ TyArrow tys
+  P.TyVar n   -> let hNm = pName2Text n in case findNm hNm of
+      Just iNm -> Right $ TyAlias iNm
+      Nothing  -> Left (UnknownTyVar hNm)
+  P.TyArrow tys'             -> TyArrow <$> mapM convTy' tys'
   P.TyExpr e                 -> _ -- TyExpr $ expr2Core e
   P.TyTyped a b              -> _ -- suspect
-  P.TyUnknown                -> pure TyUnknown
-  t -> error ("unexpected ty: " ++ show t)
+  P.TyUnknown                -> Right $ TyUnknown
+  t                          -> Left $ UnexpectedTy t
 
-doTypeFun :: P.Decl -> ToCoreEnv TypeFunction
-doTypeFun (P.TypeFun nm args expr) = freshNames (length args)
-    >>= \argNms -> case expr of
-    P.TypeExp ty -> --trivial type function
-        let hNm = pName2Text nm
-        in --registerHName hNm *>
-           do
-           traceShowM ty
-           addHName hNm =<< freshName
-           zipWithM addHName (pName2Text <$> args) argNms
-           TyTrivialFn argNms <$> convTy ty
+-- Default behavior for top level type signatures,
+-- new variables are implicitly quantified
+convTyM :: P.Type -> ToCoreEnv Type = \pTy ->
+  mkFindTyHName <&> (`convTy` pTy) >>= \case
+  Right ty -> pure ty
+  Left  er -> case er of
+    UnknownTy ty    -> error ("unknown typeName: " ++ show ty)
+    UnknownTyVar ty -> --error ("unknown typeName: " ++ show ty)
+      withNewTyHNames [ty] $ \[ty] -> convTyM pTy
+    UnexpectedTy t  -> case t of
+      P.TyApp tfn targs -> do
+        fn <- convTyM tfn
+        args <- mapM convTyM targs
+        pure $ TyExpr $ TyApp fn args
+      _ -> error ("unexpected ty: "    ++ show t)
+
+doTypeFun :: P.Decl -> IName -> ToCoreEnv TypeFunction
+doTypeFun (P.TypeFun nm args expr) tyFunINm =
+  let tyFnhNm = pName2Text nm
+      argHNms = pName2Text <$> args
+  in do
+  addTyHName tyFnhNm tyFunINm
+  withNewTyHNames argHNms $ \argNms -> case expr of
+    P.TypeExp ty -> do --trivial type function
+        zipWithM addTyHName argHNms argNms
+        tyEither <- mkFindTyHName <&> (`convTy` ty)
+        tyBody   <- case tyEither of
+          Right t -> pure t
+          Left (UnexpectedTy dty@(P.TyData alts)) -> do
+            dataNm <- freshName
+            (cons, dataTy, subTys) <- convData dataNm (P.TypeAlias nm dty)
+            modify (\x->x{localBinds= localBinds x V.++ cons})
+            modify (\x->x{localTys= (localTys x `V.snoc` dataTy) V.++ subTys})
+            pure $ typed dataTy
+          _ -> error "bad tyfunction"
+        pure $ TyTrivialFn argNms tyBody
+
     dependent -> TyDependent argNms <$> expr2Core expr
 
 ----------
@@ -97,49 +129,55 @@ getTypesAndCons :: V.Vector P.Decl -- .TypeAlias
   -- note. convTy converts all P.TyName to TyAlias
   let registerData iNm (P.TypeAlias qNm ty) = addTyHName (pName2Text qNm) iNm
   in do
-  V.imapM_ registerData datas
-  sumCons_monoTy_pairs <- mapM convData datas
-  let constructors = foldr (V.++) V.empty $ fst <$> sumCons_monoTy_pairs
-      dataMonoTys =                         snd <$> sumCons_monoTy_pairs
-  pure (constructors, dataMonoTys)
+  iNms <- V.fromList <$> freshTyNames (V.length datas)
+  V.zipWithM registerData iNms datas
+  sumCons_monoTys_pairs <- V.zipWithM convData iNms datas
+  let (cons, ents, localEnts) = V.unzip3 sumCons_monoTys_pairs
+  let vConcat = foldr (V.++) V.empty
+  pure (vConcat cons, ents V.++ vConcat localEnts)
 
--- * collect constructors and make a type for the data
--- Convert one Data decl to CoreSyn
--- Entity.typed is always a MonoTyData
--- input should only be TypeAlias to Data !
-convData :: P.Decl -> ToCoreEnv (V.Vector Binding, Entity)
- = \(P.TypeAlias aliasName ty) ->
-  case ty of
-    P.TyData sumTys -> let dataNm = aliasName in do
+-- Convert one Data decl to (constructors, dataType ++ subTypes)
+-- input must be TypeAlias.
+-- Sum types are polytype alts of their product types
+convData :: IName -> P.Decl
+         -> ToCoreEnv (V.Vector Binding, Entity, V.Vector Entity)
+ = \dataINm (P.TypeAlias aliasName ty) ->
+  let dataNm = pName2Text aliasName
+  in case ty of
+  P.TyData sumTys -> do
       let go :: (P.Name, [P.Type]) -> ToCoreEnv (HName, [Type])
-          go (prodNm, prodTys) = do
-              coreTys <- mapM convTy prodTys
+          go (prodNm, tupleTys) = do
+              coreTys <- mapM convTyM tupleTys
               pure (pName2Text prodNm, coreTys)
+      (conHNames, conTys) <- unzip <$> mapM go sumTys
+      let nAlts = length conHNames
 
-      (prodHNames, prodTys) <- unzip <$> mapM go sumTys
+      conINames <- freshNames nAlts
+      zipWithM addHName conHNames conINames
 
-      let f prodNm prodTy = LCon$Entity (Just prodNm) (TyArrow prodTy)
-          cons = V.fromList $ zipWith f prodHNames prodTys
+      -- Make subtypes
+      let qual             = dataNm `T.snoc` '.'
+          subTyHNames      = (qual `T.append`) <$> conHNames
+      subTyINames <- freshTyNames nAlts
+      zipWithM addTyHName subTyHNames subTyINames
+      let subTypes         = TyMono . MonoRigid <$> subTyINames
+          mkSubEnts hNm ty = Entity (Just hNm) ty
+          subEnts          = V.fromList$zipWith mkSubEnts subTyHNames subTypes
+      let dataDef          = DataDef dataNm (zip conHNames conTys)
+          dataPolyType     = PolyData (PolyUnion subTypes) dataDef
+          dataEnt          = Entity (Just dataNm) (TyPoly dataPolyType)
 
-          tyNm = pName2Text dataNm
-          ty = TyMono $ MonoTyData tyNm (zip prodHNames prodTys)
-          ent = Entity (Just tyNm) ty
-          getSubTypes (prodNm,_) =
-            let nm = pQName2Text (P.QName [dataNm] prodNm)
-            in  TyAlias <$> freshTyName
---    subTypeAliases <- getSubTypes <$> sumTys
---    let polyEnt = Entity (Just tyNm) (TyPoly (ForallOr subTypeAliases))
---    pure (cons, polyEnt)
-      conINames <- freshNames (V.length cons)
-      zipWithM addHName prodHNames conINames
-      pure (cons, ent)
+      let f prodNm prodTy subTy = LCon $ Entity (Just prodNm) $
+            (TyArrow $ prodTy ++ [subTy])
+          cons = V.fromList $ zipWith3 f conHNames conTys subTypes
+      pure (cons, dataEnt, subEnts)
 
     -- Records: only difference is we also need to emit accessor functions
 --  P.TyRecord hNm fields->MonoTyRecord hNm (doSumAlt prodTyRecord <$> fields)
 
-    -- simple alias
-    t -> convTy t >>= \ty -> pure
-      (V.empty, Entity (Just $ pName2Text aliasName) ty)
+  -- simple alias
+  t -> convTyM t >>= \ty -> pure
+      (V.empty, Entity (Just $ pName2Text aliasName) ty, V.empty)
 
 -- getFns: generate bindings from a [P.Decl]
 -- both normal fns and typeclass funs use this
@@ -186,21 +224,23 @@ match2LBind :: P.Match -> Type -> ToCoreEnv Binding = \m fnSig ->
       -- TODO GuardedRhs
       unExpr (P.UnGuardedRhs e) = e
       rhsE = unExpr rhs
-  in do
+  in pats2Bind pats rhsE (Just (pName2Text fNm)) fnSig
+
+pats2Bind :: [P.Pat] -> P.PExp -> Maybe HName -> Type -> ToCoreEnv Binding
+pats2Bind pats rhsE fNm fnSig = do
   -- special case for scopedtypevars: lift typed expr to fn sig
   (ty, pExp) <- case (fnSig, rhsE) of
-      (TyUnknown, P.Typed t e) -> (,e) <$> convTy t
+      (TyUnknown, P.Typed t e) -> (,e) <$> convTyM t
       _ -> pure (fnSig, rhsE)
 
   iNames <- mapM (\_->freshName) pats
   zipWithM mkLArg iNames pats
   expr <- expr2Core $ pExp
-  let fEntity = Entity (Just $ pName2Text fNm) ty
-  pure $ LBind iNames expr fEntity
+  pure $ LBind iNames expr (Entity fNm ty)
 
 mkSigMap :: V.Vector P.Decl -> ToCoreEnv (M.Map HName Type)
 mkSigMap sigs =
-    let f (P.TypeSigDecl nms ty) mp = convTy ty >>= \t ->
+    let f (P.TypeSigDecl nms ty) mp = convTyM ty >>= \t ->
             pure $ foldr (\k m->M.insert (pName2Text k) t m) mp nms
     in foldrM f M.empty sigs
 
@@ -214,7 +254,7 @@ doExtern tyMap = let
         prim t = error ("only primtypes allowed in externs: " ++ show t)
     in do
     freshName >>= addHName (pName2Text nm)
-    tys <- getFn <$> convTy ty
+    tys <- getFn <$> convTyM ty
     let externTy = TyMono $ MonoTyPrim $ primCon $ prim <$> tys
     pure $ Entity (Just hNm) externTy
   in \case
@@ -226,35 +266,47 @@ doExtern tyMap = let
 ------------------------------
 freshNames :: Int -> ToCoreEnv [IName] = \count ->
   gets nameCount >>= \n ->
-  modify (\x -> x{nameCount = n+count}) *> pure [n..n+count-1]
+  modify (\x -> x{nameCount = n+count})   *> pure [n..n+count-1]
 freshTyNames :: Int -> ToCoreEnv [IName] = \count ->
-  gets nameCount >>= \n ->
-  modify (\x -> x{nameCount = n+count}) *> pure [n..n+count-1]
-
+  gets tyNameCount >>= \n ->
+  modify (\x -> x{tyNameCount = n+count}) *> pure [n..n+count-1]
 freshName :: ToCoreEnv IName = gets nameCount >>= \n ->
   modify (\x->x{nameCount = n+1}) *> pure n
 freshTyName :: ToCoreEnv IName = gets tyNameCount >>= \n ->
   modify (\x->x{tyNameCount = n+1}) *> pure n
 
 -- ToCoreEnv functions
--- TODO use M.insertlookupWithkey to restore squashed values later !
-addHName :: T.Text -> IName -> ToCoreEnv () =
-  \hNm nm -> modify (\x->x{hNames = M.insert hNm nm (hNames x)})
-addTyHName :: T.Text -> IName -> ToCoreEnv () =
-  \hNm nm -> modify (\x->x{hTyNames = M.insert hNm nm (hTyNames x)})
-findHName :: HName -> ToCoreEnv (Maybe IName) =
-  \hNm -> gets hNames >>= \nms -> pure (nms M.!? hNm)
+addHName    :: T.Text -> IName -> ToCoreEnv () = \hNm nm ->
+  modify (\x->x{hNames = HM.insert hNm nm (hNames x)})
+addTyHName  :: T.Text -> IName -> ToCoreEnv () =
+  \hNm nm -> modify (\x->x{hTyNames = HM.insert hNm nm (hTyNames x)})
+-- add local names
+withNewHNames  :: [HName] -> ([IName] -> ToCoreEnv a) -> ToCoreEnv a
+withNewHNames =
+  \hNms fn -> CU.localState $ do
+    iNms <- freshNames (length hNms)
+    zipWithM addHName hNms iNms
+    fn iNms
+withNewTyHNames :: [HName] -> ([IName] -> ToCoreEnv a) -> ToCoreEnv a
+withNewTyHNames =
+  \hNms fn -> CU.localState $ do
+    iNms <- freshTyNames (length hNms)
+    zipWithM addTyHName hNms iNms
+    fn iNms
+findHName   :: HName -> ToCoreEnv (Maybe IName) =
+  \hNm    -> gets hNames >>= \nms -> pure (hNm `HM.lookup` nms)
 findTyHName :: HName -> ToCoreEnv (Maybe IName) =
-  \hNm -> gets hTyNames >>= \nms -> pure (nms M.!? hNm)
+  \hNm    -> gets hTyNames >>= \nms -> pure (hNm `HM.lookup` nms)
 
-addLocal :: IName -> Binding -> ToCoreEnv IName =
+mkFindHName, mkFindTyHName :: ToCoreEnv (HName -> Maybe IName)
+mkFindHName   = gets hNames   >>= \nms -> pure (`HM.lookup` nms)
+mkFindTyHName = gets hTyNames >>= \nms -> pure (`HM.lookup` nms)
+
+addLocal    :: IName -> Binding -> ToCoreEnv IName =
   \iNm bind -> do
     modify (\x->x{localBinds=V.snoc (localBinds x) bind })
     pure iNm
 
--- TODO [Decls] must be parsable within coreexpr, but :: Decl -> CoreModule
--- So do let bindings create a local module that imports all bindings at that
--- point ? we could then inline that module
 ------------------------
 -- Main conv function --
 ------------------------
@@ -268,12 +320,13 @@ parseTree2Core parsedTree = CoreModule
   }
   where
   (binds, dataTys, overloads, externs) = evalState toCoreM $ ConvState
-    { nameCount      = 0 --V.length p_TopBinds -- + V.length constructors
+    { nameCount      = 0
     , tyNameCount    = 0
-    , hNames         = M.empty
-    , hTyNames       = M.empty
+    , hNames         = HM.empty
+    , hTyNames       = HM.empty
 
     , localBinds     = V.empty
+    , localTys       = V.empty
     , toCoreErrors   = []
     }
 
@@ -306,42 +359,23 @@ parseTree2Core parsedTree = CoreModule
   toCoreM :: ToCoreEnv (BindMap, TypeMap, ClassOverloads, TypeMap) = do
     -- 1. data: get the constructors and dataEntities (name + dataty)
     (cons, dataEntities) <- getTypesAndCons p_TyAlias
-    V.imapM (\i (LCon (Entity (Just hNm) _ )) -> addHName hNm i) cons
-    -- modify (\x->x{tyNameCount = tyNameCount})
-    -- modify (\x->x{nameCount = V.length cons})
 
     -- 2. extern entities
     externs <- mapM (doExtern dataEntities) p_externs
     let externBinds = LExtern <$> externs
 
     -- 3. type functions:
-    --    2Core is easy, we let typeJudge deal with complications
-    typeFuns <- mapM doTypeFun p_TyFuns
+    tyFunINms <- V.fromList <$> freshNames (V.length p_TyFuns)
+    typeFuns  <- V.zipWithM doTypeFun p_TyFuns tyFunINms
+    traceShowM typeFuns
 
     -- 4. typeclasses
-    -- get: (classFn bindings, classTy polytypes, instance overloads)
+    -- we need: (classFn bindings, classTy polytypes, instance overloads)
     -- note. classDecls includes local bindings (they must match iNames)
     (classDecls, classEntities, overloadBinds)
       <- doTypeClasses p_TyClasses p_TyClassInsts
-      :: ToCoreEnv (V.Vector Binding, V.Vector Entity
-                    , IM.IntMap (IM.IntMap [P.Decl]))
-
-    -- Generate instance overloads, making sure to match iNames to the binds
-    -- we want to use classDecl iNames for our overloads
-    let genOverload (P.FunBind [match@(P.Match nm _ _)]) = do
-          let fName = pName2Text nm
-              sig = TyUnknown
-          iNm <- findHName fName <&> \case -- lookup class fn
-              Nothing -> error ("unknown class function: " ++ show fName)
-              Just i  -> i
-          f <- match2LBind match sig
-          pure (iNm, f)
-
-    -- double IntMap: InstTyName to (classFn to binding)
-    overloads <- mapM (mapM (\insts->IM.fromList <$> mapM genOverload insts)) overloadBinds
-      :: ToCoreEnv ClassOverloads -- (IM.IntMap (IM.IntMap Binding))
-
-    --let classOverloads  = IM.fromList <$> classFns
+    -- Overloads :: (IM.IntMap (IM.IntMap Binding))
+    overloads   <- generateOverloads overloadBinds :: ToCoreEnv ClassOverloads
     classLocals <- gets localBinds
     modify (\x->x{localBinds=V.empty})
 
@@ -359,6 +393,23 @@ parseTree2Core parsedTree = CoreModule
         tyEntities = dataEntities V.++ classEntities
     pure (binds, tyEntities, overloads, externs)
 
+generateOverloads :: IM.IntMap (IM.IntMap [P.Decl]) -> ToCoreEnv ClassOverloads
+ = \overloadBinds ->
+  -- Generate instance overloads, making sure to match iNames to the binds
+  let genOverload (P.FunBind [match@(P.Match nm _ _)]) =
+        let fName = pName2Text nm
+            sig = TyUnknown
+        in do
+        iNm <- findHName fName <&> \case -- lookup class fn
+            Nothing -> error ("unknown class function: " ++ show fName)
+            Just i  -> i
+        f <- match2LBind match sig
+        pure (iNm, f)
+  in
+  -- double IntMap: InstTyName to (classFn to binding)
+  mapM (mapM (\insts->IM.fromList <$> mapM genOverload insts)) overloadBinds
+
+
 doTypeClasses :: V.Vector P.Decl -> V.Vector P.Decl
  -> ToCoreEnv (V.Vector Binding, V.Vector Entity, IM.IntMap (IM.IntMap [P.Decl]))
 doTypeClasses p_TyClasses p_TyClassInsts = do
@@ -366,8 +417,8 @@ doTypeClasses p_TyClasses p_TyClassInsts = do
   let partitionFns = partition $ \case {P.TypeSigDecl{}->True ;_-> False }
       getClassSigs (P.TypeSigDecl nms sig) =
         (\ty -> (\x->LClass$Entity (Just (pName2Text x)) ty)<$>nms)
-        <$> convTy sig
-      doClass :: (P.Decl) -> ToCoreEnv [Binding]
+        <$> convTyM sig
+      doClass :: (P.Decl) -> ToCoreEnv (HName, [Binding])
       doClass (P.TypeClass nm decls) =
           let (sigs, fnBinds) = partitionFns decls
               registerClassFn (P.TypeSigDecl nms sig) =
@@ -377,26 +428,29 @@ doTypeClasses p_TyClasses p_TyClassInsts = do
              then error "default class decls unsupported"
              else pure ()
              -- register all names
-             addTyHName (pName2Text nm) =<< freshTyName
+             classTyINm <- freshTyName
+             let classTyHNm = pName2Text nm
+             addTyHName classTyHNm classTyINm
              mapM registerClassFn sigs
              -- collect class signatures
              sigMap <- mkSigMap (V.fromList sigs)
              let getSig = (\hNm -> M.lookup hNm sigMap)
              -- TODO default class functions
              -- getFns getSig (V.length dataTys) (V.fromList fnBinds)
-             concat <$> mapM getClassSigs sigs
+             (classTyHNm,) . concat <$> mapM getClassSigs sigs
   -- top-level class bindings, we add these to the bindmap.
   -- Instance functions are added to the 'OverLoads intmap'
   -- These take polytypes; typeJudge will have to instantiate them.
-  classDecls <- V.fromList . concat <$> mapM doClass p_TyClasses
-    :: ToCoreEnv (V.Vector Binding)
+  (classTyNms, classDecls') <- V.unzip <$> V.mapM doClass p_TyClasses
+    :: ToCoreEnv (V.Vector HName,  V.Vector [Binding])
+  let classDecls = V.fromList $ V.foldr (++) [] classDecls'
 
   -- 2.1 TypeClass overloads/instances
   -- For each typeclass, we're constructing it's (poly)type, and collecting
   -- it's overloads: We fold classInsts, and simultaneously check them.
   -- We also need to update the typeclass PolyType every instance
-  let f :: P.Decl -> IM.IntMap  (Type, IM.IntMap [P.Decl])
-        -> ToCoreEnv (IM.IntMap (Type, IM.IntMap [P.Decl]))
+  let f :: P.Decl -> IM.IntMap  (PolyType, IM.IntMap [P.Decl])
+        -> ToCoreEnv (IM.IntMap (PolyType, IM.IntMap [P.Decl]))
       f tcInst@(P.TypeClassInst clsNm instTyNm decls) classIMap =
         let ok = check p_TyClasses tcInst
             (clsHNm, instHNm) = (pName2Text clsNm, pName2Text instTyNm)
@@ -404,8 +458,7 @@ doTypeClasses p_TyClasses p_TyClassInsts = do
             declsOk = not $ any (\case P.FunBind{}->False ; _ -> True) fnBinds
             -- verify that inst satisfies the class decl
             check classes inst = True
-            addPoly (TyPoly (ForallOr t1)) (TyPoly (ForallOr t2))
-              = (TyPoly (ForallOr (t2 ++ t1)))
+            addPoly (PolyUnion t1) (PolyUnion t2) = (PolyUnion (t2 ++ t1))
         in if not $ ok && declsOk -- TODO better validity checks
         then error "bad instance decl"
         else do
@@ -428,7 +481,7 @@ doTypeClasses p_TyClasses p_TyClassInsts = do
               --case getSig fName of
               --Nothing -> error ("no sig for instance: " ++ show nm)
               --Just t  -> t
-        let polyTy = TyPoly (ForallOr [TyAlias instINm])
+        let polyTy = PolyUnion [TyAlias instINm]
             val = (polyTy, IM.singleton instINm fnBinds)
             insertFn (ty', binds') (ty, binds)
               = (addPoly ty' ty, IM.union binds binds') -- union may fail ?
@@ -437,19 +490,13 @@ doTypeClasses p_TyClasses p_TyClassInsts = do
 
   -- The classIMap contains both the class polytypes and class overloads
   classIMap <- foldrM f IM.empty p_TyClassInsts
-    :: ToCoreEnv (IM.IntMap (Type, IM.IntMap [P.Decl]))
+    :: ToCoreEnv (IM.IntMap (PolyType, IM.IntMap [P.Decl]))
 
   -- Get class Entities (a polytype for each typeclass var)
-  let classTys = fst <$> IM.elems classIMap
+  let classTys = TyPoly <$> fst <$> IM.elems classIMap
       overloadBinds = snd <$> classIMap
-
-      toEntity i ty =
-          let ent = (\(LClass info) -> named info) $ classDecls V.! i
-              hNm = case ent of
-                Nothing -> error "internal error: lost class typeName"
-                Just n -> n
-          in Entity (Just hNm) ty
-  let classEntities = V.imap toEntity (V.fromList classTys)
+      toEntity hNm ty = Entity (Just hNm) ty
+  let classEntities = V.zipWith toEntity classTyNms (V.fromList classTys)
 
   -- Results = class entities: The polytype associated with each class
   -- Overloads = all instance functions
@@ -467,10 +514,10 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
         Char   c -> "Num"
         Int    i -> "Num"
         Frac   r -> "Num"
-        String s -> _
-        Array sz lits -> _
+        String s -> "CharPtr"
+        Array lits -> "CharPtr"
     let ty = case maybeTy of
-            Nothing -> error "Internal: Num typeclass not in scope"
+            Nothing -> error "Internal: prim typeclass not in scope"
             Just t  -> TyAlias t
     addLocal iNm (LBind [] (Lit l) (Entity Nothing ty))
     pure $ Var iNm
@@ -485,16 +532,17 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   -- P.Let Binds PExp where Binds = BDecls [Decl]
   -- P.Lambda [Pat] PExp
   -- TODO allow any decl ?
+  -- TODO use M.insertlookupWithkey to restore squashed values later !
   P.Let binds exp   -> _ -- local decls !!
+-- withNewHNames  :: [HName] -> ([IName] -> ToCoreEnv a)
+--                -> ToCoreEnv a
 
   -- lambdas are Cases with 1 alt
   -- TODO similar to match2Lbind !
+  --match2LBind :: P.Match -> Type -> ToCoreEnv Binding = \m fnSig ->
   P.Lambda pats f   -> do
       fIName <- freshName
-      iArgs  <- mapM (\_ -> freshName) pats
-      zipWithM mkLArg iArgs pats
-      expr <- expr2Core f
-      let bind = LBind iArgs expr (Entity Nothing TyUnknown)
+      bind <- pats2Bind pats f (Nothing) TyUnknown
       addLocal fIName bind
       pure $ Var fIName
 
@@ -524,10 +572,10 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Case e alts  -> expr2Core e >>= getCaseAlts alts
   P.AsPat nm pat -> _
   P.WildCard     -> pure WildCard
-  P.TypeExp ty   -> TypeExpr <$> convTy ty
+  P.TypeExp ty   -> TypeExpr <$> convTyM ty
   P.Typed t e    -> do -- we name it so we can type annotate it
       iNm <- freshName
-      ty <- convTy t
+      ty <- convTyM t
       expr <- expr2Core e
       addLocal iNm (LBind [] expr (Entity Nothing ty))
       pure $ Var iNm
@@ -588,5 +636,3 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
       in doInfixPats $ P.PApp n (p1:[ps])
     P.PApp qNm ps -> P.PApp qNm (doInfixPats <$> ps)
     other -> other
-
-

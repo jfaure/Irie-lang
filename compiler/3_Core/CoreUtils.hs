@@ -7,6 +7,7 @@ module CoreUtils where
 import CoreSyn
 import qualified Data.Vector as V
 import qualified Data.Text as T (unpack)
+import Control.Monad.State.Strict
 
 lookupBinding :: IName -> BindMap -> Binding
  = \n binds -> binds V.! n
@@ -26,3 +27,6 @@ unVar :: TypeMap -> Type -> Type = \tyMap x ->
             else checkLoop (typed $ lookupType n tyMap) (n:seen)
           t -> t  -- trivial case
   in  checkLoop x []
+
+localState :: State s a -> State s a
+localState f = get >>= \s -> f <* put s

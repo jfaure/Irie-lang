@@ -2,13 +2,8 @@
 -- #! will directly parse an llvm type or llvm instruction
 
 type Int             = #!Int 32
-
----- ! requires type functions
---type Ptr e           = #!Ptr e
---type (n:Nat) * eType = #!Array n eType
--- #!Struct tyList -- takes a tuple of types.. scary
-
-type Nat = Int -- difference is we use unsigned instructions on it
+type Nat = Int -- difference is we use unsigned instructions
+type CharPtr = #!CharPtr
 
 -- all float types use the same llvm instructions
 -- type Half      = #!Half
@@ -16,7 +11,7 @@ type Float     = #!Float
 type Double    = #!Double
 -- type FP128     = #!FP128        -- 112 bit mantissa
 -- type PPC_FP128 = #!PPC_FP128 -- two 64-bits
--- instances Frac [Half Float Double FP128 PPC_FP128]
+-- Frac = Half | Float | Double | FP128 | PPC_FP128
 
 type IntOp2 = Int -> Int -> Int
 (+)  : IntOp2 = #!add
@@ -27,7 +22,7 @@ type IntOp2 = Int -> Int -> Int
 (==) : IntOp2 = #!icmp
 -- (/)  : Int -> Int -> Real = \x y -> (#!fptoui x) // (#!fptoui y)
 
----- unsigned overloads for Nat
+-- unsigned overloads for Nat
 --(//) : Nat -> Nat -> Nat = #!udiv
 --(/?) : Nat -> Nat -> Nat = #!urem
 
@@ -47,5 +42,11 @@ type IntOp2 = Int -> Int -> Int
 --(.) : n*e -> i -> e = \arr i -> #!atIndex arr i
 --(len) : n*e -> Nat = n
 
+---- ! requires type functions
+--type Ptr e           = #!Ptr e
+--type (n:Nat) * eType = #!Array n eType
+-- #!Struct tyList -- takes a tuple of types.. scary
+
+-- C extern functions --
 extern puts : (#!CharPtr) -> Int
 externVarArg printf : (#!CharPtr) -> Int

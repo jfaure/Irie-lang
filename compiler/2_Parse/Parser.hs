@@ -116,7 +116,6 @@ iB = L.indentBlock scn
 --saveIndent = L.indentLevel >>= put
 svIndent f = L.indentLevel >>= \s -> local (const s) f
 
---sepBy2 :: Alternative m => m a -> m sep -> m [a]
 sepBy2 p sep = liftA2 (:) p (some (sep *> p))
 
 --debug functions
@@ -187,7 +186,7 @@ decl :: Parser Decl -- top level
   funBind = FunBind <$> some match
 
   defaultDecl = DefaultDecl <$ reserved "default"
-                <*> pType <*> pType
+                <*> singleType <*> singleType
   match = (Match <$> (name <|> parens symbolName) <*> many (lexeme pat)
       <|> InfixMatch <$> (lexeme pat) <*> infixName <*> many (lexeme pat))
       <*  reservedOp "=" <*> rhs
@@ -313,8 +312,8 @@ singleType :: Parser Type =
   where
   unKnown = TyUnknown <$ reserved "_"
 forall :: Parser Type
- = TyForall <$> (ForallAnd <$> try (singleType `sepBy2` symbol "&")
-            <|> ForallOr  <$> singleType `sepBy2` symbol "|")
+ = TyPoly <$> (PolyAnd <$> try (singleType `sepBy2` symbol "&")
+            <|> PolyUnion  <$> singleType `sepBy2` symbol "|")
 
 -- Note this only parses data to the right of the '=' !
 -- Because to the left there be type functions..

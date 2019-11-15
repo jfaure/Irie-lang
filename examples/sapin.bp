@@ -1,12 +1,12 @@
-sapin : Int -> @String
+sapin : Int -> [String]
 sapin n =
   let -- base = baseWidth of each section
-      base       = (6 + [0..n])^2 // 2 - 11
-      stars      = base + (\n. 2*[0..n])@0 $ [0..n]-4
-      trunkWidth = 1 + 2 * (1 + (n-1)//2)
+      base       = (6+[0..n])^2 // 2 - 11
+      stars      = base + (\x => 2*[0..x])@0 [-4..n-4]
+      trunkWidth = 2*(1 + (n-1)//2) + 1
       addOffset : n*Int -> [n 2]*Int
-      addOffset line = (\x. x ,. x) $ last base//2 - line//2
+      addOffset line = zip $ last base//2 - line//2
 
       tree  = addOffset stars               `choose` " *"
       trunk = [n 2] `shape` addOffset trunk `choose` " |"
-  in  tree , trunk
+  in  tree ++ trunk

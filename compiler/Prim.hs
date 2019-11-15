@@ -7,8 +7,8 @@ where
 
 data Literal
  = Char Char | Int Integer | Frac Rational | String String
- | Array Int [Literal] -- incl. tuples
--- | WildCard            -- errors on evaluation
+ | Array [Literal] -- incl. tuples
+-- | WildCard      -- errors on evaluation
 
 -----------
 -- types --
