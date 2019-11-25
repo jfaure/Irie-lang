@@ -19,11 +19,10 @@ type Op = Name
 type QOp = QName
 
 -- Modules are returned by typefunctions.. (trivial module ?)
--- Note. modules subsume Type ! So they can returned by type functions
-type Module = [Decl]
-data Module' = Module {
-   mName    :: Name
- , contents :: [Decl]
+-- Note. modules subsume Type ! So they can be returned by type functions
+data Module = Module {
+   moduleName :: Name
+ , decls      :: [Decl]
  }
 
 data Decl
@@ -124,7 +123,7 @@ data Stmt -- in 'do' / in pattern guard
 
 deriving instance Show Name
 deriving instance Show QName 
-deriving instance Show Module'
+deriving instance Show Module
 deriving instance Show Decl
 deriving instance Show Assoc
 deriving instance Show Binds

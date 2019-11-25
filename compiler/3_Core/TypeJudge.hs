@@ -11,6 +11,20 @@
 -- Inference can guess monotypes, but not polytypes
 
 -- skolemization = remove existential quantifiers
+--   boxy matching: fill boxes with monotypes
+--   (no instantiation/skolemization)
+--
+-- Flexible Vs rigid
+-- flexible = subsume a type (<=)
+-- rigid    = all must be exactly the same type (=)
+
+
+-- By design, boxy matching is not an equivalence relation:
+-- it is not reflexive (that would require guessing polytypes)
+-- neither is it transitive |s|~s and s~|s| but not |s|~|s|.
+-- similarly, boxy subsumption is neither reflexive nor transitive
+
+
 module TypeJudge where
 import Prim
 import CoreSyn as C
@@ -19,37 +33,42 @@ import qualified CoreUtils as CU
 
 import qualified Data.Vector.Mutable as MV -- mutable vectors
 import Control.Monad.ST
-
 import qualified Data.Text as T -- for cancer purposes
 import qualified Data.Vector as V
 import qualified Data.Map as M
+import qualified Data.IntMap as IM
 import Data.Functor
 import Control.Monad
 import Control.Applicative
 import Control.Monad.Trans.State.Strict
+import Data.Char (ord)
 
-import qualified LLVM.AST.Constant as LC
-import qualified LLVM.AST as L
+--import qualified LLVM.AST.Constant as LC
+--import qualified LLVM.AST as L
 import Debug.Trace
 
 dump :: TCEnv ()
 dump = traceM =<< gets (ppCoreModule . coreModule)
 
--- TODO use modifiable vector here!
-data TCEnvState = TCEnvState { -- type check environment
-   coreModule :: CoreModule
- , errors :: [TCError]
-}
+data TCEnvState = TCEnvState -- type check environment
+ { coreModule  :: CoreModule
+ , errors      :: [TCError]
+ }
 
 type TCEnv a = State TCEnvState a
 
 judgeModule :: CoreModule -> CoreModule
-judgeModule cm = handleErrors $ execState go $ TCEnvState cm []
-  where go = V.imapM (judgeBind cm) (bindings cm)
-        handleErrors :: TCEnvState -> CoreModule
-          = \st -> case errors st of
-          [] -> coreModule st
-          errs -> error $ show errs
+judgeModule cm =
+  let startState = TCEnvState
+        { coreModule = cm
+        , errors     = []
+        }
+      handleErrors :: TCEnvState -> CoreModule
+        = \st -> case errors st of
+        [] -> coreModule st
+        errs -> error $ show errs
+      go = V.imapM (judgeBind cm) (bindings cm)
+  in handleErrors $ execState go startState
 
 -- functions used by judgeBind and judgeExpr
 lookupBindM :: IName -> TCEnv Binding
@@ -73,20 +92,27 @@ updateBindTy :: IName -> Type -> TCEnv ()
 -- Rule lambda: propagate (maybe partial) type annotations downwards
 -- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
 judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
- = \cm bindINm -> \case
+ = \cm bindINm ->
+  let unVar = CU.unVar (algData cm)
+  in \case
   LArg    i -> pure () -- pure $ typed i
   LCon    i -> pure () -- pure $ typed i
   LClass  i -> pure () -- pure $ traceShowId $ typed i
   LExtern i -> pure () -- pure $ typed i
-  LBind args e info -> let t = typed info in case t of
-    expTy@(TyArrow tys) -> if length args + 1 /= length tys
-      then error ("arity mismatch: " ++ 
-                    show (named info) ++ show args ++ ": " ++ show tys)
-      else do
+  LBind info args e -> case unVar (typed info) of
+  -- Careful with splitting off | rebuilding TyArrows
+  -- to avoid having (TyArrow [TyArrow [..]])
+    expTy@(TyArrow tys) -> do
         zipWithM updateBindTy args tys
-        retTy  <- judgeExpr e (last tys) cm
+        let retTy = case drop (length args) tys of
+              []  -> error "impossible"
+              [t] -> t
+              tys -> TyArrow tys
+        judgedRetTy  <- judgeExpr e retTy cm
         argTys <- mapM typeOfM args
-        let fnTy = TyArrow (argTys ++ [retTy])
+        let fnTy = case retTy of 
+              r@(TyArrow rTs) -> TyArrow (argTys ++ rTs)
+              r -> TyArrow (argTys ++ [r])
         updateBindTy bindINm fnTy
 
     t -> do
@@ -128,7 +154,8 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
 
   Lit l    -> pure $ expected
   WildCard -> pure expected
-  Instr p  -> case expected of -- prims must be type annotated if used
+  -- prims must have an expected type
+  Instr p  -> case expected of
       TyUnknown -> error ("primitive has unknown type: " ++ show p)
       t         -> pure expected
   Var nm ->
@@ -149,36 +176,66 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
   -- APP expr: unify argTypes and remove left arrows from app expresssion
   -- TODO PAP, also check arities match
   -- Typeclass resolution
-  App fn args -> 
-    let judgeApp tys = zipWithM judgeExpr' args (init tys)
-         >>= \judged ->
-         if not $ all id $ zipWith subsume' judged tys
-         then error "cannot unify function arguments"
-         else pure (last tys)
-    in judgeExpr' fn TyUnknown <&> unVar >>= \case
-      TyArrow tys -> judgeApp tys
+  App fn args ->
+    -- TODO what the fuck ?!
+    let judgeApp fnTy@(TyArrow tys) =
+          let expArgTys = take (length args) tys
+          in  zipWithM judgeExpr' args expArgTys
+           >>= \judged -> do
+           if all id $ zipWith subsume' judged tys
+           then pure $ case drop (length args) tys of
+             []  -> last tys -- TODO impossible unless takes more args than it's type = probably printf
+             [t] -> t
+             tys -> TyArrow tys
+           else error "cannot unify function arguments"
+    in case fn of
+
+    -- Mem primitives are valid only on PrimArr|PrimTuple
+    Instr (MemInstr mi) -> case args of
+      args -> judgeExpr' (last args) TyUnknown <&> unVar <&> \case
+        TyMono (MonoTyPrim (PrimArr   ty))      -> _
+        TyMono (MonoTyPrim (PrimTuple primTys)) -> case mi of
+          ExtractVal idx ->
+            if idx >= 0 && idx < length primTys
+            then TyMono $ MonoTyPrim $ primTys !! idx
+            else error "tuple access out of bounds !"
+          Gep -> _
+        t -> error ("Cannot use mem access on: " ++ show t)
+      _ -> error "too many args for mem access primitive"
+    Instr (MkTuple) -> do
+      rawTys <- zipWithM judgeExpr' args (repeat TyUnknown)
+      let tys = unVar <$> rawTys
+          mkPrim = \case
+            TyMono (MonoTyPrim p) -> p
+            t        -> error ("bad type in tuple: " ++ show t)
+          tupleTy = PrimTuple $ mkPrim <$> tys
+--    addTuple
+      pure $ TyMono $ MonoTyPrim $ tupleTy
+
+    -- normal fn application
+    fn -> do
+     judgeExpr' fn TyUnknown <&> unVar >>= \case
+      fn@(TyArrow tys) -> judgeApp fn
       TyMono (MonoTyPrim prim) ->
         let toPrim = TyMono . MonoTyPrim
         in case prim of
-          PrimExtern   etys -> judgeApp (toPrim <$> etys)
-          PrimExternVA etys -> judgeApp (toPrim <$> etys)
+          PrimExtern   etys -> judgeApp (TyArrow (toPrim <$> etys))
+          PrimExternVA etys -> judgeApp (TyArrow (toPrim <$> etys))
       TyUnknown -> error ("failed to infer function type: "++show fn)
       t -> error ("cannot call non function: "++show fn++" : "++show t)
-
---Let binds inExpr -> mapM_ (judgeBind cm) binds
---                    *> judgeExpr' inExpr expected
 
 ----------------------
 -- Case expressions --
 ----------------------
 -- 1. all patterns must subsume the scrutinee
 -- 2. all exprs    must subsume the return type
-  SwitchCase ofExpr alts ->
+  Case ofExpr a -> case a of
+   Switch alts ->
     let tys = mapM (\(pat, expr) -> judgeExpr' expr expected) alts
     in head <$> tys
 
 -- dataCase: good news is we know the exact type of constructors
-  DataCase ofExpr alts -> do
+   Decon alts -> do
     exprTys <- mapM (\(_,_,expr) -> judgeExpr' expr expected) alts
     patTys  <- mapM (\(con,args,_) -> case args of
         [] -> judgeExpr' (Var con) expected
@@ -217,7 +274,7 @@ subsume got exp unVar = subsume' got exp
     TyMono exp' -> case got of
       TyMono got' -> subsumeMM got' exp'
       TyPoly got' -> subsumePM got' exp'
-      a -> error ("subsume: unexpected type: " ++ show a)
+      a -> error ("subsume: unexpected type: " ++ show a ++ " : " ++ show exp)
     TyPoly exp' -> case got of
       TyMono got'  -> subsumeMP got' exp'
       TyPoly got'  -> subsumePP got' exp'

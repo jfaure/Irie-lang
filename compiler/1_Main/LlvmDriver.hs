@@ -42,6 +42,16 @@ optimize m f = withPassManager defaultPassSetSpec $ \pm ->
   runPassManager pm m *> f m
 -- eg. withCppModule moduleAST $ optimize f
 
+writeFile :: FilePath -> ModuleAST -> IO () = \fNm mod ->
+  withHostTargetMachineDefault $ \tm -> do
+  dataLayout <- getTargetMachineDataLayout tm
+  withCppModule mod{LLVM.AST.moduleDataLayout=Just dataLayout}
+    (go fNm tm)
+  where
+  bc  tm = LLVM.Module.writeBitcodeToFile
+  obj tm = LLVM.Module.writeObjectToFile tm
+  go fNm tm mod = bc tm (LLVM.Module.File fNm) mod
+
 passes :: Word -> PassSetSpec = \opt -> defaultCuratedPassSetSpec
   { optLevel = if opt>0 then Just opt else Nothing } -- otherwise SEGV lol
 

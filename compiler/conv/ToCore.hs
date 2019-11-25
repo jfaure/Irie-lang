@@ -29,7 +29,8 @@ import Debug.Trace
 -- conversion state is necessary when converting variables to integers
 type ToCoreEnv a = State ConvState a
 data ConvState = ConvState {
-   nameCount     :: IName
+   imports       :: [CoreModule]
+ , nameCount     :: IName
  , tyNameCount   :: IName
 
  , hNames        :: HM.HashMap HName IName
@@ -200,19 +201,6 @@ getFns findSig fnBindings =
   (matches, tys) <- V.unzip <$> V.mapM (registerBinds findSig) fnBindings
   V.zipWithM match2LBind matches tys
 
--- Convert fn argument patterns to case expr (for lambdas + matches)
--- TODO handle more patterns
-mkLArg :: IName -> P.Pat -> ToCoreEnv Binding = \iNm pat -> do
-  hNmMaybe <- case pat of
-      P.PVar hNm -> let h = pName2Text hNm
-                    in addHName h iNm *> pure (Just h)
-      _          -> pure Nothing
-  -- in some cases we could give the type immediately,
-  -- but in general we must leave that to typeJudge
-  let bind = LArg $ Entity hNmMaybe TyUnknown
-  addLocal iNm bind
-  pure bind
-
 -- convert function matches to top level binding
 -- note. (P.Case PExp [Alt]) ; Alt Pat Rhs
 -- Convert to case. (expr2Core (P.Case) can optimize it.)
@@ -233,10 +221,32 @@ pats2Bind pats rhsE fNm fnSig = do
       (TyUnknown, P.Typed t e) -> (,e) <$> convTyM t
       _ -> pure (fnSig, rhsE)
 
-  iNames <- mapM (\_->freshName) pats
+  iNames <- freshNames (length pats)
   zipWithM mkLArg iNames pats
-  expr <- expr2Core $ pExp
-  pure $ LBind iNames expr (Entity fNm ty)
+  expr   <- expr2Core $ pExp
+  pure $ LBind (Entity fNm ty) iNames expr
+
+-- Note. all patterns are given 1 (!) name corresponding to the
+-- function argument. Bind fresh gep instructions if it's an aggregate.
+mkLArg :: IName -> P.Pat -> ToCoreEnv IName = \argNm -> \case
+  P.PVar hNm -> let h = pName2Text hNm
+    in do -- we can sometimes give a type, but it may be wrong.
+       addHName h argNm
+       addLocal argNm (LArg $ Entity (Just h) TyUnknown)
+  P.PTuple pNms ->
+    let hNms = (\(P.PVar h) -> pName2Text h) <$> pNms
+        f :: IName -> HName -> Int -> ToCoreEnv IName
+        f tupleNm hNm idx  = do
+          elemNm <- freshName
+          addHName hNm elemNm
+          let expr = App (Instr$MemInstr$ExtractVal idx) [Var tupleNm]
+              entity = Entity (Just hNm) TyUnknown
+          addLocal elemNm (Local entity $ expr)
+    in do
+      addLocal argNm (LArg $ Entity Nothing TyUnknown)
+      zipWithM (f argNm) hNms [0..]
+      pure argNm
+  p -> error ("unknown pattern: " ++ show p)
 
 mkSigMap :: V.Vector P.Decl -> ToCoreEnv (M.Map HName Type)
 mkSigMap sigs =
@@ -246,7 +256,7 @@ mkSigMap sigs =
 
 doExtern :: TypeMap -> P.Decl -> ToCoreEnv Entity
 doExtern tyMap = let
-  addExtern primCon nm ty = 
+  addExtern primCon nm ty =
     let hNm = pName2Text nm
         getFn (TyArrow tys) = tys
         getFn _ = error "only functions can be externs"
@@ -261,9 +271,10 @@ doExtern tyMap = let
     P.Extern   nm ty -> addExtern PrimExtern   nm ty
     P.ExternVA nm ty -> addExtern PrimExternVA nm ty
 
-------------------------------
--- Various lookup functions --
-------------------------------
+------------------------
+-- Functions on Names -- 
+------------------------
+-- Fresh
 freshNames :: Int -> ToCoreEnv [IName] = \count ->
   gets nameCount >>= \n ->
   modify (\x -> x{nameCount = n+count})   *> pure [n..n+count-1]
@@ -275,7 +286,7 @@ freshName :: ToCoreEnv IName = gets nameCount >>= \n ->
 freshTyName :: ToCoreEnv IName = gets tyNameCount >>= \n ->
   modify (\x->x{tyNameCount = n+1}) *> pure n
 
--- ToCoreEnv functions
+-- AddNames
 addHName    :: T.Text -> IName -> ToCoreEnv () = \hNm nm ->
   modify (\x->x{hNames = HM.insert hNm nm (hNames x)})
 addTyHName  :: T.Text -> IName -> ToCoreEnv () =
@@ -293,54 +304,30 @@ withNewTyHNames =
     iNms <- freshTyNames (length hNms)
     zipWithM addTyHName hNms iNms
     fn iNms
-findHName   :: HName -> ToCoreEnv (Maybe IName) =
-  \hNm    -> gets hNames >>= \nms -> pure (hNm `HM.lookup` nms)
-findTyHName :: HName -> ToCoreEnv (Maybe IName) =
-  \hNm    -> gets hTyNames >>= \nms -> pure (hNm `HM.lookup` nms)
 
+findHName   :: HName -> ToCoreEnv (Maybe IName) = \hNm ->
+  gets hNames   <&> (hNm `HM.lookup`)
+findTyHName :: HName -> ToCoreEnv (Maybe IName) = \hNm ->
+  gets hTyNames <&> (hNm `HM.lookup`)
 mkFindHName, mkFindTyHName :: ToCoreEnv (HName -> Maybe IName)
 mkFindHName   = gets hNames   >>= \nms -> pure (`HM.lookup` nms)
 mkFindTyHName = gets hTyNames >>= \nms -> pure (`HM.lookup` nms)
 
 addLocal    :: IName -> Binding -> ToCoreEnv IName =
   \iNm bind -> do
-    modify (\x->x{localBinds=V.snoc (localBinds x) bind })
-    pure iNm
+  modify (\x->x{localBinds=V.snoc (localBinds x) bind })
+  pure iNm
 
-------------------------
--- Main conv function --
-------------------------
-parseTree2Core :: P.Module -> CoreModule
-parseTree2Core parsedTree = CoreModule
-  { algData       = dataTys -- data entites from 'data' declarations
-  , bindings      = binds
-  , externs       = externs
-  , overloads     = overloads
-  , defaults      = IM.empty
-  }
+-- Careful! groupDecls output order
+-- Would be nice to have subtyping for this
+type D = V.Vector P.Decl
+type ParseTree = (D,D,D,D,D,D,D,D,D)
+groupDecls :: [P.Decl] -> ParseTree
+groupDecls parsedTree = mapTuple9 V.fromList $
+ foldr f ([],[],[],[],[],[],[],[],[]) parsedTree
   where
-  (binds, dataTys, overloads, externs) = evalState toCoreM $ ConvState
-    { nameCount      = 0
-    , tyNameCount    = 0
-    , hNames         = HM.empty
-    , hTyNames       = HM.empty
-
-    , localBinds     = V.empty
-    , localTys       = V.empty
-    , toCoreErrors   = []
-    }
-
-  --------------------------
-  -- Group the parseDecls --
-  --------------------------
-  -- Would be nice to have subtyping for this
   mapTuple9 z (a,b,c,d,e,f,g,h,i) = (z a,z b,z c,z d,z e,z f,z g,z h,z i)
-  (p_TyAlias, p_TyFuns, p_TyClasses, p_TyClassInsts
-    , p_TopSigs, p_TopBinds, p_InfixBinds
-    , p_defaults, p_externs) = mapTuple9 V.fromList groupDecls
-   where
-   groupDecls = foldr f ([],[],[],[],[],[],[],[],[]) parsedTree
-   f x (a,b,c,d,e,f,g,h,i) = case x of
+  f x (a,b,c,d,e,f,g,h,i) = case x of
     P.TypeAlias{}     -> (x:a,b,c,d,e,f,g,h,i)
     P.TypeFun{}       -> (a,x:b,c,d,e,f,g,h,i)
     P.TypeClass{}     -> (a,b,x:c,d,e,f,g,h,i)
@@ -353,10 +340,59 @@ parseTree2Core parsedTree = CoreModule
     P.DefaultDecl{}   -> (a,b,c,d,e,f,g,x:h,i)
     P.Extern{}        -> (a,b,c,d,e,f,g,h,x:i)
     P.ExternVA{}      -> (a,b,c,d,e,f,g,h,x:i)
+    wht -> error ("unexpected: " ++ show wht)
 
-  -- :: topBindings ; typeDecls ; localBindings ; overloads ; externs
-  -- Note. types and binds vectors must be consistent with iNames
+------------------------
+-- Main conv function --
+------------------------
+parseTree2Core :: [CoreModule] -> P.Module -> CoreModule
+parseTree2Core topImports (P.Module mName parsedTree) = CoreModule
+  { moduleName    = pName2Text mName
+  , algData       = dataTys
+  , bindings      = binds
+  , externs       = r_externs
+  , overloads     = r_overloads
+  , defaults      = IM.empty
+  , hNameBinds    = hNames   endState
+  , hNameTypes    = hTyNames endState
+  }
+  where
+  (binds, dataTys, r_overloads, r_externs) = val
+  (val, endState) = runState toCoreM $ ConvState
+    { imports        = topImports
+    , nameCount      = 0
+    , tyNameCount    = 0
+    , hNames         = HM.empty
+    , hTyNames       = HM.empty
+
+    , localBinds     = V.empty
+    , localTys       = V.empty
+    , toCoreErrors   = []
+    }
+  -- Grouped Decls
+  (p_TyAlias, p_TyFuns, p_TyClasses, p_TyClassInsts
+    , p_TopSigs, p_TopBinds, p_InfixBinds
+    , p_defaults, p_externs) = groupDecls parsedTree
+
+  -- Note. types and binds vectors must match iNames
+  -- topBindings;typeDecls;localBindings;overloads;externs
   toCoreM :: ToCoreEnv (BindMap, TypeMap, ClassOverloads, TypeMap) = do
+    -- 0. set up refs to imported modules
+    let check = \case { [] -> pure [] ; [a] -> pure [a] ; a -> error "multiple modules unsupported" }
+    check topImports
+    let moduleHNames   = moduleName <$> topImports
+        importBinds    = V.concat  (bindings   <$> topImports)
+        importTypes    = V.concat  (algData    <$> topImports)
+        -- TODO increase all INames in imported nameMaps (?)
+        -- TODO nameMaps may overwrite names
+        importHNames   = HM.unions (hNameBinds <$> topImports)
+        importTyHNames = HM.unions (hNameTypes <$> topImports)
+        importExterns  = V.concat  (externs    <$> topImports)
+        importOverloads= IM.unions (overloads  <$> topImports)
+    modify (\x->x{hNames=importHNames , hTyNames=importTyHNames
+                 ,nameCount=V.length importBinds
+                 ,tyNameCount=V.length importTypes})
+
     -- 1. data: get the constructors and dataEntities (name + dataty)
     (cons, dataEntities) <- getTypesAndCons p_TyAlias
 
@@ -367,7 +403,6 @@ parseTree2Core parsedTree = CoreModule
     -- 3. type functions:
     tyFunINms <- V.fromList <$> freshNames (V.length p_TyFuns)
     typeFuns  <- V.zipWithM doTypeFun p_TyFuns tyFunINms
-    traceShowM typeFuns
 
     -- 4. typeclasses
     -- we need: (classFn bindings, classTy polytypes, instance overloads)
@@ -388,10 +423,11 @@ parseTree2Core parsedTree = CoreModule
 
     -- 6. Collect results
     -- ! the resulting vectors must be consistent with all iNames !
-    let binds = V.concat
-          [cons, externBinds, classDecls, classLocals, fnBinds, fnLocals]
-        tyEntities = dataEntities V.++ classEntities
-    pure (binds, tyEntities, overloads, externs)
+    let binds = V.concat [importBinds, cons, externBinds
+          , classDecls, classLocals, fnBinds, fnLocals]
+        tyEntities = V.concat [importTypes, dataEntities, classEntities]
+        overloads' = IM.union overloads importOverloads
+    pure (binds, tyEntities, overloads', importExterns V.++ externs)
 
 generateOverloads :: IM.IntMap (IM.IntMap [P.Decl]) -> ToCoreEnv ClassOverloads
  = \overloadBinds ->
@@ -408,7 +444,6 @@ generateOverloads :: IM.IntMap (IM.IntMap [P.Decl]) -> ToCoreEnv ClassOverloads
   in
   -- double IntMap: InstTyName to (classFn to binding)
   mapM (mapM (\insts->IM.fromList <$> mapM genOverload insts)) overloadBinds
-
 
 doTypeClasses :: V.Vector P.Decl -> V.Vector P.Decl
  -> ToCoreEnv (V.Vector Binding, V.Vector Entity, IM.IntMap (IM.IntMap [P.Decl]))
@@ -510,23 +545,27 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Con pNm           -> expr2Core (P.Var pNm) -- same as Var
   P.Lit l             -> do
     iNm <- freshName
-    maybeTy  <- findTyHName $ T.pack $ case l of
-        Char   c -> "Num"
-        Int    i -> "Num"
-        Frac   r -> "Num"
-        String s -> "CharPtr"
-        Array lits -> "CharPtr"
+    let classNm = case l of
+          Char   c -> "Num"
+          Int    i -> "Int" -- "Num"
+          Frac   r -> "Num"
+          String s -> "CharPtr"
+          Array lits -> "CharPtr"
+    maybeTy  <- findTyHName $ T.pack $ classNm
     let ty = case maybeTy of
-            Nothing -> error "Internal: prim typeclass not in scope"
+            Nothing -> error ("Internal: prim type(class) not in scope: " ++ show classNm)
             Just t  -> TyAlias t
-    addLocal iNm (LBind [] (Lit l) (Entity Nothing ty))
+    addLocal iNm (LBind (Entity Nothing ty) [] (Lit l))
     pure $ Var iNm
 
   P.PrimOp primInstr  -> pure $ Instr primInstr
   P.Infix nm          -> expr2Core (P.Var nm)
-  P.App f args        -> handlePrecedence f args
-    where handlePrecedence f args = App <$> expr2Core f
-                                    <*> mapM expr2Core args
+  -- we cannot produce structs/data for tuples
+  -- if we don't know the types yet !
+  P.App f args        ->
+    let handlePrecedence f args
+          = App <$> expr2Core f <*> mapM expr2Core args
+    in handlePrecedence f args
 
   -- let|lambda: need to lift functions to ToCoreEnv
   -- P.Let Binds PExp where Binds = BDecls [Decl]
@@ -550,7 +589,7 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
       fIName <- freshName
       iArg   <- freshName
       expr   <- getCaseAlts alts (Var iArg)
-      let bind = LBind [iArg] expr (Entity Nothing TyUnknown)
+      let bind = LBind (Entity Nothing TyUnknown) [iArg] expr
       addLocal fIName bind
       pure $ Var fIName
 
@@ -563,7 +602,7 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
         mkSwitch ifE thenE elseAlt = do
           ifE'   <- expr2Core ifE
           thenE' <- expr2Core thenE
-          pure $ SwitchCase ifE' [(lTrue, thenE'), elseAlt]
+          pure $ Case ifE' $ Switch [(lTrue, thenE'), elseAlt]
 --      f :: ((PExp,PExp) -> CoreExpr.SwitchCase -> CoreExpr.SwitchCase)
         f (ifE, thenE) nextSwitch = mkSwitch ifE thenE (lFalse, nextSwitch)
     in mkSwitch lastIfE lastElseE (lFalse, WildCard) >>= \lastSwitch ->
@@ -577,8 +616,11 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
       iNm <- freshName
       ty <- convTyM t
       expr <- expr2Core e
-      addLocal iNm (LBind [] expr (Entity Nothing ty))
+      addLocal iNm (LBind (Entity Nothing ty) [] expr)
       pure $ Var iNm
+--P.SectionL
+--P.SectionR
+--other -> error ("strange expr: " ++ show other)
 
 -- getCaseAlts returns a partial constructor for a CoreExpr.*Case expression
 -- biggest point is to accomodate both P.Case and P.LambdaCase cleanly
@@ -594,6 +636,7 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
       varOrNothing _          = Nothing
       go (P.Alt pat (P.UnGuardedRhs pexp)) = do
         let p = doInfixPats pat
+        -- TODO more patterns
         case p of
           P.PVar hNm -> findHName (pName2Text hNm) >>= \case
              Nothing -> error ("unknown name in pattern: " ++ show hNm)
@@ -612,6 +655,7 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
                         iArgs args
                exp <- expr2Core pexp
                pure $ Just (n, iArgs, exp)
+          P.PTuple args -> error "tuple in case"
           _ -> pure Nothing
 --        P.PVar hNm -> _
 --        P.PLit l -> _
@@ -624,8 +668,8 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
   let litAlts = _ -- no switchCase for now
 
   pure $ case dataCase of
-    Just alts -> DataCase   e alts
-    Nothing   -> SwitchCase e litAlts
+    Just alts -> Case e (Decon alts)
+    Nothing   -> Case e (Switch litAlts)
 
   where
   -- handle infix patterns

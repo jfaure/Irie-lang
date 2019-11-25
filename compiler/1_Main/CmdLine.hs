@@ -16,10 +16,11 @@ data CmdLine = CmdLine
 
   , jit            :: Bool
   , optlevel       :: Word
+  , outFile        :: Maybe String
   , files          :: [String]
   } deriving (Show)
 
-defaultCmdLine = CmdLine False False False False False False False False 0 []
+defaultCmdLine = CmdLine False False False False False False False False 0 Nothing []
 
 cmdLineDecls :: Parser CmdLine
 cmdLineDecls = CmdLine
@@ -48,10 +49,13 @@ cmdLineDecls = CmdLine
 
   <*> switch (long "jit"
           <> short 'j'
-          <> help "execute program in jit")
+          <> help "Execute program in jit")
   <*> option auto (short 'O'
-               <> help "optimization level = 0|1|2|3"
-               <> value 0)
+          <> help "Optimization level = 0|1|2|3"
+          <> value 0)
+  <*> (optional . strOption) (
+             (short 'o')
+          <> help "Write output to file")
   <*> many (argument str (metavar "FILE"))
 
 cmdLineInfo = info (cmdLineDecls <**> helper) description

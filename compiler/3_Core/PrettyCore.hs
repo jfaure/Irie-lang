@@ -36,8 +36,9 @@ ppCoreExpr :: (IName -> String) -> (IName -> String)
     let parenthesize x = "(" ++ ppCoreExpr' x ++ ")" 
     in ppCoreExpr' f ++" "++ concat (DL.intersperse " " (parenthesize <$> args))
   -- Let binds e -> error "let in coreexpr" --"let "++ppBinds (\x->Nothing) binds++"in "++ ppCoreExpr e
-  SwitchCase c alts -> "case "++ppCoreExpr' c++show alts
-  DataCase c alts -> "case " ++ ppCoreExpr' c ++ " of" ++ "\n" ++ (concat $ DL.intersperse "\n" $ (ppDataAlt deref (indent++"  "))<$> alts)
+  Case c a -> case a of
+    Switch alts -> "case "++ppCoreExpr' c++show alts
+    Decon  alts -> "case " ++ ppCoreExpr' c ++ " of" ++ "\n" ++ (concat $ DL.intersperse "\n" $ (ppDataAlt deref (indent++"  "))<$> alts)
   TypeExpr ty -> show ty
   l -> show l
 
@@ -51,7 +52,7 @@ ppBinds :: [Binding] -> (IName -> String) -> (IName -> String) -> String
 ppBind f derefTy indent b =
   let ppEntity' = ppEntity derefTy
   in clGreen indent ++ case b of
-  LBind args e entity -> case named entity of
+  LBind entity args e -> case named entity of
      { Just nm -> show nm ; Nothing -> "_" }
     ++ " " ++ show args 
     ++ " : " ++ ppType derefTy (typed entity)
@@ -62,7 +63,7 @@ ppBind f derefTy indent b =
   LExtern a -> "lextern: " ++ ppEntity' a
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule typeMap bindings externs overloads defaults) ->
+ = \(CoreModule hNm typeMap bindings externs overloads defaults _ _) ->
   let derefTy  i = bind2HName        (typeMap  V.! i) i
       derefVar i = bind2HName (info (bindings V.! i)) i
       ppEntity'  = ppEntity derefTy

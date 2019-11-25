@@ -1,0 +1,9 @@
+* Modules are like records
+* let bindings are local modules (freeVars are arguments to dependent module ?)
+* toCoreM should take a moduleTree / list ?
+* Names (local imports, naming priority, already assigned names..)
+* don't 'pollute namespace' with module imports until used (just add everything to nameMap)
+
+? compiled module
+ - LLVM module
+ - coreModule

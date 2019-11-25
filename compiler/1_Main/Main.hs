@@ -13,44 +13,53 @@ import qualified LlvmDriver as LD
 import Text.Megaparsec
 import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
+import qualified Data.Text.Lazy.IO as TL.IO
+
 import Control.Monad.Trans (lift)
 import System.Console.Haskeline
 import System.Exit
+import Data.Functor
+import Data.Maybe (isJust, fromJust)
+import LLVM.Pretty
 
 main = parseCmdLine >>= \cmdLine ->
   case files cmdLine of
     [] -> repl cmdLine
-    av -> mapM_ (doFile cmdLine) av
+    [f] -> doProgText cmdLine f =<< T.IO.readFile f
+    av -> error "one file pls"
+--  av -> mapM_ (doFile cmdLine) av
 
-prelude = ["Library/Prim.stg"]
+preludeFNames = ["Library/Prim.stg"]
 
--- TODO modules
-doFile :: CmdLine -> FilePath -> IO ()
-doFile c fName = do
-  preludes <- mapM T.IO.readFile prelude
-  let prelude = if noPrelude c
-                then T.empty
-                else foldr T.append T.empty preludes :: T.Text
-  f <- T.IO.readFile fName
-  doProgText c fName (T.append prelude f)
+doImport :: FilePath -> T.Text -> IO CoreModule
+doImport fName progText =
+--putStrLn ("Compiling " ++ show fName) *>
+  case parseModule fName progText of
+    Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
+    Right r -> pure r
+  <&> (judgeModule . parseTree2Core [])
 
 doProgText :: CmdLine -> FilePath -> T.Text -> IO ()
-doProgText flags fName progText =
-  case parseModule fName progText of
-          Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
-          Right r -> pure r
-  >>= \parseTree ->
-  let core      = parseTree2Core parseTree
-      judged    = judgeModule core
-      stg       = core2stg judged
-      llvmMod   = stgToIRTop stg
-  in if
+doProgText flags fName progText = do
+ imports   <- if noPrelude flags
+   then pure []
+   else mapM (\x -> doImport x =<< T.IO.readFile x) preludeFNames
+-- putStrLn ("Compiling " ++ show fName)
+ parseTree <- case parseModule fName progText of
+         Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
+         Right r -> pure r
+ let core      = parseTree2Core imports parseTree
+     judged    = judgeModule core
+     stg       = core2stg judged
+     llvmMod   = stgToIRTop stg
+ if
+  | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags) llvmMod
   | emitSourceFile flags -> putStr =<< readFile fName
-  | emitParseTree  flags -> mapM_ print parseTree
+  | emitParseTree  flags -> print parseTree
   | emitParseCore  flags -> putStrLn $ ppCoreModule core
   | emitCore       flags -> putStrLn $ ppCoreModule judged
   | emitStg        flags -> putStrLn $ show stg
-  | emitLlvm       flags -> LD.dumpModule llvmMod
+  | emitLlvm       flags -> TL.IO.putStrLn $ ppllvm llvmMod -- LD.dumpModule llvmMod
   | jit            flags -> LD.runJIT (optlevel flags) llvmMod
   | otherwise            -> putStrLn $ ppCoreModule judged -- ppCoreBinds judged
 

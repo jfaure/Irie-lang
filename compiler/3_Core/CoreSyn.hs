@@ -17,9 +17,10 @@ where
 
 import Prim
 
-import qualified Data.Vector        as V
-import qualified Data.Text          as T
-import qualified Data.IntMap.Strict as IM
+import qualified Data.Vector         as V
+import qualified Data.Text           as T
+import qualified Data.IntMap.Strict  as IM
+import qualified Data.HashMap.Strict as HM
 
 type IName   = Int
 type NameMap = V.Vector
@@ -29,54 +30,52 @@ type TypeMap      = NameMap Entity
 type BindMap      = NameMap Binding
 type DefaultDecls = IM.IntMap MonoType
 
--- note. algData is dataTypes     ++ aliases
---       bindings is constructors ++ binds
+-- Classes
 type ClassFns       = IM.IntMap Binding  -- indexed by polymorphic classFn's Iname
 type ClassInsts     = IM.IntMap ClassFns
 type ClassOverloads = IM.IntMap ClassInsts
 
-type CoreModuleSig  = CoreModule -- difference is no lBinds are saved
+data ImportList     = ImportList [CoreModule]
 data CoreModule     = CoreModule {
-   algData   :: TypeMap -- data and aliases
+   moduleName :: HName
 
- -- binds incl. constructors, locals, and class Fns (not overloads!)
- , bindings  :: BindMap
- , externs   :: TypeMap -- extern declarations
+ , algData    :: TypeMap -- data and aliases
+ -- binds: constructors, locals, and class Fns (not overloads!)
+ , bindings   :: BindMap
 
- -- typeclass resolution, indexed by the class polytype's iName
- , overloads :: ClassOverloads
- -- typeclass resolution when multiple Monotypes are possible
- , defaults  :: IM.IntMap MonoType -- eg. default Num Int
+ , externs    :: TypeMap -- extern declarations (also referenced in bindmap)
+
+ -- typeclass  resolution, indexed by the class polytype's iName
+--  , classes  :: ? -- importers will want the classdecls
+ , overloads  :: ClassOverloads
+ , defaults   :: IM.IntMap MonoType -- for typeclass resolution eg. default Num Int
 
 -- , tyFuns :: V.Vector TypeFunction
--- , copied :: Map IName Int -- track potentially copied data
 
- -- lookup table (for the interpreter)
- --, hNameBinds :: Data.Map HName IName
- --, hNameTypes :: Data.Map HName IName
+ -- lookup tables (Used when module is imported)
+ , hNameBinds :: HM.HashMap HName IName
+ , hNameTypes :: HM.HashMap HName IName
  }
 
--- Binding: save argNames brought into scope
--- since all vars get a unique name, we need this for locals,
--- note. top binds/data are always in scope, so no need.
 data Binding
--- let bindings assigned to a coreExpr
- = LBind {
-   args  :: [IName] -- the unique arg Names used by 'expr'
+ = LBind { -- let binding
+   info  :: Entity  -- hname, type, source
+ , args  :: [IName] -- the unique arg Names used locally by 'expr'
  , expr  :: CoreExpr
- , info  :: Entity  -- hname, type, source
  }
--- vars coming into scope (via lambda, case expr, and expr+typesig)
- | LArg    { info :: Entity }
--- Term level GADT constructor (Type is known)
- | LCon    { info :: Entity }
+ | Local { -- the lbind accesses some freeVars in the scope
+   info :: Entity
+ , expr :: CoreExpr
+ }
+ | LArg    { info :: Entity } -- local vars via (lambda|case|expr:tysig)
+ | LCon    { info :: Entity } -- Term level GADT constructor (Type is known)
  | LExtern { info :: Entity }
  | LClass  { info :: Entity } -- classFn declaration
 
--- an entity = info about | coreExpr | fn arg | decon arg
+-- an entity = info about anything we give an IName to.
 data Entity = Entity { -- entity info
    named    :: Maybe HName
- , typed    :: Type -- also terms (in a type context)
+ , typed    :: Type
 -- , source :: Maybe SourceEntity
  }
 
@@ -90,11 +89,14 @@ data CoreExpr
  | Lit Literal
  | Instr PrimInstr
  | App CoreExpr [CoreExpr]
- | SwitchCase CoreExpr [(Literal, CoreExpr)]
- | DataCase CoreExpr
-            [(IName, [IName], CoreExpr)] -- Con [args] -> expr
+ | Case CoreExpr CaseAlts
  | TypeExpr Type -- as return of `TypeFunction`
- | WildCard      -- TODO move to Literal
+ | WildCard
+
+data CaseAlts
+ = Switch [(Literal, CoreExpr)]
+ | Decon  [(IName, [IName], CoreExpr)] -- Con [args] -> expr
+ | Tuple  ([IName], CoreExpr)
 
 ----------- Types -- ---------
 -- note. alias vs name:
@@ -104,8 +106,8 @@ data Type
 
  | TyMono  MonoType -- monotypes 't'
  | TyPoly  PolyType -- constrained polytypes 'p', 's'
- | TyArrow [Type]  -- Kind 'function' incl. Sum/Product cons
 
+ | TyArrow [Type]  -- Kind 'function' incl. Sum/Product cons
  | TyExpr  TypeFunction -- incl. dependent types
 
  | TyUnknown -- needs to be inferred - the so-called box type.
@@ -117,15 +119,17 @@ data MonoType
 
 data PolyType
  = PolyConstrain  [Type] -- (&) multiple typeclass constraints
- | PolyUnion      [Type] -- (|) union types (esp. type of typeclass)
+ | PolyUnion      [Type] -- (|) union types (esp. typeclass var)
  | PolyAny               -- Existential type (flexible typevars)
- -- Data is both a polytype (of it's alts) and a monotype
+ -- Data is a polytype (of it's alts)
  | PolyData PolyType DataDef
 
--- Data saves bindMap names, since they're not in the typeMap
-data DataDef = DataDef HName [(HName, [Type])]
--- | RecordDef HName [(HName, [(HName, Type)])]
--- | TupleDef [Type]
+-- Data saves bindMap names, since those otherwise can't be found in the typeMap
+data DataDef
+ = DataDef   HName [(HName, [Type])]
+ | RecordDef HName [(HName, [FieldDecl])]
+ | ModuleDef HName CoreModule
+data FieldDecl = FieldDecl HName Type
 
 -- type functions: from trivial `data a = ..` to dependent types
 data TypeFunction
@@ -139,23 +143,15 @@ data TypeFunction
  }
  | TyApp Type [Type]
 
------------ Types -- --------- 
--- type vars are flexible = arbitrary types rather than variables.
--- boxy matching: fill boxes with monotypes
---   (no instantiation/skolemization)
---
--- By design, boxy matching is not an equivalence relation:
--- it is not reflexive (that would require guessing polytypes)
--- neither is it transitive |s|~s and s~|s| but not |s|~|s|.
--- similarly, boxy subsumption is neither reflexive nor transitive
-
 deriving instance Show PolyType
 deriving instance Show DataDef
+deriving instance Show FieldDecl
 deriving instance Show Binding
 deriving instance Show MonoType
 deriving instance Show Type
 deriving instance Show TypeFunction
 deriving instance Show CoreExpr
+deriving instance Show CaseAlts
 deriving instance Show Entity
 deriving instance Show CoreModule
 

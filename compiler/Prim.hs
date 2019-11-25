@@ -1,13 +1,14 @@
 -- Primitives: literals and instructions
 -- conversions from Prim to llvm instructions/types
 -- PrimInstr are roughly equivalent to LLVM.AST. (Operand->Operand->Operand)
--- However they are more flexible and some are more powerful
+-- However they are seperate from llvm.
 module Prim
 where
 
 data Literal
  = Char Char | Int Integer | Frac Rational | String String
  | Array [Literal] -- incl. tuples
+-- | Tuple [Literal]
 -- | WildCard      -- errors on evaluation
 
 -----------
@@ -34,13 +35,14 @@ data PrimInstr
  | NatInstr   NatInstrs
  | FracInstr  FracInstrs
  | MemInstr   ArrayInstrs
+ | MkTuple
  -- TODO conversion instructions, bitcasts, bitwise ops
- -- Maybe memory instrs, va_arg, aggregate instrs, vector
+ -- Maybe va_arg, aggregate instrs, vector, SIMD
 
 data IntInstrs   = Add | Sub | Mul | SDiv | SRem | ICmp
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
 data NatInstrs   = UDiv | URem
-data ArrayInstrs = ExtractVal | InsertVal | Gep -- pointer arithmetic
+data ArrayInstrs = ExtractVal Int | InsertVal Int | Gep
 
 deriving instance Eq PrimType
 deriving instance Eq FloatTy

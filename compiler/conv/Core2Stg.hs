@@ -18,6 +18,7 @@ import Data.Char (ord)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified LLVM.AST as L -- (Operand, Instruction, Type, Name, mkName)
+import GHC.Word
 import qualified LLVM.AST  -- (Operand, Instruction, Type, Name, mkName)
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.IntegerPredicate as IP
@@ -29,7 +30,7 @@ import Data.List
 
 -- TODO filter all functions from CoreModule.bindings
 core2stg :: CoreModule -> StgModule
-core2stg (CoreModule algData coreBinds externs overloads defaults)
+core2stg (CoreModule hNm algData coreBinds externs overloads defaults _ _)
  = StgModule stgData (V.fromList stgTypedefs) stgExterns stgBinds
   where
   (stgData, stgTypedefs) = convData algData
@@ -87,7 +88,7 @@ convTy tyMap =
   -- Note any other type is illegal at this point
   t -> error ("internal error: core2Stg: not a monotype: " ++ show t)
 
--- the V.imap will give us the right inames since all terms are in the bindMap
+-- the V.imap will give us the right inames since it contains all terms
 doBinds :: V.Vector Binding -> TypeMap -> V.Vector StgBinding
 doBinds binds tyMap = V.fromList $ V.ifoldr f [] binds
   where
@@ -95,8 +96,8 @@ doBinds binds tyMap = V.fromList $ V.ifoldr f [] binds
   lookupBind i = CU.lookupBinding i binds
   convName' i  = convName i $ named $ info $ lookupBind i
   f iNm        = \case
-    LBind _ (Instr i) _  -> id -- don't try to gen primitives
-    LBind args expr info ->
+--  LBind args (Instr i) info  -> id -- don't try to gen primitives
+    LBind info args expr ->
       let nm       = convName iNm (named info)
           argNames = StgVarArg . convName' <$> args
           (argTys, [retTy]) = case args of
@@ -104,51 +105,55 @@ doBinds binds tyMap = V.fromList $ V.ifoldr f [] binds
               t  -> case typed info of
                   TyArrow tys -> splitAt (length tys - 1) $ convTy' <$> tys
                   _ -> error "internal typecheck error"
-          stgExpr = convExpr binds expr
-      in (StgBinding nm (StgRhsClosure argNames argTys retTy stgExpr) :)
+          rhs :: StgRhs = case expr of
+            Instr i -> StgPrim $ prim2llvm i
+            e       -> let stgExpr = convExpr binds expr
+                       in StgTopRhs argNames argTys retTy stgExpr
+      in (StgBinding nm rhs :)
     _ -> id
 
 convExpr :: BindMap -> CoreExpr -> StgExpr
 convExpr bindMap =
-  let lookup      = (bindMap V.!)
-      convExpr'   = convExpr bindMap
-      convName' i = convName i $ named $ info $ lookup i
-      typeOf      = typed . info . lookup
+ let lookup      = (bindMap V.!)
+     convExpr'   = convExpr bindMap
+     convName' i = convName i $ named $ info $ lookup i
+     typeOf      = typed . info . lookup
  in \case
  Var nm                -> StgLit $ StgVarArg $ convName' nm
  Lit lit               -> StgLit $ StgConstArg $ literal2Stg lit
- App fn args           -> case fn of
-    (Var fId)    ->
-      let bind = lookup fId
-          instanciate = case bind of
-            b@(LClass i) -> traceShow i b
-            b            -> b
-      in  StgApp (convName' fId) (StgExprArg . convExpr' <$> traceShow instanciate args)
+ App fn args           ->
+   let args' = convExpr' <$> args
+   in  case fn of
+    Var fId    ->
+      let LBind _ iArgs _ = lookup fId
+          tyArity = length iArgs
+          stgArgs = StgExprArg . convExpr' <$> args
+      in if tyArity < length args'
+         then error "paps unsupported"
+         else StgApp (convName' fId) stgArgs
  
-    (Instr prim) -> case (convExpr' <$> args) of
-        [a, b] -> StgPrimOp $ StgPrimBinOp (prim2llvm prim) a b
-        _      -> error "unsupported arity for primInstr"
- 
+    Instr prim -> error ("raw primitive: " ++ show prim)
     weirdFn -> error ("panic: core2Stg: not a function: " ++ show weirdFn)
 
  -- TODO default case alt
- SwitchCase expr alts ->
+ Case expr a -> case a of
+   Switch alts ->
     let convAlt (c, e) = (literal2Stg c, convExpr' e)
-    in StgCaseSwitch (convExpr' expr) Nothing (convAlt <$> alts)
- DataCase expr alts   -> -- [(IName, [IName], CoreExpr)]
+    in StgCase (convExpr' expr) Nothing (StgSwitch$convAlt <$> alts)
+   Decon  alts   -> -- [(IName, [IName], CoreExpr)]
     let convAlt (con, arg, e)
               = (convName' con, convName' <$> arg, convExpr' e)
-    in StgDataCase (convExpr' expr) Nothing (convAlt<$>alts)
+    in StgCase (convExpr' expr) Nothing (StgDeconAlts$convAlt<$>alts)
 
  TypeExpr t -> error "internal error: core2Stg: unexpected typeExpr"
  WildCard   -> error "found hole"
- Instr i -> error ("core2Stg: unsaturated primInstr" ++ show i)
+ Instr i    -> error ("core2Stg: unsaturated primInstr: " ++ show i)
 
 -- cancerous llvm-hs Name policy
 -- TODO name clashes ?
 convName :: IName -> Maybe HName -> StgId
 convName i = \case
-  Nothing -> LLVM.AST.UnName $ fromIntegral i
+  Nothing -> LLVM.AST.mkName $ '_' : show i
   Just h  -> LLVM.AST.mkName $ CU.hNm2Str h -- ++ show i
 
 -- TODO depends on the type of the Literal ?!
@@ -157,23 +162,22 @@ literal2Stg :: Literal -> StgConst =
   in \case
     Char c   -> mkChar c
     Int i    -> C.Int 32 $ i
-    String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar <$> s)
+    String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar <$> (s++['\0']))
     Frac f   -> C.Float (LF.Double $ fromRational f)
 
 -- most llvm instructions take flags, stg wants functions on operands
-prim2llvm :: PrimInstr -> StgBinOp
- = \case
-  IntInstr i  -> case i of
+prim2llvm :: PrimInstr -> StgPrimitive = \case
+  IntInstr i  -> StgPrim2 $ case i of
       Add  -> \a b -> L.Add False False a b []
       Sub  -> \a b -> L.Sub False False a b []
       Mul  -> \a b -> L.Mul False False a b []
       SDiv -> \a b -> L.SDiv False a b []
       SRem -> \a b -> L.SRem a b []
       ICmp -> \a b -> L.ICmp IP.EQ a b []
-  NatInstr i  -> case i of
+  NatInstr i  -> StgPrim2 $ case i of
       UDiv -> \a b -> L.UDiv False a b []
       URem -> \a b -> L.URem a b []
-  FracInstr i -> case i of
+  FracInstr i -> StgPrim2 $ case i of
       FAdd -> \a b -> L.FAdd L.noFastMathFlags a b []
       FSub -> \a b -> L.FSub L.noFastMathFlags a b []
       FMul -> \a b -> L.FMul L.noFastMathFlags a b []
@@ -181,10 +185,10 @@ prim2llvm :: PrimInstr -> StgBinOp
       FRem -> \a b -> L.FRem L.noFastMathFlags a b []
       FCmp -> \a b -> L.FCmp FP.UEQ a b []
   MemInstr i -> case i of
-  {}
-   -- ExtractVal -> \a b -> L.ExtractValue a b
-   -- InsertVal  -> \a b -> L.InsertValue  a b
-   -- Gep        -> \a b -> L.GetElementPtr True a b []
+      Gep        -> StgGep
+      ExtractVal idx -> StgPrim1 $ \a -> L.ExtractValue a [fromIntegral idx] []
+  --  InsertVal  -> \a b -> L.InsertValue True a [b] []
+  MkTuple -> StgMkTuple
 
 primTy2llvm :: PrimType -> LLVM.AST.Type =
  let doExtern isVa tys =
@@ -201,7 +205,7 @@ primTy2llvm :: PrimType -> LLVM.AST.Type =
   PtrTo ty      -> LT.PointerType (primTy2llvm ty) (AddrSpace 0)
   PrimExtern   argTys -> doExtern False (primTy2llvm <$> argTys)
   PrimExternVA argTys -> doExtern True  (primTy2llvm <$> argTys)
-
--- APInts etc.. should perhaps be as Functor module (ie. in prelude)
--- APInt   -> _
--- APFloat -> _
+  PrimArr t     -> _
+  PrimTuple tys -> -- StgTuple (primTy2llvm <$> tys)
+    let structTy = LT.StructureType False (primTy2llvm <$> tys)
+    in  LT.PointerType structTy (AddrSpace 0)

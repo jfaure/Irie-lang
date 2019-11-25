@@ -1,0 +1,2 @@
+type Int = #!Int 32
+f : Int->Int->Int = #!add

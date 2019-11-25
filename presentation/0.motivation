@@ -1,0 +1,31 @@
+Pure
+ * purity is critical both for users and compilers - impure actions can be purified using an effect system (eg. Frank https://arxiv.org/pdf/1611.09259.pdf, )Supermonads and superapplicatives
+https://jbracker.de/publications/2017-BrackerNilsson-SupermonadsAndSuperapplicatives-UnderConsideration.pdf
+
+Array oriented
+  * Most loops and heavy computations are array operations, and extending the notion of array to heterogeneous Tensors (arrays of higher dimensions) generalizes this class of operation. Notably, this greatly extends the applicability of fold-build optimised (removal of intermediate structures). Processors are also beccoming array-oriented with faster SIMD instructions
+
+Dependent types (DT's): (When considering the usefuleness of DT's, I lean more towards optimization opportunities then proofs)
+  * static guarantees (As many as you care to specify in the types)
+  * Optimization opportunities: type matching and arbitrary compile-time computations
+    - Memory management is done in the DT's, so the user has total control and we are free to link creation-destruction of resources, which notably allows us to identify destructions on constant stackframes and switch to stack memory
+
+Mini Compiler (As much functionality as possible is shifted to the dependently type prelude (see below)
+  * Codegen via llvm|SPIR-v backends
+  * impredicative higher-order type inference forms the basis for dependent type checking
+  * Compiler primitives are prefaced with '#!' and aren't meant for use outside the Prelude.
+    - You can completely change the entire language by importing a different prelude and using mixfix syntax: eg recreate C by defining all C keywords and fns within an IO effect.
+  * Types and expressions are parsed exactly the same, (- their compiler primitives)
+  * Compiler can be used as a library for tools (eg. for renaming/refactoring/profiling)
+
+Compiler primitives
+  * #!-> function arrow - you can do anything to it (eg. make arrays of ->), before returning the primitive #!->
+  * Memory pools (alloca | malloc | gpu mem | distributed nodes)
+  * fn calls - for dependently typed calculations on memory usage
+
+Prelude
+  * Array oriented programming incl. fold-build typematching optimisations
+  * Memory management via linear/quantitatiive types
+
+Principles:
+  Fast development

@@ -1,0 +1,4 @@
+ap : (Int->Int->Int) -> Int -> Int -> Int
+ap f a b = f a b
+
+main = printf "%d\n\0" (ap (+) 1 2)

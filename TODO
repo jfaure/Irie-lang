@@ -4,33 +4,39 @@
 
 # expr2Core
   * Let
-  * array prims
-  * modules
   * tuples (anon product types)
+  * records
+  * array prims
+  * use a fromString function for literals
+  * inline primitives
 
+  * precedence (parser doesn't have all infix decls)
+  * primitive type operators (| & ->)
+  * patterns, nested patterns, matches2Case
   * TyRigid could be polytype
   * multiparam typeclasses
   * default typeclass signatures/decls
   * fn overloads
-  * records
-  * more patterns
+  * list pattern matching
   * Case -> Case optimizations
-  * precedence (parser doesn't have all infix decls)
-  * risky implicit forall typevars ?
+  * implicit forall typevars ?
+  * re-examine prim typeclasses for literals
 
 # core2Stg
   * tyFunctions
   * polymorphic fns (boxed vs unboxed)
 
 # typeJudge
-  * dependent types
-  * resolve polytypes (using classOverloads + default decls)
+  * resolve/instanciate polytypes (using classOverloads + default decls)
 
 # parser
+  * move all type parse logic to pExp
+  * Multiple Infixes
+  * custom infix decls
   * indented 'where', esp. class
   * linefolds
   * GADT style
-  * let-rec (?)
+  * rec (let-rec)
   * source locations
 
 # Prelude / dependent types
@@ -38,17 +44,18 @@
   * fusion across functions ? composition fusion
   * var-arity
   * effects
+  * distribution
+  * non-copyable memory (if only one inplace - could execute it last)
+  * memory (sudoku example - inplace modifications undo as stack unravels)
 
 # LFVM
-  * Module level constraints ? to avoid name clashes
-  * track non-copyable data lifetime
-    * data passed to multiple functions:
-      if only one wants to modify it: give it ownership and execute last
-    * sudoku example - inplace modifications, that undo as stack unravels
+  * emit extern decls for all functions
 
 # General
   * error message clarity
+  * precomipled modules
 
 # Maybe
   * View patterns (?)
+  * PAP
   * GuardedRhs

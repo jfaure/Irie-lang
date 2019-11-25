@@ -1,1 +1,1 @@
-main = printf "hello\n"
+main = printf "%d\n\0" 3
