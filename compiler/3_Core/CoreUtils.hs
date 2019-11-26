@@ -5,9 +5,12 @@
 module CoreUtils where
 
 import CoreSyn
+import Prim
 import qualified Data.Vector as V
 import qualified Data.Text as T (unpack)
 import Control.Monad.State.Strict
+
+import Debug.Trace
 
 lookupBinding :: IName -> BindMap -> Binding
  = \n binds -> binds V.! n
@@ -30,3 +33,10 @@ unVar :: TypeMap -> Type -> Type = \tyMap x ->
 
 localState :: State s a -> State s a
 localState f = get >>= \s -> f <* put s
+
+getArity :: Type -> Int = \case
+  TyArrow t -> length t - 1
+  TyMono (MonoTyPrim p) -> case p of
+    PrimExternVA l -> length l -- at least
+    PrimExtern   l -> length l - 1
+  o -> trace "warning: getArity on non-function" 0

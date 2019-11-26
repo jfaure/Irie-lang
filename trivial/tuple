@@ -1,5 +1,5 @@
 type T = ((#!Int 32) #!, (#!Int 32))
---at : T -> Int -> Int -> Int = #!gep
+at : T -> Int -> Int -> Int = #!gep
 --uncurry : (Int->Int->Int) -> T -> Int
 --uncurry f tuple = f (at tuple 0 0) (at tuple 0 1)
 uncurry : (Int->Int->Int) -> T -> Int

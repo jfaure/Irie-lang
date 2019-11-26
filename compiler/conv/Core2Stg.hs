@@ -110,7 +110,10 @@ doBinds binds tyMap = V.fromList $ V.ifoldr f [] binds
             e       -> let stgExpr = convExpr binds expr
                        in StgTopRhs argNames argTys retTy stgExpr
       in (StgBinding nm rhs :)
-    _ -> id
+    Inline{}   -> id
+    LExtern{} -> id
+    LArg{}    -> id
+    wht -> error $ show wht
 
 convExpr :: BindMap -> CoreExpr -> StgExpr
 convExpr bindMap =
@@ -119,21 +122,28 @@ convExpr bindMap =
      convName' i = convName i $ named $ info $ lookup i
      typeOf      = typed . info . lookup
  in \case
- Var nm                -> StgLit $ StgVarArg $ convName' nm
+ Var nm                ->
+   let bind = lookup nm
+   in case bind of
+     Inline i e -> convExpr' e
+     _ -> StgLit $ StgVarArg $ convName' nm
  Lit lit               -> StgLit $ StgConstArg $ literal2Stg lit
  App fn args           ->
    let args' = convExpr' <$> args
+       stgArgs = StgExprArg . convExpr' <$> args
    in  case fn of
     Var fId    ->
-      let LBind _ iArgs _ = lookup fId
-          tyArity = length iArgs
-          stgArgs = StgExprArg . convExpr' <$> args
+      let bind = lookup fId
+          tyArity = CU.getArity $ typed $ info $ lookup fId
       in if tyArity < length args'
-         then error "paps unsupported"
+         then error $ "paps unsupported" ++ show tyArity ++ " < " ++ show (length args') ++ " with function " ++ show (lookup fId)
          else StgApp (convName' fId) stgArgs
  
-    Instr prim -> error ("raw primitive: " ++ show prim)
-    weirdFn -> error ("panic: core2Stg: not a function: " ++ show weirdFn)
+    Instr prim -> case prim of
+      MemInstr (ExtractVal i) ->
+        StgInstr (StgExtractVal i) stgArgs
+      _ -> error ("raw primitive: " ++ show prim)
+    notFn -> error ("panic: core2Stg: not a function: " ++ show notFn)
 
  -- TODO default case alt
  Case expr a -> case a of
@@ -186,8 +196,9 @@ prim2llvm :: PrimInstr -> StgPrimitive = \case
       FCmp -> \a b -> L.FCmp FP.UEQ a b []
   MemInstr i -> case i of
       Gep        -> StgGep
-      ExtractVal idx -> StgPrim1 $ \a -> L.ExtractValue a [fromIntegral idx] []
-  --  InsertVal  -> \a b -> L.InsertValue True a [b] []
+      ExtractVal idx -> StgExtractVal idx
+  -- StgPrim1 $ \a -> L.ExtractValue a [fromIntegral idx] []
+  -- InsertVal  -> \a b -> L.InsertValue True a [b] []
   MkTuple -> StgMkTuple
 
 primTy2llvm :: PrimType -> LLVM.AST.Type =

@@ -43,16 +43,17 @@ data CoreModule     = CoreModule {
  -- binds: constructors, locals, and class Fns (not overloads!)
  , bindings   :: BindMap
 
- , externs    :: TypeMap -- extern declarations (also referenced in bindmap)
+ , externs    :: TypeMap -- extern decl (also referenced in bindmap)
 
  -- typeclass  resolution, indexed by the class polytype's iName
---  , classes  :: ? -- importers will want the classdecls
+ --  , classes  :: ? -- importers will want the classdecls
  , overloads  :: ClassOverloads
- , defaults   :: IM.IntMap MonoType -- for typeclass resolution eg. default Num Int
+ -- default for otherwise ambiguous instances eg. default Num Int
+ , defaults   :: IM.IntMap MonoType
 
 -- , tyFuns :: V.Vector TypeFunction
 
- -- lookup tables (Used when module is imported)
+ -- lookup tables (Used when module is imported and in the repl)
  , hNameBinds :: HM.HashMap HName IName
  , hNameTypes :: HM.HashMap HName IName
  }
@@ -63,7 +64,9 @@ data Binding
  , args  :: [IName] -- the unique arg Names used locally by 'expr'
  , expr  :: CoreExpr
  }
- | Local { -- the lbind accesses some freeVars in the scope
+ -- always inline this binding (esp. to access freevars)
+ -- only used internally for pattern match deconstructions
+ | Inline {
    info :: Entity
  , expr :: CoreExpr
  }

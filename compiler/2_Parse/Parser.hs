@@ -59,7 +59,7 @@ symboln = L.symbol scn . T.pack
 -- reserved: ():\{}"_'`.
 symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: String
 reservedOps = ["=","->","|",":", "#!", "."]
-reservedNames = ["type", "data", "class", "extern", "externVarArg",
+reservedNames = ["type", "data", "record", "class", "extern", "externVarArg",
                  "let", "in", "case", "of", "_"]
 reservedName w = (lexeme . try) (string (T.pack w) *> notFollowedBy alphaNumChar)
 reservedOp w = lexeme (notFollowedBy (opLetter w) *> string (T.pack w))
@@ -143,13 +143,14 @@ decl :: Parser Decl -- top level
        <|> ExternVA<$reserved "externVarArg"<*> name<*reservedOp ":"<*>pType
   -- TODO parse GADT style parser ?
   typeAlias :: Parser Decl
-  typeAlias = reserved "data" *> doData <|> reserved "type" *> doType
-    where
-    doData = defOrFun tyData -- "data" parses a tyData
-    doType = defOrFun pType  -- "type" parses any alias (not data)
-    defOrFun pTy = try (tyFun (TypeExp <$> pTy)) <|> tyDef pTy
-    tyFun pTy = TypeFun   <$> tyName <*> some tyVar <* symboln "=" <*> pTy
-    tyDef pTy = TypeAlias <$> tyName                <* symboln "=" <*> pTy
+  typeAlias =
+    let defOrFun pTy = try (tyFun (TypeExp <$> pTy)) <|> tyDef pTy
+        tyFun pTy = TypeFun   <$> tyName <*> some tyVar <* symboln "=" <*> pTy
+        tyDef pTy = TypeAlias <$> tyName                <* symboln "=" <*> pTy
+    in choice
+    [ reserved "type"   *> defOrFun pType
+    , reserved "data"   *> defOrFun tyData
+    , reserved "record" *> defOrFun tyRecord]
 
   infixDecl = let pInfix = reserved "infix"  $> AssocNone
                        <|> reserved "infixr" $> AssocRight
@@ -244,17 +245,17 @@ pExp :: Parser PExp = appOrSingle
       p <- pExp
       pure (Let binds p)
   -- it's assumed later that there is at least one if alt
-  multiIf = normalIf <|> do
-    reserved "if"
-    l <- L.indentLevel
-    iB (pure $ L.IndentSome (Just l) (pure . MultiIf) subIf)
+  multiIf = reserved "if" *> choice [normalIf , multiIf]
       where
       normalIf = do
-        ifE   <- reserved "if"   *> pExp
+        ifE   <- pExp
         thenE <- reserved "then" *> pExp
         elseE <- reserved "else" *> pExp
         pure (MultiIf [(ifE, thenE), (WildCard, elseE)])
       subIf = (,) <$ reservedOp "|" <*> pExp <* reservedOp "=" <*> pExp
+      multiIf = do
+        l <- L.indentLevel
+        iB (pure $ L.IndentSome (Just l) (pure . MultiIf) subIf)
 
   caseExpr = do
     reserved "case"
@@ -307,12 +308,19 @@ forall :: Parser Type
 
 -- Note this only parses data to the right of the '=' !
 -- Because to the left there be type functions..
-tyData :: Parser Type
- = fail "_" -- TyRecord <$> tyName <*> braces (some namedCon)
- <|> TyData      <$> ((,) <$> tyName <*> many singleType) `sepBy` symboln "|"
- <|> TyInfixData <$> singleType <*> infixName <*> singleType
-  where
-  namedCon = (,) <$> tyName <*> some (singleType)
+tyData :: Parser Type =
+ let parseAlts alt = ((,) <$> tyName <*> alt) `sepBy` symboln "|"
+     recordFields :: Parser [(Name, Type)] =
+       let field = (,) <$> tyVar <* reservedOp ":" <*> pType
+       in  lexemen field `sepBy` lexemen ","
+     bracesn = between (symboln "{") (symboln "}")
+ in choice
+ [ TyRecord    <$> parseAlts (bracesn recordFields)
+ , TyData      <$> try (parseAlts (many singleType))
+ , TyInfixData <$> singleType <*> infixName <*> singleType
+ ]
+
+tyRecord = fail "use haskell style records for now pls"
 
 tyName   :: Parser Name = uIden
 tyVar    :: Parser Name = lIden

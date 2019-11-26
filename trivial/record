@@ -1,0 +1,13 @@
+--record Coord where
+--  x : Int
+--  y : Int
+--
+
+area : Coord -> Int
+area r = (x r) * (y r)
+
+data Coord = Coord {
+   x : Int
+ , y : Int
+}
+main = printf "%d\n" (area (Coord 2 3))

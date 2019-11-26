@@ -23,7 +23,7 @@ ppType :: (IName -> String) -> Type -> String = \deref -> clCyan . \case
  TyExpr coreExpr -> error "tyexpr"
  TyUnknown       -> "TyUnknown"
  TyBroken        -> "tyBroken"
- other           -> "other: " ++ show other
+ --other           -> "other: " ++ show other
 
 ppCoreExpr :: (IName -> String) -> (IName -> String)
            -> String -> CoreExpr -> String

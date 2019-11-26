@@ -32,15 +32,20 @@ data ConvState = ConvState {
    imports       :: [CoreModule]
  , nameCount     :: IName
  , tyNameCount   :: IName
+ , freeVars      :: [IName] -- used to prepare PAP'S
 
  , hNames        :: HM.HashMap HName IName
  , hTyNames      :: HM.HashMap HName IName
 
  , localTys      :: V.Vector Entity
  , localBinds    :: V.Vector Binding
- , toCoreErrors  :: [ToCoreErrors]
+ , toCoreErrors  :: ToCoreErrors
 }
-type ToCoreErrors = String
+
+data ToCoreErrors = ToCoreErrors {
+   notInScope :: [P.Name]
+}
+noErrors = ToCoreErrors []
 
 -- incomplete function ?
 pName2Text = \case
@@ -144,37 +149,68 @@ convData :: IName -> P.Decl
          -> ToCoreEnv (V.Vector Binding, Entity, V.Vector Entity)
  = \dataINm (P.TypeAlias aliasName ty) ->
   let dataNm = pName2Text aliasName
+
+      -- Functions shared by TyData and TyRecord
+      mkSubTypes :: HName -> Int -> [HName] -> [[Type]]
+                 -> ToCoreEnv ([Type], [Entity], Entity)
+      mkSubTypes qual nAlts conHNames conTys = do
+        let subTyHNames      = (qual `T.append`) <$> conHNames
+        subTyINames <- freshTyNames nAlts
+        zipWithM addTyHName subTyHNames subTyINames
+        let subTypes         = TyMono . MonoRigid <$> subTyINames
+            mkSubEnts hNm ty = Entity (Just hNm) ty
+            subEnts          = zipWith mkSubEnts subTyHNames subTypes
+        let dataDef      = DataDef dataNm (zip conHNames conTys)
+            dataPolyType = PolyData (PolyUnion subTypes) dataDef
+            dataEnt      = Entity (Just dataNm) (TyPoly dataPolyType)
+        pure (subTypes, subEnts, dataEnt)
+
+      mkConstructors conHNames conTys subTypes = 
+        let mkCon prodNm prodTy subTy =
+              LCon $ Entity (Just prodNm) (TyArrow $ prodTy ++ [subTy])
+        in V.fromList $ zipWith3 mkCon conHNames conTys subTypes
+
   in case ty of
   P.TyData sumTys -> do
-      let go :: (P.Name, [P.Type]) -> ToCoreEnv (HName, [Type])
-          go (prodNm, tupleTys) = do
-              coreTys <- mapM convTyM tupleTys
-              pure (pName2Text prodNm, coreTys)
-      (conHNames, conTys) <- unzip <$> mapM go sumTys
-      let nAlts = length conHNames
+    let go (prodNm, tupleTys) =
+            (pName2Text prodNm ,) <$> mapM convTyM tupleTys
+    (conHNames, conTys) <- unzip <$> mapM go sumTys
+    let nAlts = length conHNames
+    zipWithM addHName conHNames =<< freshNames nAlts
+    let qual = dataNm `T.snoc` '.'
+    (subTypes,subEnts,dataEnt) <- mkSubTypes qual nAlts conHNames conTys
+    let cons = mkConstructors conHNames conTys subTypes
+    pure (cons, dataEnt, V.fromList subEnts)
 
-      conINames <- freshNames nAlts
-      zipWithM addHName conHNames conINames
+  -- Records: same, but also emit accessor functions
+  P.TyRecord recordAlts -> do
+    let nAlts = length recordAlts
+        go (prodNm, fields) = do
+          let (nms, tys) = unzip fields
+          (pName2Text prodNm , pName2Text<$>nms ,) <$> mapM convTyM tys
+    (conHNames, fieldNames, conTys) <- unzip3 <$> mapM go recordAlts
 
-      -- Make subtypes
-      let qual             = dataNm `T.snoc` '.'
-          subTyHNames      = (qual `T.append`) <$> conHNames
-      subTyINames <- freshTyNames nAlts
-      zipWithM addTyHName subTyHNames subTyINames
-      let subTypes         = TyMono . MonoRigid <$> subTyINames
-          mkSubEnts hNm ty = Entity (Just hNm) ty
-          subEnts          = V.fromList$zipWith mkSubEnts subTyHNames subTypes
-      let dataDef          = DataDef dataNm (zip conHNames conTys)
-          dataPolyType     = PolyData (PolyUnion subTypes) dataDef
-          dataEnt          = Entity (Just dataNm) (TyPoly dataPolyType)
+    zipWithM addHName conHNames =<< freshNames nAlts
+    let qual = dataNm `T.snoc` '.'
+    (subTypes, subEnts, dataEnt) <-
+      mkSubTypes qual nAlts conHNames conTys
 
-      let f prodNm prodTy subTy = LCon $ Entity (Just prodNm) $
-            (TyArrow $ prodTy ++ [subTy])
-          cons = V.fromList $ zipWith3 f conHNames conTys subTypes
-      pure (cons, dataEnt, subEnts)
+    -- record field accessor functions
+    let emitAccessors :: Type-> [HName] -> [Type] -> ToCoreEnv ()
+         = \subTy a b-> sequence_$zipWith3 (oneAccessor subTy) [0..] a b
+        oneAccessor subTy i hNm ty = do
+          argINm <- freshName
+          addLocal argINm (LArg $ Entity Nothing subTy)
+          accessorINm <- freshName
+          let entity = Entity (Just hNm) (TyArrow [subTy, ty])
+              e = Instr (MemInstr (ExtractVal i))
+              bind = LBind entity [argINm] e
+          addHName hNm accessorINm
+          addLocal accessorINm bind
+    sequence_ $ zipWith3 emitAccessors subTypes fieldNames conTys
 
-    -- Records: only difference is we also need to emit accessor functions
---  P.TyRecord hNm fields->MonoTyRecord hNm (doSumAlt prodTyRecord <$> fields)
+    let cons = mkConstructors conHNames conTys subTypes
+    pure (cons, dataEnt, V.fromList subEnts)
 
   -- simple alias
   t -> convTyM t >>= \ty -> pure
@@ -223,29 +259,31 @@ pats2Bind pats rhsE fNm fnSig = do
 
   iNames <- freshNames (length pats)
   zipWithM mkLArg iNames pats
+--mapM mkLArg pats
   expr   <- expr2Core $ pExp
   pure $ LBind (Entity fNm ty) iNames expr
 
 -- Note. all patterns are given 1 (!) name corresponding to the
 -- function argument. Bind fresh gep instructions if it's an aggregate.
-mkLArg :: IName -> P.Pat -> ToCoreEnv IName = \argNm -> \case
+mkLArg :: IName -> P.Pat -> ToCoreEnv IName = \argINm -> \case
   P.PVar hNm -> let h = pName2Text hNm
     in do -- we can sometimes give a type, but it may be wrong.
-       addHName h argNm
-       addLocal argNm (LArg $ Entity (Just h) TyUnknown)
+       addHName h argINm
+       addLocal argINm (LArg $ Entity (Just h) TyUnknown)
   P.PTuple pNms ->
     let hNms = (\(P.PVar h) -> pName2Text h) <$> pNms
-        f :: IName -> HName -> Int -> ToCoreEnv IName
-        f tupleNm hNm idx  = do
+        deconTuple :: IName -> HName -> Int -> ToCoreEnv IName
+        deconTuple tupleINm hNm idx  = do
+          let instr = Instr $ MemInstr $ ExtractVal idx
+              entity = Entity (Just hNm) TyUnknown
+              expr = App instr [Var tupleINm]
           elemNm <- freshName
           addHName hNm elemNm
-          let expr = App (Instr$MemInstr$ExtractVal idx) [Var tupleNm]
-              entity = Entity (Just hNm) TyUnknown
-          addLocal elemNm (Local entity $ expr)
+          addLocal elemNm (Inline entity expr)
     in do
-      addLocal argNm (LArg $ Entity Nothing TyUnknown)
-      zipWithM (f argNm) hNms [0..]
-      pure argNm
+      addLocal argINm (LArg $ Entity Nothing TyUnknown)
+      zipWithM (deconTuple argINm) hNms [0..]
+      pure argINm
   p -> error ("unknown pattern: " ++ show p)
 
 mkSigMap :: V.Vector P.Decl -> ToCoreEnv (M.Map HName Type)
@@ -362,12 +400,13 @@ parseTree2Core topImports (P.Module mName parsedTree) = CoreModule
     { imports        = topImports
     , nameCount      = 0
     , tyNameCount    = 0
+    , freeVars       = []
     , hNames         = HM.empty
     , hTyNames       = HM.empty
 
     , localBinds     = V.empty
     , localTys       = V.empty
-    , toCoreErrors   = []
+    , toCoreErrors   = noErrors
     }
   -- Grouped Decls
   (p_TyAlias, p_TyFuns, p_TyClasses, p_TyClassInsts
@@ -567,14 +606,14 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
           = App <$> expr2Core f <*> mapM expr2Core args
     in handlePrecedence f args
 
-  -- let|lambda: need to lift functions to ToCoreEnv
-  -- P.Let Binds PExp where Binds = BDecls [Decl]
-  -- P.Lambda [Pat] PExp
-  -- TODO allow any decl ?
-  -- TODO use M.insertlookupWithkey to restore squashed values later !
-  P.Let binds exp   -> _ -- local decls !!
--- withNewHNames  :: [HName] -> ([IName] -> ToCoreEnv a)
---                -> ToCoreEnv a
+  P.Let (P.BDecls binds) exp   ->
+    let letModule = P.Module (P.Ident "_Let") binds
+    in do
+      topImports <- gets imports
+      let letCore = parseTree2Core topImports letModule
+      CU.localState $ do
+        modify (\x->x{imports = letCore : topImports})
+        expr2Core exp
 
   -- lambdas are Cases with 1 alt
   -- TODO similar to match2Lbind !
