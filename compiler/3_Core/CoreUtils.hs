@@ -35,7 +35,8 @@ localState :: State s a -> State s a
 localState f = get >>= \s -> f <* put s
 
 getArity :: Type -> Int = \case
-  TyArrow t -> length t - 1
+  TyArrow t   -> length t - 1
+  TyPAp t1 t2 -> length t2 - 1
   TyMono (MonoTyPrim p) -> case p of
     PrimExternVA l -> length l -- at least
     PrimExtern   l -> length l - 1

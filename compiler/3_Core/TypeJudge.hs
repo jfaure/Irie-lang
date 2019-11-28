@@ -33,7 +33,6 @@ import qualified CoreUtils as CU
 
 import qualified Data.Vector.Mutable as MV -- mutable vectors
 import Control.Monad.ST
-import qualified Data.Text as T -- for cancer purposes
 import qualified Data.Vector as V
 import qualified Data.Map as M
 import qualified Data.IntMap as IM
@@ -72,11 +71,11 @@ judgeModule cm =
 
 -- functions used by judgeBind and judgeExpr
 lookupBindM :: IName -> TCEnv Binding
-  = \n -> CU.lookupBinding n <$> gets (bindings . coreModule)
+ = \n -> CU.lookupBinding n <$> gets (bindings . coreModule)
 typeOfM :: IName -> TCEnv Type
-  = \n -> CU.typeOfBind n    <$> gets (bindings . coreModule)
+ = \n -> CU.typeOfBind n    <$> gets (bindings . coreModule)
 lookupHNameM :: IName -> TCEnv (Maybe HName)
-  = \n -> named . info . CU.lookupBinding n
+ = \n -> named . info . CU.lookupBinding n
           <$> gets (bindings . coreModule)
 -- modify a binding's type annotation
 updateBindTy :: IName -> Type -> TCEnv () = \n newTy ->
@@ -105,31 +104,36 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
   LClass  i  -> pure () -- pure $ traceShowId $ typed i
   LExtern i  -> pure () -- pure $ typed i
   Inline i e -> pure ()
---LMkPAp  info args e -> pure () -- only created from judged LBinds
-  LBind info args e -> case unVar (typed info) of
-    expTy@(TyArrow tys) -> do
-        zipWithM updateBindTy args tys
-        -- Careful with splitting off and rebuilding TyArrows
-        -- to avoid nesting (TyArrow [TyArrow [..]])
-        let retTy = case drop (length args) tys of
-              []  -> error "impossible"
-              [t] -> t
-              tys -> TyArrow tys
-        judgedRetTy <- judgeExpr e retTy cm
-        argTys      <- mapM typeOfM args
-        let fnTy = case retTy of
-              r@(TyArrow rTs) -> TyArrow (argTys ++ rTs)
-              r -> TyArrow (argTys ++ [r])
-        updateBindTy bindINm fnTy
-
-    notFnTy -> do
-        ty <- judgeExpr e notFnTy cm
-        case args of
-          [] -> updateBindTy bindINm ty
-          args -> do -- 'proxy' functions just pass on their args
-            argTys <- mapM ((typed . info <$>) . lookupBindM) args
-            let fnTy = TyArrow $ argTys ++ [ty]
-            updateBindTy bindINm fnTy
+--LPAp  info args e -> trace "lpap" $ pure () -- only created from judged LBinds
+  LBind inf args e -> 
+    let judgeFnBind isPAp arrowTys = do
+          zipWithM updateBindTy args arrowTys
+          -- Careful with splitting off and rebuilding TyArrows
+          -- to avoid nesting (TyArrow [TyArrow [..]])
+          let retTy = case drop (length args) arrowTys of
+                []  -> error "impossible"
+                [t] -> t
+                tys -> TyArrow tys
+          judgedRetTy <- judgeExpr e retTy cm
+          argTys      <- mapM typeOfM args
+          let fnTy = case retTy of
+                r@(TyArrow rTs) -> TyArrow (argTys ++ rTs)
+                r -> TyArrow (argTys ++ [r])
+        --if isPAp
+        --then updateBind bindINm $ LPAp inf{typed=fnTy} args e
+          updateBindTy bindINm fnTy
+    in case unVar (typed inf) of
+      TyArrow arrowTys -> judgeFnBind False arrowTys
+--    TyPAp   arrowTys -> judgeFnBind True  arrowTys
+      -- notFnTys can still be 'proxy' functions that pass on all args
+      notFnTy -> judgeExpr e notFnTy cm >>= \ty -> case args of
+        [] -> updateBindTy bindINm ty
+        args -> do 
+          -- 'proxy' functions eg. `f a = (+) 1 a` just pass on args.
+          binds <- mapM lookupBindM args
+          let argTys = typed . info <$> binds
+              fnTy = TyArrow $ argTys ++ [ty]
+          updateBindTy bindINm fnTy
 
 -- type judgements
 -- a UserType of TyUnknown needs to be inferred. otherwise check it.
@@ -192,28 +196,24 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
   App fn args ->
     let judgeApp arrowTys =
           let expArgTys = take (length args) arrowTys
+              (consumedTys, remTys) = splitAt (length args) arrowTys
           in  zipWithM judgeExpr' args expArgTys
            >>= \judged -> if all id $ zipWith subsume' judged arrowTys
-           then case drop (length args) arrowTys of
+           then case remTys of
              -- fn takes more args than it's type (eg. printf)
              []  -> pure $ last arrowTys -- TODO ensure it's variadic
              [t] -> pure t
-             tys -> pure $ TyArrow tys
-           --let Var bindNm = fn in lookupBindM bindNm >>= \case
-           --  LBind info args e -> do
-           --    traceM $ "pap? " ++ show fn ++ " : " ++ show tys
-           --    let fnTy = TyArrow tys
-           --    updateBind bindNm $ LMkPAp info{typed=fnTy} args e
-           --    pure fnTy
+             tys -> pure $ TyPAp consumedTys remTys
            else error "cannot unify function arguments"
         judgeExtern eTys = judgeApp $ TyMono . MonoTyPrim <$> eTys
 
     in judgeExpr' fn TyUnknown <&> unVar >>= \case
       TyArrow arrowTys -> judgeApp arrowTys
+      TyPAp    t1s t2s -> judgeApp $ t1s ++ t2s
       TyMono (MonoTyPrim (PrimExtern   eTys)) -> judgeExtern eTys
       TyMono (MonoTyPrim (PrimExternVA eTys)) -> judgeExtern eTys
       TyUnknown -> error ("failed to infer function type: "++show fn)
-      t -> error ("not a function (pap ?): "++show fn++" : "++show t)
+      t -> error ("not a function: "++show fn++" : "++show t)
 
 ----------------------
 -- Case expressions --

@@ -48,3 +48,5 @@
   * View patterns
   * GuardedRhs
   * Case -> Case optimizations
+  * lfvm memParam may recodegen llvmArgs
+  * polymorphic PAp - how are freeVars bound ?

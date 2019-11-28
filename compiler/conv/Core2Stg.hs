@@ -84,6 +84,10 @@ convTy tyMap =
     MonoRigid  riNm -> StgTypeAlias $ mkAlias riNm
 
   TyExpr tyfun -> error ("dependent type: " ++ show tyfun)
+  TyPAp t1s t2s -> 
+    let st1s = convTy' <$> t1s
+        st2s = convTy' <$> t2s
+    in StgPApTy st1s st2s
 
   -- Note any other type is illegal at this point
   t -> error ("internal error: core2Stg: not a monotype: " ++ show t)
@@ -113,6 +117,7 @@ doBinds binds tyMap = V.fromList $ V.ifoldr f [] binds
     Inline{}   -> id
     LExtern{} -> id
     LArg{}    -> id
+    LCon{}    -> id
     wht -> error $ show wht
 
 convExpr :: BindMap -> CoreExpr -> StgExpr
@@ -122,11 +127,9 @@ convExpr bindMap =
      convName' i = convName i $ named $ info $ lookup i
      typeOf      = typed . info . lookup
  in \case
- Var nm                ->
-   let bind = lookup nm
-   in case bind of
-     Inline i e -> convExpr' e
-     _ -> StgLit $ StgVarArg $ convName' nm
+ Var nm -> case lookup nm of
+   Inline i e -> convExpr' e
+   _ -> StgLit $ StgVarArg $ convName' nm
  Lit lit               -> StgLit $ StgConstArg $ literal2Stg lit
  App fn args           ->
    let args' = convExpr' <$> args
@@ -134,9 +137,14 @@ convExpr bindMap =
    in  case fn of
     Var fId    ->
       let bind = lookup fId
-          tyArity = CU.getArity $ typed $ info $ lookup fId
-      in if tyArity < length args'
-         then error $ "paps unsupported" ++ show tyArity ++ " < " ++ show (length args') ++ " with function " ++ show (lookup fId)
+          fnTy = typed $ info bind
+          tyArity = CU.getArity fnTy
+          arity = length args
+          stgExprFn = StgVarArg $ convName' $ fId
+      in case fnTy of
+      TyPAp{} -> StgInstr (StgPApApp (trace "careful" $ arity-tyArity)) $ stgExprFn : stgArgs
+      _ -> if tyArity > arity
+         then StgInstr StgPAp (stgExprFn : stgArgs)
          else StgApp (convName' fId) stgArgs
  
     Instr prim -> case prim of

@@ -64,6 +64,11 @@ data Binding
  , args  :: [IName] -- the unique arg Names used locally by 'expr'
  , expr  :: CoreExpr
  }
+-- | LPAp { -- partial application
+--   info  :: Entity
+-- , args  :: [IName]
+-- , expr  :: CoreExpr
+-- }
  -- always inline this binding (esp. to access freevars)
  -- only used internally for pattern match deconstructions
  | Inline {
@@ -106,15 +111,14 @@ data CaseAlts
 type UserType = Type -- user supplied type annotation
 data Type
  = TyAlias IName   -- aliases (esp. to MonoTyData)
-
  | TyMono  MonoType -- monotypes 't'
  | TyPoly  PolyType -- constrained polytypes 'p', 's'
-
  | TyArrow [Type]  -- Kind 'function' incl. Sum/Product cons
  | TyExpr  TypeFunction -- incl. dependent types
 
- | TyUnknown -- needs to be inferred - the so-called box type.
- | TyBroken -- typecheck couldn't infer a coherent type
+ | TyPAp [Type] [Type] -- for internal use
+ | TyUnknown    -- needs to be inferred - the so-called box type.
+ | TyBroken     -- typecheck couldn't infer a coherent type
 
 data MonoType
  = MonoTyPrim   PrimType

@@ -20,6 +20,7 @@ ppType :: (IName -> String) -> Type -> String = \deref -> clCyan . \case
  TyPoly p        -> show p
  TyArrow tys     -> clNormal ++ "(" ++ (concat $ DL.intersperse " -> "
                            (ppType deref <$> tys)) ++ ")"
+ TyPAp tys ty -> "PAp (" ++ ppType deref (TyArrow tys) ++ ") -> " ++ ppType deref (TyArrow tys)
  TyExpr coreExpr -> error "tyexpr"
  TyUnknown       -> "TyUnknown"
  TyBroken        -> "tyBroken"
