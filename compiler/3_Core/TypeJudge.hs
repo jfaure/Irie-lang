@@ -18,12 +18,10 @@
 -- flexible = subsume a type (<=)
 -- rigid    = all must be exactly the same type (=)
 
-
 -- By design, boxy matching is not an equivalence relation:
 -- it is not reflexive (that would require guessing polytypes)
 -- neither is it transitive |s|~s and s~|s| but not |s|~|s|.
 -- similarly, boxy subsumption is neither reflexive nor transitive
-
 
 module TypeJudge where
 import Prim
@@ -104,9 +102,8 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
   LClass  i  -> pure () -- pure $ traceShowId $ typed i
   LExtern i  -> pure () -- pure $ typed i
   Inline i e -> pure ()
---LPAp  info args e -> trace "lpap" $ pure () -- only created from judged LBinds
   LBind inf args e -> 
-    let judgeFnBind isPAp arrowTys = do
+    let judgeFnBind arrowTys = do
           zipWithM updateBindTy args arrowTys
           -- Careful with splitting off and rebuilding TyArrows
           -- to avoid nesting (TyArrow [TyArrow [..]])
@@ -119,12 +116,10 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
           let fnTy = case retTy of
                 r@(TyArrow rTs) -> TyArrow (argTys ++ rTs)
                 r -> TyArrow (argTys ++ [r])
-        --if isPAp
-        --then updateBind bindINm $ LPAp inf{typed=fnTy} args e
           updateBindTy bindINm fnTy
     in case unVar (typed inf) of
-      TyArrow arrowTys -> judgeFnBind False arrowTys
---    TyPAp   arrowTys -> judgeFnBind True  arrowTys
+      TyArrow arrowTys -> judgeFnBind arrowTys
+      TyPAp{} -> error "pap" -- judgeFnBind True  arrowTys
       -- notFnTys can still be 'proxy' functions that pass on all args
       notFnTy -> judgeExpr e notFnTy cm >>= \ty -> case args of
         [] -> updateBindTy bindINm ty
@@ -191,7 +186,6 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       pure newTy
 
   -- APP expr: unify argTypes and remove left arrows from app expr
-  -- TODO PAP, also check arities match
   -- Typeclass resolution
   App fn args ->
     let judgeApp arrowTys =
@@ -209,7 +203,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
 
     in judgeExpr' fn TyUnknown <&> unVar >>= \case
       TyArrow arrowTys -> judgeApp arrowTys
-      TyPAp    t1s t2s -> judgeApp $ t1s ++ t2s
+      TyPAp    t1s t2s -> judgeApp t2s
       TyMono (MonoTyPrim (PrimExtern   eTys)) -> judgeExtern eTys
       TyMono (MonoTyPrim (PrimExternVA eTys)) -> judgeExtern eTys
       TyUnknown -> error ("failed to infer function type: "++show fn)

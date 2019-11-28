@@ -104,13 +104,11 @@ doBinds binds tyMap = V.fromList $ V.ifoldr f [] binds
     LBind info args expr ->
       let nm       = convName iNm (named info)
           argNames = StgVarArg . convName' <$> args
-          (argTys, [retTy]) = case args of
-              [] -> ([], [convTy' $ typed info])
-              t  -> case typed info of
-                  TyArrow tys -> splitAt (length tys - 1) $ convTy' <$> tys
-                  _ -> error "internal typecheck error"
+          (argTys, [retTy]) = case typed info of
+              TyArrow tys -> splitAt (length tys - 1) $ convTy' <$> tys
+              t -> ([], [convTy' t])
           rhs :: StgRhs = case expr of
-            Instr i -> StgPrim $ prim2llvm i
+            Instr i -> StgPrim (prim2llvm i) argTys retTy
             e       -> let stgExpr = convExpr binds expr
                        in StgTopRhs argNames argTys retTy stgExpr
       in (StgBinding nm rhs :)
@@ -174,13 +172,12 @@ convName i = \case
   Nothing -> LLVM.AST.mkName $ '_' : show i
   Just h  -> LLVM.AST.mkName $ CU.hNm2Str h -- ++ show i
 
--- TODO depends on the type of the Literal ?!
 literal2Stg :: Literal -> StgConst =
   let mkChar c = C.Int 8 $ toInteger $ ord c 
   in \case
     Char c   -> mkChar c
     Int i    -> C.Int 32 $ i
-    String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar <$> (s++['\0']))
+    String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))
     Frac f   -> C.Float (LF.Double $ fromRational f)
 
 -- most llvm instructions take flags, stg wants functions on operands
@@ -210,10 +207,10 @@ prim2llvm :: PrimInstr -> StgPrimitive = \case
   MkTuple -> StgMkTuple
 
 primTy2llvm :: PrimType -> LLVM.AST.Type =
- let doExtern isVa tys =
-       let (argTys, [retTy]) = splitAt (length tys -1) tys
-       in LT.FunctionType retTy argTys isVa
- in \case
+  let doExtern isVa tys =
+        let (argTys, [retTy]) = splitAt (length tys -1) tys
+        in LT.FunctionType retTy argTys isVa
+  in \case
   PrimInt   i   -> LT.IntegerType $ fromIntegral i
   PrimFloat f   -> LT.FloatingPointType $ case f of
       HalfTy    -> LT.HalfFP
