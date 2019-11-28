@@ -76,18 +76,23 @@ lookupBindM :: IName -> TCEnv Binding
 typeOfM :: IName -> TCEnv Type
   = \n -> CU.typeOfBind n    <$> gets (bindings . coreModule)
 lookupHNameM :: IName -> TCEnv (Maybe HName)
-  = \n -> named . info . CU.lookupBinding n 
+  = \n -> named . info . CU.lookupBinding n
           <$> gets (bindings . coreModule)
 -- modify a binding's type annotation
-updateBindTy :: IName -> Type -> TCEnv ()
-  = \n ty -> 
-   let doUpdate cm =
-        let binds = bindings cm
-            b = CU.lookupBinding n binds
-            b' = b { info = (info b) { typed=ty } }
-            binds' = V.modify (\v->MV.write v n b') binds
-        in cm { bindings=binds' }
-   in modify (\x->x{ coreModule = doUpdate (coreModule x) })
+updateBindTy :: IName -> Type -> TCEnv () = \n newTy ->
+ let doUpdate cm =
+      let binds = bindings cm
+          b = CU.lookupBinding n binds
+          newBind = b { info = (info b) { typed=newTy } }
+          binds' = V.modify (\v->MV.write v n newBind) binds
+      in cm { bindings=binds' }
+ in modify (\x->x{ coreModule = doUpdate (coreModule x) })
+
+updateBind :: IName -> Binding -> TCEnv () = \n newBind ->
+ let doUpdate cm =
+      let binds = V.modify (\v->MV.write v n newBind) (bindings cm)
+      in  cm { bindings=binds }
+ in modify (\x->x{ coreModule = doUpdate (coreModule x) })
 
 -- Rule lambda: propagate (maybe partial) type annotations downwards
 -- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
@@ -95,30 +100,36 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
  = \cm bindINm ->
   let unVar = CU.unVar (algData cm)
   in \case
-  LArg    i -> pure () -- pure $ typed i
-  LCon    i -> pure () -- pure $ typed i
-  LClass  i -> pure () -- pure $ traceShowId $ typed i
-  LExtern i -> pure () -- pure $ typed i
+  LArg    i  -> pure () -- pure $ typed i
+  LCon    i  -> pure () -- pure $ typed i
+  LClass  i  -> pure () -- pure $ traceShowId $ typed i
+  LExtern i  -> pure () -- pure $ typed i
   Inline i e -> pure ()
+--LMkPAp  info args e -> pure () -- only created from judged LBinds
   LBind info args e -> case unVar (typed info) of
-  -- Careful with splitting off | rebuilding TyArrows
-  -- to avoid having (TyArrow [TyArrow [..]])
     expTy@(TyArrow tys) -> do
         zipWithM updateBindTy args tys
+        -- Careful with splitting off and rebuilding TyArrows
+        -- to avoid nesting (TyArrow [TyArrow [..]])
         let retTy = case drop (length args) tys of
               []  -> error "impossible"
               [t] -> t
               tys -> TyArrow tys
-        judgedRetTy  <- judgeExpr e retTy cm
-        argTys <- mapM typeOfM args
-        let fnTy = case retTy of 
+        judgedRetTy <- judgeExpr e retTy cm
+        argTys      <- mapM typeOfM args
+        let fnTy = case retTy of
               r@(TyArrow rTs) -> TyArrow (argTys ++ rTs)
               r -> TyArrow (argTys ++ [r])
         updateBindTy bindINm fnTy
 
-    t -> do
-        ty <- judgeExpr e t cm
-        updateBindTy bindINm ty
+    notFnTy -> do
+        ty <- judgeExpr e notFnTy cm
+        case args of
+          [] -> updateBindTy bindINm ty
+          args -> do -- 'proxy' functions just pass on their args
+            argTys <- mapM ((typed . info <$>) . lookupBindM) args
+            let fnTy = TyArrow $ argTys ++ [ty]
+            updateBindTy bindINm fnTy
 
 -- type judgements
 -- a UserType of TyUnknown needs to be inferred. otherwise check it.
@@ -175,56 +186,34 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       updateBindTy nm newTy
       pure newTy
 
-  -- APP expr: unify argTypes and remove left arrows from app expresssion
+  -- APP expr: unify argTypes and remove left arrows from app expr
   -- TODO PAP, also check arities match
   -- Typeclass resolution
   App fn args ->
-    -- TODO what the fuck ?!
-    let judgeApp fnTy@(TyArrow tys) =
-          let expArgTys = take (length args) tys
+    let judgeApp arrowTys =
+          let expArgTys = take (length args) arrowTys
           in  zipWithM judgeExpr' args expArgTys
-           >>= \judged -> do
-           if all id $ zipWith subsume' judged tys
-           then pure $ case drop (length args) tys of
-             []  -> last tys -- TODO impossible unless takes more args than it's type = probably printf
-             [t] -> t
-             tys -> TyArrow tys
+           >>= \judged -> if all id $ zipWith subsume' judged arrowTys
+           then case drop (length args) arrowTys of
+             -- fn takes more args than it's type (eg. printf)
+             []  -> pure $ last arrowTys -- TODO ensure it's variadic
+             [t] -> pure t
+             tys -> pure $ TyArrow tys
+           --let Var bindNm = fn in lookupBindM bindNm >>= \case
+           --  LBind info args e -> do
+           --    traceM $ "pap? " ++ show fn ++ " : " ++ show tys
+           --    let fnTy = TyArrow tys
+           --    updateBind bindNm $ LMkPAp info{typed=fnTy} args e
+           --    pure fnTy
            else error "cannot unify function arguments"
-    in case fn of
+        judgeExtern eTys = judgeApp $ TyMono . MonoTyPrim <$> eTys
 
-    -- Mem primitives are valid only on PrimArr|PrimTuple
-    Instr (MemInstr mi) -> case args of
-      args -> judgeExpr' (last args) TyUnknown <&> unVar <&> \case
-        TyMono (MonoTyPrim (PrimArr   ty))      -> _
-        TyMono (MonoTyPrim (PrimTuple primTys)) -> case mi of
-          ExtractVal idx ->
-            if idx >= 0 && idx < length primTys
-            then TyMono $ MonoTyPrim $ primTys !! idx
-            else error "tuple access out of bounds !"
-          Gep -> _
-        t -> error ("Cannot use mem access on: " ++ show t)
---    _ -> error "too many args for mem access primitive"
-    Instr (MkTuple) -> do
-      rawTys <- zipWithM judgeExpr' args (repeat TyUnknown)
-      let tys = unVar <$> rawTys
-          mkPrim = \case
-            TyMono (MonoTyPrim p) -> p
-            t        -> error ("bad type in tuple: " ++ show t)
-          tupleTy = PrimTuple $ mkPrim <$> tys
---    addTuple
-      pure $ TyMono $ MonoTyPrim $ tupleTy
-
-    -- normal fn application
-    fn -> judgeExpr' fn TyUnknown <&> unVar >>= \case
-      fn@(TyArrow tys) -> judgeApp fn
-      TyMono (MonoTyPrim prim) ->
-        let toPrim = TyMono . MonoTyPrim
-        in case prim of
-          PrimExtern   etys -> judgeApp (TyArrow (toPrim <$> etys))
-          PrimExternVA etys -> judgeApp (TyArrow (toPrim <$> etys))
-          o -> error "strange inference case"
+    in judgeExpr' fn TyUnknown <&> unVar >>= \case
+      TyArrow arrowTys -> judgeApp arrowTys
+      TyMono (MonoTyPrim (PrimExtern   eTys)) -> judgeExtern eTys
+      TyMono (MonoTyPrim (PrimExternVA eTys)) -> judgeExtern eTys
       TyUnknown -> error ("failed to infer function type: "++show fn)
-      t -> error ("cannot call non function: "++show fn++" : "++show t)
+      t -> error ("not a function (pap ?): "++show fn++" : "++show t)
 
 ----------------------
 -- Case expressions --
