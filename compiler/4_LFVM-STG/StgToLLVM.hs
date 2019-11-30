@@ -245,28 +245,31 @@ stgToIR (StgLit lit) =
       dont_call                           -> pure s
 
   handle0Arity :: CodeGenIRConstraints m => StgId -> Symbol -> m Operand
-  handle0Arity iden = \case
+  handle0Arity iden = 
+      let 
+      -- to pass primitives to functions, you need a function pointer
+      wrapPrim p argTys retTy = case p of
+        -- TODO more prims
+         StgPrim2 op -> do
+           a <- fresh
+           b <- fresh
+           let stgArgs = StgVarArg <$> [a, b]
+               expr = StgInstr p stgArgs
+               rhs = StgTopRhs stgArgs argTys retTy expr
+           f <- fnToLlvm iden rhs
+           let cont = ContPrim p argTys retTy (Just f)
+           modify (\x->x {bindMap = Map.insert iden cont (bindMap x)})
+           pure f
+         _ -> error $ "internal: no support for wrapping: " ++ show p
+      in \case
       ContLi s  -> pure s --  never call literals
       ContFn v  -> callIfThunk v
       ContRhs (StgRhsSsa val) -> pure val -- don't make a function for literals
+      ContRhs (StgPrim p argTys retTy) -> wrapPrim p argTys retTy
       ContRhs r -> fnToLlvm iden r >>= callIfThunk -- rly
-      -- Primitives cannot be passed around as args, you need a function wrapper
       ContPrim p argTys retTy fn -> case fn of
        Just f -> pure f
-       Nothing -> case p of
-       -- TODO more prims
-        StgPrim2 op -> do
-          a <- fresh
-          b <- fresh
-          let stgArgs = StgVarArg <$> [a, b]
-              expr = StgInstr p stgArgs
-              rhs = StgTopRhs stgArgs argTys retTy expr
-          f <- fnToLlvm iden rhs
-          let cont = ContPrim p argTys retTy (Just f)
-          modify (\x->x {bindMap = Map.insert iden cont (bindMap x)})
-          pure f
-
-        _ -> error $ "internal: Primitive is not a function pointer" ++ show p
+       Nothing -> wrapPrim p argTys retTy
  in case lit of
    StgConstArg l -> pure $ ConstantOperand l -- fresh >>= \nm -> ConstantOperand <$> globalArray nm l
    StgSsaArg s   -> pure s
@@ -307,7 +310,7 @@ stgToIR (StgInstr stgPrim args) =
 
 -- StgApp
 -- Arities always exactly match
--- Recall stack frames are responsible for all data returned by their functions !
+-- Recall stack frames are responsible for data returned to them
 -- We may need to alloca some stack space and pass that to the function
 -- The fn might not yet be codegened, but should still be bound
 stgToIR (StgApp iden args) = gets ((Map.!? iden) . bindMap)
@@ -319,7 +322,8 @@ stgToIR (StgApp iden args) = gets ((Map.!? iden) . bindMap)
         llvmArgs = mapM (stgToIR . StgLit) args
     case x of
       ContPrim r _ _ _-> stgToIR (StgInstr r args)
-      other -> params >>= \p -> (`call` p) =<< case other of
+      ContRhs (StgPrim p _ _) -> stgToIR (StgInstr p args)
+      callable -> params >>= \p -> (`call` p) =<< case callable of
           ContLi f -> error "StgToIR ($): panic: unexpected literal"
           ContFn f -> pure f
           ContRhs (StgRhsSsa val) -> pure val -- a function pointer arg

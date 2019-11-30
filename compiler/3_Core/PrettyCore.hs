@@ -62,6 +62,7 @@ ppBind f derefTy indent b =
   LCon a    -> "lcon: "    ++ ppEntity' a
   LClass a  -> "lclass: "  ++ ppEntity' a
   LExtern a -> "lextern: " ++ ppEntity' a
+  Inline a e-> "inline: " ++ ppEntity' a ++ " = " ++ ppCoreExpr f derefTy "" e
 
 ppCoreModule :: CoreModule -> String
  = \(CoreModule hNm typeMap bindings externs overloads defaults _ _) ->

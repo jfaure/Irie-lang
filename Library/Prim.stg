@@ -13,6 +13,7 @@ type Double    = #!Double
 -- type PPC_FP128 = #!PPC_FP128 -- two 64-bits
 -- Frac = Half | Float | Double | FP128 | PPC_FP128
 
+infix 6 +
 type IntOp2 = Int -> Int -> Int
 (+)  : IntOp2 = #!add
 (-)  : IntOp2 = #!sub
@@ -20,7 +21,7 @@ type IntOp2 = Int -> Int -> Int
 (//) : IntOp2 = #!sdiv
 (/?) : IntOp2 = #!srem
 (==) : IntOp2 = #!icmp
--- (/)  : Int -> Int -> Real = \x y -> (#!fptoui x) // (#!fptoui y)
+--(/)  : Int -> Int -> Real = \x y -> (#!fptoui x) // (#!fptoui y)
 
 -- unsigned overloads for Nat
 --(//) : Nat -> Nat -> Nat = #!udiv
@@ -50,3 +51,4 @@ type IntOp2 = Int -> Int -> Int
 -- C extern functions --
 extern puts : (#!CharPtr) -> Int
 externVarArg printf : (#!CharPtr) -> Int
+putNumber n = printf "%d\n" n

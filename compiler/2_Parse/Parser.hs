@@ -16,10 +16,12 @@ import qualified Data.Text as T
 import Control.Monad.State.Strict as ST
 import Control.Monad.Reader
 import Data.Functor
+import Data.Char (isAlphaNum)
 
 import Debug.Trace
 import qualified Text.Megaparsec.Debug as DBG
-dbg i = id -- DBG.dbg i
+dbg i = id
+-- dbg i = DBG.dbg i
 
 --located :: Parser (Span -> a) -> Parser a = do
 --  start <- getPosition
@@ -58,9 +60,10 @@ symboln = L.symbol scn . T.pack
 -- all symbol chars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 -- reserved: ():\{}"_'`.
 symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: String
-reservedOps = ["=","->","|",":", "#!", "."]
-reservedNames = ["type", "data", "record", "class", "extern", "externVarArg",
-                 "let", "in", "case", "of", "_"]
+reservedOps   = ["=","->","|",":", "#!", "."]
+reservedNames = T.pack <$>
+ ["type", "data", "record", "class", "extern", "externVarArg"
+ , "let", "in", "case", "of", "_"]
 reservedName w = (lexeme . try) (string (T.pack w) *> notFollowedBy alphaNumChar)
 reservedOp w = lexeme (notFollowedBy (opLetter w) *> string (T.pack w))
   where opLetter :: String -> Parser ()
@@ -68,22 +71,22 @@ reservedOp w = lexeme (notFollowedBy (opLetter w) *> string (T.pack w))
         longerOps w = filter (\x -> isInfixOf w x && x /= w) reservedOps
 reserved = reservedName
 
-iden :: Parser Name
-iden = lexeme (p >>= check)
-  where
-  p = (:) <$> letterChar <*> many alphaNumChar
+iden :: Parser Name = lexeme (p >>= check) where
+  p :: Parser T.Text
+  p = lookAhead letterChar *> takeWhileP Nothing isAlphaNum
   check x = if x `elem` reservedNames
             then fail $ "keyword "++show x++" cannot be an identifier"
             else pure (Ident x)
 
-symbolName = check =<< some (satisfy (`elem` symbolChars))
-  where
-  check x = if x `elem` reservedOps
+symbolName :: Parser Name = lexeme (p >>= check) where
+  p :: Parser T.Text
+  p = takeWhile1P Nothing (`elem` symbolChars)
+  check x = if x `elem` (T.pack <$> reservedOps)
             then fail $ "reserved Symbol: "++show x ++" cannot be an identifier"
             else pure $ Symbol x
 
 -- Names
-lIden, uIden, symbolName :: Parser Name
+lIden, uIden :: Parser Name
 lIden = lookAhead lowerChar *> iden -- variables
 uIden = lookAhead upperChar *> iden -- constructors / types
 name = iden
@@ -104,6 +107,7 @@ stringLiteral :: Parser String
 parens, braces :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 braces = between (symbol "{") (symbol "}")
+bracesn = between (symboln "{") (symboln "}")
 
 endLine = lexeme (single '\n')
 
@@ -128,7 +132,8 @@ parseModule :: FilePath -> T.Text
             -> Either (ParseErrorBundle T.Text Void) Module
   = \nm txt ->
   let doParse = runParserT (between sc eof parseProg) nm txt
-  in Module (Ident nm) <$> runReader doParse (mkPos 0) -- start indent is 0
+      startIndent = mkPos 0
+  in Module (Ident $ T.pack nm) <$> runReader doParse startIndent
 
 parseProg :: Parser [Decl]
  = noIndent decl `sepEndBy` many endLine
@@ -158,16 +163,15 @@ decl :: Parser Decl -- top level
               in InfixDecl <$> pInfix <*> optional int <*> some name
   fnName = name <|> parens symbolName
 
-  -- TODO indentation
+  -- TODO indentation for where
   pWhere        = reserved "where" *> scn
   typeClass     = reserved "class"    $> TypeClass <*>
-                  tyName <* pWhere <*> between (symboln "{") (symboln "}") (some (decl <* scn))
+                  tyName <* pWhere <*> bracesn (some (decl <* scn))
   typeClassInst = reserved "instance" $> TypeClassInst <*>
-                  tyName <*> tyName <* pWhere <*> between (symboln "{") (symboln "}") (some (decl <* scn))
+                  tyName <*> tyName <* pWhere <*> bracesn (some (decl <* scn))
 
   -- Flexible type vars are possible in type signatures
-  -- Also dependent types..
-  funBind = FunBind <$> some match
+  funBind = dbg "fnbind" $ FunBind <$> some match
   typeSigDecl = (<?> "typeSig") $ do
     fns <- fnName `sepBy` symbol ","
     reservedOp ":"
@@ -181,9 +185,10 @@ decl :: Parser Decl -- top level
         _        -> fail "multiple function bindings at once"
 
   defaultDecl = DefaultDecl <$ reserved "default" <*> singleType <*> singleType
-  match = (Match <$> (name <|> parens symbolName) <*> many (lexeme pat)
-      <|> InfixMatch <$> (lexeme pat) <*> infixName <*> many (lexeme pat))
-      <*  reservedOp "=" <*> rhs
+  match = dbg "match" $ do 
+    (Match <$> (name <|> parens symbolName) <*> many (lexeme pat)
+      <|> InfixMatch <$> lexeme pat <*> infixName <*> many (lexeme pat))
+          <*  reservedOp "=" <*> rhs
 
 -- needs to return an Exp so we can give the literal a polytype
 literalExp :: Parser PExp = lexeme $ choice
@@ -204,12 +209,16 @@ indentedItems ref lvl scn p finished = go where
      | pos == lvl -> (:) <$> p <*> go
      | otherwise  -> L.incorrectIndent EQ lvl pos
 
-pExp :: Parser PExp = appOrSingle
+pExp :: Parser PExp = dbg "pexp" $
+  appOrSingle >>= \app ->
+    optional (infixTrain app) >>= \case
+      Nothing      -> pure app
+      Just infixes -> pure infixes
   where
   appOrSingle = single >>= \fn -> choice
    [ App fn <$> some single
-   , infixApp fn
-   , pure fn]
+   , pure fn
+   ]
   single = dbg "pSingleExp" $ choice
    [ letIn
    , multiIf
@@ -223,24 +232,25 @@ pExp :: Parser PExp = appOrSingle
    , try someName
    , parens (try opSection <|> pExp)
    ]
+  infixTrain lArg =
+    let infixOp = qName infixName
+    in  InfixTrain lArg <$> some ((,) <$> infixOp <*> appOrSingle)
   opSection = SectionR <$> qName infixName <*> pExp
-  infixApp lArg = do
-      fnInfix <- Infix <$> qName infixName
-      rArg <- some pExp
-      pure (App fnInfix (lArg:rArg))
-  someName = dbg "someName" $ do
-    Con . UnQual <$> uIden
-    <|> Var <$> qName lIden
-    <|> Var <$> try (qName (parens symbolName))
+  someName = dbg "someName" $ choice
+    [ Con . UnQual <$> uIden
+    , Var <$> qName lIden
+    , Var <$> try (qName (parens symbolName)) ]
   lambda = Lambda <$ char '\\' <*> many pat <* symbol "->" <*> pExp
   lambdaCase = LambdaCase <$> (char '\\' <* reserved "case" *> many (alt <* scn))
   letIn = do
-    reserved "let"
+   reserved "let"
+   dbg "let" $ do
     ref <- ask -- reference indentation
     scn
     lvl <- L.indentLevel
-    local (const lvl) $ do -- save this indent
+    local (const lvl) $ dbg "letBinds" $ do -- save this indent
       binds <- BDecls <$> indentedItems ref lvl scn decl (reserved "in")
+--    binds <- BDecls <$> decl `sepBy` symbol ";"
       reserved "in"
       p <- pExp
       pure (Let binds p)
@@ -313,7 +323,6 @@ tyData :: Parser Type =
      recordFields :: Parser [(Name, Type)] =
        let field = (,) <$> tyVar <* reservedOp ":" <*> pType
        in  lexemen field `sepBy` lexemen ","
-     bracesn = between (symboln "{") (symboln "}")
  in choice
  [ TyRecord    <$> parseAlts (bracesn recordFields)
  , TyData      <$> try (parseAlts (many singleType))

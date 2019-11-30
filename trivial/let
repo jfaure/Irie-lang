@@ -1,2 +1,2 @@
 f = let b = 3
-    in b
+  in b

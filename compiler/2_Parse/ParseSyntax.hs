@@ -6,11 +6,11 @@
 module ParseSyntax where -- import qualified as PSyn
 
 import Prim
+import Data.Text as T -- Names are Text
 
--- TODO use bytestring for names?
 data Name        -- variables (incl constructors and symbols)
- = Ident  String -- varid/conid
- | Symbol String -- varsym/consym
+ = Ident  Text -- varid/conid
+ | Symbol Text -- varsym/consym
 data QName -- QName: qualified name: '::' namespace operator
  = QName [Name] Name
  | UnQual Name
@@ -90,8 +90,9 @@ data PExp
  | Con QName
  | Lit Literal
  | PrimOp PrimInstr
- | Infix QName     -- `name` or symbols
- | App PExp [PExp] -- extract infix apps from this during core2expr
+-- | Infix QName     -- `name` or symbols
+ | App PExp [PExp]
+ | InfixTrain PExp [(QName, PExp)] -- `name` or symbolName
  | Lambda [Pat] PExp
  | SectionL PExp QName -- operator sections
  | SectionR QName PExp

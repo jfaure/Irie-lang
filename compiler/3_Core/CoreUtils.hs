@@ -1,7 +1,3 @@
--- CoreUtils:
---  * lookup INames
---  * prettyprint
-
 module CoreUtils where
 
 import CoreSyn

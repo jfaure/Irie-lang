@@ -1,0 +1,2 @@
+neg a = 0 - a
+main = putNumber (3 * neg 1 + 2)

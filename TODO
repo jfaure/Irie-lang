@@ -1,15 +1,14 @@
-# Dependent types
 # expr2Core
-  * PAP
   * freevars
   * array prims + pattern matching
 
+  * generate function wrappers for remaining primitives (stgtollvm:258)
   * precedence (parser doesn't have all infix decls)
-  * primitive type operators (| & ->)
   * patterns, nested patterns, matches2Case
   * implicit forall typevars ?
   * register subtypes before codegen in case recursive
   * TyRigid could be polytype
+  * review case -> core logic
 
 # Typeclass
   * Instantiation (classOverloads + defaults) (in typejudge ?)
@@ -37,16 +36,16 @@
   * error message clarity
   * precomipled modules (also emit externs for all functions)
 
-# Prelude / dependent types
+# Prelude
   * fold-build
   * fusion across functions ? composition fusion
   * effects
   * distribution
-  * memory (sudoku example - inplace modifications undo as stack unravels)
+  * memory (eg. inplace modifications undo as stack unravels eg. sudoku)
 
 # Maybe
   * View patterns
   * GuardedRhs
   * Case -> Case optimizations
-  * lfvm memParam may recodegen llvmArgs
   * polymorphic PAp - how are freeVars bound ?
+  * ContPrim may be unecessary

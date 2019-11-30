@@ -43,7 +43,7 @@ data CoreModule     = CoreModule {
  -- binds: constructors, locals, and class Fns (not overloads!)
  , bindings   :: BindMap
 
- , externs    :: TypeMap -- extern decl (also referenced in bindmap)
+ , externs    :: TypeMap -- A subset of the bindMap
 
  -- typeclass  resolution, indexed by the class polytype's iName
  --  , classes  :: ? -- importers will want the classdecls
@@ -56,7 +56,7 @@ data CoreModule     = CoreModule {
  -- lookup tables (Used when module is imported and in the repl)
  , hNameBinds :: HM.HashMap HName IName
  , hNameTypes :: HM.HashMap HName IName
- }
+}
 
 data Binding
  = LBind { -- let binding
@@ -64,11 +64,6 @@ data Binding
  , args  :: [IName] -- the unique arg Names used locally by 'expr'
  , expr  :: CoreExpr
  }
--- | LPAp { -- partial application
---   info  :: Entity
--- , args  :: [IName]
--- , expr  :: CoreExpr
--- }
  -- always inline this binding (esp. to access freevars)
  -- only used internally for pattern match deconstructions
  | Inline {
