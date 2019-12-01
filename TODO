@@ -1,12 +1,12 @@
 # expr2Core
+  * compiled modules
   * freevars
   * array prims + pattern matching
-
   * generate function wrappers for remaining primitives (stgtollvm:258)
-  * precedence (parser doesn't have all infix decls)
+  * infix associativity
   * patterns, nested patterns, matches2Case
   * implicit forall typevars ?
-  * register subtypes before codegen in case recursive
+  * register subtypes before codegen (support for recursive)
   * TyRigid could be polytype
   * review case -> core logic
 
@@ -24,8 +24,6 @@
 # parser
   * move all type parse logic to pExp
   * oneline let parser
-  * Multiple Infixes
-  * custom infix decls
   * indented 'where', esp. class
   * linefolds
   * GADT style
@@ -38,14 +36,16 @@
 
 # Prelude
   * fold-build
-  * fusion across functions ? composition fusion
+  * fusion across functions ? composition fusion ~ lazy
   * effects
   * distribution
   * memory (eg. inplace modifications undo as stack unravels eg. sudoku)
 
 # Maybe
+  * rec / set / let
   * View patterns
   * GuardedRhs
   * Case -> Case optimizations
   * polymorphic PAp - how are freeVars bound ?
   * ContPrim may be unecessary
+  * optimize convFixities

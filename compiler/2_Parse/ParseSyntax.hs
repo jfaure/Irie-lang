@@ -40,7 +40,7 @@ data Decl
  | FunBind       [Match]
 
  -- auxilary decls
- | InfixDecl     Assoc (Maybe Integer) [Op] --info for infix operators
+ | InfixDecl     Assoc (Maybe Int) [Op] --info for infix operators
  | DefaultDecl   Type Type -- eg: default Num Integer
 
 -- associativity of infix/infixr/infixl decls

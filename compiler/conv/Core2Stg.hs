@@ -30,7 +30,7 @@ import Data.List
 
 -- TODO filter all functions from CoreModule.bindings
 core2stg :: CoreModule -> StgModule
-core2stg (CoreModule hNm algData coreBinds externs overloads defaults _ _)
+core2stg (CoreModule hNm algData coreBinds externs overloads defaults _ _ _)
  = StgModule stgData (V.fromList stgTypedefs) stgExterns stgBinds
   where
   (stgData, stgTypedefs) = convData algData

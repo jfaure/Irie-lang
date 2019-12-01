@@ -157,10 +157,12 @@ decl :: Parser Decl -- top level
     , reserved "data"   *> defOrFun tyData
     , reserved "record" *> defOrFun tyRecord]
 
-  infixDecl = let pInfix = reserved "infix"  $> AssocNone
-                       <|> reserved "infixr" $> AssocRight
-                       <|> reserved "infixl" $> AssocLeft
-              in InfixDecl <$> pInfix <*> optional int <*> some name
+  infixDecl =
+    let pInfix = reserved "infix"  $> AssocNone
+             <|> reserved "infixr" $> AssocRight
+             <|> reserved "infixl" $> AssocLeft
+        opNames = (\x->[x]) <$> symbolName --`sepBy` symbol ","
+    in InfixDecl <$> pInfix <*> optional (lexeme L.decimal) <*> opNames
   fnName = name <|> parens symbolName
 
   -- TODO indentation for where

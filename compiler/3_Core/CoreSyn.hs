@@ -35,6 +35,9 @@ type ClassFns       = IM.IntMap Binding  -- indexed by polymorphic classFn's Ina
 type ClassInsts     = IM.IntMap ClassFns
 type ClassOverloads = IM.IntMap ClassInsts
 
+data Fixity = Fixity Int Assoc
+data Assoc = LAssoc | RAssoc
+
 data ImportList     = ImportList [CoreModule]
 data CoreModule     = CoreModule {
    moduleName :: HName
@@ -50,6 +53,7 @@ data CoreModule     = CoreModule {
  , overloads  :: ClassOverloads
  -- default for otherwise ambiguous instances eg. default Num Int
  , defaults   :: IM.IntMap MonoType
+ , fixities   :: HM.HashMap HName Fixity
 
 -- , tyFuns :: V.Vector TypeFunction
 
@@ -156,6 +160,8 @@ deriving instance Show CoreExpr
 deriving instance Show CaseAlts
 deriving instance Show Entity
 deriving instance Show CoreModule
+deriving instance Show Fixity
+deriving instance Show Assoc
 
 data TCError
  = UnifyFail { expected :: Entity, got :: Entity}

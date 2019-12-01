@@ -65,7 +65,7 @@ ppBind f derefTy indent b =
   Inline a e-> "inline: " ++ ppEntity' a ++ " = " ++ ppCoreExpr f derefTy "" e
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule hNm typeMap bindings externs overloads defaults _ _) ->
+ = \(CoreModule hNm typeMap bindings externs overloads defaults fixities _ _) ->
   let derefTy  i = bind2HName        (typeMap  V.! i) i
       derefVar i = bind2HName (info (bindings V.! i)) i
       ppEntity'  = ppEntity derefTy
@@ -76,10 +76,10 @@ ppCoreModule :: CoreModule -> String
   ++ "\n\n" ++ clYellow "-- externs --"
   ++ "\n"   ++ (concatMap (\x->ppEntity' x ++ "\n") externs)
 
-  ++ "\n"   ++ clGreen "-- bindings --"
-  ++ concat ((ppBind derefVar derefTy "\n") <$> bindings)
   ++ "\n\n" ++ clRed "-- overloads --"
   ++ "\n"   ++ DL.intercalate "\n" (ppClassOverloads <$> IM.elems overloads)
+  ++ "\n"   ++ clGreen "-- bindings --"
+  ++ concat ((ppBind derefVar derefTy "\n") <$> bindings)
 
 ppClassOverloads overloads = DL.intercalate "\n" (show <$> IM.elems overloads)
 

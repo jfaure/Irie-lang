@@ -1,4 +1,3 @@
-{-# LANGUAGE ViewPatterns #-}
 -- ParseTree -> Core
 
 -- 1. resolve infix apps (including precedence)
@@ -31,6 +30,7 @@ import Debug.Trace
 type ToCoreEnv a = State ConvState a
 data ConvState = ConvState {
    imports       :: Imports -- imports in scope
+ , localFixities :: HM.HashMap HName Fixity
  , nameCount     :: IName
  , tyNameCount   :: IName
  , freeVars      :: [IName] -- used to prepare PAP'S
@@ -84,7 +84,7 @@ convTy :: (HName -> Maybe IName) -> P.Type -> Either ConvTyError Type
  let convTy' = convTy findNm
  in \case
   P.TyPrim t                -> Right$TyMono$MonoTyPrim t
-  P.TyPoly (P.PolyAnd   f)-> TyPoly . PolyConstrain <$> mapM convTy' f
+  P.TyPoly (P.PolyAnd   f) -> TyPoly . PolyConstrain <$> mapM convTy' f
   P.TyPoly (P.PolyUnion f) -> TyPoly . PolyUnion     <$> mapM convTy' f
   P.TyPoly (P.PolyAny)  -> Right$TyPoly$PolyAny
   P.TyName n                ->
@@ -371,6 +371,7 @@ lookupHNm hNm = getHName hNm >>= \case
           addHName hNm nm
           traceM $ "adding name: " ++ show hNm
           addLocal nm bind
+          error "untested support for external bindings"
   just -> pure just
 
 lookupTyHNm hNm = getTyHName hNm >>= \case
@@ -385,6 +386,7 @@ lookupTyHNm hNm = getTyHName hNm >>= \case
           addTyHName hNm nm
           traceM "adding tyname"
           addLocalTy nm bind
+          error "untested support for external bindings"
   just -> pure just
 
 lookupNm_Module :: HName->CoreModule -> Maybe (IName, CoreModule)
@@ -444,20 +446,22 @@ groupDecls parsedTree = mapTuple9 V.fromList $
 ------------------------
 parseTree2Core :: [CoreModule] -> P.Module -> CoreModule
 parseTree2Core topImports (P.Module mName parsedTree) = CoreModule
-  { moduleName    = pName2Text mName
-  , algData       = dataTys
-  , bindings      = binds
-  , externs       = r_externs
-  , overloads     = r_overloads
-  , defaults      = IM.empty
-  , hNameBinds    = hNames   endState
-  , hNameTypes    = hTyNames endState
+  { moduleName  = pName2Text mName
+  , algData     = dataTys
+  , bindings    = binds
+  , externs     = r_externs
+  , overloads   = r_overloads
+  , defaults    = IM.empty
+  , fixities    = localFixities endState
+  , hNameBinds  = hNames   endState
+  , hNameTypes  = hTyNames endState
   }
   where
   (binds, dataTys, r_overloads, r_externs) = val
   (val, endState) = runState toCoreM $ ConvState
     { imports        = Imports { openImports = topImports 
                                , qualImports = HM.empty }
+    , localFixities  = HM.empty
     , nameCount      = 0
     , tyNameCount    = 0
     , freeVars       = []
@@ -470,12 +474,12 @@ parseTree2Core topImports (P.Module mName parsedTree) = CoreModule
     }
   -- Grouped Decls
   (p_TyAlias, p_TyFuns, p_TyClasses, p_TyClassInsts
-    , p_TopSigs, p_TopBinds, p_InfixBinds
+    , p_TopSigs, p_TopBinds, p_Fixities
     , p_defaults, p_externs) = groupDecls parsedTree
 
   -- Note. types and binds vectors must match iNames
   -- topBindings;typeDecls;localBindings;overloads;externs
-  toCoreM :: ToCoreEnv (BindMap, TypeMap, ClassOverloads, TypeMap)= do
+  toCoreM :: ToCoreEnv (BindMap, TypeMap, ClassOverloads, TypeMap) = do
     -- 0. set up refs to imported modules
 --  let check = \case { [] -> pure [] ; [a] -> pure [a] ; a -> error "multiple modules unsupported" }
 --  check topImports
@@ -497,6 +501,9 @@ parseTree2Core topImports (P.Module mName parsedTree) = CoreModule
 --      importOverloads = IM.unions (overloads <$> topImports)
 --      importTyHNames = HM.unions (hNameTypes <$> topImports)
 --  modify (\x->x{hTyNames=importTyHNames, tyNameCount=V.length importTypes})
+
+    -- register fixity declarations
+    modify (\x->x{localFixities=convFixities p_Fixities})
 
     -- 1. data: get the constructors and dataEntities (name + dataty)
     (cons, dataEntities) <- getTypesAndCons p_TyAlias
@@ -672,15 +679,21 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
           = App <$> expr2Core f <*> mapM expr2Core args
     in handlePrecedence f args
 
-  P.InfixTrain leftExpr infixTrain -> let
-    getInfix x = case T.unpack $ pQName2Text x of
-      "*" -> 3
-      "+" -> 2
-      "-" -> 1
+  P.InfixTrain leftExpr infixTrain -> 
+    gets localFixities >>= \fixities ->
+    let
+    -- [InfixDecl AssocNone (Just 6) [Symbol "+"]]
+    getInfix x = case (pQName2Text x) `HM.lookup` fixities of
+      Just (Fixity i _) -> i
+      Nothing -> defaultFixity
+--  case T.unpack $ pQName2Text x of
+--    "*" -> 3
+--    "+" -> 2
+--    "-" -> 1
     -- General plan is to fold handlePrec over the infixTrain
     -- 1. if rOp has higher prec then lOp then add it to the opStack
     -- 2. else apply infixes from opStack until stack has lower prec then rOp
-    -- 3. finally Apply everything remaining in the opStack
+    -- 3. finally Apply everything remaining in the _opStack
     handlePrec :: (P.PExp, [(P.QName, P.PExp)]) -> (P.QName, P.PExp)
                -> (P.PExp, [(P.QName, P.PExp)])
     handlePrec (expr, []) (rOp, rExp) = (P.App (P.Var rOp) [expr, rExp] , [])
@@ -806,3 +819,15 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
   pure $ case dataCase of
     Just alts -> Case e (Decon alts)
     Nothing   -> Case e (Switch litAlts)
+
+defaultFixity :: Int = 9
+convFixities :: V.Vector P.Decl{- .InfixDecl-} -> HM.HashMap HName Fixity
+convFixities decls = 
+  let convAssoc = \case
+        P.AssocRight -> RAssoc
+        P.AssocNone  -> LAssoc
+        P.AssocLeft  -> LAssoc
+      convFixity = \case { Just i -> i ; Nothing -> defaultFixity }
+      infix2pair (P.InfixDecl a f [op])
+        = (pName2Text op , Fixity (convFixity f) (convAssoc a))
+  in HM.fromList $ V.toList $ infix2pair <$> decls

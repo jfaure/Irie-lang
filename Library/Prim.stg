@@ -14,6 +14,7 @@ type Double    = #!Double
 -- Frac = Half | Float | Double | FP128 | PPC_FP128
 
 infix 6 +
+infix 7 *
 type IntOp2 = Int -> Int -> Int
 (+)  : IntOp2 = #!add
 (-)  : IntOp2 = #!sub
@@ -51,4 +52,4 @@ type IntOp2 = Int -> Int -> Int
 -- C extern functions --
 extern puts : (#!CharPtr) -> Int
 externVarArg printf : (#!CharPtr) -> Int
-putNumber n = printf "%d\n" n
+--putNumber n = printf "%d\n" n
