@@ -7,6 +7,7 @@ module ParseSyntax where -- import qualified as PSyn
 
 import Prim
 import Data.Text as T -- Names are Text
+import qualified Data.Vector as V
 
 data Name        -- variables (incl constructors and symbols)
  = Ident  Text -- varid/conid
@@ -18,15 +19,27 @@ data QName -- QName: qualified name: '::' namespace operator
 type Op = Name
 type QOp = QName
 
--- Modules are returned by typefunctions.. (trivial module ?)
--- Note. modules subsume Type ! So they can be returned by type functions
+-- modules as extensions of records ?
+-- So they can be returned by type functions
 data Module = Module {
    moduleName :: Name
- , decls      :: [Decl]
+-- , decls      :: [Decl]
+ , parseTree  :: ParseTree
+}
+
+data ImportDecl
+ = Open    Name -- open import
+ | Require Name -- qualified import
+ | ImportAs ImportDecl Name
+ | ImportCustom {
+   importMod :: Name
+ , hiding    :: [Name]
+ , renaming  :: [(Name, Name)]
  }
+ -- | Extern | ExternVA
 
 data Decl
- = Import        Type -- must return TyModule | TyExtern (maybe via TyFun)
+ = Import        ImportDecl
  -- type decls
  | TypeAlias     Name Type        -- note. type includes data
  | TypeFun       Name [Name] PExp -- TODO move this to Type
@@ -97,6 +110,8 @@ data PExp
  | SectionL PExp QName -- operator sections
  | SectionR QName PExp
  | Let Binds PExp
+-- | Let Module PExp
+ | Rec Module PExp
  | MultiIf [(PExp, PExp)] -- ghc accepts [GuardedRhs]
  | Case PExp [Alt]
  | LambdaCase [Alt]
@@ -122,10 +137,27 @@ data Stmt -- in 'do' / in pattern guard
  | Qualifier PExp -- exp alone in do expr
  | LetStmt   Binds
 
+-- subtyping would be nice, but in the meantime I won't make a data
+-- for every single subtype
+data ParseTree = ParseTree {
+   tyAliases  :: V.Vector Decl
+ , tyFuns     :: V.Vector Decl
+ , classes    :: V.Vector Decl
+ , classInsts :: V.Vector Decl
+ , topSigs    :: V.Vector Decl
+ , topBinds   :: V.Vector Decl
+ , fixities   :: V.Vector Decl
+ , defaults   :: V.Vector Decl
+ , externs    :: V.Vector Decl
+ , modImports :: V.Vector Decl
+}
+
 deriving instance Show Name
 deriving instance Show QName 
 deriving instance Show Module
+deriving instance Show ParseTree
 deriving instance Show Decl
+deriving instance Show ImportDecl
 deriving instance Show Assoc
 deriving instance Show Binds
 deriving instance Show Match 

@@ -10,7 +10,6 @@ import qualified Data.Vector as V
 data StgModule = StgModule
  { stgData  :: V.Vector StgData          -- alg data
  , typeDefs :: V.Vector (StgId, StgType) -- type aliases
- , externs  :: V.Vector StgBinding       -- constants|functions|extern
  , binds    :: V.Vector StgBinding       -- constants|functions|extern
  }
 --note. aliases: if we emit the definition, then the simple
@@ -108,15 +107,13 @@ data StgCaseAlts
 -- Cheap show instances
 instance Show StgModule
   where
-  show (StgModule stgData aliases externs binds) =
+  show (StgModule stgData aliases binds) =
     "-- Data --\n"
     ++ (concatMap (\x-> show x ++ "\n\n") stgData)
     ++ "\n-- Aliases --\n"
     ++ (concatMap (\x-> show x ++ "\n") aliases)
     ++ "\n-- Bindings --\n"
     ++ (concatMap (\x-> show x ++ "\n") binds)
-    ++ "\n-- Externs --\n"
-    ++ (concatMap (\x-> show x ++ "\n") externs)
 
 instance Show StgPrimitive where
  show =

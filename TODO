@@ -1,7 +1,6 @@
 # expr2Core
-  * compiled modules
-  * freevars
   * array prims + pattern matching
+  * precompiled modules, rec, freeVars
   * generate function wrappers for remaining primitives (stgtollvm:258)
   * infix associativity
   * patterns, nested patterns, matches2Case
@@ -23,7 +22,7 @@
 
 # parser
   * move all type parse logic to pExp
-  * oneline let parser
+  * oneline let
   * indented 'where', esp. class
   * linefolds
   * GADT style
@@ -32,7 +31,6 @@
 
 # General
   * error message clarity
-  * precomipled modules (also emit externs for all functions)
 
 # Prelude
   * fold-build
@@ -42,7 +40,6 @@
   * memory (eg. inplace modifications undo as stack unravels eg. sudoku)
 
 # Maybe
-  * rec / set / let
   * View patterns
   * GuardedRhs
   * Case -> Case optimizations

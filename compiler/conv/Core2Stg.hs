@@ -30,12 +30,11 @@ import Data.List
 
 -- TODO filter all functions from CoreModule.bindings
 core2stg :: CoreModule -> StgModule
-core2stg (CoreModule hNm algData coreBinds externs overloads defaults _ _ _)
- = StgModule stgData (V.fromList stgTypedefs) stgExterns stgBinds
+core2stg (CoreModule hNm algData coreBinds overloads defaults _ _ _)
+ = StgModule stgData (V.fromList stgTypedefs) stgBinds
   where
   (stgData, stgTypedefs) = convData algData
   stgBinds               = doBinds coreBinds algData
-  stgExterns             = V.imap (doExtern algData) externs
 
 doExtern :: TypeMap -> IName -> Entity -> StgBinding
 doExtern tyMap iNm (Entity (Just nm) ty) =
@@ -113,10 +112,11 @@ doBinds binds tyMap = V.fromList $ V.ifoldr f [] binds
                        in StgTopRhs argNames argTys retTy stgExpr
       in (StgBinding nm rhs :)
     Inline{}   -> id
-    LExtern{} -> id
-    LArg{}    -> id
-    LCon{}    -> id
-    wht -> error $ show wht
+    LExtern ty -> (doExtern tyMap iNm ty :) -- id
+    LArg{}     -> id
+    LCon{}     -> id
+    c@LClass{} -> trace ("core2stg: class: " ++ show c) id
+--  wht -> error $ show wht
 
 convExpr :: BindMap -> CoreExpr -> StgExpr
 convExpr bindMap =

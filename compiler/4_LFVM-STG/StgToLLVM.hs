@@ -63,7 +63,7 @@ import Control.Exception (assert)
 
 -- stgToIRTop:  This module's only export
 stgToIRTop :: StgModule -> LLVM.AST.Module
-stgToIRTop (StgModule stgData typeDefs externs bindings) =
+stgToIRTop (StgModule stgData typeDefs bindings) =
  let
   stgToIRState = StgToIRState
      { bindMap      = Map.empty
@@ -106,7 +106,6 @@ stgToIRTop (StgModule stgData typeDefs externs bindings) =
     *> emitCustomRtsFns
     *> modify (\x->x {typeMap=Map.fromList $ V.toList typeDefs})
     *> mapM genConstructor stgData
-    *> mapM (\(StgBinding nm rhs) -> fnToLlvm nm rhs) externs
     *> mapM (\(StgBinding nm rhs) -> fnToLlvm nm rhs) bindings
 
   -- Override buildModuleT to get more control over module parameters

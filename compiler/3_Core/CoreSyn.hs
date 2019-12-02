@@ -46,8 +46,6 @@ data CoreModule     = CoreModule {
  -- binds: constructors, locals, and class Fns (not overloads!)
  , bindings   :: BindMap
 
- , externs    :: TypeMap -- A subset of the bindMap
-
  -- typeclass  resolution, indexed by the class polytype's iName
  --  , classes  :: ? -- importers will want the classdecls
  , overloads  :: ClassOverloads

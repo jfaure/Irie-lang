@@ -7,18 +7,14 @@ class Num where {
 
 -- Int subsumes Num
 instance Num Int where {
-  (+) : Int -> Int -> Int
-  (+) = #!add
-  (-) : Int -> Int -> Int
-  (-) = #!sub
+  (+) : Int -> Int -> Int = #!add
+  (-) : Int -> Int -> Int = #!sub
   }
 
 -- Float subsumes Num
 instance Num Float where {
-  (+) : Float -> Float -> Float
-  (+) = #! fadd
-  (-) : Float -> Float -> Float
-  (-) = #! fsub
+  (+) : Float -> Float -> Float = #!fadd
+  (-) : Float -> Float -> Float = #!fsub
 }
 default Num Int
 
