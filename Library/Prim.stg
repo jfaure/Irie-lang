@@ -15,14 +15,30 @@ type Double    = #!Double
 
 infix 6 +
 infix 7 *
-type IntOp2 = Int -> Int -> Int
-(+)  : IntOp2 = #!add
-(-)  : IntOp2 = #!sub
-(*)  : IntOp2 = #!mul
-(//) : IntOp2 = #!sdiv
-(/?) : IntOp2 = #!srem
-(==) : IntOp2 = #!icmp
---(/)  : Int -> Int -> Real = \x y -> (#!fptoui x) // (#!fptoui y)
+class Num a where
+  (+)  : a->a->a
+  (-)  : a->a->a
+  (*)  : a->a->a
+  (//) : a->a->a
+  (/?) : a->a->a
+  (==) : a->a->a
+  --(/)  : Int -> Int -> Real = \x y -> (#!fptoui x) // (#!fptoui y)
+
+instance Num Int where
+  (+)  : a->a->a = #!add
+  (-)  : a->a->a = #!sub
+  (*)  : a->a->a = #!mul
+  (//) : a->a->a = #!sdiv
+  (/?) : a->a->a = #!srem
+  (==) : a->a->a = #!icmp
+
+instance Num Float where
+  (+)  : a->a->a = #!fadd
+  (-)  : a->a->a = #!fsub
+  (*)  : a->a->a = #!fmul
+  (//) : a->a->a = #!fdiv
+  (/?) : a->a->a = #!frem
+  (==) : a->a->a = #!fcmp
 
 -- unsigned overloads for Nat
 --(//) : Nat -> Nat -> Nat = #!udiv

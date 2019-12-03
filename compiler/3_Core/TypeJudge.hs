@@ -180,7 +180,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           TyUnknown -> known
           TyArrow tys ->
             let TyArrow knownTys = known
-            in TyArrow $ zipWith fillBoxes tys knownTys
+            in  TyArrow $ zipWith fillBoxes tys knownTys
           t -> got
     in do
       bindTy <- typed . info <$> lookupBindM nm

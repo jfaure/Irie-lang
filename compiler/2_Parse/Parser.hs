@@ -173,7 +173,6 @@ groupDecls parsedTree = mapTuple10 V.fromList $
     ExternVA{}      -> (a,b,c,d,e,f,g,h,x:i,j)
     Import{}        -> (a,b,c,d,e,f,g,h,i,x:j)
 
-
 parseProg :: Parser [Decl]
  = noIndent decl `sepEndBy` many endLine
 
@@ -229,14 +228,17 @@ decl :: Parser Decl -- top level
     in InfixDecl <$> pInfix <*> optional (lexeme L.decimal) <*> opNames
   fnName = name <|> parens symbolName
 
-  -- TODO indentation for where
-  pWhere        = reserved "where" *> scn
   typeClass     = reserved "class" $> TypeClass <*>
-                  tyName <*> some (try tyVar) <* pWhere
-                  <*> bracesn (some (decl <* scn))
-  typeClassInst = 
-    reserved "instance" $> TypeClassInst
-    <*> tyName <*> tyName <* pWhere <*> bracesn (some (decl <* scn))
+                    tyName <*> some (try tyVar) <*> pWhere decl
+  typeClassInst = reserved "instance" $> TypeClassInst
+                    <*> tyName <*> tyName <*> pWhere decl
+
+--pWhere :: Parser p -> Parser [p]
+  pWhere pdecl = reserved "where" *> do
+    bracesn ((decl <* scn) `sepBy2` symboln ";") <|> do
+      ref <- ask <* scn
+      lvl <- L.indentLevel
+      local (const lvl) $ indentedItems ref lvl scn pdecl (fail "_")
 
   -- Flexible type vars are possible in type signatures
   funBind = dbg "fnbind" $ FunBind <$> some match

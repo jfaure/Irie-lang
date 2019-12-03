@@ -24,7 +24,7 @@ import Control.Monad (zipWithM)
 import Control.Applicative ((<|>))
 import Data.Functor
 import Data.Foldable
-import Data.List (groupBy)
+import GHC.Exts (groupWith)
 
 import Debug.Trace
 
@@ -546,13 +546,12 @@ doTypeClasses p_TyClasses p_classInsts = do
               Just h -> h
               Nothing -> error ("class not in scope: " ++ show instNm)
         in doClassInstance inst classDecl
-      eqOverload o1 o2 = classFnId o1 == classFnId o2
   perInstOverloads <- V.mapM doInstance p_classInsts
 
   -- Combine all elements to generate the class polytype
-  let instOverloads = groupBy eqOverload $ V.toList
+  let instOverloads = groupWith classFnId $ V.toList
                       $ V.foldl' (V.++) V.empty perInstOverloads
-      classBinds = mkClassBind <$> instOverloads
+      classBinds = mkClassBind <$> traceShowId instOverloads
   pure (  classDecls
         , V.fromList classBinds             -- class fns
         , V.fromList $ info <$> classBinds) -- class polytypes
@@ -640,7 +639,8 @@ doClassInstance :: P.Decl{-.TypeClassInst-}-> ClassDecl
        --pure $ Overload classFnNm lBind sig
   in do
     -- TODO check instances
-    -- check all classFns have overloads and they respect classFnSigs
+    -- check all overloads respect classFnSigs
+    -- all must be overloaded?
     sigMap <- mkSigMap (V.fromList sigs)
     let findInstSig hNm = M.lookup hNm sigMap
 

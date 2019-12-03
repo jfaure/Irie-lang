@@ -198,7 +198,7 @@ literal2Stg :: Literal -> StgConst =
     Char c   -> mkChar c
     Int i    -> C.Int 32 $ i
     String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))
-    Frac f   -> C.Float (LF.Double $ fromRational f)
+    Frac f   -> C.Float (LF.Single $ fromRational f)
 
 -- most llvm instructions take flags, stg wants functions on operands
 prim2llvm :: PrimInstr -> StgPrimitive = \case
