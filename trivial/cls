@@ -1,20 +1,20 @@
 type Int = #! Int 32
 type Float = #! Float
-class Num where {
-  (+) : Num->Num->Num
-  (-) : Num->Num->Num
+class Num a where {
+  (+) : a->a->a
+--(-) : a->a->a
   }
 
 -- Int subsumes Num
 instance Num Int where {
   (+) : Int -> Int -> Int = #!add
-  (-) : Int -> Int -> Int = #!sub
+--(-) : Int -> Int -> Int = #!sub
   }
 
 -- Float subsumes Num
 instance Num Float where {
   (+) : Float -> Float -> Float = #!fadd
-  (-) : Float -> Float -> Float = #!fsub
+--(-) : Float -> Float -> Float = #!fsub
 }
 default Num Int
 

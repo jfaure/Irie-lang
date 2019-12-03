@@ -53,7 +53,9 @@ getType :: CodeGenModuleConstraints m => StgType -> m LLVM.AST.Type
 getType = \case
   StgLlvmType t   -> pure t
   StgTyperef t t2 -> pure t
-  StgTypeAlias iden -> (gets (aliasToType iden . typeMap)) >>=
+  StgPolyType iden ->  gets (aliasToType iden . typeMap) >>=
+    maybe (error $ "unknown polytype: " ++ show iden) getType
+  StgTypeAlias iden -> gets (aliasToType iden . typeMap) >>=
     maybe (error $ "unknown type: " ++ show iden) getType
 -- used only by gen constructors
   StgAlgType stgData@(StgSumType iden alts) -> do
@@ -74,6 +76,7 @@ getType = \case
     llvmTypes <- mapM getType t1s
     let papTy = StructureType False $ fnType : llvmTypes
     pure $ (`PointerType` (AddrSpace 0)) papTy
+  w -> error $ show w
 --StgTuple tys -> -- getOrMakeTuple tys >>= \(DataFns s f [] n) -> pure f
 
 -- Resolves type aliases (also check for alias loops)

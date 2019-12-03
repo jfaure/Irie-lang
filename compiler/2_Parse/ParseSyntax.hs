@@ -41,9 +41,9 @@ data ImportDecl
 data Decl
  = Import        ImportDecl
  -- type decls
- | TypeAlias     Name Type        -- note. type includes data
- | TypeFun       Name [Name] PExp -- TODO move this to Type
- | TypeClass     Name [Decl]      -- haskell newtype ?
+ | TypeAlias     Name Type          -- note. type includes data
+ | TypeFun       Name [Name] PExp   -- TODO move this to Type
+ | TypeClass     Name [Name] [Decl] -- haskell newtype ?
  | TypeClassInst Name Name [Decl]
 
  -- top bindings (seperate because sigs may be in sigModules)

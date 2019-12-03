@@ -64,7 +64,7 @@ symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: String
 reservedOps   = ["=","->","|",":", "#!", "."]
 reservedNames = T.pack <$>
  ["type", "data", "record", "class", "extern", "externVarArg"
- , "let", "rec", "in", "case", "of", "_"
+ , "let", "rec", "in", "where", "case", "of", "_"
  , "import", "require"]
 reservedName w = (lexeme . try) (string (T.pack w) *> notFollowedBy alphaNumChar)
 reservedOp w = lexeme (notFollowedBy (opLetter w) *> string (T.pack w))
@@ -73,7 +73,8 @@ reservedOp w = lexeme (notFollowedBy (opLetter w) *> string (T.pack w))
         longerOps w = filter (\x -> isInfixOf w x && x /= w) reservedOps
 reserved = reservedName
 
-iden :: Parser Name = lexeme (p >>= check) where
+-- have to use try in case we parse part of a reserved word
+iden :: Parser Name = try $ lexeme (p >>= check) where
   p :: Parser T.Text
   p = lookAhead letterChar *> takeWhileP Nothing isAlphaNum
   check x = if x `elem` reservedNames
@@ -107,9 +108,9 @@ charLiteral :: Parser Char = between (single '\'') (single '\'') L.charLiteral
 stringLiteral :: Parser String
   = char '\"' *> manyTill L.charLiteral (single '\"')
 
-parens, braces :: Parser a -> Parser a
-parens = between (symbol "(") (symbol ")")
-braces = between (symbol "{") (symbol "}")
+parens, braces, bracesn :: Parser a -> Parser a
+parens  = between (symbol "(") (symbol ")")
+braces  = between (symbol "{") (symbol "}")
 bracesn = between (symboln "{") (symboln "}")
 
 endLine = lexeme (single '\n')
@@ -230,8 +231,9 @@ decl :: Parser Decl -- top level
 
   -- TODO indentation for where
   pWhere        = reserved "where" *> scn
-  typeClass     = reserved "class"    $> TypeClass <*>
-                  tyName <* pWhere <*> bracesn (some (decl <* scn))
+  typeClass     = reserved "class" $> TypeClass <*>
+                  tyName <*> some (try tyVar) <* pWhere
+                  <*> bracesn (some (decl <* scn))
   typeClassInst = 
     reserved "instance" $> TypeClassInst
     <*> tyName <*> tyName <* pWhere <*> bracesn (some (decl <* scn))
@@ -308,9 +310,7 @@ pExp :: Parser PExp = dbg "pexp" $
     , Var <$> try (qName (parens symbolName)) ]
   lambda = Lambda <$ char '\\' <*> many pat <* symbol "->" <*> pExp
   lambdaCase = LambdaCase <$> (char '\\' <* reserved "case" *> many (alt <* scn))
-  letIn = do
-   reserved "let"
-   dbg "let" $ do
+  letIn = reserved "let" *> do
     ref <- ask -- reference indentation
     scn
     lvl <- L.indentLevel

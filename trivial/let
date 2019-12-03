@@ -1,2 +1,1 @@
-f = let b = 3
-  in b
+f = let b = 3 in b

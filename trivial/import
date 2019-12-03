@@ -1,0 +1,5 @@
+import PutNumber
+
+f = putNumber 5
+--g = PutNumber::putNumber 5
+main = f

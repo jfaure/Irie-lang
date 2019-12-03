@@ -22,18 +22,36 @@ import qualified Data.Text           as T
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.HashMap.Strict as HM
 
-type IName   = Int
-type NameMap = V.Vector
+type IName   = Int    -- Int name: index into bind|type vectors
 type HName   = T.Text -- human readable name
 
-type TypeMap      = NameMap Entity
-type BindMap      = NameMap Binding
-type DefaultDecls = IM.IntMap MonoType
+type TypeMap      = V.Vector Entity
+type BindMap      = V.Vector Binding
 
--- Classes
-type ClassFns       = IM.IntMap Binding  -- indexed by polymorphic classFn's Iname
-type ClassInsts     = IM.IntMap ClassFns
-type ClassOverloads = IM.IntMap ClassInsts
+-------------
+-- classes --
+-------------
+data Overload = Overload {
+   classFnId  :: IName
+ , instanceId :: IName
+ , instanceTy :: Type
+}
+-- classdecl: used to check instances / make overloads
+data ClassDecl = ClassDecl {
+   className :: HName
+ , classVars :: V.Vector HName
+ , classFns  :: V.Vector ClassFn
+}
+data ClassFn = ClassFn {
+-- class decls bring some polytypes into scope for their overloads
+-- argIndxs: rigid typevars in the function signature
+-- TODO move to tyfunction
+-- argIndxs: for each classVar, indexes into the fnsig
+   argIndxs    :: [Int]
+ , classFnInfo :: Entity  -- fnsig is almost always tyArrow
+ , defaultFn   :: Maybe Overload
+}
+type ClassDefaults  = IM.IntMap MonoType
 
 data Fixity = Fixity Int Assoc
 data Assoc = LAssoc | RAssoc
@@ -43,12 +61,13 @@ data CoreModule     = CoreModule {
    moduleName :: HName
 
  , algData    :: TypeMap -- data and aliases
- -- binds: constructors, locals, and class Fns (not overloads!)
+ -- binds: constructors, locals, and class Fns (+ overloads!)
  , bindings   :: BindMap
 
  -- typeclass  resolution, indexed by the class polytype's iName
  --  , classes  :: ? -- importers will want the classdecls
- , overloads  :: ClassOverloads
+-- , overloads  :: ClassOverloads
+ , classDecls :: V.Vector ClassDecl -- so importers can check instances
  -- default for otherwise ambiguous instances eg. default Num Int
  , defaults   :: IM.IntMap MonoType
  , fixities   :: HM.HashMap HName Fixity
@@ -72,10 +91,14 @@ data Binding
    info :: Entity
  , expr :: CoreExpr
  }
- | LArg    { info :: Entity } -- local vars via (lambda|case|expr:tysig)
- | LCon    { info :: Entity } -- Term level GADT constructor (Type is known)
- | LExtern { info :: Entity }
- | LClass  { info :: Entity } -- classFn declaration
+ | LArg   { info :: Entity } --local vars via (lambda|case|expr:tysig)
+ | LCon   { info :: Entity } --Term level GADT constructor(Type is known)
+ | LExtern{ info :: Entity }
+-- | LClass { info :: Entity }
+ | LClass {
+   info :: Entity
+ , overloads :: V.Vector Overload -- [Binding]
+ }
 
 -- an entity = info about anything we give an IName to.
 data Entity = Entity { -- entity info
@@ -112,9 +135,10 @@ data Type
  | TyPoly  PolyType -- constrained polytypes 'p', 's'
  | TyArrow [Type]  -- Kind 'function' incl. Sum/Product cons
  | TyExpr  TypeFunction -- incl. dependent types
-
- | TyPAp [Type] [Type] -- for internal use
  | TyUnknown    -- needs to be inferred - the so-called box type.
+
+ | TyInstance IName Type -- name of overload and return types
+ | TyPAp [Type] [Type] -- for internal use
  | TyBroken     -- typecheck couldn't infer a coherent type
 
 data MonoType
@@ -149,6 +173,9 @@ data TypeFunction
 
 deriving instance Show PolyType
 deriving instance Show DataDef
+deriving instance Show Overload
+deriving instance Show ClassDecl
+deriving instance Show ClassFn
 deriving instance Show FieldDecl
 deriving instance Show Binding
 deriving instance Show MonoType

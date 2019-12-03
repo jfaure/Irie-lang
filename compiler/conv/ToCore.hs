@@ -24,6 +24,7 @@ import Control.Monad (zipWithM)
 import Control.Applicative ((<|>))
 import Data.Functor
 import Data.Foldable
+import Data.List (groupBy)
 
 import Debug.Trace
 
@@ -39,7 +40,6 @@ data ConvState = ConvState {
 
  , _tyList       :: [V.Vector Entity]
  , _bindList     :: [V.Vector Binding]
- , _overloads    :: [ClassOverloads]
 -- , _defaults     :: IM.IntMap MonoType
 
 -- , localTys      :: V.Vector Entity
@@ -431,7 +431,6 @@ parseTree2Core topImports = let
 
     , _tyList        = []
     , _bindList      = []
-    , _overloads     = []
     , localBinds     = V.empty
 --  , localTys       = V.empty
     , localModules   = []
@@ -448,14 +447,14 @@ _parseTree2Core startConvState topImports (P.Module mName parseTree)
   { moduleName  = pName2Text mName
   , algData     = dataTys
   , bindings    = binds
-  , overloads   = r_overloads
+  , classDecls  = classDecls'
   , defaults    = IM.empty
   , fixities    = localFixities endState
   , hNameBinds  = hNames   endState
   , hNameTypes  = hTyNames endState
   }
   where
-  (binds, dataTys, r_overloads) = val
+  (binds, dataTys, classDecls') = val
   (val, endState) = runState toCoreM startConvState
 
   -- Add a module to the ToCoreEnv state
@@ -473,13 +472,12 @@ _parseTree2Core startConvState topImports (P.Module mName parseTree)
       , hTyNames = hTyNames x `HM.union` hNameTypes cm
       -- TODO check no overwrites
       , localFixities = localFixities x `HM.union` fixities cm
-      , _overloads = overloads cm : _overloads x
   --  , defaults = defaults x `IM.union` defaults cm
       })
 
   -- Note. types and binds vectors must match iNames
   -- topBindings;typeDecls;localBindings;overloads;externs
-  toCoreM :: ToCoreEnv (BindMap, TypeMap, ClassOverloads) = do
+  toCoreM :: ToCoreEnv (BindMap, TypeMap, V.Vector ClassDecl) = do
     -- 0. set up imported modules
     case topImports of
       []   -> pure ()
@@ -506,15 +504,12 @@ _parseTree2Core startConvState topImports (P.Module mName parseTree)
     -- 5. typeclasses
     -- we need: (classFn bindings, classTy polytypes, instance overloads)
     -- note. classDecls includes local bindings (they must match iNames)
-    (classDecls, classEntities, overloadBinds)
+    (classDecls, topClassFns, classPolyEntities)
       <- doTypeClasses (P.classes parseTree) (P.classInsts parseTree)
-    -- Overloads :: (IM.IntMap (IM.IntMap Binding))
-    (newOverloads :: ClassOverloads) <- generateOverloads overloadBinds
-    classLocals <- gets localBinds
-    modify (\x->x{ _bindList  = classLocals : classDecls : _bindList x
-                 , _tyList    = classEntities : _tyList x
+    -- also take + clear locals from overloads + default functions
+    modify (\x->x{ _bindList  = localBinds x : topClassFns : _bindList x
+                 , _tyList    = classPolyEntities : _tyList x
                  , localBinds = V.empty
-                 , _overloads = newOverloads : _overloads x
                  })
 
     -- 6. expression bindings
@@ -527,127 +522,139 @@ _parseTree2Core startConvState topImports (P.Module mName parseTree)
 
     -- 7. Collect results
     -- ! the resulting vectors must be consistent with all iNames !
---  let binds = V.concat [importBinds, cons, externBinds
---        , classDecls, classLocals, fnBinds, fnLocals]
---      tyEntities = V.concat [importTypes, dataEntities, classEntities]
     binds      <- V.concat . reverse <$> gets _bindList
     tyEntities <- V.concat . reverse <$> gets _tyList
-    overloads  <- IM.unions <$> gets _overloads
---  let overloads' = IM.union overloads importOverloads
-    pure (binds, tyEntities, overloads)
+    pure (binds, tyEntities, classDecls)
 
-generateOverloads :: IM.IntMap (IM.IntMap [P.Decl])
-                  -> ToCoreEnv ClassOverloads
- = \overloadBinds ->
-  -- Generate instance overloads, making sure to match iNames to the binds
-  let genOverload (P.FunBind [match@(P.Match fName _ _)]) =
-        let sig = TyUnknown
-        in do
-        iNm <- lookupName fName <&> \case -- lookup class fn
-            Nothing -> error ("unknown class function: " ++ show fName)
-            Just i  -> i
-        f <- match2LBind match sig
-        pure (iNm, f)
-  in
-  -- double IntMap: InstTyName to (classFn to binding)
-  mapM (mapM (\insts->IM.fromList <$> mapM genOverload insts)) overloadBinds
+-- TODO remove
+partitionFns = partition $ \case {P.TypeSigDecl{}->True ;_-> False }
 
+-------------
+-- Classes --
+-------------
 doTypeClasses :: V.Vector P.Decl -> V.Vector P.Decl
- -> ToCoreEnv (V.Vector Binding, V.Vector Entity, IM.IntMap (IM.IntMap [P.Decl]))
-doTypeClasses p_TyClasses p_TyClassInsts =
-  -- 2.1 Typeclass top declarations
-  let 
-  partitionFns = partition $ \case {P.TypeSigDecl{}->True ;_-> False }
-  getClassSigs (P.TypeSigDecl nms sig) =
-    (\ty -> (\x->LClass$Entity (Just (pName2Text x)) ty)<$>nms)
-    <$> convTyM sig
-  doClass :: (P.Decl) -> ToCoreEnv (HName, [Binding])
-  doClass (P.TypeClass nm decls) =
-      let (sigs, fnBinds) = partitionFns decls
-          registerClassFn (P.TypeSigDecl nms sig) =
+ -> ToCoreEnv (  V.Vector ClassDecl -- exported classDecl info
+               , V.Vector Binding   -- polytyped functions
+               , V.Vector Entity)   -- class polytypes
+doTypeClasses p_TyClasses p_classInsts = do
+  classDecls <- V.mapM doClassDecl p_TyClasses
+  let declMap =
+        let hNms = className <$> classDecls
+        in  HM.fromList $ V.toList $ V.zip hNms classDecls
+      doInstance  inst@(P.TypeClassInst instNm _ _) =
+        let classDecl = case HM.lookup (pName2Text instNm) declMap of
+              Just h -> h
+              Nothing -> error ("class not in scope: " ++ show instNm)
+        in doClassInstance inst classDecl
+      eqOverload o1 o2 = classFnId o1 == classFnId o2
+  perInstOverloads <- V.mapM doInstance p_classInsts
+
+  -- Combine all elements to generate the class polytype
+  let instOverloads = groupBy eqOverload $ V.toList
+                      $ V.foldl' (V.++) V.empty perInstOverloads
+      classBinds = mkClassBind <$> instOverloads
+  pure (  classDecls
+        , V.fromList classBinds             -- class fns
+        , V.fromList $ info <$> classBinds) -- class polytypes
+
+mkClassBind :: [Overload] -> Binding {- polyBind -}
+ = \overloads ->
+ -- TODO this assumes only 1 class arg, = 0
+ let overloadTys = instanceTy <$> overloads
+
+     tyUnions = foldr merge (repeat []) overloadTys
+     merge (TyArrow tas) polyUnion = zipWith (:) tas polyUnion
+     instType = TyArrow $ TyPoly . PolyUnion <$> tyUnions
+
+     instEnt  = Entity Nothing instType
+ in LClass instEnt $ V.fromList overloads
+
+doClassDecl :: P.Decl -> ToCoreEnv ClassDecl
+doClassDecl (P.TypeClass classNm classVars decls) =
+  let
+    (sigs, defaultBinds) = partitionFns decls
+
+    registerClassFns sigs =
+      let registerFn (P.TypeSigDecl nms sig) =
             mapM (\h -> addHName (pName2Text h) =<< freshName) nms
-      in do
-         if (length fnBinds > 0)
-         then error "default class decls unsupported"
-         else pure ()
-         -- register all names
-         classTyINm <- freshTyName
-         let classTyHNm = pName2Text nm
-         addTyHName classTyHNm classTyINm
-         mapM registerClassFn sigs
-         -- collect class signatures
-         sigMap <- mkSigMap (V.fromList sigs)
-         let getSig = (\hNm -> M.lookup hNm sigMap)
-         -- TODO default class functions
-         -- getFns getSig (V.length dataTys) (V.fromList fnBinds)
-         (classTyHNm,) . concat <$> mapM getClassSigs sigs
-  -- top-level class bindings, we add these to the bindmap.
-  -- Instance functions are added to the 'OverLoads intmap'
-  -- These take polytypes; typeJudge will have to instantiate them.
-  in (V.unzip <$> V.mapM doClass p_TyClasses
-     :: ToCoreEnv (V.Vector HName,  V.Vector [Binding]))
-  >>= \(classTyNms, classDecls') ->
-  let classDecls = V.fromList $ V.foldr (++) [] classDecls'
-  in let
+      in  mapM registerFn sigs
 
-  -- 2.1 TypeClass overloads/instances
-  -- For each typeclass, we're constructing it's (poly)type, and
-  -- it's overloads: We fold classInsts, and simultaneously check them.
-  -- We also need to update the typeclass PolyType every instance
-    f :: P.Decl -> IM.IntMap  (PolyType, IM.IntMap [P.Decl])
-      -> ToCoreEnv (IM.IntMap (PolyType, IM.IntMap [P.Decl]))
-    f tcInst@(P.TypeClassInst clsNm instTyNm decls) classIMap =
-      let 
-        ok = check p_TyClasses tcInst
---      (clsHNm, instHNm) = (pName2Text clsNm, pName2Text instTyNm)
-        (sigs, fnBinds)   = partitionFns decls
-        declsOk = not $ any (\case P.FunBind{}->False ; _->True) fnBinds
-        -- verify that inst satisfies the class decl
-        check classes inst = True
-        addPoly (PolyUnion t1) (PolyUnion t2) = (PolyUnion (t2 ++ t1))
-      in if not $ ok && declsOk -- TODO better validity checks
-      then error "bad instance decl"
-      else do
+    sig2ClassFn :: V.Vector IName -> P.Decl{-.TypeSigDecl-}
+                -> ToCoreEnv ClassFn
+    sig2ClassFn classVars (P.TypeSigDecl nms sig) = do
+      let mkEntity ty nm = Entity (Just (pName2Text nm)) ty
+      sigTy <- convTyM sig
 
-      -- check names exist
-      clsINm  <- lookupTyName clsNm <&> \case
-        Just h -> h
-        Nothing -> error ("instance for unknown class: " ++ show clsNm)
-      instINm  <- lookupTyName instTyNm <&> \case
-        Just h -> h
-        Nothing -> error ("instance for unknown class: " ++ show clsNm)
+      -- We need to know which arguments are relevent polytypes
+      let getClassVarIdx :: Int -> Type -> [Int] -> [Int]
+          getClassVarIdx i ty acc = case ty of
+            TyAlias iNm -> if iNm `V.elem` classVars
+              then i : acc else acc
+            _ -> acc
+          idxs = case sigTy of
+            TyArrow tys -> V.ifoldr getClassVarIdx [] (V.fromList tys)
+            ty          -> getClassVarIdx 0 ty []
+          [nm] = nms -- TODO multiple sigs
 
-      -- get instance signatures
-      instSigMap <- mkSigMap (V.fromList sigs)
-      let findInstSig hNm = M.lookup hNm instSigMap
-          findClassSig :: HName -> HName -> Maybe Type
-            -- TODO generate signatures from classSigs (replace classNm)
-            = \fnName instTyNm -> Nothing
-          getSig nm = findInstSig nm -- <|> findClassSig nm instHNm
-            --case getSig fName of
-            --Nothing -> error ("no sig for instance: " ++ show nm)
-            --Just t  -> t
-      let polyTy = PolyUnion [TyAlias instINm]
-          val = (polyTy, IM.singleton instINm fnBinds)
-          insertFn (ty', binds') (ty, binds)
-            = (addPoly ty' ty, IM.union binds binds') -- union may fail ?
-          newMp = IM.insertWith insertFn clsINm val classIMap
-      pure newMp
+      pure ClassFn {
+         argIndxs    = idxs
+       , classFnInfo = mkEntity sigTy nm
+       , defaultFn   = Nothing
+      }
+
   in do
-  -- The classIMap contains both the class polytypes and class overloads
-  classIMap <- foldrM f IM.empty p_TyClassInsts
-    :: ToCoreEnv (IM.IntMap (PolyType, IM.IntMap [P.Decl]))
+    let classTyHNms = pName2Text <$> V.fromList classVars
+        classArity = length classVars
+    registerClassFns sigs
 
-  -- Get class Entities (a polytype for each typeclass var)
-  let classTys = TyPoly <$> fst <$> IM.elems classIMap
-      overloadBinds = snd <$> classIMap
-      toEntity hNm ty = Entity (Just hNm) ty
-  let classEntities = V.zipWith toEntity classTyNms (V.fromList classTys)
+    -- convert classFns with classArgs locally available in HNameMap
+    classFnEntities <- CU.localState $ do
+      classArgs <- V.fromList <$> (freshNames classArity)
+      V.zipWithM addTyHName classTyHNms classArgs
+      mapM (sig2ClassFn classArgs) sigs
 
-  -- Results = class entities: The polytype associated with each class
-  -- Overloads = all instance functions
-  -- note. delay generating overloads, let toCoreM handle iNames
-  pure (classDecls, classEntities, overloadBinds)
+    let classDecl = ClassDecl
+          { className = pName2Text classNm
+          , classVars = classTyHNms
+          , classFns  = V.fromList classFnEntities }
+    pure classDecl
+
+doClassInstance :: P.Decl{-.TypeClassInst-}-> ClassDecl
+                -> ToCoreEnv (V.Vector Overload)
+                   -- class IName and the overloads
+ = \classInst classDecl ->
+  let P.TypeClassInst instNm instTyNm decls = classInst
+      ClassDecl classNm classVars classFns  = classDecl
+      (sigs, fnBinds) = partitionFns decls
+
+      genOverload (P.FunBind [match@(P.Match fName pats rhs)]) =
+        let sig = TyUnknown
+            scopedName = P.Ident $ (pName2Text fName) `T.append`
+                                   T.cons '.' (pName2Text instTyNm)
+            match' = P.Match scopedName pats rhs
+        in do
+         classFnNm <- lookupName fName <&> \case
+           Nothing -> error $ "unknown class function: " ++ show fName
+           Just i  -> i
+         (classFnNm , ) <$> match2LBind match' sig
+       --pure $ Overload classFnNm lBind sig
+  in do
+    -- TODO check instances
+    -- check all classFns have overloads and they respect classFnSigs
+    sigMap <- mkSigMap (V.fromList sigs)
+    let findInstSig hNm = M.lookup hNm sigMap
+
+    overloads <- mapM genOverload fnBinds
+    startOverloadId <- gets nameCount
+    modify (\x->x{ nameCount = nameCount x + length overloads })
+    let (overloadINms, overloadBinds) = unzip overloads
+    zipWithM addLocal overloadINms overloadBinds
+--  tyApps <- getTypeApplications fnBinds classFns
+    let overloads = zipWith3 Overload overloadINms [startOverloadId..]
+                                     (typed . info <$> overloadBinds)
+    pure $ V.fromList overloads
+
+getTypeApplications fnBinds classFns = pure []
 
 expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Var (P.UnQual hNm)-> lookupName hNm >>= \case
@@ -658,8 +665,8 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
     iNm <- freshName
     let classNm = case l of
           Char   c -> "Num"
-          Int    i -> "Int" -- "Num"
-          Frac   r -> "Num"
+          Int    i -> "Int"
+          Frac   r -> "Float"
           String s -> "CharPtr"
           Array lits -> "CharPtr"
     maybeTy  <- lookupTyHNm $ T.pack $ classNm

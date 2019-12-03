@@ -4,15 +4,14 @@
   * generate function wrappers for remaining primitives (stgtollvm:258)
   * infix associativity
   * patterns, nested patterns, matches2Case
-  * implicit forall typevars ?
+  * ocaml 'a | implicit forall typevars ?
   * register subtypes before codegen (support for recursive)
-  * TyRigid could be polytype
   * review case -> core logic
+  * error data
 
 # Typeclass
-  * Instantiation (classOverloads + defaults) (in typejudge ?)
+  * avoid nameclashes for instances
   * default typeclass signatures/decls
-  * fn overloads
   * use a fromString function for literals
   * multiparam typeclasses
 
@@ -22,15 +21,15 @@
 
 # parser
   * move all type parse logic to pExp
-  * oneline let
   * indented 'where', esp. class
   * linefolds
   * GADT style
   * rec (let-rec)
   * source locations
 
-# General
-  * error message clarity
+# Clean
+  * toCore::typeclass
+  * tyJudge::instantiate
 
 # Prelude
   * fold-build
@@ -40,6 +39,7 @@
   * memory (eg. inplace modifications undo as stack unravels eg. sudoku)
 
 # Maybe
+  * TyRigid could be polytype
   * View patterns
   * GuardedRhs
   * Case -> Case optimizations

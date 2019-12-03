@@ -24,7 +24,7 @@ ppType :: (IName -> String) -> Type -> String = \deref -> clCyan . \case
  TyExpr coreExpr -> error "tyexpr"
  TyUnknown       -> "TyUnknown"
  TyBroken        -> "tyBroken"
- --other           -> "other: " ++ show other
+ other           -> show other
 
 ppCoreExpr :: (IName -> String) -> (IName -> String)
            -> String -> CoreExpr -> String
@@ -49,10 +49,10 @@ ppDataAlt deref indent (con, args, ret) = indent ++
  ppCoreExpr deref (\_->"fixpls") (indent++"  ") ret
 
 ppBinds :: [Binding] -> (IName -> String) -> (IName -> String) -> String
- = \l f derefTy -> concatMap (ppBind f derefTy "\n   ") l
-ppBind f derefTy indent b =
+ = \l f derefTy -> concat $ zipWith (ppBind f derefTy "\n   ") [0..] l
+ppBind f derefTy indent lineNumber b =
   let ppEntity' = ppEntity derefTy
-  in clGreen indent ++ case b of
+  in clGreen indent ++ show lineNumber ++ ": " ++ case b of
   LBind entity args e -> case named entity of
      { Just nm -> show nm ; Nothing -> "_" }
     ++ " " ++ show args 
@@ -60,12 +60,12 @@ ppBind f derefTy indent b =
     ++ {-indent ++-} " = " ++ ppCoreExpr f derefTy "" e
   LArg a    -> "larg: "    ++ ppEntity' a
   LCon a    -> "lcon: "    ++ ppEntity' a
-  LClass a  -> "lclass: "  ++ ppEntity' a
+  LClass a b-> "lclass: "  ++ ppEntity' a ++ " >= " ++ show b
   LExtern a -> "lextern: " ++ ppEntity' a
   Inline a e-> "inline: " ++ ppEntity' a ++ " = " ++ ppCoreExpr f derefTy "" e
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule hNm typeMap bindings overloads defaults fixities _ _) ->
+ = \(CoreModule hNm typeMap bindings classDecls defaults fixities _ _) ->
   let derefTy  i = bind2HName        (typeMap  V.! i) i
       derefVar i = bind2HName (info (bindings V.! i)) i
       ppEntity'  = ppEntity derefTy
@@ -76,12 +76,13 @@ ppCoreModule :: CoreModule -> String
 -- ++ "\n\n" ++ clYellow "-- externs --"
 -- ++ "\n"   ++ (concatMap (\x->ppEntity' x ++ "\n") externs)
 
-  ++ "\n\n" ++ clRed "-- overloads --"
-  ++ "\n"   ++ DL.intercalate "\n" (ppClassOverloads <$> IM.elems overloads)
+  ++ "\n\n" ++ clRed "-- Class decls --"
+  ++ "\n"   ++ ppClassDecls classDecls
   ++ "\n"   ++ clGreen "-- bindings --"
-  ++ concat ((ppBind derefVar derefTy "\n") <$> bindings)
+  ++ concat (zipWith (ppBind derefVar derefTy "\n") [0..] (V.toList bindings))
 
-ppClassOverloads overloads = DL.intercalate "\n" (show <$> IM.elems overloads)
+ppClassDecls classDecls
+ = DL.intercalate "\n" $ show <$> V.toList classDecls
 
 -- function to convert an entity to a stringname
 bind2HName entity i = case named entity  of

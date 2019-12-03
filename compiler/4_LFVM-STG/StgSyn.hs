@@ -34,13 +34,16 @@ type StgFn    = LLVM.AST.Operand
 data StgType  -- All these must eventually become llvm equivalents
  = StgLlvmType  LLVM.AST.Type -- Vanilla type (could still be a struct)
  | StgTypeAlias StgId         -- resolved using typeMap during codegen
- | StgFnType    [StgType]     -- stg function type (not extern)
- | StgAlgType   StgData       -- Algdata - by far the most complex
 -- StgTypeRef: Internally we store alias+type for StgAlgTypes
 -- aliases: we save the initial type to tell later (if its a fn/struct)
  | StgTyperef   LLVM.AST.Type LLVM.AST.Type
+ | StgFnType    [StgType]     -- stg function type (not extern)
+ | StgAlgType   StgData       -- Algdata - by far the most complex
  | StgTuple     [LLVM.AST.Type]
  | StgPApTy     [StgType] [StgType]
+ -- polytypes
+ | StgPolyType  StgId   -- just a name, valid types must be bitcasted
+-- | StgSubType   StgType -- ty is ok here, but must be bitcasted
 
 -- StgArg = resolves (stgToIR) to an ssa passable to an llvm function
 -- Note. this includes function pointers!
@@ -134,6 +137,7 @@ deriving instance Show StgType
 instance Show StgRhs where
  show = \case
   StgTopRhs args tys retty e -> "top: " ++ show args ++ show e
+    ++ "\n : " ++ show tys ++ show retty
   StgRhsSsa s                    -> "closure: " ++ show s
   StgExt t                       -> "extern " ++ show t
   StgRhsConst l                  -> "const: " ++ show l
