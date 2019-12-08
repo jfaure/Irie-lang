@@ -26,55 +26,66 @@ import qualified LLVM.AST.FloatingPointPredicate as FP
 import qualified LLVM.AST.Type as LT
 import qualified LLVM.AST.Float as LF
 import           LLVM.AST.AddrSpace
+import qualified Data.IntMap as IM
 import Data.List
+
+-- map for dynamic types
+type DynTyMap = TypeMap
 
 -- TODO filter all functions from CoreModule.bindings
 core2stg :: CoreModule -> StgModule
-core2stg (CoreModule hNm algData coreBinds overloads defaults _ _ _)
- = StgModule stgData (V.fromList stgTypedefs) stgBinds
-  where
-  (stgData, stgTypedefs) = convData algData
-  stgBinds               = doBinds coreBinds algData overloads
+core2stg (CoreModule hNm algData coreBinds overloads defaults _ tyConInstances _ _) =
+  let (normalData, stgTypedefs) = convData algData tyConInstances
+      getDynInst i conIdx = case named (tyConInstances V.! i) of
+        Nothing -> error "impossible"
+        Just  h -> h
+  in StgModule {
+     stgData  = normalData
+   , typeDefs = V.fromList stgTypedefs
+   , binds    = doBinds getDynInst coreBinds algData tyConInstances overloads
+  }
 
-doExtern :: TypeMap -> IName -> Entity -> StgBinding
-doExtern tyMap iNm (Entity (Just nm) ty) =
-  let llvmFnTy   = (\(StgLlvmType t) -> t) $ convTy tyMap ty
+doExtern :: TypeMap -> DynTyMap -> IName -> Entity -> StgBinding
+doExtern tyMap dynTyMap iNm (Entity (Just nm) ty) =
+  let llvmFnTy   = (\(StgLlvmType t) -> t) $ convTy tyMap dynTyMap ty
       stgId      = convName iNm (Just nm)
   in StgBinding stgId (StgExt llvmFnTy)
 
 -- handle the algData TypeMap (NameMap Entity)
 -- This returns the TyAliases monotyDatas
-convData :: TypeMap -> (V.Vector StgData, [(StgId, StgType)])
-convData tyMap = mkLists $ foldr f ([],[]) tyMap
+convData :: TypeMap -> DynTyMap -> (V.Vector StgData, [(StgId, StgType)])
+convData tyMap dynTyMap = mkLists $ foldr f ([],[]) (tyMap V.++ dynTyMap)
   where
   mkLists (a,b) = (V.fromList a, b)
-  f (Entity (Just hNm) (TyMono (MonoRigid r))) (d, a) = (d,a)
-  f (Entity (Just hNm) (TyPoly (PolyData ty dataDef))) (datas, aliases)
-    = let (newData, subTys) = convDataDef tyMap dataDef
-      in  (newData : datas, subTys ++ aliases)
---f (Entity _       TyPoly{}) acc = acc -- don't conv polytypes
-  f (Entity (Just hNm) rawTy) (datas, aliases) =
-      let ty = convTy tyMap rawTy
-          nm = LLVM.AST.mkName (CU.hNm2Str hNm)
-      in  (datas, (nm, ty):aliases)
-  f _ (d,a) = (d,a) -- error $ show a ++ " -- " ++ show b
+  f (Entity (Just hNm) ty) (d, a) = 
+    let nm = LLVM.AST.mkName (CU.hNm2Str hNm)
+    in case ty of
+      TyPoly (PolyData ty dataDef) ->
+        let (newData, subTys) = convDataDef tyMap dynTyMap dataDef
+        in  (newData : d, subTys ++ a)
+      -- ignore tycons
+      TyExpr{} -> (d , a)
+      rawTy -> (d, (nm, convTy tyMap dynTyMap rawTy):a)
+  f (Entity Nothing _) (d,a) = (d,a)
+--f o (d,a) = error $ show o ++ " :" ++ show d ++ " , " ++ show a
 
-convDataDef :: TypeMap -> DataDef -> (StgData, [(StgId, StgType)])
-convDataDef tyMap (DataDef dataNm sumAlts) =
+convDataDef :: TypeMap -> DynTyMap -> DataDef
+            -> (StgData, [(StgId, StgType)])
+convDataDef tyMap dynTyMap (DataDef dataNm sumAlts) =
   let deref = (tyMap V.!)
       mkStgId = LLVM.AST.mkName . CU.hNm2Str
       mkProdData (pNm, tys)
-        = StgProductType (mkStgId pNm) $ convTy tyMap <$> tys
+        = StgProductType (mkStgId pNm) $ convTy tyMap dynTyMap <$> tys
       sumTy = StgSumType (mkStgId dataNm) $ mkProdData <$> sumAlts
       qual = dataNm `T.snoc` '.'
       subAliases = (\(pNm, tys) -> mkStgId $ qual `T.append` pNm) <$> sumAlts
   in  (sumTy, zip subAliases (repeat $ StgTypeAlias $ mkStgId dataNm))
 
 -- needs the TypeMap in order to deref types
-convTy :: TypeMap -> Type -> StgType
-convTy tyMap =
+convTy :: TypeMap -> DynTyMap -> Type -> StgType
+convTy tyMap dynTyMap =
   let deref   = (tyMap V.!)
-      convTy' = convTy tyMap
+      convTy' = convTy tyMap dynTyMap
       mkAlias iNm = convName iNm (named (deref iNm))
   in \case
   TyAlias iNm ->
@@ -83,32 +94,43 @@ convTy tyMap =
     in case typed tyInfo of
       -- polytypes will need to be bitcasted in llvm
       TyPoly (PolyUnion{}) -> StgPolyType  stgAlias
+      TyPoly PolyAny       -> StgPolyType  stgAlias
+--    TyMono (MonoRigid ri) -> StgRigid ri
       o                    -> StgTypeAlias stgAlias
   TyArrow types       -> StgFnType (convTy' <$> types)
   TyMono m            -> case m of
-    MonoTyPrim prim -> StgLlvmType  $ primTy2llvm prim
-    MonoRigid  riNm -> StgTypeAlias $ mkAlias riNm
+    MonoTyPrim prim -> StgLlvmType $ primTy2llvm prim
+--  MonoRigid  riNm -> StgRigid riNm -- arguments of tycons
+    MonoSubTy  r p ci -> convTy' (TyAlias p) --StgPolyType $ mkAlias r
 
-  TyExpr tyfun -> error ("dependent type: " ++ show tyfun)
+  TyExpr tyfun -> case tyfun of
+      TyTrivialFn args val -> error ("tycon definition")
+--    TyApp       ty args  -> StgTyCon (convTy' ty) (convTy' <$> args)
+      TyDependent args expr-> error ("dependent type: " ++ show tyfun)
+
   TyPAp t1s t2s ->
     let st1s = convTy' <$> t1s
         st2s = convTy' <$> t2s
     in StgPApTy st1s st2s
-  TyInstance fId ty -> convTy' ty
+  TyInstance fId ty    -> convTy' ty
+  TyDynInstance fId conIdx ty -> StgTypeAlias
+    $ convName (fId + V.length tyMap) (named (dynTyMap V.! fId))
 
-  -- TODO use defaults
   TyPoly (PolyUnion alts) -> error "core2stg: polytype" -- convTy' $ head alts
   -- Note any other type is illegal at this point
   t -> error ("internal error: core2Stg: not a monotype: " ++ show t)
 
 -- the V.imap will give us the right inames since it contains all terms
-doBinds :: V.Vector Binding -> TypeMap -> V.Vector ClassDecl
+doBinds :: (Int->Int->HName) -> V.Vector Binding
+        -> TypeMap -> DynTyMap -> V.Vector ClassDecl
         -> V.Vector StgBinding
-doBinds binds tyMap classDecls = V.fromList $ V.ifoldr f [] binds
+doBinds getDynInst binds tyMap dynTyMap classDecls
+  = V.fromList $ V.ifoldr f [] binds
   where
-  convTy'      = convTy tyMap
+  convTy'      = convTy tyMap dynTyMap
   lookupBind i = CU.lookupBinding i binds
   convName' i  = convName i $ named $ info $ lookupBind i
+  convExpr' = convExpr binds classDecls
   f iNm        = \case
 --  LBind args (Instr i) info  -> id -- don't try to gen primitives
     LBind info args expr -> let
@@ -119,18 +141,27 @@ doBinds binds tyMap classDecls = V.fromList $ V.ifoldr f [] binds
           t -> ([], [convTy' t])
       rhs :: StgRhs = case expr of
         Instr i -> StgPrim (prim2llvm i) argTys retTy
-        e       -> 
-          let expr' = case typed info of
+        e       ->
+          let stgExpr = case typed info of
                 -- TODO not ideal
                 TyInstance i _ ->
                   let App _ args = expr
-                  in App (Var i) args
-                _ -> expr
-              stgExpr = convExpr binds classDecls expr'
+                  in convExpr' (App (Var i) args)
+                TyDynInstance i conIdx _ ->
+                  let App _ args = expr
+                  in StgApp (convName i $ Just $ getDynInst i conIdx)
+                            (StgExprArg . convExpr' <$> args)
+                _ -> convExpr' expr
           in StgTopRhs argNames argTys retTy stgExpr
       in (StgBinding nm rhs :)
+    LLit i lit ->
+      let nm = (convName iNm (named i))
+          e  = StgLit $ StgConstArg $ literal2Stg lit
+                              -- $ typedLit2Stg lit (tyMap V.! typed i)
+          rhs = StgTopRhs [] [] (convTy' $ typed i) e
+      in  (StgBinding nm rhs :)
     Inline{}   -> id
-    LExtern ty -> (doExtern tyMap iNm ty :) -- id
+    LExtern ty -> (doExtern tyMap dynTyMap iNm ty :) -- id
     LArg{}     -> id
     LCon{}     -> id
     LClass{}   -> id
@@ -146,9 +177,10 @@ convExpr bindMap classDecls =
  Var nm -> case lookup nm of
    Inline i e -> convExpr' e
    _ -> StgLit $ StgVarArg $ convName' nm
- Lit lit               -> StgLit $ StgConstArg $ literal2Stg lit
+ Lit lit -> error "unbound literal"
+            -- StgLit $ StgConstArg $ literal2Stg lit
  App fn args           ->
-   let args' = convExpr' <$> args
+   let -- args' = convExpr' <$> args
        stgArgs = StgExprArg . convExpr' <$> args
    in  case fn of
     Var fId    ->
@@ -187,14 +219,30 @@ convExpr bindMap classDecls =
 
 -- cancerous llvm-hs Name policy
 -- TODO name clashes ?
+-- core inames are unique, but llvm will complain that they are
+-- not given sequentially (since they don't all end up in stg)
+-- prepending a '_' to force a string name is not ideal
 convName :: IName -> Maybe HName -> StgId
 convName i = \case
   Nothing -> LLVM.AST.mkName $ '_' : show i
+--Nothing -> LLVM.AST.UnName $ fromIntegral i
   Just h  -> LLVM.AST.mkName $ CU.hNm2Str h -- ++ show i
 
-literal2Stg :: Literal -> StgConst =
+typedLit2Stg :: Literal -> Type -> StgConst = \l t ->
   let mkChar c = C.Int 8 $ toInteger $ ord c 
-  in \case
+  in case t of
+  TyMono (MonoTyPrim p) -> case p of
+    PrimInt bits  -> let Int i = l in C.Int (fromIntegral bits) i
+    PrimFloat fTy -> let Frac f = l in case fTy of
+      FloatTy  -> C.Float (LF.Single $ fromRational f)
+      DoubleTy -> C.Float (LF.Double $ fromRational f)
+    PrimArr ty -> let String s = l in
+      C.Array (LLVM.AST.IntegerType 8) (mkChar <$> (s++['\0']))
+  o -> error $ show o
+
+literal2Stg :: Literal -> StgConst = \l ->
+  let mkChar c = C.Int 8 $ toInteger $ ord c 
+  in case l of
     Char c   -> mkChar c
     Int i    -> C.Int 32 $ i
     String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))

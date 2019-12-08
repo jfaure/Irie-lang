@@ -34,6 +34,7 @@ import Control.Monad.State
 import Control.Monad.Fix (MonadFix)
 import Data.Functor
 import Data.Functor.Identity (Identity)
+import qualified Data.IntMap as IM (lookup, union)
 
 import Debug.Trace
 import Control.Exception (assert)
@@ -53,8 +54,8 @@ getType :: CodeGenModuleConstraints m => StgType -> m LLVM.AST.Type
 getType = \case
   StgLlvmType t   -> pure t
   StgTyperef t t2 -> pure t
-  StgPolyType iden ->  gets (aliasToType iden . typeMap) >>=
-    maybe (error $ "unknown polytype: " ++ show iden) getType
+  StgPolyType iden ->  error "polytype" -- gets (aliasToType iden . typeMap) >>=
+    --maybe (error $ "unknown polytype: " ++ show iden) getType
   StgTypeAlias iden -> gets (aliasToType iden . typeMap) >>=
     maybe (error $ "unknown type: " ++ show iden) getType
 -- used only by gen constructors
@@ -76,6 +77,14 @@ getType = \case
     llvmTypes <- mapM getType t1s
     let papTy = StructureType False $ fnType : llvmTypes
     pure $ (`PointerType` (AddrSpace 0)) papTy
+
+-- note IM.union is left-biased,
+-- although it doesn't matter as arg iNames from core never overlap
+--StgTyCon ty imap -> modify (\x->x{
+--    tyConArgMap = IM.union imap (tyConArgMap x)})
+--    *> getType ty
+--StgRigid i -> maybe (error $ "unknown rigid: " ++ show i) getType
+--              =<< gets (IM.lookup i . tyConArgMap)
   w -> error $ show w
 --StgTuple tys -> -- getOrMakeTuple tys >>= \(DataFns s f [] n) -> pure f
 

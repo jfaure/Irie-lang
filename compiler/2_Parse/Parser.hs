@@ -22,7 +22,7 @@ import qualified Data.Vector as V -- for groupDecls
 import Debug.Trace
 import qualified Text.Megaparsec.Debug as DBG
 dbg i = id
--- dbg i = DBG.dbg i
+--dbg i = DBG.dbg i
 
 --located :: Parser (Span -> a) -> Parser a = do
 --  start <- getPosition
@@ -280,27 +280,29 @@ indentedItems ref lvl scn p finished = go where
      | otherwise  -> L.incorrectIndent EQ lvl pos
 
 pExp :: Parser PExp = dbg "pexp" $
-  appOrSingle >>= \app ->
+  notFn <|> appOrSingle >>= \app ->
     optional (infixTrain app) >>= \case
       Nothing      -> pure app
       Just infixes -> pure infixes
   where
-  appOrSingle = single >>= \fn -> choice
-   [ App fn <$> some single
+  appOrSingle = maybeFn >>= \fn -> choice
+   [ App fn <$> some maybeFn
    , pure fn
    ]
-  single = dbg "pSingleExp" $ choice
+  maybeFn = dbg "pSingleExp" $ choice
+   [ WildCard <$ reserved "_"
+   , PrimOp <$> dbg "primInstr" primInstr
+-- , doExpr , mdoExpr
+   , literalExp
+   , try someName
+   , parens (try opSection <|> notFn <|> pExp)
+   ]
+  notFn = choice
    [ letIn
    , multiIf
    , lambda
    , lambdaCase
    , caseExpr
-   , WildCard <$ reserved "_"
-   , PrimOp <$> dbg "primInstr" primInstr
--- , doExpr , mdoExpr
-   , literalExp
-   , try someName
-   , parens (try opSection <|> pExp)
    ]
   infixTrain lArg =
     let infixOp = qName infixName
@@ -338,11 +340,10 @@ pExp :: Parser PExp = dbg "pexp" $
   caseExpr = do
     reserved "case"
     scrut <- pExp <* reserved "of"
-    ref <- ask
-    scn
+    ref <- ask <* scn
     lvl <- L.indentLevel
     local (const lvl) $ do
-      alts <- indentedItems ref lvl scn alt (fail "_") -- no end condition
+      alts <- indentedItems ref lvl scn alt (fail "_") --no end condition
       pure $ Case scrut alts
   typeSig e = reserved ":" *> pType >>= \t -> pure (Typed t e)
   typeExp = TypeExp <$> pType
@@ -387,13 +388,16 @@ forall :: Parser Type
 -- Note this only parses data to the right of the '=' !
 -- Because to the left there be type functions..
 tyData :: Parser Type =
- let parseAlts alt = ((,) <$> tyName <*> alt) `sepBy` symboln "|"
+ let parseAlts alt = ((,) <$> tyName <*> alt) `sepBy1` symboln "|"
      recordFields :: Parser [(Name, Type)] =
        let field = (,) <$> tyVar <* reservedOp ":" <*> pType
        in  lexemen field `sepBy` lexemen ","
+     record = choice
+       [ RecordFields <$> bracesn (recordFields)
+       , RecordTuple <$> many singleType]
  in choice
- [ TyRecord    <$> parseAlts (bracesn recordFields)
- , TyData      <$> try (parseAlts (many singleType))
+ [ TyRecord    <$> parseAlts record
+-- , TyData      <$> try (parseAlts (many singleType))
  , TyInfixData <$> singleType <*> infixName <*> singleType
  ]
 

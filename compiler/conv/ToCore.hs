@@ -74,7 +74,7 @@ data ConvTyError
  | UnknownTyVar HName
  | UnexpectedTy P.Type
 
--- Error handling is slightly different if the ty is in a type function
+-- Error handling is different if the ty is in a type function
 convTy :: (HName -> Maybe IName) -> P.Type -> Either ConvTyError Type
  = \findNm ->
  let convTy' = convTy findNm
@@ -96,7 +96,7 @@ convTy :: (HName -> Maybe IName) -> P.Type -> Either ConvTyError Type
   P.TyExpr e                 -> _ -- TyExpr $ expr2Core e
   P.TyTyped a b              -> _ -- suspect
   P.TyUnknown                -> Right $ TyUnknown
-  t                          -> Left $ UnexpectedTy t
+  t                          -> Left  $ UnexpectedTy t
 
 -- Default behavior for top level type signatures,
 -- new variables are implicitly quantified
@@ -108,34 +108,72 @@ convTyM :: P.Type -> ToCoreEnv Type = \pTy ->
     UnknownTyVar ty -> --error ("unknown typeName: " ++ show ty)
       withNewTyHNames [ty] $ \[ty] -> convTyM pTy
     UnexpectedTy t  -> case t of
-      P.TyApp tfn targs -> do
-        fn <- convTyM tfn
-        args <- mapM convTyM targs
-        pure $ TyExpr $ TyApp fn args
+--    P.TyApp tfn targs -> do
+--      fn <- convTyM tfn
+--      args <- mapM convTyM targs
+--      pure $ TyExpr $ TyApp fn args
       _ -> error ("unexpected ty: "    ++ show t)
 
-doTypeFun :: P.Decl -> IName -> ToCoreEnv TypeFunction
-doTypeFun (P.TypeFun nm args expr) tyFunINm =
-  let tyFnhNm = pName2Text nm
-      argHNms = pName2Text <$> args
-  in do
-  addTyHName tyFnhNm tyFunINm
-  withNewTyHNames argHNms $ \argNms -> case expr of
-    P.TypeExp ty -> do --trivial type function
-        zipWithM addTyHName argHNms argNms
-        tyEither <- mkFindTyHName <&> (`convTy` ty)
-        tyBody   <- case tyEither of
-          Right t -> pure t
-          Left (UnexpectedTy dty@(P.TyData alts)) -> do
-            dataNm <- freshName
-            (cons, dataTy, subTys) <- convData dataNm (P.TypeAlias nm dty)
---          modify (\x->x{localBinds= localBinds x V.++ cons})
---          modify (\x->x{localTys= (localTys x `V.snoc` dataTy) V.++ subTys})
-            pure $ typed dataTy
-          _ -> error "bad tyfunction"
-        pure $ TyTrivialFn argNms tyBody
+-- type constructors
+-- We may come accross data definitions at the leaves
+-- return tyfuns + data they return
 
-    dependent -> TyDependent argNms <$> expr2Core expr
+--doTypeFun :: P.Decl -> IName -> ToCoreEnv (Entity , V.Vector Entity)
+--doTypeFun (P.TypeFun topNm args (P.TypeExp dataDef@TyRecord{})) tyFnINm =
+--  let tyFnHNm = pName2Text topNm
+--      argHNms = pName2Text <$> args
+--  in do
+--  addTyHName tyFnHNm tyFnINm
+--  argNms <- freshTyNames (length argHNms)
+--  let rigidTys = TyMono . MonoRigid <$> argNms
+--      rigids   = (\ty -> Entity Nothing ty) <$> rigidTys
+--  zipWithM addTyHName argHNms argNms
+--  (cons , dTy , subTys) <- convData tyFunINm (P.TypeAlias topNm dataDef)
+--  mapM rmTyHName argHNMs
+--  let PolyData poly ddef = dTy
+--      newDDef = NewTypeDef argNms ddef
+
+doTypeFun :: P.Decl -> IName -> ToCoreEnv (Entity , V.Vector Entity)
+doTypeFun tyFun@(P.TypeFun topNm args (P.TypeExp ty)) tyFunINm =
+  let tyFnHNm = pName2Text topNm
+      argHNms = pName2Text <$> args
+      tyFnTopHNm = {-T.pack "tyFn." `T.append`-} tyFnHNm
+  in do
+  addTyHName tyFnTopHNm tyFunINm
+  argNms <- freshTyNames (length argHNms)
+  -- tyFunction arguments are PolyAny
+  let rigidTys = TyMono . MonoRigid <$> argNms
+      rigids   = (\ty -> Entity Nothing ty) <$> rigidTys
+
+  zipWithM addTyHName argHNms argNms
+  rhs <- (`convTy` ty) <$> mkFindTyHName
+  -- convTy won't emit data declarations for us
+  (fnBody , cons , subTys) <- case rhs of
+    Right t -> pure (t , V.empty , V.empty)
+    Left (UnexpectedTy dataDef@(P.TyRecord alts)) -> do
+      -- TyCon returns data
+      -- Note. ignore the incomplete dTy, use the tyFunction instead
+      (cons, dTy, subTys)
+        <- convData tyFunINm (P.TypeAlias topNm dataDef)
+      pure $ (typed dTy , cons , subTys)
+    Left t -> error $ "unexpected return type of tyFunction: "
+  mapM rmTyHName argHNms
+
+  let tyFn = TyTrivialFn argNms fnBody
+      tyEnt = Entity (Just tyFnTopHNm) (TyExpr tyFn)
+
+  -- if TyFun returns data, wrap it's constructor types
+  let mkTyFn ty = TyExpr $ TyTrivialFn argNms ty
+      dataCon2TyFun (LCon ent) =
+        LCon ent{ typed = mkTyFn (typed ent) }
+      cons' = dataCon2TyFun <$> cons
+      subTys' = (\x->x{ typed = mkTyFn (typed x) }) <$> subTys
+  modify (\x->x{ _bindList = cons' : _bindList x })
+
+  pure (tyEnt ,  V.fromList rigids V.++ subTys')
+
+--dependent -> error $ "dependent: " ++ show dependent
+--          -- TyDependent argNms <$> expr2Core expr
 
 ----------
 -- Data --
@@ -146,7 +184,8 @@ getTypesAndCons :: V.Vector P.Decl -- .TypeAlias
  = \datas ->
   -- type/data names may be used out of order/recursively
   -- note. convTy converts all P.TyName to TyAlias
-  let registerData iNm (P.TypeAlias qNm ty) = addTyHName (pName2Text qNm) iNm
+  let registerData iNm (P.TypeAlias qNm ty)
+        = addTyHName (pName2Text qNm) iNm
   in do
   iNms <- V.fromList <$> freshTyNames (V.length datas)
   V.zipWithM registerData iNms datas
@@ -163,14 +202,15 @@ convData :: IName -> P.Decl
  = \dataINm (P.TypeAlias aliasName ty) ->
   let dataNm = pName2Text aliasName
 
-      -- Functions shared by TyData and TyRecord
+      -- Functions for converting data/record
       mkSubTypes :: HName -> Int -> [HName] -> [[Type]]
                  -> ToCoreEnv ([Type], [Entity], Entity)
       mkSubTypes qual nAlts conHNames conTys = do
         let subTyHNames      = (qual `T.append`) <$> conHNames
         subTyINames <- freshTyNames nAlts
         zipWithM addTyHName subTyHNames subTyINames
-        let subTypes         = TyMono . MonoRigid <$> subTyINames
+        let mkSubTy i conIdx = TyMono (MonoSubTy i dataINm conIdx)
+            subTypes         = zipWith mkSubTy subTyINames [0..]
             mkSubEnts hNm ty = Entity (Just hNm) ty
             subEnts          = zipWith mkSubEnts subTyHNames subTypes
         let dataDef      = DataDef dataNm (zip conHNames conTys)
@@ -179,29 +219,20 @@ convData :: IName -> P.Decl
         pure (subTypes, subEnts, dataEnt)
 
       mkConstructors conHNames conTys subTypes = 
-        let mkCon prodNm prodTy subTy =
+        let mkCon prodNm [] subTy = LCon $ Entity (Just prodNm) subTy
+            mkCon prodNm prodTy subTy =
               LCon $ Entity (Just prodNm) (TyArrow $ prodTy ++ [subTy])
         in V.fromList $ zipWith3 mkCon conHNames conTys subTypes
 
   in case ty of
-  P.TyData sumTys -> do
-    let go (prodNm, tupleTys) =
-            (pName2Text prodNm ,) <$> mapM convTyM tupleTys
-    (conHNames, conTys) <- unzip <$> mapM go sumTys
-    let nAlts = length conHNames
-    zipWithM addHName conHNames =<< freshNames nAlts
-    let qual = dataNm `T.snoc` '.'
-    (subTypes,subEnts,dataEnt) <- mkSubTypes qual nAlts conHNames conTys
-    let cons = mkConstructors conHNames conTys subTypes
-    pure (cons, dataEnt, V.fromList subEnts)
-
-  -- Records: same, but also emit accessor functions
   P.TyRecord recordAlts -> do
     let nAlts = length recordAlts
-        go (prodNm, fields) = do
+        convAlt (prodNm , (P.RecordFields fields)) = do
           let (nms, tys) = unzip fields
           (pName2Text prodNm , pName2Text<$>nms ,) <$> mapM convTyM tys
-    (conHNames, fieldNames, conTys) <- unzip3 <$> mapM go recordAlts
+        convAlt (prodNm , (P.RecordTuple tys)) =
+          (pName2Text prodNm , [] ,) <$> mapM convTyM tys
+    (conHNames, fieldNames, conTys) <- unzip3 <$> mapM convAlt recordAlts
 
     zipWithM addHName conHNames =<< freshNames nAlts
     let qual = dataNm `T.snoc` '.'
@@ -340,8 +371,12 @@ freshTyName :: ToCoreEnv IName = gets tyNameCount >>= \n ->
 -- AddNames
 addHName    :: T.Text -> IName -> ToCoreEnv () = \hNm nm ->
   modify (\x->x{hNames = HM.insert hNm nm (hNames x)})
-addTyHName  :: T.Text -> IName -> ToCoreEnv () =
-  \hNm nm -> modify (\x->x{hTyNames = HM.insert hNm nm (hTyNames x)})
+addTyHName  :: T.Text -> IName -> ToCoreEnv () = \hNm nm ->
+  modify (\x->x{hTyNames = HM.insert hNm nm (hTyNames x)})
+rmHName    :: T.Text -> ToCoreEnv () = \hNm ->
+  modify (\x->x{hNames = HM.delete hNm (hNames x)})
+rmTyHName  :: T.Text -> ToCoreEnv () = \hNm ->
+  modify (\x->x{hTyNames = HM.delete hNm (hTyNames x)})
 
 getHName, getTyHName :: HName -> ToCoreEnv (Maybe IName)
 getHName   hNm = gets hNames   <&> (hNm `HM.lookup`)
@@ -444,14 +479,15 @@ parseTree2Core topImports = let
 _parseTree2Core :: ConvState -> [CoreModule] -> P.Module -> CoreModule
 _parseTree2Core startConvState topImports (P.Module mName parseTree)
  = CoreModule
-  { moduleName  = pName2Text mName
-  , algData     = dataTys
-  , bindings    = binds
-  , classDecls  = classDecls'
-  , defaults    = IM.empty
-  , fixities    = localFixities endState
-  , hNameBinds  = hNames   endState
-  , hNameTypes  = hTyNames endState
+  { moduleName     = pName2Text mName
+  , algData        = dataTys
+  , bindings       = binds
+  , classDecls     = classDecls'
+  , defaults       = IM.empty
+  , fixities       = localFixities endState
+  , tyConInstances = V.empty
+  , hNameBinds     = hNames   endState
+  , hNameTypes     = hTyNames endState
   }
   where
   (binds, dataTys, classDecls') = val
@@ -494,12 +530,13 @@ _parseTree2Core startConvState topImports (P.Module mName parseTree)
 
     -- 3. extern entities
     externs <- mapM (doExtern dataEntities) (P.externs parseTree)
-    let externBinds = LExtern <$> externs
-    modify (\x->x{_bindList = externBinds : _bindList x})
+    modify (\x->x{_bindList = (LExtern <$> externs) : _bindList x})
 
     -- 4. type functions:
-    tyFunINms<- V.fromList <$> freshNames (V.length (P.tyFuns parseTree))
-    typeFuns <- V.zipWithM doTypeFun (P.tyFuns parseTree) tyFunINms
+    tyFunINms<- V.fromList<$>freshTyNames (V.length (P.tyFuns parseTree))
+    (typeFuns, datas) <- V.unzip <$> V.zipWithM doTypeFun (P.tyFuns parseTree) tyFunINms
+    let datas' = V.foldl' (V.++) V.empty datas
+    modify (\x->x{ _tyList = datas' : typeFuns : _tyList x })
 
     -- 5. typeclasses
     -- we need: (classFn bindings, classTy polytypes, instance overloads)
@@ -513,8 +550,7 @@ _parseTree2Core startConvState topImports (P.Module mName parseTree)
                  })
 
     -- 6. expression bindings
-    -- need to register all names first (for recursive references)
-    hNSigMap <- mkSigMap (P.topSigs parseTree) -- :: ToCoreEnv (M.Map T.Text Type)
+    (hNSigMap :: M.Map HName Type) <- mkSigMap (P.topSigs parseTree)
     let findTopSig :: HName -> Maybe Type = \hNm -> M.lookup hNm hNSigMap
     fnBinds  <- getFns findTopSig (P.topBinds parseTree)
     fnLocals <- gets localBinds
@@ -527,7 +563,7 @@ _parseTree2Core startConvState topImports (P.Module mName parseTree)
     pure (binds, tyEntities, classDecls)
 
 -- TODO remove
-partitionFns = partition $ \case {P.TypeSigDecl{}->True ;_-> False }
+partitionFns = partition $ \case { P.TypeSigDecl{}->True ; _-> False }
 
 -------------
 -- Classes --
@@ -551,7 +587,9 @@ doTypeClasses p_TyClasses p_classInsts = do
   -- Combine all elements to generate the class polytype
   let instOverloads = groupWith classFnId $ V.toList
                       $ V.foldl' (V.++) V.empty perInstOverloads
-      classBinds = mkClassBind <$> traceShowId instOverloads
+      classBinds = mkClassBind <$> instOverloads
+--    getInstPolytype =
+--      let TyArrow fns = 
   pure (  classDecls
         , V.fromList classBinds             -- class fns
         , V.fromList $ info <$> classBinds) -- class polytypes
@@ -649,12 +687,9 @@ doClassInstance :: P.Decl{-.TypeClassInst-}-> ClassDecl
     modify (\x->x{ nameCount = nameCount x + length overloads })
     let (overloadINms, overloadBinds) = unzip overloads
     zipWithM addLocal overloadINms overloadBinds
---  tyApps <- getTypeApplications fnBinds classFns
     let overloads = zipWith3 Overload overloadINms [startOverloadId..]
                                      (typed . info <$> overloadBinds)
     pure $ V.fromList overloads
-
-getTypeApplications fnBinds classFns = pure []
 
 expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Var (P.UnQual hNm)-> lookupName hNm >>= \case
@@ -674,7 +709,8 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
           Nothing -> error ("Internal: prim typeclass not in scope: "
                             ++ show classNm)
           Just t  -> TyAlias t
-    addLocal iNm (LBind (Entity Nothing ty) [] (Lit l))
+--  addLocal iNm (LBind (Entity Nothing ty) [] (Lit l))
+    addLocal iNm (LLit (Entity Nothing ty) l)
     pure $ Var iNm
 
   P.PrimOp primInstr  -> pure $ Instr primInstr
@@ -689,10 +725,16 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.InfixTrain leftExpr infixTrain -> 
     gets localFixities >>= \fixities ->
     let
-    -- [InfixDecl AssocNone (Just 6) [Symbol "+"]]
-    getInfix x = case (pQName2Text x) `HM.lookup` fixities of
-      Just (Fixity i _) -> i
+    getFixity x = case pQName2Text x `HM.lookup` fixities of
+      Just  f -> f
       Nothing -> defaultFixity
+    lOp `hasPrec`rOp =
+      let Fixity precL assocL = getFixity lOp
+          Fixity precR assocR = getFixity rOp
+      in case compare precR precL of
+          GT -> True
+          EQ -> assocL == LAssoc
+          LT -> False
     -- General plan is to fold handlePrec over the infixTrain
     -- 1. if rOp has higher prec then lOp then add it to the opStack
     -- 2. else apply infixes from opStack until stack has lower prec then rOp
@@ -701,7 +743,7 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
                -> (P.PExp, [(P.QName, P.PExp)])
     handlePrec (expr, []) (rOp, rExp) = (P.App (P.Var rOp) [expr, rExp] , [])
     handlePrec (expr, (lOp, lExp) : stack) next@(rOp, _) =
-      if getInfix rOp > getInfix lOp
+      if lOp `hasPrec` rOp -- getInfix rOp > getInfix lOp
       then (expr , next : (lOp, lExp) : stack)
       else handlePrec (P.App (P.Var lOp) [expr, lExp] , stack) next
     (expr', remOpStack) = foldl' handlePrec (leftExpr, []) infixTrain
@@ -823,14 +865,15 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
     Just alts -> Case e (Decon alts)
     Nothing   -> Case e (Switch litAlts)
 
-defaultFixity :: Int = 9
+defaultPrec = 9
+defaultFixity = Fixity defaultPrec LAssoc
 convFixities :: V.Vector P.Decl{- .InfixDecl-} -> HM.HashMap HName Fixity
 convFixities decls = 
   let convAssoc = \case
         P.AssocRight -> RAssoc
         P.AssocNone  -> LAssoc
         P.AssocLeft  -> LAssoc
-      convFixity = \case { Just i -> i ; Nothing -> defaultFixity }
+      convFixity = \case { Just i -> i ; Nothing -> defaultPrec }
       infix2pair (P.InfixDecl a f [op])
         = (pName2Text op , Fixity (convFixity f) (convAssoc a))
   in HM.fromList $ V.toList $ infix2pair <$> decls

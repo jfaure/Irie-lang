@@ -22,6 +22,7 @@ import Data.Functor
 import Data.Maybe (isJust, fromJust)
 import LLVM.Pretty
 
+xd f = doProgText defaultCmdLine { emitParseCore = True } f =<< T.IO.readFile f
 main = parseCmdLine >>= \cmdLine ->
   case files cmdLine of
     [] -> repl cmdLine

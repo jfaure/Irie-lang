@@ -8,6 +8,7 @@ import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import qualified LLVM.AST.Constant as C
 
+import qualified Data.IntMap as IM
 import qualified Data.Map.Strict as Map
 import Control.Monad.State
 import Control.Monad.Fix (MonadFix)
@@ -34,8 +35,8 @@ data Symbol
   = ContLi LLVM.AST.Operand -- an SSA (a global / constant)
   | ContFn LLVM.AST.Operand -- llvm function
   | ContRhs StgRhs    -- Placeholder (we can let-bind this immediately)
- -- ContPrim: llvm instruction
- -- + function wrapper (if it's used as an argument)
+ -- ContPrim: llvm instruction + maybe a function wrapper
+ -- (necessary if it's used as an argument)
   | ContPrim StgPrimitive [StgType] StgType (Maybe LLVM.AST.Operand)
 
 type TypeMap    = Map.Map StgId StgType
@@ -69,11 +70,15 @@ data DataFns = DataFns -- llvm fns generated when data is defined
 
 -- note. constructors are stored in dataFnsMap
 -- stackFrames: some frames are responsible for stgdata.
-data StgToIRState = StgToIRState 
-  { bindMap    :: SymMap      -- vanilla fns/globals in scope
-  , dataFnsMap :: DataFnsMap  -- basic info about a data
-  , typeMap    :: TypeMap     -- Type aliases
-  , tupleMap   :: Map.Map [LLVM.AST.Type] DataFns
-  , stackFrame :: Maybe StackFrame -- for fns returning data - only top layer data,
-  , subData    :: Bool             -- nested constructors use malloc
-  }
+data StgToIRState = StgToIRState { 
+   bindMap     :: SymMap      -- vanilla fns/globals in scope
+ , dataFnsMap  :: DataFnsMap  -- basic info about a data
+ , typeMap     :: TypeMap     -- Type aliases
+ , tupleMap    :: Map.Map [LLVM.AST.Type] DataFns
+
+ , stackFrame  :: Maybe StackFrame -- for top level data returning fns
+ , subData     :: Bool             -- nested constructors use malloc
+
+ , tyConArgMap :: IM.IntMap StgType
+-- , rtsFns      :: RtsFns
+}

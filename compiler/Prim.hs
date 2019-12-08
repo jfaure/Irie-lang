@@ -17,8 +17,6 @@ data Literal
 data PrimType
  = PrimInt Int -- typeBits
  | PrimFloat FloatTy
- | APInt -- arbitrary precision int
- | APFloat
  | PrimArr PrimType
  | PrimTuple [PrimType]
  | PtrTo PrimType

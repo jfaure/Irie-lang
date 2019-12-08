@@ -44,7 +44,7 @@ data Decl
  | TypeAlias     Name Type          -- note. type includes data
  | TypeFun       Name [Name] PExp   -- TODO move this to Type
  | TypeClass     Name [Name] [Decl] -- haskell newtype ?
- | TypeClassInst Name Name [Decl]
+ | TypeClassInst Name Name   [Decl]
 
  -- top bindings (seperate because sigs may be in sigModules)
  | Extern        Name Type
@@ -82,15 +82,19 @@ data Type
 
  -- GADTs
  -- These must subsume Type so they can be returned by TyFunctions
- | TyRecord [(Name, [(Name, Type)])]
- | TyData   [(Name, [Type])]
+ | TyRecord [(Name, Record)]
+-- | TyData   [(Name, [Type])]
  | TyInfixData Type Name Type
  | TyModule Module
 
  | TyExpr PExp       -- type functions (maybe dependent on values)
- | TyTyped Type Type -- user gave a 'Kind' annotation (are all kinds types ?)
+ | TyTyped Type Type -- user gave a type (kind?) annotation
  | TyUnknown         -- including '_' type given / no type sig
-type DataDef = Type -- TyRecord, TyData, TyInfixData
+-- type DataDef = Type -- TyRecord, TyData, TyInfixData
+data Record
+  = RecordTuple  [Type]
+  | RecordFields [(Name, Type)]
+-- type RecordField = (Name, Type)
 
 data PolyType
  = PolyAnd   [Type] -- & constraints
@@ -164,6 +168,7 @@ deriving instance Show Match
 deriving instance Show Rhs
 deriving instance Show GuardedRhs
 deriving instance Show Type
+deriving instance Show Record
 deriving instance Show PolyType
 deriving instance Show PExp
 deriving instance Show Alt

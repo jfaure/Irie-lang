@@ -1,48 +1,46 @@
 # expr2Core
-  * array prims + pattern matching
-  * precompiled modules, rec, freeVars
+  * typeFuns (beta reduction)
+  * array prims + patterns
+  * precompiled modules, freeVars
   * generate function wrappers for remaining primitives (stgtollvm:258)
-  * infix associativity
-  * patterns, nested patterns, matches2Case
+  * nested patterns
   * ocaml 'a | implicit forall typevars ?
-  * register subtypes before codegen (support for recursive)
-  * review case -> core logic
-  * error data
+  * register subtypes (to handle recursive refs)
+  * error reporting
 
 # Typeclass
-  * avoid nameclashes for instances
   * default typeclass signatures/decls
   * use a fromString function for literals
   * multiparam typeclasses
+  * check instances <= class
+  * subsume : rigid -> _ -> True -- check it's ok somewhere
 
 # core2Stg
   * tyFunctions
   * polymorphic fns (boxed vs unboxed)
 
 # parser
+  * funBind eats all matches ignoring name
   * move all type parse logic to pExp
-  * indented 'where', esp. class
   * linefolds
-  * GADT style
   * rec (let-rec)
   * source locations
 
 # Clean
   * toCore::typeclass
   * tyJudge::instantiate
+  * match->case->core
 
 # Prelude
-  * fold-build
-  * fusion across functions ? composition fusion ~ lazy
+  * fold-build ~ lazy
   * effects
   * distribution
   * memory (eg. inplace modifications undo as stack unravels eg. sudoku)
 
 # Maybe
-  * TyRigid could be polytype
+  * GADT style
   * View patterns
   * GuardedRhs
   * Case -> Case optimizations
-  * polymorphic PAp - how are freeVars bound ?
   * ContPrim may be unecessary
   * optimize convFixities

@@ -32,6 +32,7 @@ import Control.Monad.State
 import Control.Monad.Fix (MonadFix)
 import Data.Functor.Identity (Identity)
 import Data.Functor
+import qualified Data.IntMap as IM (empty)
 
 import Debug.Trace
 import Control.Exception (assert)
@@ -72,6 +73,7 @@ stgToIRTop (StgModule stgData typeDefs bindings) =
      , tupleMap     = Map.empty
      , stackFrame   = Nothing
      , subData      = False
+     , tyConArgMap  = IM.empty 
      }
   rtsExterns =
    [ ("malloc", [IntegerType 32], charPtrType)
@@ -118,18 +120,7 @@ stgToIRTop (StgModule stgData typeDefs bindings) =
     in fmap mkModule . execModuleBuilderT emptyModuleBuilder
  in evalState (myBuildModuleT "MainModule" emitModule) stgToIRState
 
--- suspicious function.. but sometimes a vanilla llvmType/alias is expected
--- eg in an extern declaration we cannot really accept anything more complex (?!)
-mkLlvmTy :: (CodeGenModuleConstraints m)
-  => StgType -> m LLVM.AST.Type
-mkLlvmTy = \case
-  StgLlvmType t -> pure t
-  StgTypeAlias iden -> gets (aliasToType iden . typeMap) >>= \case
-    Nothing -> error ("unknown type alias: " ++ show iden)
-    Just ty -> mkLlvmTy ty
-  any -> error "expected vanilla llvm type or type alias"
-
--- Check if a type is stg data, in which case stg has to handle it's memory
+-- if StgData, stg has to handle it's memory
 isStgData :: CodeGenModuleConstraints m => StgType -> m (Maybe C.Constant)
 isStgData (StgTypeAlias iden) = gets ((Map.!? iden) . dataFnsMap)
   >>= \case

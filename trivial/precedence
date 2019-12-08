@@ -1,2 +1,9 @@
+--(--) = (-)
+--(++) = (+)
+--infixr 5 ++
+--infixr 5 --
+--f = 1 -- 2 ++ 3
+
 neg a = 0 - a
-main = putNumber (3 * neg 1 + 2)
+f = 3 * neg 1 + 2
+main = printf "%d\n" f

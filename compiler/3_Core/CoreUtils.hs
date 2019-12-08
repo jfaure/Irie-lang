@@ -36,4 +36,5 @@ getArity :: Type -> Int = \case
   TyMono (MonoTyPrim p) -> case p of
     PrimExternVA l -> length l -- at least
     PrimExtern   l -> length l - 1
-  o -> trace "warning: getArity on non-function" 0
+  TyExpr (TyTrivialFn _ t) -> getArity t
+  o -> trace ("warning: getArity on non-function: " ++ show o) 0

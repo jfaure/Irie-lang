@@ -4,7 +4,7 @@
 --
 
 area : Coord -> Int
-area r = (x r) * (y r)
+area r = (x r) + (y r)
 
 data Coord = Coord {
    x : Int

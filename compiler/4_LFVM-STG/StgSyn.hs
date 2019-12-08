@@ -6,6 +6,7 @@ module StgSyn where
 import qualified LLVM.AST -- (Operand, Instruction, Type, Name)
 import qualified LLVM.AST.Constant -- (Constant)
 import qualified Data.Vector as V
+import qualified Data.IntMap as IM
 
 data StgModule = StgModule
  { stgData  :: V.Vector StgData          -- alg data
@@ -34,16 +35,21 @@ type StgFn    = LLVM.AST.Operand
 data StgType  -- All these must eventually become llvm equivalents
  = StgLlvmType  LLVM.AST.Type -- Vanilla type (could still be a struct)
  | StgTypeAlias StgId         -- resolved using typeMap during codegen
--- StgTypeRef: Internally we store alias+type for StgAlgTypes
+-- StgTypeRef: used to gen algdata: stores llvm alias + llvm type
 -- aliases: we save the initial type to tell later (if its a fn/struct)
  | StgTyperef   LLVM.AST.Type LLVM.AST.Type
- | StgFnType    [StgType]     -- stg function type (not extern)
- | StgAlgType   StgData       -- Algdata - by far the most complex
+ | StgAlgType   StgData       -- Algebraic data
  | StgTuple     [LLVM.AST.Type]
- | StgPApTy     [StgType] [StgType]
- -- polytypes
+ | StgFnType    [StgType]     -- stg function type (not extern)
+ | StgPApTy     [StgType] [StgType] -- partial application
+
  | StgPolyType  StgId   -- just a name, valid types must be bitcasted
 -- | StgSubType   StgType -- ty is ok here, but must be bitcasted
+
+-- Type functions, TyCon introduces rigid variables, for StgRigid
+-- probably should rm this (handle it in core)
+-- | StgRigid     Int --usually becomes a polytype, but can be specialized
+-- | StgTyCon     StgType (IM.IntMap StgType)
 
 -- StgArg = resolves (stgToIR) to an ssa passable to an llvm function
 -- Note. this includes function pointers!
@@ -56,6 +62,7 @@ data StgArg
 -- Alg data is modeled as a sum type: it may have 0 alts or 0 fields.
 -- the sumType tag corresponds to the alts, in the order defined
 type StgData        = StgSumType -- Alg data
+
 data StgProductType = StgProductType StgId [StgType]
 data StgSumType     = StgSumType     StgId [StgProductType]
 
@@ -72,8 +79,6 @@ data StgRhs
  | StgRhsConst StgConst -- become global constants
  | StgRhsSsa   StgSsa   -- used internally for locals (esp.function arguments)
  | StgPrim StgPrimitive [StgType] StgType
-
-data FreeVars = FreeVars [(StgArg, StgType)]
 
 data StgPrimitive
  = StgPrim1   StgUnOp

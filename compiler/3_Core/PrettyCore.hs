@@ -8,20 +8,22 @@ import qualified Data.Vector        as V
 import qualified Data.Text          as T
 import qualified Data.List          as DL
 import qualified Data.IntMap.Strict as IM
+import Text.Printf
 
 ppType' = ppType (\x -> "$" ++ show x)
 ppType :: (IName -> String) -> Type -> String = \deref -> clCyan . \case
  TyAlias nm      -> deref nm
  TyMono m        -> case m of
-   MonoTyPrim lty     -> case lty of
-     other            -> show other
-   MonoRigid r        -> "rigid: " ++ show r ++ "(" ++ deref r ++ ")"
+   MonoTyPrim lty  -> case lty of
+     other         -> show other
+   MonoRigid r     -> printf "rigid: %d(%v)" r (deref r)
+   MonoSubTy r p i -> printf "subTy %d : %d <= %d" i r p
 
  TyPoly p        -> show p
  TyArrow tys     -> clNormal ++ "(" ++ (concat $ DL.intersperse " -> "
                            (ppType deref <$> tys)) ++ ")"
  TyPAp tys ty -> "PAp (" ++ ppType deref (TyArrow tys) ++ ") -> " ++ ppType deref (TyArrow tys)
- TyExpr coreExpr -> error "tyexpr"
+ TyExpr coreExpr -> show coreExpr
  TyUnknown       -> "TyUnknown"
  TyBroken        -> "tyBroken"
  other           -> show other
@@ -30,6 +32,7 @@ ppCoreExpr :: (IName -> String) -> (IName -> String)
            -> String -> CoreExpr -> String
  = \deref derefTy indent ->
  let ppCoreExpr' = ppCoreExpr deref derefTy indent
+     ppType'     = ppType derefTy
  in \e -> case e of
   Var n -> {- show n ++-} deref n
   Lit l -> show l
@@ -40,7 +43,7 @@ ppCoreExpr :: (IName -> String) -> (IName -> String)
   Case c a -> case a of
     Switch alts -> "case "++ppCoreExpr' c++show alts
     Decon  alts -> "case " ++ ppCoreExpr' c ++ " of" ++ "\n" ++ (concat $ DL.intersperse "\n" $ (ppDataAlt deref (indent++"  "))<$> alts)
-  TypeExpr ty -> show ty
+  TypeExpr ty -> ppType' ty
   l -> show l
 
 ppDataAlt :: (IName -> String) -> String -> (IName, [IName], CoreExpr) -> String
@@ -53,6 +56,7 @@ ppBinds :: [Binding] -> (IName -> String) -> (IName -> String) -> String
 ppBind f derefTy indent lineNumber b =
   let ppEntity' = ppEntity derefTy
   in clGreen indent ++ show lineNumber ++ ": " ++ case b of
+  LLit  entity l -> "# " ++ show l
   LBind entity args e -> case named entity of
      { Just nm -> show nm ; Nothing -> "_" }
     ++ " " ++ show args 
@@ -65,21 +69,18 @@ ppBind f derefTy indent lineNumber b =
   Inline a e-> "inline: " ++ ppEntity' a ++ " = " ++ ppCoreExpr f derefTy "" e
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule hNm typeMap bindings classDecls defaults fixities _ _) ->
+ = \(CoreModule hNm typeMap bindings classDecls defaults fixities tyConInstances _ _) ->
   let derefTy  i = bind2HName        (typeMap  V.! i) i
       derefVar i = bind2HName (info (bindings V.! i)) i
       ppEntity'  = ppEntity derefTy
   in
                clCyan "-- types --\n"
-  ++ (concatMap (\x->ppEntity' x ++ "\n") typeMap)
+  ++ concat (V.imap (\i x->show i ++ " " ++ ppEntity' x ++ "\n")typeMap)
   ++ "\n"   ++ clMagenta "-- defaults --\n" ++ show defaults
--- ++ "\n\n" ++ clYellow "-- externs --"
--- ++ "\n"   ++ (concatMap (\x->ppEntity' x ++ "\n") externs)
-
   ++ "\n\n" ++ clRed "-- Class decls --"
   ++ "\n"   ++ ppClassDecls classDecls
   ++ "\n"   ++ clGreen "-- bindings --"
-  ++ concat (zipWith (ppBind derefVar derefTy "\n") [0..] (V.toList bindings))
+  ++ concat (V.imap (ppBind derefVar derefTy "\n") bindings)
 
 ppClassDecls classDecls
  = DL.intercalate "\n" $ show <$> V.toList classDecls
@@ -98,8 +99,8 @@ bind2HName entity i = case named entity  of
 ppEntity derefTy (Entity nm ty) = 
   case nm of
     Just nm -> show nm
-    Nothing -> "_"
-  ++ " : " ++ ppType derefTy ty -- ++ " (" ++ show uni ++ ")"
+    Nothing -> show ""
+  ++ " := " ++ ppType derefTy ty -- ++ " (" ++ show uni ++ ")"
 
 clBlack   x = "\x1b[30m" ++ x ++ "\x1b[0m"
 clRed     x = "\x1b[31m" ++ x ++ "\x1b[0m" 
