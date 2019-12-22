@@ -16,19 +16,18 @@ import LLVM.AST hiding (function)
 import LLVM.AST.Type as AST
 import qualified LLVM.AST.Float as F
 import qualified LLVM.AST.Constant as C
+import LLVM.AST.AddrSpace
 --import qualified LLVM.AST.IntegerPredicate as P
 --import qualified LLVM.AST.FloatingPointPredicate as Pf
 import LLVM.AST.Global
-import LLVM.AST.Linkage
-import LLVM.AST.Typed
-import LLVM.AST.AddrSpace
-import LLVM.AST.Attribute
+--import LLVM.AST.Linkage
+--import LLVM.AST.Typed
+--import LLVM.AST.Attribute
 
 -- ultra cancerous shortbytestrings
-import qualified Data.ByteString.Short as BS
+--import qualified Data.ByteString.Short as BS
 import qualified Data.ByteString.Char8 -- Char -> Word8
 
-import Data.List (elemIndex) -- to match deconstruction orders
 import qualified Data.Map.Strict as Map
 import Control.Monad.State
 import Control.Monad.Fix (MonadFix)
@@ -54,8 +53,7 @@ getType :: CodeGenModuleConstraints m => StgType -> m LLVM.AST.Type
 getType = \case
   StgLlvmType t   -> pure t
   StgTyperef t t2 -> pure t
-  StgPolyType iden ->  error "polytype" -- gets (aliasToType iden . typeMap) >>=
-    --maybe (error $ "unknown polytype: " ++ show iden) getType
+  StgPolyType     -> pure unknownPtrType
   StgTypeAlias iden -> gets (aliasToType iden . typeMap) >>=
     maybe (error $ "unknown type: " ++ show iden) getType
 -- used only by gen constructors

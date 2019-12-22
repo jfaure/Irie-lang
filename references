@@ -32,6 +32,26 @@ Dependent Types in Haskell: Theory and Practice
 compiling to Vulkan in Futhark
 https://futhark-lang.org/student-projects/steffen-msc-project.pdf
 
+resource dependent algebraic effects
+https://eb.host.cs.st-andrews.ac.uk/drafts/dep-eff.pdf
+
+dependent types references
+https://math.stackexchange.com/questions/3466976/online-reference-book-for-implementing-concepts-in-type-theory/3468022#3468022
+
+higher-order dynamic pattern unification for dependent types and records
+http://www2.tcs.ifi.lmu.de/~abel/unif-sigma-long.pdf
+
+Unification algorithm for coq featuring universe polymorphism and overloading
+https://www.mpi-sws.org/~beta/papers/unicoq.pdf
+
+Computational interpretations of linear logic
+https://core.ac.uk/download/pdf/81933277.pdf
+
+algebraic subtyping
+https://www.cl.cam.ac.uk/~sd601/thesis.pdf
+
+Syntax and semantics of QTT
+https://bentnib.org/quantitative-type-theory.pdf
 --
 
 Zip Fusion with Hyperfunctions

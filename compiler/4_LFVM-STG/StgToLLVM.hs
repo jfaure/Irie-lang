@@ -15,8 +15,8 @@ import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Instruction hiding (globalStringPtr)
 import LLVM.AST hiding (function)
 import LLVM.AST.Type as AST
-import qualified LLVM.AST.Float as F
 import qualified LLVM.AST.Constant as C
+--import qualified LLVM.AST.Float as F
 --import qualified LLVM.AST.IntegerPredicate as P
 --import qualified LLVM.AST.FloatingPointPredicate as Pf
 import LLVM.AST.Global
@@ -25,7 +25,6 @@ import LLVM.AST.Typed
 import LLVM.AST.AddrSpace
 import LLVM.AST.Attribute
 
-import Data.List (elemIndex) -- to match deconstruction orders
 import qualified Data.Vector as V
 import qualified Data.Map.Strict as Map
 import Control.Monad.State
@@ -275,11 +274,15 @@ stgToIR (StgInstr stgPrim args) =
   let mkLlvmInt = ConstantOperand . C.Int 32
       loadVal ptr i =
         let idxs = [mkLlvmInt 0, mkLlvmInt $ fromIntegral i]
-        in gep ptr idxs >>= (`load` 0)
+        in ptr `gep` idxs >>= (`load` 0)
   in case stgPrim of
-  StgExtractVal i -> mapM (stgToIR . StgLit) args >>= \case
-    [arg] -> loadVal arg i
-    args -> error "internal error, too many args for StgInstr"
+  StgExtractVal -> mapM (stgToIR . StgLit) args >>= \case
+    [arg, i] -> arg `gep` [{-mkLlvmInt 0,-} i] >>= (`load` 0)
+    args  -> error "internal error, too many args for StgInstr"
+  StgInsertVal -> mapM (stgToIR . StgLit) args >>= \case
+    [ptr, i, val] -> ptr `gep` [{-mkLlvmInt 0 ,-} i]
+      >>= (\addr -> store val 0 addr)
+      <&> pure ptr
   StgPAp -> stgMkTuple args
   StgPApApp papArity -> mapM (stgToIR . StgLit) args >>= \case
     pap : llArgs -> mapM (loadVal pap) [0..1+papArity] >>= \case
@@ -297,6 +300,9 @@ stgToIR (StgInstr stgPrim args) =
   StgGep     -> mapM (stgToIR . StgLit) args >>= \lArgs ->
                 gep (head lArgs) (drop 1 lArgs)
                 >>= (`load` 0)
+  StgAlloc -> mapM (stgToIR . StgLit) args >>= \case
+    [arg] -> gets ((\(Just (ContFn m))->m) . (Map.!? "malloc") . bindMap)       >>= \malloc -> call malloc [(arg, [])]
+    args  -> error "stg: too many args for StgAlloc"
 
 -- StgApp
 -- Arities always exactly match
@@ -359,6 +365,18 @@ stgToIR (StgCase scrut maybeDefault (StgDeconAlts alts)) =
                              >>= stgToIR . (`StgLet` e)
      alts -> stgToIR =<< deconSum dataStruct maybeDefault alts
 
+--stgMkArray :: CodeGenIRConstraints m
+-- => StgArg -> StgType -> m Operand
+--stgMkArray count ty = do
+-- llvmCount <- stgToIR $ StgLit count
+-- malloc' <- gets ((Map.!? (mkName "malloc")) . bindMap)
+-- let Just (ContFn malloc) = malloc'
+-- llvmTy <- getType ty
+-- allocSz <- mul (ConstantOperand $ sizeof llvmTy) llvmCount
+-- call malloc [(allocSz,[])]
+ 
+stgMkTuple :: CodeGenIRConstraints m
+ => [StgArg] -> m Operand
 stgMkTuple args = do
   llvmArgs <- mapM (stgToIR . StgLit) args
   let tys = typeOf <$> llvmArgs

@@ -13,10 +13,10 @@ import Text.Printf
 ppType' = ppType (\x -> "$" ++ show x)
 ppType :: (IName -> String) -> Type -> String = \deref -> clCyan . \case
  TyAlias nm      -> deref nm
+ TyRigid r       -> printf "rigid: %d(%v)" r (deref r)
  TyMono m        -> case m of
    MonoTyPrim lty  -> case lty of
      other         -> show other
-   MonoRigid r     -> printf "rigid: %d(%v)" r (deref r)
    MonoSubTy r p i -> printf "subTy %d : %d <= %d" i r p
 
  TyPoly p        -> show p
@@ -51,14 +51,16 @@ ppDataAlt deref indent (con, args, ret) = indent ++
  deref con ++ (concatMap (\x -> " " ++ (deref x)) args) ++ " -> " ++ 
  ppCoreExpr deref (\_->"fixpls") (indent++"  ") ret
 
+showMaybeName = \case { Just nm -> show nm ; Nothing -> "_" }
+
 ppBinds :: [Binding] -> (IName -> String) -> (IName -> String) -> String
  = \l f derefTy -> concat $ zipWith (ppBind f derefTy "\n   ") [0..] l
 ppBind f derefTy indent lineNumber b =
   let ppEntity' = ppEntity derefTy
   in clGreen indent ++ show lineNumber ++ ": " ++ case b of
+  LTypeVar e -> "tyVar " ++ showMaybeName (named e) ++ ": " ++ show (typed e)
   LLit  entity l -> "# " ++ show l
-  LBind entity args e -> case named entity of
-     { Just nm -> show nm ; Nothing -> "_" }
+  LBind entity args e -> showMaybeName (named entity)
     ++ " " ++ show args 
     ++ " : " ++ ppType derefTy (typed entity)
     ++ {-indent ++-} " = " ++ ppCoreExpr f derefTy "" e

@@ -44,13 +44,14 @@ data Decl
  | TypeAlias     Name Type          -- note. type includes data
  | TypeFun       Name [Name] PExp   -- TODO move this to Type
  | TypeClass     Name [Name] [Decl] -- haskell newtype ?
- | TypeClassInst Name Name   [Decl]
+ | TypeClassInst Name [Name] [Decl]
 
  -- top bindings (seperate because sigs may be in sigModules)
  | Extern        Name Type
  | ExternVA      Name Type
  | TypeSigDecl   [Name] Type
  | FunBind       [Match]
+-- | FunBinds      [[Match]]
 
  -- auxilary decls
  | InfixDecl     Assoc (Maybe Int) [Op] --info for infix operators
@@ -62,7 +63,7 @@ newtype Binds = BDecls [Decl] -- let or where clauses
 data Match -- clauses of a function binding
  = Match Name [Pat] Rhs
  | InfixMatch Pat Name [Pat] Rhs
- | TypeMatch Name Rhs -- f : Int->Float = cast -- TODO
+-- | TypeMatch Name Rhs -- f : Int->Float = cast -- TODO
 data Rhs
  = UnGuardedRhs PExp
  | GuardedRhss [GuardedRhs]
@@ -72,16 +73,17 @@ data GuardedRhs = GuardedRhs [Stmt] PExp
 data Type
  = TyPrim PrimType -- primitive
  | TyPoly PolyType
--- | TyQuant [Name] [Name] Type -- quantified (forall ::)
 
  | TyName Name    -- alias / data name / binding (TyExpr)
  | TyVar  Name    -- introduced by TyFunction
 
  | TyArrow [Type] -- function type
  | TyApp Type [Type]
+ | TyPtr Type     -- builtin
+ | TySet          -- type of types
 
  -- GADTs
- -- These must subsume Type so they can be returned by TyFunctions
+ -- These subsume Type so they can be returned by TyFunctions
  | TyRecord [(Name, Record)]
 -- | TyData   [(Name, [Type])]
  | TyInfixData Type Name Type
@@ -90,6 +92,7 @@ data Type
  | TyExpr PExp       -- type functions (maybe dependent on values)
  | TyTyped Type Type -- user gave a type (kind?) annotation
  | TyUnknown         -- including '_' type given / no type sig
+
 -- type DataDef = Type -- TyRecord, TyData, TyInfixData
 data Record
   = RecordTuple  [Type]

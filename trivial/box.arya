@@ -2,5 +2,6 @@ type Int = #! Int 32
 data Box a = Box a
 
 b = Box 3
+f = printf "%d\n" 3
 --main = case b of
 --  Box i -> printf "%d\n" i

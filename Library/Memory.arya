@@ -1,0 +1,39 @@
+-- Overview of data lifetime
+-----------------
+-- Stack Frame --
+-----------------
+-- Let    A     B   1. let can spawn reused data
+--        | \   |
+-- Args   1  2  3   2. args use data (if mutable, maybe need to copy)
+--         \ | /
+--          Call
+--           |      4. Before ret, Free data used by args
+--          Ret
+--           |
+--          Case    5. Case deconstructions may (conditionally) free data
+--         /   \
+--        1     2
+--        |     |
+--        SF    SF  6. New stack frame =~ lambda applied on the case scrutinee
+--
+-- * If a function returns data, it takes an arg pointing to free memory
+-- for it's return data - so it can (situationally) be stack memory.
+
+-- * by returning data, functions can create data that outlives them
+-- * for recursive data, the return size is not usually predictable
+-- * for non-recursive data, subdata may outlive the parent
+
+------------------
+-- Linear types --
+------------------
+-- * linear types say a value can only be used once : it can be inplaced
+-- * Lin -> Shared ; Shared 1 -> Lin
+
+----------------------
+-- Alloc Attributes --
+----------------------
+x : Linear -- x is used once: can be inplaced
+x : Static n
+-- x always expires on the same stack frame
+-- (n SF's from it's allocation)
+x : (Lin & Static n)

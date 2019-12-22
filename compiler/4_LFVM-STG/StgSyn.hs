@@ -43,13 +43,7 @@ data StgType  -- All these must eventually become llvm equivalents
  | StgFnType    [StgType]     -- stg function type (not extern)
  | StgPApTy     [StgType] [StgType] -- partial application
 
- | StgPolyType  StgId   -- just a name, valid types must be bitcasted
--- | StgSubType   StgType -- ty is ok here, but must be bitcasted
-
--- Type functions, TyCon introduces rigid variables, for StgRigid
--- probably should rm this (handle it in core)
--- | StgRigid     Int --usually becomes a polytype, but can be specialized
--- | StgTyCon     StgType (IM.IntMap StgType)
+ | StgPolyType -- just a name, valid types must be bitcasted
 
 -- StgArg = resolves (stgToIR) to an ssa passable to an llvm function
 -- Note. this includes function pointers!
@@ -68,7 +62,6 @@ data StgSumType     = StgSumType     StgId [StgProductType]
 
 data StgBinding = StgBinding StgId StgRhs
 data StgRhs
- -- function expr
  = StgTopRhs   [StgArg]  -- Arg Names
                [StgType] -- Arg Types
                StgType   -- return Type
@@ -86,7 +79,11 @@ data StgPrimitive
  | StgMkTuple
  | StgGep
 
- | StgExtractVal Int -- like llvm, except will also deref pointers
+ | StgSizeOf StgType
+ | StgAlloc
+
+ | StgExtractVal -- like llvm, except will also deref pointers
+ | StgInsertVal
  | StgPAp
  | StgPApApp Int
 
@@ -131,9 +128,11 @@ instance Show StgPrimitive where
   StgPrim1 f -> "primUnOp: " ++ show (f z)
   StgGep -> "#!gep"
   StgMkTuple  -> "#!MkTuple"
-  StgExtractVal i -> "internal ExtractVal " ++ show i
+  StgExtractVal -> "#!ExtractVal "
+  StgInsertVal -> "#!InsertVal "
   StgPApApp arity -> "#! papApp " ++ show arity
   StgPAp    -> "#! pap"
+  StgAlloc  -> "#! alloc"
 deriving instance Show StgExpr
 deriving instance Show StgCaseAlts
 deriving instance Show StgSumType

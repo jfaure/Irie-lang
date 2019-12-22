@@ -1,0 +1,13 @@
+alloc  : Int -> a   = #!alloc
+--sizeof : Set -> Int = #!sizeof
+--szInt = sizeof Int
+
+data CArray ty = CArray (#!ptr ty)
+mkArray : Int -> (CArray ty)
+mkArray count = CArray (alloc (count * 4))
+
+(!) : (CArray ty) -> Int -> ty = #!extractVal
+(=!) : (CArray ty) -> Int -> ty -> (CArray ty) = #!insertVal
+
+f = "hello"
+main = printf "%c\n" ("ab" ! 1)

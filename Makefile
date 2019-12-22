@@ -1,8 +1,9 @@
 # stack does nothing (except take 1 sec to realize) if no work is necessary
 
-NAME	=	plop
-EXE	=	$$(stack path --local-install-root)/bin/$(NAME)-exe
+NAME	=	arya
 SrcDir	= 	compiler/
+
+EXE	=	$$(stack path --local-install-root)/bin/$(NAME)-exe
 SRC	:=	$(shell find $(SrcDir) -type f -name '*.hs')
 
 all: $(NAME)

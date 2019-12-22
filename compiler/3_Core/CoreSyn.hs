@@ -21,8 +21,10 @@ import qualified Data.Vector         as V
 import qualified Data.Text           as T
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Map.Strict as M
 
 type IName   = Int    -- Int name: index into bind|type vectors
+type IName0  = IName  -- IName of a type
 type HName   = T.Text -- human readable name
 
 type TypeMap = V.Vector Entity
@@ -52,11 +54,6 @@ data CoreModule     = CoreModule {
 -------------
 -- classes --
 -------------
-data Overload = Overload {
-   classFnId  :: IName
- , instanceId :: IName
- , instanceTy :: Type
-}
 -- classdecl: used to check instances / make overloads
 data ClassDecl = ClassDecl {
    className :: HName
@@ -64,11 +61,8 @@ data ClassDecl = ClassDecl {
  , classFns  :: V.Vector ClassFn
 }
 data ClassFn = ClassFn {
--- class decls bring some polytypes into scope for their overloads
--- TODO move to tyfunction
-   argIndxs    :: [Int] -- the rigid typevars in the function signature
- , classFnInfo :: Entity  -- fnsig is almost always tyArrow
- , defaultFn   :: Maybe Overload
+   classFnInfo :: Entity      -- the tyFunction TODO use TyFunction
+ , defaultFn   :: Maybe IName --Overload
 }
 type ClassDefaults  = IM.IntMap MonoType
 
@@ -85,11 +79,13 @@ data Binding
  | LArg   { info :: Entity } --local vars via (lambda|case|expr:tysig)
  | LCon   { info :: Entity } --Term level GADT constructor(Type is known)
  | LExtern{ info :: Entity }
--- | LClass { info :: Entity }
  | LClass {
-   info :: Entity
- , overloads :: V.Vector Overload -- [Binding]
+   info        :: Entity -- TypeFunction
+ , overloads   :: M.Map [Type] IName -- instanceIds
  }
+ -- typevar is accessed in the function signature
+ | LTypeVar { info :: Entity }
+-- | LBuiltinSizeof
 
 -- an entity = info about anything we give an IName to.
 data Entity = Entity { -- entity info
@@ -105,6 +101,7 @@ data Entity = Entity { -- entity info
 
 data CoreExpr
  = Var      IName
+-- | ExtVar   IName IName -- lookup in other module
  | Lit      Literal
  | Instr    PrimInstr
  | App      CoreExpr [CoreExpr]
@@ -121,14 +118,18 @@ data CaseAlts
 -- note. alias vs name:
 type UserType = Type -- user supplied type annotation
 data Type
- = TyAlias IName   -- aliases (esp. to MonoTyData)
+ = TyAlias IName    -- aliases (esp. to MonoTyData)
+ | TyRigid IName    -- correspond to arguments of type constructors
  | TyMono  MonoType -- monotypes 't'
  | TyPoly  PolyType -- constrained polytypes 'p', 's'
- | TyArrow [Type]  -- Kind 'function' incl. Sum/Product cons
--- | TyCon   TypeFunction
- | TyExpr  TypeFunction -- incl. dependent types
- | TyUnknown    -- needs to be inferred - the so-called box type.
+ | TyArrow [Type]   -- Kind 'function' incl. Sum/Product cons
 
+ | TyExpr  TypeFunction -- [IName] Type
+ | TyDep   CoreExpr
+ | TyCon   Type [Type]  -- make a new type from a TyFun
+ | TyTy
+
+ | TyUnknown    -- needs to be inferred - the so-called box type.
  -- markers for internal use
  | TyInstance IName Type -- name of overload and return type
  | TyDynInstance { --binding doesn't exist before tyjudge
@@ -141,10 +142,15 @@ data Type
  | TyPAp [Type] [Type]   -- for internal use
  | TyBroken              -- typejudge couldn't infer a coherent type
 
+-- type functions: eg `data a = ..`
+data TypeFunction
+ = TyTrivialFn { -- trivial case: App (Con n) (TypeExp e)
+   tyArgs :: [IName0]
+ , tyVal  :: Type
+ }
+
 data MonoType
  = MonoTyPrim   PrimType
- -- rigid typeVars: tyfun arg slots, subsume by comparing INames
- | MonoRigid     IName -- correspond to arguments of type constructors
  | MonoSubTy {
    rigidSubNm :: IName
  , parentTy   :: IName -- case expressions need the parent type info
@@ -154,7 +160,7 @@ data MonoType
 data PolyType
  = PolyConstrain  [Type] -- (&) multiple typeclass constraints
  | PolyUnion      [Type] -- (|) union types (esp. typeclass var)
- | PolyAny               -- Existential type (flexible typevars)
+ | PolyAny               -- some fns merely pass on polymorhism (void*)
  -- Data is a polytype (of it's alts)
  | PolyData PolyType DataDef
 
@@ -166,27 +172,11 @@ data DataDef
  | ModuleDef  HName CoreModule
 -- data NewType = NewType { parentData :: DataDef , newType :: DataDef }
 
--- type functions: from trivial `data a = ..` to dependent types
-data TypeFunction
- = TyDependent {
-   tyArgs :: [IName]
- , tyExpr :: CoreExpr -- : CoreExpr.TypeExpr
- }
- | TyTrivialFn { -- trivial case: App (Con n) (TypeExp e)
-   tyArgs :: [IName]
- , tyVal  :: Type
- }
- | TyApp {
-   tyFn :: Type
- , tyFnArgsMap :: (IM.IntMap Type) -- type of rigid typeVars in the tyFn
- }
-
 data Fixity = Fixity Int Assoc
-data Assoc = LAssoc | RAssoc deriving (Eq)
+data Assoc = LAssoc | RAssoc deriving (Eq, Show)
 
 deriving instance Show PolyType
 deriving instance Show DataDef
-deriving instance Show Overload
 deriving instance Show ClassDecl
 deriving instance Show ClassFn
 deriving instance Show Binding
@@ -198,7 +188,35 @@ deriving instance Show CaseAlts
 deriving instance Show Entity
 deriving instance Show CoreModule
 deriving instance Show Fixity
-deriving instance Show Assoc
+
+deriving instance Ord PolyType
+deriving instance Ord DataDef
+deriving instance Ord ClassDecl
+deriving instance Ord ClassFn
+deriving instance Ord Binding
+deriving instance Ord MonoType
+deriving instance Ord Type
+deriving instance Ord TypeFunction
+deriving instance Ord CoreExpr
+deriving instance Ord CaseAlts
+deriving instance Ord Entity
+deriving instance Ord CoreModule
+deriving instance Ord Fixity
+deriving instance Ord Assoc
+
+deriving instance Eq PolyType
+deriving instance Eq DataDef
+deriving instance Eq ClassDecl
+deriving instance Eq ClassFn
+deriving instance Eq Binding
+deriving instance Eq MonoType
+deriving instance Eq Type
+deriving instance Eq TypeFunction
+deriving instance Eq CoreExpr
+deriving instance Eq CaseAlts
+deriving instance Eq Entity
+deriving instance Eq CoreModule
+deriving instance Eq Fixity
 
 data TCError
  = UnifyFail { expected :: Entity, got :: Entity}

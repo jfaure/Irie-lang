@@ -1,23 +1,18 @@
-name:                plop
+name:                arya
 version:             0.1.0.0
-github:              "githubuser/plop"
+github:              "jfaure/arya"
 license:             BSD3
-author:              "Author name here"
-maintainer:          "example@example.com"
-copyright:           "2019 Author name here"
+author:              "James Faure"
+maintainer:          "james.faure@epitech.eu"
+copyright:           "2019 James Faure"
 
 extra-source-files:
 - README.md
-- ChangeLog.md
 
-# Metadata used when publishing your package
-# synopsis:            Short description of your package
-# category:            Web
+synopsis:            Array oriented calculus of inductive constructions
+category:            Compilers
 
-# To avoid duplicated efforts in documentation and dealing with the
-# complications of embedding Haddock markup inside cabal files, it is
-# common to point users to the README.md file.
-description:         Please see the README on GitHub at <https://github.com/githubuser/plop#readme>
+description:         Please see the README on GitHub at <https://github.com/jfaure/arya#readme>
 
 dependencies:
 - base >= 4.7 && < 5
@@ -40,7 +35,7 @@ dependencies:
   #   source-dirs:
 
 executables:
-  plop-exe:
+  arya-exe:
     source-dirs:
     - compiler/
     - compiler/1_Main/
@@ -50,7 +45,7 @@ executables:
     - compiler/conv
 
     main:          Main.hs
-    ghc-options:  -threaded -dynamic -fdefer-typed-holes -Wno-typed-holes # -Wunused-imports -Wunused-binds
+    ghc-options:  -threaded -dynamic -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds
     default-extensions:
     - LambdaCase
     - EmptyCase
@@ -67,11 +62,11 @@ executables:
 #   - PolyKinds
 #   - GADTs -- Parser.hs crashes ghc with this
 #   - DataKinds
-   #    dependencies: plop
+   #    dependencies: arya
 
-tests:
-  plop-test:
-    main:                Spec.hs
-    source-dirs:         test
-    ghc-options: -threaded
-    #   dependencies: plop
+#tests:
+#  arya-test:
+#    main:                Spec.hs
+#    source-dirs:         test
+#    ghc-options: -threaded
+#    #   dependencies: arya

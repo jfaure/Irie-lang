@@ -34,16 +34,19 @@ data PrimInstr
  | FracInstr  FracInstrs
  | MemInstr   ArrayInstrs
  | MkTuple
- -- TODO conversion instructions, bitcasts, bitwise ops
+ | Alloc
+ | SizeOf
+ -- TODO conversion instructions, bitcasts,
  -- Maybe va_arg, aggregate instrs, vector, SIMD
 
 data IntInstrs   = Add | Sub | Mul | SDiv | SRem | ICmp
+                 | And | Or | Xor | Shl | Shr
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
 data NatInstrs   = UDiv | URem
-data ArrayInstrs = ExtractVal Int | InsertVal Int | Gep
+data ArrayInstrs = ExtractVal | InsertVal | Gep
 
-deriving instance Eq PrimType
-deriving instance Eq FloatTy
+--deriving instance Eq PrimType
+--deriving instance Eq FloatTy
 
 deriving instance Show Literal
 deriving instance Show PrimType
@@ -53,3 +56,21 @@ deriving instance Show IntInstrs
 deriving instance Show NatInstrs
 deriving instance Show FracInstrs
 deriving instance Show ArrayInstrs
+
+deriving instance Ord Literal
+deriving instance Ord PrimType
+deriving instance Ord FloatTy
+deriving instance Ord PrimInstr
+deriving instance Ord IntInstrs
+deriving instance Ord NatInstrs
+deriving instance Ord FracInstrs
+deriving instance Ord ArrayInstrs
+
+deriving instance Eq Literal
+deriving instance Eq PrimType
+deriving instance Eq FloatTy
+deriving instance Eq PrimInstr
+deriving instance Eq IntInstrs
+deriving instance Eq NatInstrs
+deriving instance Eq FracInstrs
+deriving instance Eq ArrayInstrs

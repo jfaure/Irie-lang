@@ -30,7 +30,7 @@ main = parseCmdLine >>= \cmdLine ->
     av -> error "one file pls"
 --  av -> mapM_ (doFile cmdLine) av
 
-preludeFNames = ["Library/Prim.stg"]
+preludeFNames = ["Library/Prim.arya"]
 
 doImport :: FilePath -> T.Text -> IO CoreModule
 doImport fName progText =
@@ -65,9 +65,9 @@ doProgText flags fName progText = do
   | otherwise            -> putStrLn $ ppCoreModule judged -- ppCoreBinds judged
 
 repl :: CmdLine -> IO ()
-repl cmdLine = runInputT defaultSettings loop
- where 
-  loop = getInputLine "<\"" >>= \case
-    Nothing -> return ()
-    Just l  -> lift doLine *> loop
-      where doLine = print =<< doProgText cmdLine "<stdin>" (T.pack l)
+repl cmdLine = let
+  doLine l = print =<< doProgText cmdLine "<stdin>" (T.pack l)
+  loop     = getInputLine "'''" >>= \case
+      Nothing -> pure ()
+      Just l -> lift (doLine l) *> loop
+ in runInputT defaultSettings loop

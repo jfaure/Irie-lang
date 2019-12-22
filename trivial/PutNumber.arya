@@ -1,0 +1,1 @@
+putNumber i = printf "%d\n" i

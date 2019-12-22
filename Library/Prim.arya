@@ -15,30 +15,30 @@ type Double    = #!Double
 
 infix 6 +
 infix 7 *
-class Num a where
-  (+)  : a->a->a
-  (-)  : a->a->a
-  (*)  : a->a->a
-  (//) : a->a->a
-  (/?) : a->a->a
-  (==) : a->a->a
-  --(/)  : Int -> Int -> Real = \x y -> (#!fptoui x) // (#!fptoui y)
+--class Num a where
+--  (+)  : a->a->a
+--  (-)  : a->a->a
+--  (*)  : a->a->a
+----(//) : a->a->a
+----(/?) : a->a->a
+----(==) : a->a->a
+--  --(/)  : Int -> Int -> Real = \x y -> (#!fptoui x) // (#!fptoui y)
+--
+--instance Num Int where
+  (+)  : Int->Int->Int = #!add
+  (-)  : Int->Int->Int = #!sub
+  (*)  : Int->Int->Int = #!mul
+--(//) : Int->Int->Int = #!sdiv
+--(/?) : Int->Int->Int = #!srem
+--(==) : Int->Int->Int = #!icmp
 
-instance Num Int where
-  (+)  : a->a->a = #!add
-  (-)  : a->a->a = #!sub
-  (*)  : a->a->a = #!mul
-  (//) : a->a->a = #!sdiv
-  (/?) : a->a->a = #!srem
-  (==) : a->a->a = #!icmp
-
-instance Num Float where
-  (+)  : a->a->a = #!fadd
-  (-)  : a->a->a = #!fsub
-  (*)  : a->a->a = #!fmul
-  (//) : a->a->a = #!fdiv
-  (/?) : a->a->a = #!frem
-  (==) : a->a->a = #!fcmp
+--instance Num Float where
+--  (+)  : Float->Float->Float = #!fadd
+--  (-)  : Float->Float->Float = #!fsub
+--  (*)  : Float->Float->Float = #!fmul
+--(//) : Int->Int->Int = #!fdiv
+--(/?) : a->a->a = #!frem
+--(==) : a->a->a = #!fcmp
 
 -- unsigned overloads for Nat
 --(//) : Nat -> Nat -> Nat = #!udiv

@@ -18,7 +18,7 @@ import Data.Char (ord)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified LLVM.AST as L -- (Operand, Instruction, Type, Name, mkName)
-import GHC.Word
+--import GHC.Word
 import qualified LLVM.AST  -- (Operand, Instruction, Type, Name, mkName)
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.IntegerPredicate as IP
@@ -29,7 +29,7 @@ import           LLVM.AST.AddrSpace
 import qualified Data.IntMap as IM
 import Data.List
 
--- map for dynamic types
+-- map for dynamic types: types created in tyjudge
 type DynTyMap = TypeMap
 
 -- TODO filter all functions from CoreModule.bindings
@@ -66,19 +66,21 @@ convData tyMap dynTyMap = mkLists $ foldr f ([],[]) (tyMap V.++ dynTyMap)
       -- ignore tycons
       TyExpr{} -> (d , a)
       rawTy -> (d, (nm, convTy tyMap dynTyMap rawTy):a)
-  f (Entity Nothing _) (d,a) = (d,a)
+  f (Entity Nothing ty) (d,a) = case ty of
+    TyRigid i -> (d , (convName i Nothing , StgPolyType) : a)
+    _ -> (d,a)
 --f o (d,a) = error $ show o ++ " :" ++ show d ++ " , " ++ show a
 
 convDataDef :: TypeMap -> DynTyMap -> DataDef
             -> (StgData, [(StgId, StgType)])
-convDataDef tyMap dynTyMap (DataDef dataNm sumAlts) =
-  let deref = (tyMap V.!)
-      mkStgId = LLVM.AST.mkName . CU.hNm2Str
-      mkProdData (pNm, tys)
-        = StgProductType (mkStgId pNm) $ convTy tyMap dynTyMap <$> tys
-      sumTy = StgSumType (mkStgId dataNm) $ mkProdData <$> sumAlts
-      qual = dataNm `T.snoc` '.'
-      subAliases = (\(pNm, tys) -> mkStgId $ qual `T.append` pNm) <$> sumAlts
+convDataDef tyMap dynTyMap (DataDef dataNm sumAlts) = let
+  deref      = (tyMap V.!)
+  mkStgId    = LLVM.AST.mkName . CU.hNm2Str
+  mkProdData (pNm, tys)
+    = StgProductType (mkStgId pNm) $ convTy tyMap dynTyMap <$> tys
+  sumTy      = StgSumType (mkStgId dataNm) $ mkProdData <$> sumAlts
+  qual       = dataNm `T.snoc` '.'
+  subAliases = (\(pNm, tys) -> mkStgId $ qual `T.append` pNm) <$> sumAlts
   in  (sumTy, zip subAliases (repeat $ StgTypeAlias $ mkStgId dataNm))
 
 -- needs the TypeMap in order to deref types
@@ -93,8 +95,8 @@ convTy tyMap dynTyMap =
         stgAlias = convName iNm (named tyInfo)
     in case typed tyInfo of
       -- polytypes will need to be bitcasted in llvm
-      TyPoly (PolyUnion{}) -> StgPolyType  stgAlias
-      TyPoly PolyAny       -> StgPolyType  stgAlias
+      TyPoly (PolyUnion{}) -> StgPolyType
+      TyPoly PolyAny       -> StgPolyType
 --    TyMono (MonoRigid ri) -> StgRigid ri
       o                    -> StgTypeAlias stgAlias
   TyArrow types       -> StgFnType (convTy' <$> types)
@@ -106,7 +108,9 @@ convTy tyMap dynTyMap =
   TyExpr tyfun -> case tyfun of
       TyTrivialFn args val -> error ("tycon definition")
 --    TyApp       ty args  -> StgTyCon (convTy' ty) (convTy' <$> args)
-      TyDependent args expr-> error ("dependent type: " ++ show tyfun)
+--    TyDependent args expr-> error ("dependent type: " ++ show tyfun)
+  TyRigid{}    -> StgPolyType
+  t@(TyCon ty tys) -> StgPolyType --convTy' $ head tys --error $ show t
 
   TyPAp t1s t2s ->
     let st1s = convTy' <$> t1s
@@ -129,30 +133,27 @@ doBinds getDynInst binds tyMap dynTyMap classDecls
   where
   convTy'      = convTy tyMap dynTyMap
   lookupBind i = CU.lookupBinding i binds
+  lookupTy     = typed . (tyMap V.!)
   convName' i  = convName i $ named $ info $ lookupBind i
-  convExpr' = convExpr binds classDecls
+  convExpr' = convExpr binds classDecls getDynInst lookupTy
   f iNm        = \case
 --  LBind args (Instr i) info  -> id -- don't try to gen primitives
     LBind info args expr -> let
       nm       = convName iNm (named info)
       argNames = StgVarArg . convName' <$> args
       (argTys, [retTy]) = case typed info of
-          TyArrow tys -> splitAt (length tys-1) $ convTy' <$> tys
-          t -> ([], [convTy' t])
+          TyArrow tys -> splitAt (length tys-1) $ tys
+          t -> ([], [t])
+      stgArgTys = convTy' <$> argTys
+      stgRetTy  = convTy' retTy
       rhs :: StgRhs = case expr of
-        Instr i -> StgPrim (prim2llvm i) argTys retTy
+        Instr (SizeOf) ->
+          let [arg] = stgArgTys
+          in StgPrim (StgSizeOf arg) [] stgRetTy
+        Instr i -> StgPrim (prim2llvm i) stgArgTys stgRetTy
         e       ->
-          let stgExpr = case typed info of
-                -- TODO not ideal
-                TyInstance i _ ->
-                  let App _ args = expr
-                  in convExpr' (App (Var i) args)
-                TyDynInstance i conIdx _ ->
-                  let App _ args = expr
-                  in StgApp (convName i $ Just $ getDynInst i conIdx)
-                            (StgExprArg . convExpr' <$> args)
-                _ -> convExpr' expr
-          in StgTopRhs argNames argTys retTy stgExpr
+          let stgExpr = convExpr' retTy expr
+          in StgTopRhs argNames stgArgTys stgRetTy stgExpr
       in (StgBinding nm rhs :)
     LLit i lit ->
       let nm = (convName iNm (named i))
@@ -165,12 +166,17 @@ doBinds getDynInst binds tyMap dynTyMap classDecls
     LArg{}     -> id
     LCon{}     -> id
     LClass{}   -> id
+    LTypeVar e -> error $ "tyVar: " ++ show e
 --  wht -> error $ show wht
 
-convExpr :: BindMap -> V.Vector ClassDecl -> CoreExpr -> StgExpr
-convExpr bindMap classDecls =
+convExpr :: BindMap -> V.Vector ClassDecl
+         -> (IName->IName->HName) -> w
+         -> Type -> CoreExpr
+         -> StgExpr
+convExpr bindMap classDecls getDynInst lookupTy ty =
  let lookup      = (bindMap V.!)
-     convExpr'   = convExpr bindMap classDecls
+     convExpr''  = convExpr bindMap classDecls getDynInst lookupTy
+     convExpr'   = convExpr'' ty
      convName' i = convName i $ named $ info $ lookup i
      typeOf      = typed . info . lookup
  in \case
@@ -179,28 +185,35 @@ convExpr bindMap classDecls =
    _ -> StgLit $ StgVarArg $ convName' nm
  Lit lit -> error "unbound literal"
             -- StgLit $ StgConstArg $ literal2Stg lit
- App fn args           ->
-   let -- args' = convExpr' <$> args
-       stgArgs = StgExprArg . convExpr' <$> args
-   in  case fn of
-    Var fId    ->
-      let bind = lookup fId
-          fnTy = typed $ info bind
-          tyArity = CU.getArity fnTy
-          arity = length args
-          stgExprFn = StgVarArg $ convName' $ fId
-      in case fnTy of
-      TyPAp{}-> StgInstr (StgPApApp (trace "careful" $ arity-tyArity))
-                 $ stgExprFn : stgArgs
---    TyInstance instId ty -> StgApp (convName' instId) stgArgs
+ -- App: need to check the retTy; for instantiation markers
+ App fn@(Var fId) args ->
+   let fnTy = typed $ info $ lookup fId
+       (argTys, [retTy]) = case fnTy of
+         TyArrow tys -> splitAt (length tys-1) $ tys
+         TyExpr (TyTrivialFn _ (TyArrow tys)) ->
+           splitAt (length tys-1) tys
+         t -> ([], [t])
+       arity = length args
+       tyArity = length argTys
+       argTys' = argTys ++ repeat TyUnknown
+       -- TODO temp hack since VarArgs functions short this zipWith
+       stgArgs = --trace (show args ++ " :: " ++ show argTys)
+         zipWith (\t x-> StgExprArg $ convExpr'' t x) argTys' args
+   in case fn of
+    Var fId -> case ty of
+      TyInstance instId ty -> StgApp (convName' instId) stgArgs
+      TyDynInstance i conIdx _ ->
+        StgApp (convName i (Just $ getDynInst i conIdx)) stgArgs
+      TyPAp{}-> StgInstr (StgPApApp (trace "careful"$arity-tyArity))
+                 $ StgVarArg (convName' fId) : stgArgs
       _ -> if tyArity > arity
-         then StgInstr StgPAp (stgExprFn : stgArgs)
-         else StgApp (convName' fId) stgArgs
- 
-    Instr prim -> case prim of
-      MemInstr (ExtractVal i) ->
-        StgInstr (StgExtractVal i) stgArgs
-      _ -> error ("raw primitive: " ++ show prim)
+       then StgInstr StgPAp (StgVarArg (convName' fId) : stgArgs)
+       else StgApp (convName' fId) stgArgs
+
+--  Instr prim -> case prim of
+--    MemInstr (ExtractVal) ->
+--      StgInstr (StgExtractVal i) stgArgs
+--    _ -> error ("raw primitive: " ++ show prim)
     notFn -> error ("panic: core2Stg: not a function: " ++ show notFn)
 
  -- TODO default case alt
@@ -254,9 +267,14 @@ prim2llvm :: PrimInstr -> StgPrimitive = \case
       Add  -> \a b -> L.Add False False a b []
       Sub  -> \a b -> L.Sub False False a b []
       Mul  -> \a b -> L.Mul False False a b []
-      SDiv -> \a b -> L.SDiv False a b []
-      SRem -> \a b -> L.SRem a b []
-      ICmp -> \a b -> L.ICmp IP.EQ a b []
+      SDiv -> \a b -> L.SDiv False      a b []
+      SRem -> \a b -> L.SRem            a b []
+      ICmp -> \a b -> L.ICmp IP.EQ      a b []
+      And  -> \a b -> L.And             a b []
+      Or   -> \a b -> L.Or              a b []
+      Xor  -> \a b -> L.Xor             a b []
+      Shl  -> \a b -> L.Shl False False a b []
+      Shr  -> \a b -> L.LShr False      a b []
   NatInstr i  -> StgPrim2 $ case i of
       UDiv -> \a b -> L.UDiv False a b []
       URem -> \a b -> L.URem a b []
@@ -269,10 +287,13 @@ prim2llvm :: PrimInstr -> StgPrimitive = \case
       FCmp -> \a b -> L.FCmp FP.UEQ a b []
   MemInstr i -> case i of
       Gep        -> StgGep
-      ExtractVal idx -> StgExtractVal idx
+      ExtractVal -> StgExtractVal -- idx
+      InsertVal  -> StgInsertVal
   -- StgPrim1 $ \a -> L.ExtractValue a [fromIntegral idx] []
   -- InsertVal  -> \a b -> L.InsertValue True a [b] []
   MkTuple -> StgMkTuple
+  Alloc   -> StgAlloc
+  t -> error $ show t
 
 primTy2llvm :: PrimType -> LLVM.AST.Type =
   let doExtern isVa tys =

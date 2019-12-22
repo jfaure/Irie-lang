@@ -1,17 +1,17 @@
 # expr2Core
-  * typeFuns (beta reduction)
-  * array prims + patterns
   * precompiled modules, freeVars
+  * instance Apps need to be binds (lift them ? but pap's cannot be lifted in advance)
+  * array prims + patterns
   * generate function wrappers for remaining primitives (stgtollvm:258)
   * nested patterns
   * ocaml 'a | implicit forall typevars ?
   * register subtypes (to handle recursive refs)
   * error reporting
+  * don't allow unknown typenames
 
 # Typeclass
   * default typeclass signatures/decls
   * use a fromString function for literals
-  * multiparam typeclasses
   * check instances <= class
   * subsume : rigid -> _ -> True -- check it's ok somewhere
 
@@ -38,6 +38,7 @@
   * memory (eg. inplace modifications undo as stack unravels eg. sudoku)
 
 # Maybe
+  * STG duplicates fns / globals if referenced multiple times
   * GADT style
   * View patterns
   * GuardedRhs
