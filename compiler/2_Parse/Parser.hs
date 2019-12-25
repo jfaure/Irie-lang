@@ -106,8 +106,9 @@ int    :: Parser Integer = lexeme L.decimal
 double :: Parser Double  = lexeme L.float
 -- L.charLiteral handles escaped chars (eg. \n)
 charLiteral :: Parser Char = between (single '\'') (single '\'') L.charLiteral
-stringLiteral :: Parser String
-  = char '\"' *> manyTill L.charLiteral (single '\"')
+stringLiteral :: Parser String = choice
+  [ single '\"'   *> manyTill L.charLiteral (single '\"')
+  , (string "''") *> manyTill L.charLiteral (string "''")]
 
 parens, braces, bracesn :: Parser a -> Parser a
 parens  = between (symbol "(") (symbol ")")
@@ -136,8 +137,9 @@ db x = traceShowM x *> traceM ": " *> d
 parseModule :: FilePath -> T.Text
             -> Either (ParseErrorBundle T.Text Void) Module
   = \nm txt ->
-  let doParse = runParserT (between sc eof doParseTree) nm txt
-      startIndent = mkPos 0
+  let doParse = runParserT (between sc eof topPTree) nm txt
+      topPTree = noIndent $ doParseTree startIndent startIndent eof
+      startIndent = mkPos 1
   in -- Module (Ident $ T.pack nm) <$> runReader doParse startIndent
 --   mkModule (Ident $ T.pack nm) .groupDecls <$>
      Module (Ident $ T.pack nm) <$> runReader doParse startIndent
@@ -146,11 +148,15 @@ parseModule :: FilePath -> T.Text
 -- = noIndent decl `sepEndBy` many endLine
 
 -- group declarations as they are parsed
-doParseTree :: Parser ParseTree
-doParseTree = noIndent $ go (ParseTree v v v v v v v v v v)
+doParseTree :: Pos -> Pos -> (Parser ()) -> Parser ParseTree
+doParseTree refIndent lvlIndent finish = go emptyPTree
   where
-  v = V.empty
-  go p = many endLine *> choice
+  emptyPTree = let v = V.empty in ParseTree v v v v v v v v v v
+  go p = optional endLine *> scn *> do
+   pos <- L.indentLevel
+   lookAhead (eof <|> finish) *> pure p <|> if pos /= lvlIndent
+    then L.incorrectIndent EQ lvlIndent pos -- linefold ?
+    else choice
     [ svIndent importDecl>>=
         \x->go p{modImports=modImports p `V.snoc` (Import x)}
     , svIndent extern>>=
@@ -228,7 +234,7 @@ infixDecl = let
 fnName = name <|> parens symbolName
 
 typeClass     = reserved "class" $> TypeClass <*>
-                  tyName <*> some (try tyVar) <*> pWhere decl
+                  tyName <*> many tyVar <*> pWhere decl
 typeClassInst = reserved "instance" $> TypeClassInst
                   <*> tyName <*> some tyName <*> pWhere decl
 
@@ -331,11 +337,10 @@ pExp :: Parser PExp = dbg "pexp" $
     scn
     lvl <- L.indentLevel
     local (const lvl) $ dbg "letBinds" $ do -- save this indent
-      binds <- BDecls <$> indentedItems ref lvl scn decl (reserved "in")
---    binds <- BDecls <$> decl `sepBy` symbol ";"
+--    binds <- BDecls <$> indentedItems ref lvl scn decl (reserved "in")
+      pTree <- doParseTree ref lvl (reserved "in")
       reserved "in"
-      p <- pExp
-      pure (Let binds p)
+      Let pTree <$> pExp
   -- it's assumed later that there is at least one if alt
   multiIf = reserved "if" *> choice [normalIf , multiIf]
       where

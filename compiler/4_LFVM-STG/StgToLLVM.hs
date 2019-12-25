@@ -124,7 +124,7 @@ isStgData :: CodeGenModuleConstraints m => StgType -> m (Maybe C.Constant)
 isStgData (StgTypeAlias iden) = gets ((Map.!? iden) . dataFnsMap)
   >>= \case
     Nothing -> maybe (pure Nothing) isStgData =<<
-                 gets (aliasToType iden . typeMap)
+       gets (aliasToType iden . typeMap)
     Just datafns -> pure (Just $ staticSize datafns)
 isStgData _ = pure Nothing
 
@@ -134,60 +134,75 @@ isStgData _ = pure Nothing
 -- and functions calling these need to pass stack memory (from their frame or a prev one !)
 fnToLlvm :: (CodeGenModuleConstraints m)
   => StgId -> StgRhs -> m Operand
--- a global
-fnToLlvm iden (StgTopRhs [] [] stgRetType (StgLit (StgConstArg global))) =
-  ConstantOperand <$> globalArray iden global
-fnToLlvm iden r@(StgTopRhs args argTypes stgRetType body) = mdo
-  maybeData <- isStgData stgRetType
-  retTy <- getType stgRetType
-  params  <- map (, ParameterName "a") <$> mapM getType argTypes
+fnToLlvm iden rhs =
+ let
+  updateBind bind = modify (\x->x{bindMap = Map.insert iden bind (bindMap x)})
+  tryLookup rhs backup = gets ((iden `Map.lookup`) . bindMap) >>= \case
+    { Nothing -> backup rhs ; Just f -> case f of { ContFn f->pure f ; ContLi f->pure f ; _ -> backup rhs } }
+ in tryLookup rhs $ \case
+  StgTopRhs [] [] stgRetType (StgLit (StgConstArg global)) -> do
+    s <- ConstantOperand <$> globalArray iden global
+    updateBind (ContLi s) *> pure s
 
-  -- register the fn before codegen in case it refs itself
-  case maybeData of
-    Just sz ->
-     modify (\x->x{dataFnsMap=Map.insert iden (ProxyDataFn sz f) (dataFnsMap x)})
-     *> modify (\x->x{bindMap = Map.delete iden (bindMap x)}) -- otherwise inf loop..
-    Nothing -> modify (\x->x {bindMap = Map.insert iden (ContFn f) (bindMap x)})
+  r@(StgTopRhs args argTypes stgRetType body) -> mdo
+    maybeData <- isStgData stgRetType
+    retTy <- getType stgRetType
+    params  <- map (, ParameterName "a") <$> mapM getType argTypes
 
-  svState <- get -- function args may squash bindings, so save and restore.
-  let getArgBinds llvmArgs = zipWith StgBinding ((\(StgVarArg a) -> a) <$> args)
-                                                (StgRhsSsa <$> llvmArgs)
-      memParam = (charPtrType, ParameterName "mem")
- -- ~= let args in fnbody
-  f <- case maybeData of
-        Just _ -> function iden (memParam : params) retTy $ \(mem : llvmArgs) -> do
-                    modify (\x->x { stackFrame=Just $ StackFrame (C.Int 32 8) mem []} )
-                    ret =<< stgToIR (StgLet (getArgBinds llvmArgs) body)
+    -- register the fn before codegen in case it refs itself
+    case maybeData of
+      Just sz ->
+       modify (\x->x{dataFnsMap=Map.insert iden (ProxyDataFn sz f) (dataFnsMap x)})
+       *> modify (\x->x{bindMap = Map.delete iden (bindMap x)}) -- otherwise inf loop..
+      Nothing -> updateBind (ContFn f) --modify (\x->x {bindMap = Map.insert iden (ContFn f) (bindMap x)})
 
-        Nothing -> function iden params retTy $ \llvmArgs -> do
-                     ret =<< stgToIR (StgLet (getArgBinds llvmArgs) body)
-  put svState
-  pure f
--- StgRhsSsa is used internally for binding fn args, should never appear here
--- externs
-fnToLlvm iden (StgRhsSsa ssa)   = error "refusing to generate a function for an ssa binding"
-fnToLlvm iden (StgRhsConst ssa) = global iden (LLVM.AST.Typed.typeOf ssa) ssa
--- TODO generate wrapper functions if necessary
-fnToLlvm iden (StgPrim prim argTys retTy)    =
-  let primFn = ContPrim prim argTys retTy Nothing
-  in  modify (\x->x { bindMap = Map.insert iden primFn (bindMap x)})
-      *> pure (ConstantOperand C.TokenNone) -- hmm
-fnToLlvm iden (StgExt funTy@(FunctionType retTy argTys isVA)) = do
-  emitDefn $ GlobalDefinition functionDefaults
-    { name        = iden
-    , linkage     = External
-    , parameters  = ([Parameter ty (mkName "") [] | ty <- argTys], isVA)
-    , returnType  = retTy
-    }
-  let f = ConstantOperand $ C.GlobalReference (ptr funTy) iden
-  modify (\x->x { bindMap = Map.insert iden (ContFn f) (bindMap x) })
-  pure f
+--  svState <- get -- function args may squash bindings, so save and restore.
+    let unStgVA (StgVarArg a) = a
+        getArgBinds llvmArgs
+          = zipWith StgBinding (unStgVA <$> args) (StgRhsSsa <$> llvmArgs)
+        memParam = (charPtrType, ParameterName "mem")
+    -- ~= let args in fnbody
+    f <- case maybeData of
+      Just _ -> function iden (memParam : params) retTy $ \(mem : llvmArgs) -> do
+        modify (\x->x { stackFrame=Just $ StackFrame (C.Int 32 8) mem []} )
+        ret =<< stgToIR (StgLet (getArgBinds llvmArgs) body)
 
--- let bindings without the 'in expr', doesn't codegen anything
-registerBindings :: (MonadState StgToIRState m, Foldable f) => f StgBinding -> m ()
+      Nothing -> function iden params retTy $ \llvmArgs -> do
+        ret =<< stgToIR (StgLet (getArgBinds llvmArgs) body)
+--  put svState
+    pure f
+ -- StgRhsSsa is used internally for binding fn args, should never appear here
+ -- externs
+  StgRhsSsa ssa -> error "refusing to generate a function for an ssa binding"
+  StgRhsConst ssa ->  global iden (LLVM.AST.Typed.typeOf ssa) ssa
+  -- TODO generate wrapper functions if necessary
+  StgPrim prim argTys retTy ->
+    let primFn = ContPrim prim argTys retTy Nothing
+    in  modify (\x->x { bindMap = Map.insert iden primFn (bindMap x)})
+        *> pure (ConstantOperand C.TokenNone) -- hmm
+  StgExt funTy@(FunctionType retTy argTys isVA) -> do
+    emitDefn $ GlobalDefinition functionDefaults
+      { name        = iden
+      , linkage     = External
+      , parameters  = ([Parameter ty (mkName "") [] | ty <- argTys], isVA)
+      , returnType  = retTy
+      }
+    let f = ConstantOperand $ C.GlobalReference (ptr funTy) iden
+    updateBind (ContFn f)
+    pure f
+
+-- let bindings without the 'in expr'; doesn't codegen anything
+-- This saves overwritten values (for the benefit of StgLet)
+registerBindings :: (MonadState StgToIRState m, Foldable f , Traversable f)
+  => f StgBinding -> m (f (Maybe Symbol))
 registerBindings bindList =
-  let insertfn nm cont = modify (\x->x { bindMap = Map.insert nm cont (bindMap x) })
-  in mapM_ (\(StgBinding i rhs) -> insertfn i (ContRhs rhs)) bindList
+  let insertfn nm cont = do
+        mp <- gets bindMap
+        let insWith key oldval newVal = newVal
+            (oldVal , mp') = Map.insertLookupWithKey insWith nm cont mp
+        modify (\x->x { bindMap = mp' })
+        pure oldVal
+  in mapM (\(StgBinding i rhs) -> insertfn i (ContRhs rhs)) bindList
 
 globalArray :: CodeGenModuleConstraints m => Name -> C.Constant -> m C.Constant
 globalArray nm arr@C.Array{} = -- const arrays need to be emmited in global scope
@@ -214,8 +229,13 @@ stgToIR :: (MonadState StgToIRState m,
   => StgExpr -> m Operand
 
 -- StgLet: register the bindings and let the 'expr' codegen them when it needs them.
-stgToIR (StgLet bindList expr) =
-  registerBindings bindList *> stgToIR expr
+stgToIR (StgLet bindList expr) = do
+  oldVals <- registerBindings bindList
+  e <- stgToIR expr
+  let ins nm v = modify (\x->x{ bindMap = Map.insert nm v (bindMap x) })
+      restoreNms (StgBinding nm _) = \case {Just v->ins nm v ; Nothing->pure ()}
+  zipWithM restoreNms bindList oldVals
+  pure e
 
 -- literals/functions with 0 arity
 -- One might assume this is trivial.. but we must:
@@ -234,31 +254,30 @@ stgToIR (StgLit lit) =
       dont_call                           -> pure s
 
   handle0Arity :: CodeGenIRConstraints m => StgId -> Symbol -> m Operand
-  handle0Arity iden = 
-      let 
-      -- to pass primitives to functions, you need a function pointer
-      wrapPrim p argTys retTy = case p of
-        -- TODO more prims
-         StgPrim2 op -> do
-           a <- fresh
-           b <- fresh
-           let stgArgs = StgVarArg <$> [a, b]
-               expr = StgInstr p stgArgs
-               rhs = StgTopRhs stgArgs argTys retTy expr
-           f <- fnToLlvm iden rhs
-           let cont = ContPrim p argTys retTy (Just f)
-           modify (\x->x {bindMap = Map.insert iden cont (bindMap x)})
-           pure f
-         _ -> error $ "internal: no support for wrapping: " ++ show p
-      in \case
-      ContLi s  -> pure s --  never call literals
-      ContFn v  -> callIfThunk v
-      ContRhs (StgRhsSsa val) -> pure val -- don't make a function for literals
-      ContRhs (StgPrim p argTys retTy) -> wrapPrim p argTys retTy
-      ContRhs r -> fnToLlvm iden r >>= callIfThunk -- rly
-      ContPrim p argTys retTy fn -> case fn of
-       Just f -> pure f
-       Nothing -> wrapPrim p argTys retTy
+  handle0Arity iden = let 
+    -- to pass primitives to functions, you need a function pointer
+    wrapPrim p argTys retTy = case p of
+      -- TODO more prims
+       StgPrim2 op -> do
+         a <- fresh
+         b <- fresh
+         let stgArgs = StgVarArg <$> [a, b]
+             expr = StgInstr p stgArgs
+             rhs = StgTopRhs stgArgs argTys retTy expr
+         f <- fnToLlvm iden rhs
+         let cont = ContPrim p argTys retTy (Just f)
+         modify (\x->x {bindMap = Map.insert iden cont (bindMap x)})
+         pure f
+       _ -> error $ "internal: no support for wrapping: " ++ show p
+    in \case
+    ContLi s  -> pure s --  never call literals
+    ContFn v  -> callIfThunk v
+    ContRhs (StgRhsSsa val) -> pure val -- don't make a function for literals
+    ContRhs (StgPrim p argTys retTy) -> wrapPrim p argTys retTy
+    ContRhs r -> fnToLlvm iden r >>= callIfThunk -- rly
+    ContPrim p argTys retTy fn -> case fn of
+     Just f -> pure f
+     Nothing -> wrapPrim p argTys retTy
  in case lit of
    StgConstArg l -> pure $ ConstantOperand l -- fresh >>= \nm -> ConstantOperand <$> globalArray nm l
    StgSsaArg s   -> pure s
@@ -301,7 +320,8 @@ stgToIR (StgInstr stgPrim args) =
                 gep (head lArgs) (drop 1 lArgs)
                 >>= (`load` 0)
   StgAlloc -> mapM (stgToIR . StgLit) args >>= \case
-    [arg] -> gets ((\(Just (ContFn m))->m) . (Map.!? "malloc") . bindMap)       >>= \malloc -> call malloc [(arg, [])]
+    [arg] -> gets ((\(Just (ContFn m))->m) . (Map.!? "malloc") . bindMap)
+      >>= \malloc -> call malloc [(arg, [])]
     args  -> error "stg: too many args for StgAlloc"
 
 -- StgApp
@@ -343,8 +363,8 @@ stgToIR (StgCase expr defaultBranch (StgSwitch alts)) = mdo
   dSsa <- case defaultBranch of
       Just code -> stgToIR code <* br endBlock
       Nothing   -> do
-          errFn <- gets ((\(Just (ContFn f)) -> f) . (Map.!? "NoPatternMatchError") . bindMap)
-          call errFn [] <* unreachable
+        errFn <- gets ((\(Just (ContFn f)) -> f) . (Map.!? "NoPatternMatchError") . bindMap)
+        call errFn [] <* unreachable
   endBlock <- block -- `named` "endBlock"
   let phiBlocks = case defaultBranch of -- skip the 'void' default branch.
           Just _ -> (dSsa, dBlock) : retBlockPairs
@@ -406,7 +426,8 @@ handleMemParam :: CodeGenIRConstraints m
   => StgConst -> StgFn -> [StgArg] -> m Operand
 handleMemParam sz fn args = gets subData >>= \case
  True -> do
-     mem <- gets ((\(Just (ContFn m))->m) . (Map.!? "malloc") . bindMap)       >>= \malloc -> call malloc [(ConstantOperand sz, [])]
+     mem <- gets ((\(Just (ContFn m))->m) . (Map.!? "malloc") . bindMap)
+       >>= \malloc -> call malloc [(ConstantOperand sz, [])]
      params <- map (,[]) <$> mapM (stgToIR . StgLit) args
      call fn ((mem,[]) : params)
 

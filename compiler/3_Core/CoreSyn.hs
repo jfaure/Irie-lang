@@ -57,7 +57,6 @@ data CoreModule     = CoreModule {
 -- classdecl: used to check instances / make overloads
 data ClassDecl = ClassDecl {
    className :: HName
- , classVars :: V.Vector HName
  , classFns  :: V.Vector ClassFn
 }
 data ClassFn = ClassFn {
@@ -81,7 +80,8 @@ data Binding
  | LExtern{ info :: Entity }
  | LClass {
    info        :: Entity -- TypeFunction
- , overloads   :: M.Map [Type] IName -- instanceIds
+ , classNm     :: HName  -- change to IName ?
+ , overloads   :: M.Map Type IName -- instanceIds
  }
  -- typevar is accessed in the function signature
  | LTypeVar { info :: Entity }

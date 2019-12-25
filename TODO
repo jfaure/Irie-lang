@@ -1,29 +1,28 @@
 # expr2Core
-  * precompiled modules, freeVars
-  * instance Apps need to be binds (lift them ? but pap's cannot be lifted in advance)
   * array prims + patterns
+  * linear types
   * generate function wrappers for remaining primitives (stgtollvm:258)
   * nested patterns
-  * ocaml 'a | implicit forall typevars ?
+  * freeVars
   * register subtypes (to handle recursive refs)
   * error reporting
-  * don't allow unknown typenames
+  * precompiled modules
+  * Names::importType generates superfluous INames
 
 # Typeclass
   * default typeclass signatures/decls
   * use a fromString function for literals
   * check instances <= class
-  * subsume : rigid -> _ -> True -- check it's ok somewhere
+  * check subsumption of rigids
 
 # core2Stg
   * tyFunctions
   * polymorphic fns (boxed vs unboxed)
 
 # parser
-  * funBind eats all matches ignoring name
   * move all type parse logic to pExp
   * linefolds
-  * rec (let-rec)
+  * rec
   * source locations
 
 # Clean
@@ -34,11 +33,11 @@
 # Prelude
   * fold-build ~ lazy
   * effects
-  * distribution
   * memory (eg. inplace modifications undo as stack unravels eg. sudoku)
+  * distribution
 
 # Maybe
-  * STG duplicates fns / globals if referenced multiple times
+  * a , b : t -- syntax
   * GADT style
   * View patterns
   * GuardedRhs

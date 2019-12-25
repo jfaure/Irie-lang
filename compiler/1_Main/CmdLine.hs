@@ -60,8 +60,8 @@ cmdLineDecls = CmdLine
 
 cmdLineInfo = info (cmdLineDecls <**> helper) description
   where description = fullDesc
-                   <> progDesc "lfvm-stg compiler"
-                   <> header "lfvm"
+                   <> progDesc "Arya compiler"
+                   <> header "arya"
 
 parseCmdLine :: IO CmdLine
 parseCmdLine = execParser cmdLineInfo

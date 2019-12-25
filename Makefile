@@ -1,4 +1,4 @@
-# stack does nothing (except take 1 sec to realize) if no work is necessary
+# stack is very slow to realize that sometimes no work is necessary
 
 NAME	=	arya
 SrcDir	= 	compiler/

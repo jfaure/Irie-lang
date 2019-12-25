@@ -104,7 +104,7 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
   in \case
   LArg    i          -> pure () -- pure $ typed i
   LCon    i          -> pure () -- pure $ typed i
-  LClass i overloads -> pure () -- pure $ traceShowId $ typed i
+  LClass i decl insts-> pure () -- pure $ traceShowId $ typed i
   LExtern i          -> pure () -- pure $ typed i
   Inline i e         -> pure ()
   LLit  inf l        -> pure ()
@@ -174,6 +174,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
                    ++ "\nExpected: " ++ ppType' expected
                    ++ "\nGot:      " ++ ppType' gotTy
                    ++ "\n" ++ show expected ++ " <:? " ++ show gotTy
+                   ++ "\nIn the expression: " ++ show got
                    )
 
   in checkOrInfer <$> case got of
@@ -202,57 +203,57 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       updateBindTy nm newTy
       pure newTy
 
-  -- APP expr: unify argTypes and remove left arrows from app expr
-  -- Typeclass resolution
-  App fn args ->
-    let
+  -- APP expr: unify argTypes , instantiate and remove left arrows
+  App fn args -> let
     -- instanciate: propagate information about instanciated polytypes
     -- eg. if ((neg) : Num -> Num) $ (3 : Int), then Num = Int here.
-    -- also take care of PAps via checkArity
-    instantiate :: ([Type]->Type) -> IName -> Binding
-                -> [Type] -> [Type] -> TCEnv Type
-    instantiate checkArity fnName bind argTys remTys =
-      case bind of
-      LClass classInfo allOverloads ->
+    instantiate :: IName -> [Type] -> [Type] -> TCEnv [Type]
+    instantiate fnName argTys remTys = lookupBindM fnName >>= \case
+      LClass classInfo _ allOverloads ->
         let
-        isValidOverload candidateTys val =
-            all id $ zipWith subsume' candidateTys argTys
+        isValidOverload candidateTy v = all (subsume' candidateTy) argTys
         candidates = M.filterWithKey isValidOverload allOverloads
         in case M.size candidates of
-          0 -> error "no valid overloads"
-          1 ->
+          0 -> error $ "no valid overloads: "
+            ++ show argTys ++ "\n<:?\n" ++ show allOverloads
+          1 -> -- TODO return tys change ?
             let instanceId = head $ M.elems candidates
-            -- TODO return tys change ?
-            in (typed . info <$> lookupBindM instanceId) <&> \case
-                TyArrow tys ->
-                   let retTys = drop (length argTys) tys
-                   in TyInstance instanceId (checkArity retTys)
-                _ -> error "panic, expected function"
+            in (unVar . typed . info <$> lookupBindM instanceId)
+            <&> \case
+              TyArrow tys ->
+                 let retTys = drop (length argTys) tys
+                 in [TyInstance instanceId (TyArrow retTys)]
+              _ -> error "panic, expected function"
           _ -> error $ "ambiguous function call: " ++ show candidates
-      _ -> pure $ checkArity remTys
+      _ -> pure $ remTys
 
-    judgeApp arrowTys = do
-      -- there may be more arrowTys then args, zipWith will ignore them
-      judgeApp' arrowTys =<< zipWithM judgeExpr' args arrowTys
-
-    judgeApp' arrowTys judgedArgTys =
-      let (consumedTys, remTys) = splitAt (length args) arrowTys
-          checkArity = \case
-            -- check remaining args for: (saturated | PAp | VarArgs)
+    judgeApp arrowTys isVA =
+      let appArity = length args
+          splitIndx = if isVA then appArity-1 else appArity
+          (consumedTys , remTys) = splitAt splitIndx arrowTys
+          checkArity = \case -- (saturated | PAp | VarArgs)
             []  -> last arrowTys -- TODO ensure fn is ExternVA
+            [TyInstance i (TyArrow ret)] -> TyInstance i $ checkArity ret
             [t] -> t
             tys -> TyPAp consumedTys remTys
-          Var fnName = fn
+          arrowTys' = if isVA --appArity >= length arrowTys
+            then consumedTys ++ replicate 2 TyUnknown
+            else arrowTys
       in do
-      if all id $ zipWith subsume' judgedArgTys arrowTys
-      then do
-        bind <- lookupBindM fnName
-        instantiate checkArity fnName bind judgedArgTys remTys
+        judgedArgs <- zipWithM judgeExpr' args arrowTys'
+        judgedApp  <- judgeApp' arrowTys' remTys judgedArgs
+        pure $ checkArity judgedApp
+
+    judgeApp' consumedTys remTys judgedArgTys =
+      let Var fnName = fn
+      in if all id (zipWith subsume' judgedArgTys consumedTys)
+      then instantiate fnName judgedArgTys remTys
       else error $ "cannot unify function arguments\n"
-        ++ show judgedArgTys ++ "\n<:?\n" ++ show arrowTys
+          ++ show judgedArgTys ++ "\n<:?\n" ++ show consumedTys
 
     -- use term arg types to gather info on the tyFn's args here
     judgeTyFnApp argNms arrowTys = do
+      let (consumedTys , remTys) = splitAt (length args) arrowTys
       judgedArgs <- zipWithM judgeExpr' args arrowTys
       let isRigid = \case {TyRigid{}->True;_->False}
           tyFnArgVals = filter (isRigid . fst)
@@ -261,7 +262,8 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           prepareIM (TyRigid i, x) = (i , x)
           tyFnArgs = IM.fromList $ prepareIM <$> tyFnArgVals
           -- recursively replace all rigid type variables
-      retTy <- judgeApp' arrowTys judgedArgs
+      retTy_ <- judgeApp' arrowTys remTys judgedArgs
+      let [retTy] = retTy_ -- TODO
 
       -- generate newtype
       let (retTy' , datas) = betaReduce tyFnArgs unVar retTy
@@ -269,17 +271,16 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
         [newData] -> doDynInstance newData
         _ -> pure retTy'
 
-    doDynInstance newData = do
-      let (TyPoly (PolyData p@(PolyUnion subs) (DataDef hNm alts)))
-              = newData
-          dataINm = parentTy $ (\(TyMono m) -> m) $ head subs
+    doDynInstance (TyPoly (PolyData p@(PolyUnion subs)
+                          (DataDef hNm alts))) = do
+      let dataINm = parentTy $ (\(TyMono m) -> m) $ head subs
       insts <- gets dataInstances
       let idx = V.length insts
           mkNm hNm = hNm `T.append` T.pack ('@' : show idx)
           newNm = mkNm hNm
           newAlts = (\(nm,t) -> (mkNm nm , t)) <$> alts
-          newData' = TyPoly $ PolyData p (DataDef newNm newAlts)
-          ent = Entity (Just newNm) newData'
+          newData = TyPoly $ PolyData p (DataDef newNm newAlts)
+          ent = Entity (Just newNm) newData
       modify (\x->x{ dataInstances=V.snoc (dataInstances x) ent })
       -- TODO !!
       let conIdx = 0
@@ -287,13 +288,14 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       pure $ TyDynInstance idx conIdx (TyAlias dataINm)
 
     judgeFn expFnTy =
-      let judgeExtern eTys = judgeApp $ TyMono . MonoTyPrim <$> eTys
+      let judgeExtern eTys isVA
+            = judgeApp (TyMono . MonoTyPrim <$> eTys) isVA
       in case expFnTy of
-      TyArrow arrowTys -> judgeApp arrowTys
-      TyPAp    t1s t2s -> judgeApp t2s
+      TyArrow arrowTys -> judgeApp arrowTys False
+      TyPAp    t1s t2s -> judgeApp t2s False
       TyExpr (TyTrivialFn argNms (TyArrow tys))->judgeTyFnApp argNms tys
-      TyMono (MonoTyPrim (PrimExtern   eTys)) -> judgeExtern eTys
-      TyMono (MonoTyPrim (PrimExternVA eTys)) -> judgeExtern eTys
+      TyMono (MonoTyPrim (PrimExtern   eTys)) -> judgeExtern eTys False
+      TyMono (MonoTyPrim (PrimExternVA eTys)) -> judgeExtern eTys True
       TyUnknown -> error ("failed to infer function type: "++show fn)
       t -> error ("not a function: "++show fn++" : "++show t)
 

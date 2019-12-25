@@ -38,6 +38,7 @@ data Symbol
  -- ContPrim: llvm instruction + maybe a function wrapper
  -- (necessary if it's used as an argument)
   | ContPrim StgPrimitive [StgType] StgType (Maybe LLVM.AST.Operand)
+  deriving (Show)
 
 type TypeMap    = Map.Map StgId StgType
 type SymMap     = Map.Map StgId Symbol

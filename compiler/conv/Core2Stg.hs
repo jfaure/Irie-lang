@@ -121,6 +121,7 @@ convTy tyMap dynTyMap =
     $ convName (fId + V.length tyMap) (named (dynTyMap V.! fId))
 
   TyPoly (PolyUnion alts) -> error "core2stg: polytype" -- convTy' $ head alts
+  TyPoly (PolyAny) -> StgPolyType
   -- Note any other type is illegal at this point
   t -> error ("internal error: core2Stg: not a monotype: " ++ show t)
 
@@ -195,10 +196,12 @@ convExpr bindMap classDecls getDynInst lookupTy ty =
          t -> ([], [t])
        arity = length args
        tyArity = length argTys
-       argTys' = argTys ++ repeat TyUnknown
-       -- TODO temp hack since VarArgs functions short this zipWith
        stgArgs = --trace (show args ++ " :: " ++ show argTys)
-         zipWith (\t x-> StgExprArg $ convExpr'' t x) argTys' args
+         if arity > tyArity
+       -- TODO temp hack since VarArgs functions short the zipWith
+         then zipWith (\t x-> StgExprArg $ convExpr'' t x)
+                      (argTys ++ repeat TyUnknown) args
+         else zipWith (\t x-> StgExprArg $ convExpr'' t x) argTys args
    in case fn of
     Var fId -> case ty of
       TyInstance instId ty -> StgApp (convName' instId) stgArgs
@@ -259,7 +262,7 @@ literal2Stg :: Literal -> StgConst = \l ->
     Char c   -> mkChar c
     Int i    -> C.Int 32 $ i
     String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))
-    Frac f   -> C.Float (LF.Single $ fromRational f)
+    Frac f   -> C.Float (LF.Double $ fromRational f)
 
 -- most llvm instructions take flags, stg wants functions on operands
 prim2llvm :: PrimInstr -> StgPrimitive = \case

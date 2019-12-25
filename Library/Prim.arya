@@ -7,7 +7,7 @@ type CharPtr = #!CharPtr
 
 -- all float types use the same llvm instructions
 -- type Half      = #!Half
-type Float     = #!Float
+-- type Float     = #!Float -- broken for some reason
 type Double    = #!Double
 -- type FP128     = #!FP128        -- 112 bit mantissa
 -- type PPC_FP128 = #!PPC_FP128 -- two 64-bits
@@ -15,26 +15,26 @@ type Double    = #!Double
 
 infix 6 +
 infix 7 *
---class Num a where
---  (+)  : a->a->a
---  (-)  : a->a->a
+class Num where
+  (+)  : Num->Num->Num
+  (-)  : Num->Num->Num
 --  (*)  : a->a->a
 ----(//) : a->a->a
 ----(/?) : a->a->a
 ----(==) : a->a->a
 --  --(/)  : Int -> Int -> Real = \x y -> (#!fptoui x) // (#!fptoui y)
---
---instance Num Int where
+
+instance Num Int where
   (+)  : Int->Int->Int = #!add
   (-)  : Int->Int->Int = #!sub
-  (*)  : Int->Int->Int = #!mul
+--(*)  : Int->Int->Int = #!mul
 --(//) : Int->Int->Int = #!sdiv
 --(/?) : Int->Int->Int = #!srem
 --(==) : Int->Int->Int = #!icmp
 
---instance Num Float where
---  (+)  : Float->Float->Float = #!fadd
---  (-)  : Float->Float->Float = #!fsub
+instance Num Double where
+  (+)  : Double->Double->Double = #!fadd
+  (-)  : Double->Double->Double = #!fsub
 --  (*)  : Float->Float->Float = #!fmul
 --(//) : Int->Int->Int = #!fdiv
 --(/?) : a->a->a = #!frem
@@ -68,4 +68,5 @@ infix 7 *
 -- C extern functions --
 extern puts : (#!CharPtr) -> Int
 externVarArg printf : (#!CharPtr) -> Int
---putNumber n = printf "%d\n" n
+putNumber n = printf "%d\n" n
+putDouble f = printf "%f\n" f

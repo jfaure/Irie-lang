@@ -9,6 +9,7 @@ where
 
 import Prim
 import CoreSyn
+import Names
 import qualified CoreUtils as CU
 import qualified ParseSyntax as P
 
@@ -21,53 +22,15 @@ import Control.Monad.Trans.State.Strict
 import Data.List (partition)
 import Data.Foldable (foldrM)
 import Control.Monad (zipWithM)
-import Control.Applicative ((<|>))
+import Control.Applicative
 import Data.Functor
 import Data.Foldable
 import GHC.Exts (groupWith)
 import Debug.Trace
 
 transpose []             = []
-transpose ([]   : xss)   = transpose xss
+transpose ([]    : xss)  = transpose xss
 transpose ((x:xs) : xss) = (x : [h | (h:_) <- xss]) : transpose (xs : [ t | (_:t) <- xss])
-
-type ToCoreEnv a = State ConvState a
-data ConvState = ConvState {
-   imports       :: V.Vector CoreModule --Imports -- imports in scope
- , localFixities :: HM.HashMap HName Fixity
- , nameCount     :: IName
- , tyNameCount   :: IName
-
- , hNames        :: HM.HashMap HName IName
- , hTyNames      :: HM.HashMap HName IName
-
- , _tyList       :: [V.Vector Entity]
- , _bindList     :: [V.Vector Binding]
--- , _defaults     :: IM.IntMap MonoType
-
--- , localTys      :: V.Vector Entity
- , localBinds    :: V.Vector Binding
- , localModules  :: [CoreModule]
- , toCoreErrors  :: ToCoreErrors
-}
-
---data Imports = Imports [CoreModule] (HM.HashMap HName CoreModule)
---   openImports :: [CoreModule]
--- , qualImports :: HM.HashMap HName CoreModule
--- -- hiding / renaming imports ?
---}
-
-data ToCoreErrors = ToCoreErrors {
-   notInScope :: [P.Name]
-}
-noErrors = ToCoreErrors []
-
--- incomplete function ?
-pName2Text = \case
-  P.Ident h  -> h
-  P.Symbol s -> s
-pQName2Text (P.UnQual (P.Ident s)) = s
-pQName2Text (P.UnQual (P.Symbol s)) = s
 
 ------------
 -- ConvTy --
@@ -76,6 +39,7 @@ data ConvTyError
  = UnknownTy    HName
  | UnknownTyVar HName
  | UnexpectedTy P.Type
+ deriving (Show)
 
 -- Error handling is different if the ty is in a type function
 convTy :: (HName -> Maybe IName) -> P.Type -> Either ConvTyError Type
@@ -108,25 +72,31 @@ convTy :: (HName -> Maybe IName) -> P.Type -> Either ConvTyError Type
 
 -- Default behavior for top level type signatures,
 -- new variables are implicitly quantified
+-- TODO cancer
 convTyM :: P.Type -> ToCoreEnv Type = \pTy ->
   mkFindTyHName <&> (`convTy` pTy) >>= \case
   Right ty -> pure ty
-  Left  er -> case er of
-    UnknownTy ty    -> error ("unknown typeName: " ++ show ty)
-    UnknownTyVar ty -> do --error ("unknown typeName: " ++ show ty)
-    -- register the names - they're implicit foralls
-      nm <- freshTyName
-      addTyHName ty nm
-      addLocalTy nm $ Entity Nothing (TyRigid nm)
-      convTyM pTy
---    withNewTyHNames [ty] $ \[ty] -> convTyM pTy
+  Left  er -> let
+   addTys pTy ty = do 
+    lookupTyHNm ty >>= \case
+      Just i -> convTyM pTy
+      Nothing -> do
+    -- register implicit forall tynames
+        nm <- freshTyName
+        addTyHName ty nm
+        addLocalTy nm $ Entity Nothing (TyRigid nm)
+        convTyM pTy
+   in case er of
+    UnknownTy ty    -> --error ("unknown typeName: " ++ show ty)
+      addTys pTy ty
+    UnknownTyVar ty -> --error ("unknown typeName: " ++ show ty)
+      addTys pTy ty
     UnexpectedTy t  -> case t of
       _ -> error ("unexpected ty: "    ++ show t)
 
 -- type constructors
 -- We may come accross data definitions at the leaves
 -- return tyfuns + data they return
-
 doTypeFun :: P.Decl -> IName -> ToCoreEnv (Entity , V.Vector Entity)
 doTypeFun (P.TypeFun topNm args (P.TypeExp ty)) tyFunINm =
   doTyFun (pName2Text topNm) tyFunINm (pName2Text <$> V.fromList args) ty
@@ -147,7 +117,7 @@ doTyFun tyFnHNm tyFunINm argHNms ty = do
       -- handle TyCons returning data
       (cons, dTy, subTys) <- _convData tyFunINm tyFnHNm dataDef
       pure $ (typed dTy , cons , subTys)
-    Left t -> error $ "unexpected return type of tyFunction: "
+    Left t -> error $ "unexpected return type of tyFunction: " ++ show t
   mapM rmTyHName argHNms
 
   let tyFn = TyTrivialFn argNms fnBody
@@ -350,132 +320,33 @@ doExtern tyMap = let
     P.ExternVA nm ty -> addExtern PrimExternVA nm ty
 
 ------------------------
--- Functions on Names -- 
-------------------------
--- Fresh
-freshNames :: Int -> ToCoreEnv [IName] = \count ->
-  gets nameCount >>= \n ->
-  modify (\x -> x{nameCount = n+count})   *> pure [n..n+count-1]
-freshTyNames :: Int -> ToCoreEnv [IName] = \count ->
-  gets tyNameCount >>= \n ->
-  modify (\x -> x{tyNameCount = n+count}) *> pure [n..n+count-1]
-freshName :: ToCoreEnv IName = gets nameCount >>= \n ->
-  modify (\x->x{nameCount = n+1}) *> pure n
-freshTyName :: ToCoreEnv IName = gets tyNameCount >>= \n ->
-  modify (\x->x{tyNameCount = n+1}) *> pure n
-
--- AddNames
-addHName    :: T.Text -> IName -> ToCoreEnv () = \hNm nm ->
-  modify (\x->x{hNames = HM.insert hNm nm (hNames x)})
-addTyHName  :: T.Text -> IName -> ToCoreEnv () = \hNm nm ->
-  modify (\x->x{hTyNames = HM.insert hNm nm (hTyNames x)})
-rmHName    :: T.Text -> ToCoreEnv () = \hNm ->
-  modify (\x->x{hNames = HM.delete hNm (hNames x)})
-rmTyHName  :: T.Text -> ToCoreEnv () = \hNm ->
-  modify (\x->x{hTyNames = HM.delete hNm (hTyNames x)})
-
-getHName, getTyHName :: HName -> ToCoreEnv (Maybe IName)
-getHName   hNm = gets hNames   <&> (hNm `HM.lookup`)
-getTyHName hNm = gets hTyNames <&> (hNm `HM.lookup`)
-mkFindHName, mkFindTyHName :: ToCoreEnv (HName -> Maybe IName)
-mkFindHName   = gets hNames   <&> flip HM.lookup
-mkFindTyHName = gets hTyNames <&> flip HM.lookup
-
-lookupName   = lookupHNm . pName2Text
-lookupTyName = lookupTyHNm . pName2Text
--- !!! lookups have an important additional function of bringing in
--- relevant bindings from imported modules to current modules
-lookupHNm, lookupTyHNm :: HName -> ToCoreEnv (Maybe IName)
-lookupHNm hNm = getHName hNm >>= \case
-  Nothing -> 
-    gets ({-openImports .-} imports) <&> asum . (lookupNm_Module hNm <$>)
-    >>= \case
-      Nothing  -> pure Nothing
-      Just (iNm, cm) -> error "_"
---      let bind = bindings cm V.! iNm
---      in  Just <$> do
---        nm <- freshName
---        addHName hNm nm
---        traceM $ "adding name: " ++ show hNm
---        addLocal nm bind
---        error "untested support for external bindings"
-  just -> pure just
-
-lookupTyHNm hNm = getTyHName hNm >>= \case
-  Nothing ->
-    gets ({-openImports .-} imports) <&> asum . (lookupNm_Module hNm <$>)
-    >>= \case
-      Nothing  -> pure Nothing
-      Just (iNm, cm) -> error "_"
---      let bind = algData cm V.! iNm
---      in  Just <$> do 
---        nm <- freshTyName
---        addTyHName hNm nm
---        traceM "adding tyname"
---        addLocalTy nm bind
---        error "untested support for external bindings"
-  just -> pure just
-
-lookupNm_Module :: HName->CoreModule -> Maybe (IName, CoreModule)
-lookupNm_Module   nm cm = (,cm) <$> nm `HM.lookup` hNameBinds cm
-lookupTyNm_Module :: HName->CoreModule -> Maybe (IName, CoreModule)
-lookupTyNm_Module nm cm = (,cm) <$> nm `HM.lookup` hNameTypes cm
-
-addLocalTy  :: IName -> Entity -> ToCoreEnv IName =
- \iNm ty -> do
---  modify (\x->x{localTys=(localTys x `V.snoc` ty)})
-  tys <- gets _tyList
-  let h : end = tys
-      h' = h `V.snoc` ty
-      tys' = h' : end
-  modify (\x->x{_tyList = tys'})
-  pure iNm
-addLocal    :: IName -> Binding -> ToCoreEnv IName =
-  \iNm bind -> do
---  modify (\x->x{localBinds=V.snoc (localBinds x) bind })
-  modify (\x->x{localBinds= localBinds x `V.snoc` bind })
-  pure iNm
-
--- add local names
-withNewHNames  :: [HName] -> ([IName] -> ToCoreEnv a) -> ToCoreEnv a
-withNewHNames =
-  \hNms fn -> CU.localState $ do
-    iNms <- freshNames (length hNms)
-    zipWithM addHName hNms iNms
-    fn iNms
-withNewTyHNames :: [HName] -> ([IName] -> ToCoreEnv a) -> ToCoreEnv a
-withNewTyHNames =
-  \hNms fn -> CU.localState $ do
-    iNms <- freshTyNames (length hNms)
-    zipWithM addTyHName hNms iNms
-    fn iNms
-
-------------------------
 -- Main conv function --
 ------------------------
-parseTree2Core :: [CoreModule] -> P.Module -> CoreModule
-parseTree2Core topImports = let
-  emptyConvState = ConvState
-    { imports        = V.fromList topImports --Imports { openImports = topImports , qualImports = HM.empty }
-    , localFixities  = HM.empty
-    , nameCount      = 0
-    , tyNameCount    = 0
-    , hNames         = HM.empty
-    , hTyNames       = HM.empty
+parseTree2Core :: V.Vector CoreModule -> P.Module -> CoreModule
+parseTree2Core topImports = _parseTree2Core st topImports
+ where st = emptyConvState { imports = topImports }
 
-    , _tyList        = []
-    , _bindList      = []
-    , localBinds     = V.empty
+emptyConvState = ConvState
+  { imports        = V.empty --Imports { openImports = topImports , qualImports = HM.empty }
+  , localFixities  = HM.empty
+  , nameCount      = 0
+  , tyNameCount    = 0
+  , hNames         = HM.empty
+  , hTyNames       = HM.empty
+
+  , _tyList        = []
+  , _bindList      = []
+  , localBinds     = V.empty
 --  , localTys       = V.empty
-    , localModules   = []
-    , toCoreErrors   = noErrors
-    }
-  in _parseTree2Core emptyConvState topImports
+  , localModules   = []
+  , toCoreErrors   = noErrors
+  }
 
 -- having control over the start state is useful for let-bindings
 -- that are passed through _parseTree2Core
 -- then need to be appended to the parent module without conflicts
-_parseTree2Core :: ConvState -> [CoreModule] -> P.Module -> CoreModule
+_parseTree2Core :: ConvState -> V.Vector CoreModule -> P.Module
+  -> CoreModule
 _parseTree2Core startConvState topImports (P.Module mName parseTree)
  = CoreModule
   { moduleName     = pName2Text mName
@@ -492,32 +363,9 @@ _parseTree2Core startConvState topImports (P.Module mName parseTree)
   (binds, dataTys, classDecls') = val
   (val, endState) = runState toCoreM startConvState
 
-  -- Add a module to the ToCoreEnv state
-  -- !! it is critical that the module doesn't reference itself,
-  -- since those indexes are invalid in the new module
-  -- It should primarily contain extern decls
-  addModule :: CoreModule -> ToCoreEnv () = \cm ->
-    modify (\x->x
-      { _bindList = bindings cm : _bindList x
-      , _tyList   = algData  cm : _tyList x
-      , nameCount   = nameCount x   + V.length (bindings cm)
-      , tyNameCount = tyNameCount x + V.length (algData cm)
-      -- union is left-biased
-      , hNames   = hNames   x `HM.union` hNameBinds cm
-      , hTyNames = hTyNames x `HM.union` hNameTypes cm
-      -- TODO check no overwrites
-      , localFixities = localFixities x `HM.union` fixities cm
-  --  , defaults = defaults x `IM.union` defaults cm
-      })
-
+  toCoreM :: ToCoreEnv (BindMap, TypeMap, V.Vector ClassDecl) = do
   -- Note. types and binds vectors must match iNames
   -- topBindings;typeDecls;localBindings;overloads;externs
-  toCoreM :: ToCoreEnv (BindMap, TypeMap, V.Vector ClassDecl) = do
-    -- 0. set up imported modules
-    case topImports of
-      []   -> pure ()
-      [cm] -> addModule cm -- modify(\x->x{imports=cm : imports x})-- addModule cm
-      _    -> error "multiple modules unsupported"
 
     -- 1. register fixity declarations
     modify (\x->x{localFixities=convFixities (P.fixities parseTree)})
@@ -565,10 +413,10 @@ partitionFns = partition $ \case { P.TypeSigDecl{}->True ; _-> False }
 -------------
 -- Classes --
 -------------
-doClassDecl :: P.Decl -> ToCoreEnv (ClassDecl , V.Vector Entity)
-doClassDecl (P.TypeClass classNm classVarPNames decls) =
+doClassDecl :: P.Decl -> ToCoreEnv ClassDecl
+doClassDecl (P.TypeClass classNm [] {-classVarPNames-} decls) =
   let
-    classVars = pName2Text <$> V.fromList classVarPNames
+    classHNm = pName2Text classNm
     (sigs, defaultBinds) = partitionFns decls
 
     registerClassFns sigs =
@@ -576,38 +424,27 @@ doClassDecl (P.TypeClass classNm classVarPNames decls) =
             mapM (\h -> addHName (pName2Text h) =<< freshName) nms
       in  mapM registerFn sigs
 
-    sig2ClassFn :: V.Vector IName -> P.Decl{-.TypeSigDecl-}
-                -> ToCoreEnv (ClassFn , V.Vector Entity)
-    sig2ClassFn iclassVars (P.TypeSigDecl [nm] sig) = do -- TODO [nm]
-      let mkEntity ty nm = Entity (Just (pName2Text nm)) ty
-      (sigEnt , rigids) <- doTyFun (pName2Text nm) (-1) classVars sig
-      let sigTy = typed sigEnt
-          classFn = ClassFn {
-            classFnInfo = mkEntity sigTy nm
-          , defaultFn   = Nothing }
-      pure (classFn , rigids)
+    sig2ClassFn (P.TypeSigDecl [nm] sig) = do
+      sigTy <- convTyM sig
+      pure $ ClassFn {
+        classFnInfo = Entity (Just (pName2Text nm)) sigTy
+      , defaultFn   = Nothing }
   in do
-    let classArity = length classVars
+    classTyINm <- freshTyName
+    addTyHName classHNm classTyINm
+    addLocalTy classTyINm (Entity (Just classHNm) (TyPoly PolyAny))
     registerClassFns sigs
+    classFnEntities <- mapM sig2ClassFn sigs
 
-    -- convert classFns with classArgs locally available in HNameMap
-    classArgs <- V.fromList <$> (freshNames classArity)
-    V.zipWithM addTyHName classVars classArgs
-    (classFnEntities , rigids)<-unzip<$>mapM (sig2ClassFn classArgs) sigs
-    V.mapM rmTyHName classVars
-
-    let classDecl = ClassDecl
-          { className = pName2Text classNm
-          , classVars = classVars
-          , classFns  = V.fromList classFnEntities }
-    pure (classDecl , V.concat rigids)
+    pure $ ClassDecl
+      { className = pName2Text classNm
+      , classFns  = V.fromList classFnEntities }
 
 doTypeClasses :: V.Vector P.Decl -> V.Vector P.Decl
  -> ToCoreEnv (  V.Vector ClassDecl -- exported classDecl info
                , V.Vector Binding)  -- class tycons (top bindings)
 doTypeClasses p_TyClasses p_classInsts = do
-  (classDecls , rigids) <- V.unzip <$> V.mapM doClassDecl p_TyClasses
-
+  classDecls <- V.mapM doClassDecl p_TyClasses
   let classNms = className <$> classDecls
       declMap  = HM.fromList $ V.toList $ V.zip classNms classDecls
       doInstance inst@(P.TypeClassInst instNm _ _) =
@@ -616,26 +453,27 @@ doTypeClasses p_TyClasses p_classInsts = do
               Nothing -> error ("class not in scope: " ++ show instNm)
         in doClassInstance inst classDecl
   perInstOverloads <- V.mapM doInstance p_classInsts
+
   let (instVars , class2OverloadMaps) = V.unzip perInstOverloads
       vconcat = V.foldl' (V.++) V.empty
-      classFns' = vconcat $ classFns <$> classDecls
-      classEnts = classFnInfo <$> classFns'
       overloadMaps = V.zipWith mkMap instVars class2OverloadMaps
       mps = V.fromList $ transpose $ V.toList overloadMaps
-      classFs = V.zipWith LClass classEnts (M.fromList <$> mps)
 
-  modify (\x->x{ _tyList = vconcat rigids : _tyList x })
+      mkLClasses classDecl overloadMap = let
+        mkLCls clsInf = LClass clsInf (className classDecl) overloadMap
+        in V.map mkLCls (classFnInfo <$> classFns classDecl)
+      classFs = vconcat $ V.zipWith mkLClasses classDecls (M.fromList <$> mps)
   pure (classDecls , classFs)
 
-mkMap :: [Type] -> IM.IntMap IName -> [([Type], IName)]
+mkMap :: Type -> IM.IntMap IName -> [(Type, IName)]
 mkMap instTys classFn2OverloadMap =
   (instTys , ) <$> (IM.elems classFn2OverloadMap)
 
 doClassInstance :: P.Decl{-.TypeClassInst-} -> ClassDecl
-  -> ToCoreEnv ([Type] , IM.IntMap IName) -- ClassINm -> INm
+  -> ToCoreEnv (Type , IM.IntMap IName) -- ClassINm -> INm
  -- tycon args , classINms, overloadINms
  = \(P.TypeClassInst instNm [instTyNm] decls)
-    (ClassDecl classNm classVars classFns) ->
+    (ClassDecl classNm classFns) ->
   let instTyHNm = pName2Text instTyNm
       (sigs, fnBinds) = partitionFns decls
       genOverload (P.FunBind [(P.Match fName pats rhs)]) =
@@ -656,13 +494,13 @@ doClassInstance :: P.Decl{-.TypeClassInst-} -> ClassDecl
     instTy <- lookupTyHNm instTyHNm <&> \case
       { Just i -> TyAlias i ; Nothing -> error "unknown type" }
 
-    startOverloadId <- gets nameCount
     (classFnINms, overloadBinds) <- unzip <$> mapM genOverload fnBinds
+    startOverloadId <- gets nameCount
     let nOverloads = length overloadBinds
-        overloadINms = take nOverloads [startOverloadId-1..]
+        overloadINms = take nOverloads [startOverloadId..]
     modify (\x->x{ nameCount = nameCount x + nOverloads })
     zipWithM addLocal overloadINms overloadBinds
-    pure $ ([instTy] , IM.fromList (zip classFnINms overloadINms))
+    pure $ (instTy , IM.fromList (zip classFnINms overloadINms))
 
 expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Var (P.UnQual hNm) -> lookupName hNm >>= \case
@@ -676,7 +514,7 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
     let classNm = case l of
           Char   c -> "Num"
           Int    i -> "Int"
-          Frac   r -> "Float"
+          Frac   r -> "Double"
           String s -> "CharPtr"
           Array lits -> "CharPtr"
     maybeTy  <- lookupTyHNm $ T.pack $ classNm
@@ -727,16 +565,6 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
            in foldl' infix2App expr' remOpStack
     in expr2Core $ expr
 
-  P.Let (P.BDecls binds) exp -> _
---  gets imports >>= \topImports ->
---  let letModule      = P.Module (P.Ident $ T.pack "_Let") binds
---      topOpenImports = openImports topImports
---      letMod         = parseTree2Core topOpenImports letModule
---  in do
---  modify (\x->x{imports=(imports x){openImports=letMod : openImports (imports x)}})
---  modify (\x->x{localTys=  (localTys x) V.++ algData letMod})
-    expr2Core exp
-
   -- lambdas are Cases with 1 alt
   -- TODO similar to match2Lbind !
   --match2LBind :: P.Match -> Type -> ToCoreEnv Binding = \m fnSig ->
@@ -755,17 +583,17 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
       pure $ Var fIName
 
   -- [(PExp, PExp)]
-  P.MultiIf allAlts    ->
-         -- split off the last alt to allow us to fold it
-    let (lastIfE, lastElseE) = last allAlts
-        alts = init allAlts
-        (lTrue, lFalse) = (Int 1, Int 0)
-        mkSwitch ifE thenE elseAlt = do
-          ifE'   <- expr2Core ifE
-          thenE' <- expr2Core thenE
-          pure $ Case ifE' $ Switch [(lTrue, thenE'), elseAlt]
---      f :: ((PExp,PExp) -> CoreExpr.SwitchCase -> CoreExpr.SwitchCase)
-        f (ifE, thenE) nextSwitch = mkSwitch ifE thenE (lFalse, nextSwitch)
+  P.MultiIf allAlts    -> let
+    -- split off the last alt to allow us to fold it
+    (lastIfE, lastElseE) = last allAlts
+    alts = init allAlts
+    (lTrue, lFalse) = (Int 1, Int 0)
+    mkSwitch ifE thenE elseAlt = do
+      ifE'   <- expr2Core ifE
+      thenE' <- expr2Core thenE
+      pure $ Case ifE' $ Switch [(lTrue, thenE'), elseAlt]
+--  f :: ((PExp,PExp) -> CoreExpr.SwitchCase -> CoreExpr.SwitchCase)
+    f (ifE, thenE) nextSwitch = mkSwitch ifE thenE (lFalse, nextSwitch)
     in mkSwitch lastIfE lastElseE (lFalse, WildCard) >>= \lastSwitch ->
        foldrM f lastSwitch alts
 
@@ -779,10 +607,32 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
       (,) <$> convTyM t <*> expr2Core e
     addLocal iNm (LBind (Entity Nothing ty) [] expr)
     pure $ Var iNm
-  other -> error $ show other
 --P.SectionL
 --P.SectionR
---other -> error ("strange expr: " ++ show other)
+
+  P.Let pTree exp -> do
+    -- lets are special modules because we're still responsible
+    -- for codegenning everything, which is why they're assigned
+    -- names immediately
+    tyCnt <- gets tyNameCount
+    nmCnt <- gets nameCount
+    let letConvState = emptyConvState {
+            tyNameCount = tyCnt
+          , nameCount = nmCnt }
+        pMod = P.Module (P.Ident T.empty) pTree
+        letMod = _parseTree2Core letConvState V.empty pMod
+    loc <- gets id
+    modify(\x->x{localModules=letMod : localModules x
+                , nameCount   = nameCount x + V.length (bindings letMod)
+                , tyNameCount = tyNameCount x + V.length (algData letMod)
+                , localBinds  = localBinds x V.++ bindings letMod
+                , _tyList     = algData  letMod : _tyList x
+                })
+    exp <- expr2Core exp
+    modify(\x->x{localModules = drop 1 (localModules x)})
+    pure exp
+
+  other -> error ("unhandled expr: " ++ show other)
 
 -- getCaseAlts returns a partial constructor for a CoreExpr
 -- biggest point is to accomodate both P.Case and P.LambdaCase cleanly
@@ -827,7 +677,6 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
          pure $ Just (n, iArgs, exp)
     P.PTuple args -> error "tuple in case"
     _ -> pure Nothing
---  P.PLit l -> _
 --  P.PTuple p -> _
 --  P.PList ps -> _
 --  P.PWildCard -> _

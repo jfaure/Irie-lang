@@ -116,8 +116,8 @@ data PExp
  | Lambda [Pat] PExp
  | SectionL PExp QName -- operator sections
  | SectionR QName PExp
- | Let Binds PExp
--- | Let Module PExp
+-- | Let Binds PExp
+ | Let ParseTree PExp
  | Rec Module PExp
  | MultiIf [(PExp, PExp)] -- ghc accepts [GuardedRhs]
  | Case PExp [Alt]

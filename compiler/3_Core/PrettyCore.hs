@@ -9,6 +9,7 @@ import qualified Data.Text          as T
 import qualified Data.List          as DL
 import qualified Data.IntMap.Strict as IM
 import Text.Printf
+import Debug.Trace
 
 ppType' = ppType (\x -> "$" ++ show x)
 ppType :: (IName -> String) -> Type -> String = \deref -> clCyan . \case
@@ -34,7 +35,7 @@ ppCoreExpr :: (IName -> String) -> (IName -> String)
  let ppCoreExpr' = ppCoreExpr deref derefTy indent
      ppType'     = ppType derefTy
  in \e -> case e of
-  Var n -> {- show n ++-} deref n
+  Var n -> deref n
   Lit l -> show l
   App f args ->
     let parenthesize x = "(" ++ ppCoreExpr' x ++ ")" 
@@ -66,7 +67,7 @@ ppBind f derefTy indent lineNumber b =
     ++ {-indent ++-} " = " ++ ppCoreExpr f derefTy "" e
   LArg a    -> "larg: "    ++ ppEntity' a
   LCon a    -> "lcon: "    ++ ppEntity' a
-  LClass a b-> "lclass: "  ++ ppEntity' a ++ " >= " ++ show b
+  LClass a b c-> "lclass: "  ++ ppEntity' a ++ " >= " ++ show b ++ show c
   LExtern a -> "lextern: " ++ ppEntity' a
   Inline a e-> "inline: " ++ ppEntity' a ++ " = " ++ ppCoreExpr f derefTy "" e
 
