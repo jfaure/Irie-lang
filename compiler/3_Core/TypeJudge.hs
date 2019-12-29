@@ -102,7 +102,7 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
  = \cm bindINm ->
   let unVar = CU.unVar (algData cm)
   in \case
-  LArg    i          -> pure () -- pure $ typed i
+  LArg    i uc       -> pure () -- pure $ typed i
   LCon    i          -> pure () -- pure $ typed i
   LClass i decl insts-> pure () -- pure $ traceShowId $ typed i
   LExtern i          -> pure () -- pure $ typed i
@@ -211,7 +211,8 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
     instantiate fnName argTys remTys = lookupBindM fnName >>= \case
       LClass classInfo _ allOverloads ->
         let
-        isValidOverload candidateTy v = all (subsume' candidateTy) argTys
+        isValidOverload candidateTy v
+          = all (subsume' $ TyAlias candidateTy) argTys
         candidates = M.filterWithKey isValidOverload allOverloads
         in case M.size candidates of
           0 -> error $ "no valid overloads: "
@@ -224,7 +225,8 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
                  let retTys = drop (length argTys) tys
                  in [TyInstance instanceId (TyArrow retTys)]
               _ -> error "panic, expected function"
-          _ -> error $ "ambiguous function call: " ++ show candidates
+          _ -> error $ "ambiguous function call: "
+               ++ show argTys ++ "\n" ++ show candidates
       _ -> pure $ remTys
 
     judgeApp arrowTys isVA =
@@ -241,8 +243,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
             else arrowTys
       in do
         judgedArgs <- zipWithM judgeExpr' args arrowTys'
-        judgedApp  <- judgeApp' arrowTys' remTys judgedArgs
-        pure $ checkArity judgedApp
+        checkArity <$> judgeApp' arrowTys' remTys judgedArgs
 
     judgeApp' consumedTys remTys judgedArgTys =
       let Var fnName = fn

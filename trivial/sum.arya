@@ -1,2 +1,5 @@
+putFloat : Double -> Int
+putFloat f = printf "%f\n" f
+
 s = 3.0 + 2.2
---main = printf "%d\n" s
+main = putFloat s

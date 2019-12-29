@@ -1,13 +1,14 @@
 -- Primitives: literals and instructions
 -- conversions from Prim to llvm instructions/types
--- PrimInstr are roughly equivalent to LLVM.AST. (Operand->Operand->Operand)
--- However they are seperate from llvm.
+-- PrimInstr are roughly equivalent to LLVM.AST.Instructions
 module Prim
 where
+import Data.Text as T
 
 data Literal
  = Char Char | Int Integer | Frac Rational | String String
- | Array [Literal] -- incl. tuples
+ | PolyInt T.Text | PolyFrac T.Text
+ | Array [Literal] -- incl. tuples ?
 -- | Tuple [Literal]
 -- | WildCard      -- errors on evaluation
 

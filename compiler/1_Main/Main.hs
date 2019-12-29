@@ -1,10 +1,10 @@
 {- LANGUAGE OverloadedLists -}
 import CmdLine
---import qualified ParseSyntax as P
-import Modules
-import CoreSyn
 import ParseSyntax
 import Parser
+import Modules
+import CoreSyn
+import qualified CoreUtils as CU
 import ToCore
 import PrettyCore
 import TypeJudge
@@ -25,8 +25,9 @@ import Data.Functor
 import Data.Maybe (isJust, fromJust)
 import qualified Data.Vector as V
 import LLVM.Pretty
+import Debug.Trace
 
-preludeFNames = V.fromList [] -- ["Library/Prim.arya"]
+preludeFNames = V.fromList ["Library/Prim.arya"]
 searchPath    = ["Library/"]
 
 xd = let f = "trivial/sum.arya" in doProgText defaultCmdLine{emitCore=True} f =<< T.IO.readFile f
@@ -38,13 +39,12 @@ main = parseCmdLine >>= \cmdLine ->
 --  av -> mapM_ (doFile cmdLine) av
 
 doImport :: FilePath -> IO CoreModule
-doImport fName = do
+doImport fName = (judgeModule . parseTree2Core V.empty) <$> do
   putStrLn ("Compiling " ++ show fName)
   progText <- T.IO.readFile fName
   case parseModule fName progText of
     Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
     Right r -> pure r
-  <&> (judgeModule . parseTree2Core V.empty)
 
 doProgText :: CmdLine -> FilePath -> T.Text -> IO ()
 doProgText flags fName progText = do
@@ -57,22 +57,25 @@ doProgText flags fName progText = do
  let pTree = parseTree thisMod
  inclPaths <- getModulePaths searchPath $ modImports pTree
  customImports <- mapM doImport inclPaths
-
  let importList = autoImports V.++ customImports
-     core       = parseTree2Core importList thisMod
+     headers    = CU.mkHeader <$> importList
+     llvmObjs   = V.toList $ stgToIRTop . core2stg <$> headers
+ let core       = parseTree2Core headers thisMod
      judged     = judgeModule core
      stg        = core2stg judged
      llvmMod    = stgToIRTop stg
  if
-  | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags) llvmMod
+  | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags)
+                                           $ llvmMod
   | emitSourceFile flags -> putStr =<< readFile fName
   | emitParseTree  flags -> print pTree
   | emitParseCore  flags -> putStrLn $ ppCoreModule core
   | emitCore       flags -> putStrLn $ ppCoreModule judged
   | emitStg        flags -> putStrLn $ show stg
-  | emitLlvm       flags -> TL.IO.putStrLn $ ppllvm llvmMod -- LD.dumpModule llvmMod
-  | jit            flags -> LD.runJIT (optlevel flags) llvmMod
-  | otherwise            -> putStrLn $ ppCoreModule judged -- ppCoreBinds judged
+  | emitLlvm       flags -> TL.IO.putStrLn $ ppllvm llvmMod
+                            -- LD.dumpModule llvmMod
+  | jit            flags -> LD.runJIT (optlevel flags) llvmObjs llvmMod
+  | otherwise            -> putStrLn $ ppCoreModule judged
 
 repl :: CmdLine -> IO ()
 repl cmdLine = let

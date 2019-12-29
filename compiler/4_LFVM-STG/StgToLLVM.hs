@@ -7,7 +7,7 @@ where
 import StgSyn
 import CodegenRuntime
 import DataToLLVM
-import LlvmHsExts (globalStringPtr, constZero, charPtrType, unknownPtrType, sizeof)
+import LlvmHsExts
 
 -- LLVM
 import LLVM.IRBuilder.Module
@@ -61,7 +61,6 @@ import Control.Exception (assert)
 -- 1. responsible for data
 -- 2. responsible for let bindings: these are fns that should be called at most once
 
--- stgToIRTop:  This module's only export
 stgToIRTop :: StgModule -> LLVM.AST.Module
 stgToIRTop (StgModule stgData typeDefs bindings) =
  let
@@ -83,8 +82,10 @@ stgToIRTop (StgModule stgData typeDefs bindings) =
   emitCustomRtsFns = do
      let z = ConstantOperand $ C.Int 32 0
          noMatchFnName = "NoPatternMatchError"
-     failStr <- globalStringPtr "No default case alt" "noPatternMsg"
-     casePanicFn <- function noMatchFnName [] VoidType $ \[] -> do
+
+     failStr <- externStringPtr "No default case alt" "noPatternMsg"
+
+     casePanicFn <- privateFunction noMatchFnName [] VoidType $ \[] -> do
          let unCont (Just (ContFn f)) = f
          errFn <- gets (unCont . (Map.!? "error") . bindMap)
          call errFn [(z,[]), (z,[]), (ConstantOperand failStr,[])]
@@ -190,6 +191,21 @@ fnToLlvm iden rhs =
     let f = ConstantOperand $ C.GlobalReference (ptr funTy) iden
     updateBind (ContFn f)
     pure f
+
+ -- TODO the fn type a pointer here for some reason
+  StgExtComplex funTy' -> do
+    funTy <- getType funTy'
+    let PointerType (FunctionType retTy argTys isVA) _ = funTy
+    emitDefn $ GlobalDefinition functionDefaults
+      { name        = iden
+      , linkage     = External
+      , parameters  = ([Parameter ty (mkName "") [] | ty <- argTys], isVA)
+      , returnType  = retTy
+      }
+    let f = ConstantOperand $ C.GlobalReference (funTy) iden
+    updateBind $ ContFn f
+    pure f
+
 
 -- let bindings without the 'in expr'; doesn't codegen anything
 -- This saves overwritten values (for the benefit of StgLet)
@@ -345,6 +361,7 @@ stgToIR (StgApp iden args) = gets ((Map.!? iden) . bindMap)
           ContRhs (StgRhsSsa val) -> pure val -- a function pointer arg
           ContRhs rhs@StgTopRhs{} -> fnToLlvm iden rhs
           ContRhs rhs@(StgExt llvmTy) -> fnToLlvm iden rhs
+          ContRhs rhs@(StgExtComplex llvmTy) -> fnToLlvm iden rhs
           ContRhs r -> error ("cannot call non function: " ++ show r)
 
 -- | case: produce a switch on a literal value

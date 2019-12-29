@@ -46,9 +46,14 @@ data ConvState = ConvState {
 data Imports = Imports {
 -- letImports  :: [CoreModule]
    openImports :: [CoreModule]
- , qualImports :: HM.HashMap HName CoreModule
- -- hiding / renaming imports ?
+ , qualImports :: HM.HashMap HName CoreModule -- incl importas
+-- , customImport :: ImportCustom -- hiding / renaming imports
 }
+--data ImportCustom = ImportCustom {
+--   customMod :: Name
+-- , hiding  :: Name
+-- , renaming :: [(Name , Name)]
+--}
 
 data ToCoreErrors = ToCoreErrors {
    notInScope :: [P.Name]
@@ -137,8 +142,8 @@ moduleLookup imports hNm = let
               ty <- importTy $ typed (info bind)
               let bind' = bind{info=(info bind){typed=ty}}
               freshName >>= (`addLocal` bind')
-            importOverload (ty , indx)
-              = liftA2 (,) (importTy ty) (importBind indx)
+            importOverload (iTy , indx)
+              = liftA2 (,) (importTyAlias cm iTy) (importBind indx)
         in do
         lookupTyHNm classNm -- add class polytype
         overloads' <- traverse importOverload $ M.toList overloads
@@ -147,19 +152,18 @@ moduleLookup imports hNm = let
       _ -> addNm hNm bind
 --    error "untested support for external bindings"
 
+importTyAlias :: CoreModule -> ITName -> ToCoreEnv ITName
+importTyAlias cm i = let ty = (algData cm V.! i)
+  in case named ty of
+  Nothing-> importType cm (typed ty) *> freshTyName >>= (`addLocalTy` ty)
+  Just n -> lookupTyHNm n <&> \case
+     { Just x->x ; Nothing -> error "impossible" }
+
 -- recursively bring in all references to the type
 importType :: CoreModule -> Type -> ToCoreEnv Type
-importType cm t = let
-  addFresh ty = freshTyName >>= (`addLocalTy` ty)
-  in case t of
-    TyAlias i -> let ty = (algData cm V.! i) in TyAlias <$>
-      case named ty of
-      Nothing -> importType cm (typed ty) *> addFresh ty
-      Just n  -> lookupTyHNm n <&> \case
-         { Just x->x ; Nothing -> error "impossible" }
-    TyArrow tys ->
-      TyArrow <$> mapM (importType cm) tys
---    addFresh (Entity Nothing ty)
+importType cm t = case t of
+  TyAlias i ->   TyAlias <$> importTyAlias cm i
+  TyArrow tys -> TyArrow <$> mapM (importType cm) tys
 
 lookupTyHNm hNm = gets hTyNames >>=
   \hs -> case (hs `localTyLookup` hNm) of

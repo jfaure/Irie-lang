@@ -38,3 +38,11 @@ getArity :: Type -> Int = \case
     PrimExtern   l -> length l - 1
   TyExpr (TyTrivialFn _ t) -> getArity t
   o -> trace ("warning: getArity on non-function: " ++ show o) 0
+
+mkHeader :: CoreModule -> CoreModule
+mkHeader cm = let
+  mkExtern = \case
+    l@(LBind i a Instr{}) -> l
+    LBind i a e -> LExtern i 
+    l -> l
+  in cm { bindings = mkExtern <$> bindings cm }

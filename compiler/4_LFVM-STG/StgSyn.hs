@@ -69,6 +69,7 @@ data StgRhs
  -- closure: function uses free vars, to be passed as extra arguments
  -- | StgClosure  FreeVars [StgArg] [StgType] StgType StgExpr
  | StgExt      LLVM.AST.Type -- extern function
+ | StgExtComplex StgType
  | StgRhsConst StgConst -- become global constants
  | StgRhsSsa   StgSsa   -- used internally for locals (esp.function arguments)
  | StgPrim StgPrimitive [StgType] StgType
@@ -144,6 +145,7 @@ instance Show StgRhs where
     ++ "\n : " ++ show tys ++ show retty
   StgRhsSsa s                    -> "closure: " ++ show s
   StgExt t                       -> "extern " ++ show t
+  StgExtComplex t                -> "extcomplex " ++ show t
   StgRhsConst l                  -> "const: " ++ show l
   StgPrim p t r                  -> "prim: " ++ show p ++ " : " ++ show t ++ " -> " ++ show r
 instance Show StgBinding

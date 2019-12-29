@@ -23,9 +23,11 @@ import qualified Data.IntMap.Strict  as IM
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
 
-type IName   = Int    -- Int name: index into bind|type vectors
-type IName0  = IName  -- IName of a type
 type HName   = T.Text -- human readable name
+type IName   = Int    -- Int name: index into bind|type vectors
+type ITName  = IName  -- IName of a type
+type IMap    = IM.IntMap -- bind iname map
+type ITMap   = IM.IntMap -- type iname map
 
 type TypeMap = V.Vector Entity
 type BindMap = V.Vector Binding
@@ -58,6 +60,7 @@ data CoreModule     = CoreModule {
 data ClassDecl = ClassDecl {
    className :: HName
  , classFns  :: V.Vector ClassFn
+ , supers    :: [HName]
 }
 data ClassFn = ClassFn {
    classFnInfo :: Entity      -- the tyFunction TODO use TyFunction
@@ -75,13 +78,16 @@ data Binding
  -- only used internally for pattern match deconstructions
  | Inline { info :: Entity , expr :: CoreExpr }
  | LLit   { info :: Entity , lit  :: Literal }
- | LArg   { info :: Entity } --local vars via (lambda|case|expr:tysig)
+ | LArg   {  --local vars via (lambda|case|expr:tysig)
+   info :: Entity
+ , useCount :: Int -- for calculating linear types
+ }
  | LCon   { info :: Entity } --Term level GADT constructor(Type is known)
  | LExtern{ info :: Entity }
  | LClass {
    info        :: Entity -- TypeFunction
  , classNm     :: HName  -- change to IName ?
- , overloads   :: M.Map Type IName -- instanceIds
+ , overloads   :: M.Map ITName IName -- instanceIds
  }
  -- typevar is accessed in the function signature
  | LTypeVar { info :: Entity }
@@ -145,7 +151,7 @@ data Type
 -- type functions: eg `data a = ..`
 data TypeFunction
  = TyTrivialFn { -- trivial case: App (Con n) (TypeExp e)
-   tyArgs :: [IName0]
+   tyArgs :: [ITName]
  , tyVal  :: Type
  }
 
@@ -174,6 +180,10 @@ data DataDef
 
 data Fixity = Fixity Int Assoc
 data Assoc = LAssoc | RAssoc deriving (Eq, Show)
+
+data TCError
+ = UnifyFail { expected :: Entity, got :: Entity}
+ deriving (Show)
 
 deriving instance Show PolyType
 deriving instance Show DataDef
@@ -217,7 +227,3 @@ deriving instance Eq CaseAlts
 deriving instance Eq Entity
 deriving instance Eq CoreModule
 deriving instance Eq Fixity
-
-data TCError
- = UnifyFail { expected :: Entity, got :: Entity}
- deriving (Show)

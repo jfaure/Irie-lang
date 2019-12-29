@@ -43,7 +43,7 @@ data Decl
  -- type decls
  | TypeAlias     Name Type          -- note. type includes data
  | TypeFun       Name [Name] PExp   -- TODO move this to Type
- | TypeClass     Name [Name] [Decl] -- haskell newtype ?
+ | TypeClass     Name [Name] [Name] [Decl] -- haskell newtype ?
  | TypeClassInst Name [Name] [Decl]
 
  -- top bindings (seperate because sigs may be in sigModules)
@@ -132,9 +132,11 @@ data Alt = Alt Pat Rhs -- (Maybe Binds) -- case alternatives
 
 data Pat
  = PVar Name
- | PLit Literal
+ | PApp QName [Pat]         -- decon
  | PInfixApp Pat QName Pat
- | PApp QName [Pat]
+-- | ViewPattern PExp Pat
+
+ | PLit Literal
  | PTuple [Pat]
  | PList [Pat]
  | PWildCard

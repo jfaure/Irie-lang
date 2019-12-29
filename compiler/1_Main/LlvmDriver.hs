@@ -7,6 +7,7 @@ module LlvmDriver
 where
 {-# LANGUAGE OverloadedStrings #-}
 
+import Control.Monad
 import qualified LLVM.AST
 import qualified LLVM.Module
 import LLVM.Context
@@ -58,12 +59,24 @@ passes :: Word -> PassSetSpec = \opt -> defaultCuratedPassSetSpec
 ---------
 -- JIT --
 ---------
--- run an extern function TODO elaborate.. seems tied to a nonsense signature
-runExtern :: FunPtr a -> IO Double -- double.. ?
+-- since the only way to get llvm modules is via 'with*module',
+-- this fns' implementation is necessarily weird
+-- note LLVM.Module.linkModules destroys the second module
+withLinkedModules :: [ModuleAST] -> (Context -> ModuleCPP -> IO a)->IO a
+withLinkedModules ms go = withContext $ \c -> 
+  let withMod m action = LLVM.Module.withModuleFromAST c m (action c)
+  in case ms of
+  []   -> error "no module"
+  [m]  -> withMod m go
+  m:ms -> withMod m $ \c1 m1 -> withLinkedModules ms $ \c2 m2 ->
+    LLVM.Module.linkModules m1 m2 *> go c m1
+
+-- run an extern function TODO elaborate..
+runExtern :: FunPtr a -> IO Double -- why double.. ?
 runExtern fn = haskFun (castFunPtr fn :: FunPtr (IO Double))
 
-runJIT :: Word -> ModuleAST -> IO ()
-runJIT opt mod =
+runJIT :: Word -> [ModuleAST] -> ModuleAST -> IO ()
+runJIT opt objs mod =
   let runFn fnName engine m = EE.withModuleInEngine engine m $ \ee -> do
           EE.getFunction ee (LLVM.AST.mkName fnName) >>= \case
             Nothing -> pure Nothing
@@ -74,9 +87,11 @@ runJIT opt mod =
       ptrelim = Nothing
       fastins = Nothing
   in
-  withContext $ \context ->
+  withLinkedModules (mod : objs) $ \context m ->
   EE.withMCJIT context opt model ptrelim fastins $ \ executionEngine ->
-  LLVM.Module.withModuleFromAST context mod $ \m ->
+--  withContext $ \context ->
+--  EE.withMCJIT context opt model ptrelim fastins $ \ executionEngine ->
+--  LLVM.Module.withModuleFromAST context mod $ \m ->
     verify m -- llvm sanity check
     *> runFn ("main") executionEngine m >>= \case
         Nothing -> error "main() not found"

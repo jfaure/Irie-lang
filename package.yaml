@@ -48,7 +48,7 @@ executables:
     - compiler/conv
 
     main:          Main.hs
-    ghc-options:  -threaded -dynamic -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds
+    ghc-options:  -dynamic -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
     default-extensions:
     - LambdaCase
     - EmptyCase

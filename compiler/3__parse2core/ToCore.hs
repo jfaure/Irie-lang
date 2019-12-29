@@ -209,7 +209,7 @@ _convData :: IName -> HName -> P.Type
          = \subTy a b-> sequence_$zipWith3 (oneAccessor subTy) [0..] a b
         oneAccessor subTy i hNm ty = do
           argINm <- freshName
-          addLocal argINm (LArg $ Entity Nothing subTy)
+          addLocal argINm (LArg (Entity Nothing subTy) 0)
           accessorINm <- freshName
           let entity = Entity (Just hNm) (TyArrow [subTy, ty])
               e = App (Instr (MemInstr ExtractVal)) [Lit $ Int i]
@@ -228,20 +228,20 @@ _convData :: IName -> HName -> P.Type
 -- getFns: generate bindings from a [P.Decl]
 -- both normal fns and typeclass funs use this
 getFns :: (HName->Maybe Type) -> V.Vector P.Decl -> ToCoreEnv (V.Vector Binding)
-getFns findSig fnBindings =
-  let registerBinds :: (HName->Maybe Type) -> P.Decl
-                    -> ToCoreEnv (P.Match, Type)
-      registerBinds findSig (P.FunBind [match]) =
-          let getHName (P.Match nm _ _) = pName2Text nm
-              getHName _ = error "please use 'case' expressions"
-              hNm = getHName $ match
-              ty = case findSig hNm of
-                  Nothing -> TyUnknown
-                  Just t -> t
-          in do
-          addHName hNm =<< freshName
-          pure (match, ty)
-      registerBinds s what = error ("cannot register: " ++ show what)
+getFns findSig fnBindings = let
+  registerBinds :: (HName->Maybe Type) -> P.Decl
+                -> ToCoreEnv (P.Match, Type)
+  registerBinds findSig (P.FunBind [match]) =
+      let getHName (P.Match nm _ _) = pName2Text nm
+          getHName _ = error "please use 'case' expressions"
+          hNm = getHName $ match
+          ty = case findSig hNm of
+              Nothing -> TyUnknown
+              Just t -> t
+      in do
+      addHName hNm =<< freshName
+      pure (match, ty)
+  registerBinds s what = error ("cannot register: " ++ show what)
   in do
   (matches, tys) <- V.unzip <$> V.mapM (registerBinds findSig) fnBindings
   V.zipWithM match2LBind matches tys
@@ -279,22 +279,25 @@ mkLArg :: IName -> P.Pat -> ToCoreEnv IName = \argINm -> \case
   P.PVar hNm -> let h = pName2Text hNm
     in do -- we can sometimes give a type, but it may be wrong.
        addHName h argINm
-       addLocal argINm (LArg $ Entity (Just h) TyUnknown)
-  P.PTuple pNms ->
-    let hNms = (\(P.PVar h) -> pName2Text h) <$> pNms
-        deconTuple :: IName -> HName -> Int -> ToCoreEnv IName
-        deconTuple tupleINm hNm idx  = do
-          let instr = Instr $ MemInstr ExtractVal
-              entity = Entity (Just hNm) TyUnknown
-              expr = App instr [Lit (Int $ fromIntegral idx) , Var tupleINm]
-          elemNm <- freshName
-          addHName hNm elemNm
-          addLocal elemNm (Inline entity expr)
-    in do
-      addLocal argINm (LArg $ Entity Nothing TyUnknown)
-      zipWithM (deconTuple argINm) hNms [0..]
-      pure argINm
+       addLocal argINm $ LArg (Entity (Just h) TyUnknown) 0
+  P.PTuple pNms -> deconTuple argINm pNms
   p -> error ("unknown pattern: " ++ show p)
+
+deconTuple :: IName -> [P.Pat] -> ToCoreEnv IName
+deconTuple argINm pNms =
+  let hNms = (\(P.PVar h) -> pName2Text h) <$> pNms
+      deconTupleArg :: IName -> HName -> Int -> ToCoreEnv IName
+      deconTupleArg tupleINm hNm idx  = do
+        let instr = Instr $ MemInstr ExtractVal
+            entity = Entity (Just hNm) TyUnknown
+            expr = App instr [Lit (Int $ fromIntegral idx) , Var tupleINm]
+        elemNm <- freshName
+        addHName hNm elemNm
+        addLocal elemNm (Inline entity expr)
+  in do
+    addLocal argINm $ LArg (Entity Nothing TyUnknown) 0
+    zipWithM (deconTupleArg argINm) hNms [0..]
+    pure argINm
 
 mkSigMap :: V.Vector P.Decl -> ToCoreEnv (M.Map HName Type)
 mkSigMap sigs =
@@ -414,9 +417,8 @@ partitionFns = partition $ \case { P.TypeSigDecl{}->True ; _-> False }
 -- Classes --
 -------------
 doClassDecl :: P.Decl -> ToCoreEnv ClassDecl
-doClassDecl (P.TypeClass classNm [] {-classVarPNames-} decls) =
+doClassDecl (P.TypeClass classNm [] supers decls) =
   let
-    classHNm = pName2Text classNm
     (sigs, defaultBinds) = partitionFns decls
 
     registerClassFns sigs =
@@ -430,15 +432,13 @@ doClassDecl (P.TypeClass classNm [] {-classVarPNames-} decls) =
         classFnInfo = Entity (Just (pName2Text nm)) sigTy
       , defaultFn   = Nothing }
   in do
-    classTyINm <- freshTyName
-    addTyHName classHNm classTyINm
-    addLocalTy classTyINm (Entity (Just classHNm) (TyPoly PolyAny))
     registerClassFns sigs
     classFnEntities <- mapM sig2ClassFn sigs
 
     pure $ ClassDecl
       { className = pName2Text classNm
-      , classFns  = V.fromList classFnEntities }
+      , classFns  = V.fromList classFnEntities
+      , supers    = pName2Text <$> supers }
 
 doTypeClasses :: V.Vector P.Decl -> V.Vector P.Decl
  -> ToCoreEnv (  V.Vector ClassDecl -- exported classDecl info
@@ -454,27 +454,50 @@ doTypeClasses p_TyClasses p_classInsts = do
         in doClassInstance inst classDecl
   perInstOverloads <- V.mapM doInstance p_classInsts
 
-  let (instVars , class2OverloadMaps) = V.unzip perInstOverloads
+  -- class2Overmaps : foreach ClassNm ; [classFn]
+  -- mps = foreach classFn; ITName --> instFn
+  let (instVars , supers , class2OverloadMaps)= V.unzip3 perInstOverloads
       vconcat = V.foldl' (V.++) V.empty
+      -- mkmap : use instTys rather than classTys in the map
+      mkMap :: ITName -> ITMap IName -> [(ITName, IName)]
+      mkMap instTys classFn2OverloadMap =
+        (instTys , ) <$> (IM.elems classFn2OverloadMap)
       overloadMaps = V.zipWith mkMap instVars class2OverloadMaps
       mps = V.fromList $ transpose $ V.toList overloadMaps
 
       mkLClasses classDecl overloadMap = let
         mkLCls clsInf = LClass clsInf (className classDecl) overloadMap
         in V.map mkLCls (classFnInfo <$> classFns classDecl)
-      classFs = vconcat $ V.zipWith mkLClasses classDecls (M.fromList <$> mps)
-  pure (classDecls , classFs)
+      classFs = V.zipWith mkLClasses classDecls $ M.fromList <$> mps
 
-mkMap :: Type -> IM.IntMap IName -> [(Type, IName)]
-mkMap instTys classFn2OverloadMap =
-  (instTys , ) <$> (IM.elems classFn2OverloadMap)
+  genPolyTypes instVars supers -- produce union type for each class
+
+  pure (classDecls , vconcat classFs)
+
+-- produce union types for each class polytype, eg:
+-- Num  := BigInt | Int | Real
+-- Real := Float  | BigFloat
+genPolyTypes :: V.Vector IName -> V.Vector [T.Text]
+  -> ToCoreEnv [IName]
+genPolyTypes instVars supers = do
+  -- small complication: need to add instances to superclasses
+  let addInst = \mp (instVar , supers) ->
+        foldl' (\m s -> HM.insertWith (++) s [instVar] m) mp supers
+      subTyMap = V.foldl' addInst HM.empty (V.zip instVars supers)
+  polyNames <- freshTyNames (HM.size subTyMap)
+  zipWithM addTyHName (HM.keys subTyMap) polyNames
+  let addTy i (hNm,tys) =
+        let ent = Entity (Just hNm) (TyPoly$PolyUnion (TyAlias <$> tys))
+        in addLocalTy i ent
+  zipWithM addTy polyNames (HM.toList subTyMap)
 
 doClassInstance :: P.Decl{-.TypeClassInst-} -> ClassDecl
-  -> ToCoreEnv (Type , IM.IntMap IName) -- ClassINm -> INm
+  -> ToCoreEnv (ITName , [HName] , ITMap IName) -- ClassINm -> INm
  -- tycon args , classINms, overloadINms
  = \(P.TypeClassInst instNm [instTyNm] decls)
-    (ClassDecl classNm classFns) ->
+    (ClassDecl classNm classFns superClasses) ->
   let instTyHNm = pName2Text instTyNm
+      supers = classNm : superClasses
       (sigs, fnBinds) = partitionFns decls
       genOverload (P.FunBind [(P.Match fName pats rhs)]) =
         let fHName = pName2Text fName
@@ -491,8 +514,9 @@ doClassInstance :: P.Decl{-.TypeClassInst-} -> ClassDecl
     sigMap <- mkSigMap (V.fromList sigs)
     let findInstSig hNm = M.lookup hNm sigMap
 
-    instTy <- lookupTyHNm instTyHNm <&> \case
-      { Just i -> TyAlias i ; Nothing -> error "unknown type" }
+    let lookupINm hNm = lookupTyHNm hNm <&> \case
+          { Just i->i ; Nothing -> error "unknown type" }
+    instTy <- lookupINm instTyHNm
 
     (classFnINms, overloadBinds) <- unzip <$> mapM genOverload fnBinds
     startOverloadId <- gets nameCount
@@ -500,7 +524,7 @@ doClassInstance :: P.Decl{-.TypeClassInst-} -> ClassDecl
         overloadINms = take nOverloads [startOverloadId..]
     modify (\x->x{ nameCount = nameCount x + nOverloads })
     zipWithM addLocal overloadINms overloadBinds
-    pure $ (instTy , IM.fromList (zip classFnINms overloadINms))
+    pure $ (instTy, supers, IM.fromList (zip classFnINms overloadINms))
 
 expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Var (P.UnQual hNm) -> lookupName hNm >>= \case
@@ -513,8 +537,10 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
     iNm <- freshName
     let classNm = case l of
           Char   c -> "Num"
-          Int    i -> "Int"
-          Frac   r -> "Double"
+          Int    i -> "Num"
+          Frac   r -> "Real"
+          PolyInt  i -> "Num" -- i is Text
+          PolyFrac r -> "Real"
           String s -> "CharPtr"
           Array lits -> "CharPtr"
     maybeTy  <- lookupTyHNm $ T.pack $ classNm
@@ -611,9 +637,8 @@ expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
 --P.SectionR
 
   P.Let pTree exp -> do
-    -- lets are special modules because we're still responsible
-    -- for codegenning everything, which is why they're assigned
-    -- names immediately
+    -- lets are modules ; but we need to codegen them
+    -- , which is why they're assigned names immediately
     tyCnt <- gets tyNameCount
     nmCnt <- gets nameCount
     let letConvState = emptyConvState {
@@ -652,42 +677,38 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
     P.PApp qNm ps -> P.PApp qNm (doInfixPats <$> ps)
     other -> other
 
-  varOrNothing = \case { P.PVar n->Just (pName2Text n) ; _->Nothing }
+  doLitAlt = \case
+    P.PLit l -> _
 
-  convAlt :: P.Alt -> ToCoreEnv (Maybe (IName, [IName], CoreExpr))
-  convAlt (P.Alt pat (P.UnGuardedRhs pexp))
+  convDecon :: P.Alt -> ToCoreEnv (Maybe (IName, [IName], CoreExpr))
+  convDecon (P.Alt pat (P.UnGuardedRhs pexp))
    = case doInfixPats pat of
-    P.PVar hNm -> lookupName hNm >>= \case
-       Nothing -> error ("unknown name in pattern: " ++ show hNm)
-       Just n -> expr2Core pexp >>= \exp ->
-            pure $ Just (n, [], exp)
-    P.PApp hNm argPats -> lookupHNm (pQName2Text hNm) >>= \case
-       Nothing -> error ("unknown Constructor:" ++ show hNm)
-       Just n  ->
-         -- check they're all Just
-         let args = case sequence (varOrNothing <$> argPats) of
-                      Just x -> x
-                      Nothing -> error "failed to convert pattern"
-         in do
-         iArgs <- freshNames (length args) -- mapM (\_ -> freshName) args
-         zipWithM (\i hNm -> (addHName hNm i)
-                   *> addLocal i (LArg (Entity (Just hNm) TyUnknown)))
-                  iArgs args
-         exp <- expr2Core pexp
-         pure $ Just (n, iArgs, exp)
-    P.PTuple args -> error "tuple in case"
-    _ -> pure Nothing
---  P.PTuple p -> _
---  P.PList ps -> _
---  P.PWildCard -> _
+    P.PVar nm -> lookupName nm >>= \case
+      Nothing -> error ("unknown name in pattern: " ++ show nm)
+      Just n -> expr2Core pexp <&> Just . (n, [], )
+    P.PApp nm argPats -> lookupHNm (pQName2Text nm) >>= \case
+      Nothing -> error ("unknown Constructor:" ++ show nm)
+      Just n  -> let 
+          varOrNothing = \case { P.PVar n->Just (pName2Text n)
+                               ; _->Nothing }
+          args = case traverse varOrNothing argPats of
+                Just x -> x
+                Nothing -> error "failed to convert pattern"
+          registerLArg i hNm = addHName hNm i
+            *> addLocal i (LArg (Entity (Just hNm) TyUnknown) 0)
+        in do
+        iArgs <- freshNames (length args)
+        zipWithM registerLArg iArgs args
+        Just . (n, iArgs , ) <$> expr2Core pexp
+    P.PTuple args -> error "tuple in case" -- deconTuple
+    P.PLit l    -> pure Nothing
+    P.PList ps  -> _
+    P.PWildCard -> _
   in do
-  dataCase <- sequence <$> mapM convAlt alts
-  -- switchCase: all alts must be literals
-  let litAlts = _ -- no switchCase for now
-  -- TODO Switch case
+  dataCase <- sequence <$> mapM convDecon alts
   pure $ case dataCase of
     Just alts -> Case e (Decon alts)
-    Nothing   -> Case e (Switch litAlts)
+    Nothing   -> Case e $ Switch _ -- (doLitAlt <$> alts)
 
 -- fixities
 defaultPrec = 9

@@ -65,7 +65,7 @@ ppBind f derefTy indent lineNumber b =
     ++ " " ++ show args 
     ++ " : " ++ ppType derefTy (typed entity)
     ++ {-indent ++-} " = " ++ ppCoreExpr f derefTy "" e
-  LArg a    -> "larg: "    ++ ppEntity' a
+  LArg a u  -> "larg: "    ++ ppEntity' a ++ " * " ++ show u
   LCon a    -> "lcon: "    ++ ppEntity' a
   LClass a b c-> "lclass: "  ++ ppEntity' a ++ " >= " ++ show b ++ show c
   LExtern a -> "lextern: " ++ ppEntity' a
@@ -77,13 +77,12 @@ ppCoreModule :: CoreModule -> String
       derefVar i = bind2HName (info (bindings V.! i)) i
       ppEntity'  = ppEntity derefTy
   in
-               clCyan "-- types --\n"
+     clCyan "-- types --\n"
   ++ concat (V.imap (\i x->show i ++ " " ++ ppEntity' x ++ "\n")typeMap)
-  ++ "\n"   ++ clMagenta "-- defaults --\n" ++ show defaults
-  ++ "\n\n" ++ clRed "-- Class decls --"
-  ++ "\n"   ++ ppClassDecls classDecls
   ++ "\n"   ++ clGreen "-- bindings --"
   ++ concat (V.imap (ppBind derefVar derefTy "\n") bindings)
+  ++ "\n\n" ++ clMagenta "-- defaults --\n" ++ show defaults
+  ++ "\n" ++ clRed "-- Class decls --\n"++ ppClassDecls classDecls
 
 ppClassDecls classDecls
  = DL.intercalate "\n" $ show <$> V.toList classDecls

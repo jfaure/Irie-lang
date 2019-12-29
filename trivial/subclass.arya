@@ -1,0 +1,14 @@
+class Num where
+  (+) : Num->Num->Num
+
+class Real <: Num where
+
+type Int    = #!Int 32
+type Double = #!Double
+
+instance Num Int where
+  (+) : Int->Int->Int = #!add
+instance Real Double where
+  (+) : Double->Double->Double = #!add
+
+main = 3.0 + 2

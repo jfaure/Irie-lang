@@ -16,7 +16,7 @@ import qualified Data.Text as T
 import Control.Monad.State.Strict as ST
 import Control.Monad.Reader
 import Data.Functor
-import Data.Char (isAlphaNum)
+import Data.Char (isAlphaNum , isDigit)
 import qualified Data.Vector as V -- for groupDecls
 import GHC.Exts (groupWith)
 
@@ -233,10 +233,13 @@ infixDecl = let
   in InfixDecl <$> pInfix <*> optional (lexeme L.decimal) <*> opNames
 fnName = name <|> parens symbolName
 
-typeClass     = reserved "class" $> TypeClass <*>
-                  tyName <*> many tyVar <*> pWhere decl
-typeClassInst = reserved "instance" $> TypeClassInst
-                  <*> tyName <*> some tyName <*> pWhere decl
+typeClass =
+  let super = many $ reservedOp "<:" *> tyName
+  in reserved "class" $> TypeClass <*>
+       tyName <*> many tyVar <*> super <*> pWhere decl
+typeClassInst =
+  reserved "instance" $> TypeClassInst
+    <*> tyName <*> some tyName <*> pWhere decl
 
 pWhere :: Parser Decl -> Parser [Decl]
 pWhere pdecl = reserved "where" *> do
@@ -253,8 +256,8 @@ typeSigDecl = (<?> "typeSig") $ do
   case boundExp of
     Nothing -> pure $ TypeSigDecl fns ty -- normal typesig
     Just e  -> case fns of        -- scopedTypeVar style binding
-      [fnName] -> pure $
-                  FunBind [Match fnName [] (UnGuardedRhs (Typed ty e))]
+      [fnName] ->
+        pure $ FunBind [Match fnName [] (UnGuardedRhs (Typed ty e))]
       _        -> fail "multiple function bindings at once"
 
 -- funBinds parses multiple binds and groups them by match name
@@ -277,11 +280,14 @@ fnMatch matchName infixName = dbg "match" $ choice
 defaultDecl = DefaultDecl <$ reserved "default" <*> singleType <*> singleType
 
 -- needs to return an Exp so we can give the literal a polytype
-literalExp :: Parser PExp = lexeme $ choice
- [ Lit . Char   <$> charLiteral
- , Lit . String <$> stringLiteral
- , Lit . Frac . toRational <$> try L.float -- can we avoid the try ?
- , Lit . Int    <$> int]
+literalExp :: Parser PExp = Lit <$> literalP
+literalP = lexeme $ choice
+ [ Char   <$> charLiteral
+ , String <$> stringLiteral
+ , numP
+ ]
+-- , Frac . toRational <$> try L.float -- can we avoid the try ?
+-- , Int    <$> int]
 
 binds :: Parser Binds = BDecls <$> many decl
 -- ref = reference indent level
@@ -317,8 +323,8 @@ pExp :: Parser PExp = dbg "pexp" $
   notFn = choice
    [ letIn
    , multiIf
+   , try lambdaCase
    , lambda
-   , lambdaCase
    , caseExpr
    ]
   infixTrain lArg =
@@ -343,16 +349,16 @@ pExp :: Parser PExp = dbg "pexp" $
       Let pTree <$> pExp
   -- it's assumed later that there is at least one if alt
   multiIf = reserved "if" *> choice [normalIf , multiIf]
-      where
-      normalIf = do
-        ifE   <- pExp
-        thenE <- reserved "then" *> pExp
-        elseE <- reserved "else" *> pExp
-        pure (MultiIf [(ifE, thenE), (WildCard, elseE)])
-      subIf = (,) <$ reservedOp "|" <*> pExp <* reservedOp "=" <*> pExp
-      multiIf = do
-        l <- L.indentLevel
-        iB (pure $ L.IndentSome (Just l) (pure . MultiIf) subIf)
+    where
+    normalIf = do
+      ifE   <- pExp
+      thenE <- reserved "then" *> pExp
+      elseE <- reserved "else" *> pExp
+      pure (MultiIf [(ifE, thenE), (WildCard, elseE)])
+    subIf = (,) <$ reservedOp "|" <*> pExp <* reservedOp "=" <*> pExp
+    multiIf = do
+      l <- L.indentLevel
+      iB (pure $ L.IndentSome (Just l) (pure . MultiIf) subIf)
 
   caseExpr = do
     reserved "case"
@@ -360,7 +366,7 @@ pExp :: Parser PExp = dbg "pexp" $
     ref <- ask <* scn
     lvl <- L.indentLevel
     local (const lvl) $ do
-      alts <- indentedItems ref lvl scn alt (fail "_") --no end condition
+      alts <- indentedItems ref lvl scn alt eof
       pure $ Case scrut alts
   typeSig e = reserved ":" *> pType >>= \t -> pure (Typed t e)
   typeExp = TypeExp <$> pType
@@ -368,15 +374,17 @@ pExp :: Parser PExp = dbg "pexp" $
 
 rhs :: Parser Rhs = UnGuardedRhs <$> dbg "rhs" pExp
 alt :: Parser Alt = Alt <$> pat <* reservedOp "->" <*> rhs
-pat :: Parser Pat
- = (parens (PTuple <$> singlePat `sepBy2` symbol ",")) <|> singlePat
-singlePat = dbg "singlePat" (
-      PWildCard <$ reserved "_"
---  <|> literalExp
-  <|> PVar <$> dbg "patIden" lIden
-  <|> PApp <$> (UnQual <$> uIden) <*> many pat -- constructor
---    <|> PInfixApp <$> pat <*> (UnQual <$> lIden) <*> pat
-    )
+pat :: Parser Pat = choice
+ [ parens (PTuple <$> singlePat `sepBy2` symbol ",")
+ , singlePat
+ ] where
+  singlePat = dbg "singlePat" $ choice
+   [ PWildCard <$ reserved "_"
+   , PLit <$> literalP
+   , PVar <$> dbg "patIden" lIden
+   , PApp <$> (UnQual <$> uIden) <*> many pat -- constructor
+  --    <|> PInfixApp <$> pat <*> (UnQual <$> lIden) <*> pat
+   ]
 
 -----------
 -- Types --
@@ -482,3 +490,21 @@ primInstr = (<?> "Primitive Instruction") $
     [ symbol "gep"         $> Gep
     , symbol "extractVal"  $> ExtractVal
     , symbol "insertVal"   $> InsertVal]
+
+-----------------
+-- Experiments --
+-----------------
+decimal_ , dotDecimal_ , exponent_ :: Parser T.Text
+decimal_    = takeWhile1P (Just "digit") isDigit
+dotDecimal_ = char '.' *> takeWhile1P (Just "digit") isDigit
+exponent_   = char' 'e' *> decimal_
+
+numP :: Parser Literal = --T.Text =
+  let unJ = \case { Just x->x ; _ -> T.empty }
+  in do
+  c <- decimal_
+  f <- optional dotDecimal_
+  e <- optional exponent_
+  pure $ case (f , e) of
+    (Nothing , Nothing) -> PolyInt c
+    _ -> PolyFrac $ c `T.append` unJ f `T.append` unJ e

@@ -16,6 +16,7 @@ import qualified CoreUtils as CU
 
 import Data.Char (ord)
 import qualified Data.Text as T
+import qualified Data.Text.Read as T
 import qualified Data.Vector as V
 import qualified LLVM.AST as L -- (Operand, Instruction, Type, Name, mkName)
 --import GHC.Word
@@ -47,9 +48,10 @@ core2stg (CoreModule hNm algData coreBinds overloads defaults _ tyConInstances _
 
 doExtern :: TypeMap -> DynTyMap -> IName -> Entity -> StgBinding
 doExtern tyMap dynTyMap iNm (Entity (Just nm) ty) =
-  let llvmFnTy   = (\(StgLlvmType t) -> t) $ convTy tyMap dynTyMap ty
-      stgId      = convName iNm (Just nm)
-  in StgBinding stgId (StgExt llvmFnTy)
+  let stgId      = convName iNm (Just nm)
+  in StgBinding stgId $ case convTy tyMap dynTyMap ty of
+    StgLlvmType llvmFnTy -> StgExt llvmFnTy
+    t ->                    StgExtComplex t
 
 -- handle the algData TypeMap (NameMap Entity)
 -- This returns the TyAliases monotyDatas
@@ -135,6 +137,7 @@ doBinds getDynInst binds tyMap dynTyMap classDecls
   convTy'      = convTy tyMap dynTyMap
   lookupBind i = CU.lookupBinding i binds
   lookupTy     = typed . (tyMap V.!)
+  unVar        = \case { TyAlias i->lookupTy i ; t -> t}
   convName' i  = convName i $ named $ info $ lookupBind i
   convExpr' = convExpr binds classDecls getDynInst lookupTy
   f iNm        = \case
@@ -158,8 +161,8 @@ doBinds getDynInst binds tyMap dynTyMap classDecls
       in (StgBinding nm rhs :)
     LLit i lit ->
       let nm = (convName iNm (named i))
-          e  = StgLit $ StgConstArg $ literal2Stg lit
-                              -- $ typedLit2Stg lit (tyMap V.! typed i)
+          e  = StgLit $ StgConstArg $ -- literal2Stg lit
+                              typedLit2Stg lit (unVar $ typed i)
           rhs = StgTopRhs [] [] (convTy' $ typed i) e
       in  (StgBinding nm rhs :)
     Inline{}   -> id
@@ -212,11 +215,6 @@ convExpr bindMap classDecls getDynInst lookupTy ty =
       _ -> if tyArity > arity
        then StgInstr StgPAp (StgVarArg (convName' fId) : stgArgs)
        else StgApp (convName' fId) stgArgs
-
---  Instr prim -> case prim of
---    MemInstr (ExtractVal) ->
---      StgInstr (StgExtractVal i) stgArgs
---    _ -> error ("raw primitive: " ++ show prim)
     notFn -> error ("panic: core2Stg: not a function: " ++ show notFn)
 
  -- TODO default case alt
@@ -246,12 +244,15 @@ convName i = \case
 
 typedLit2Stg :: Literal -> Type -> StgConst = \l t ->
   let mkChar c = C.Int 8 $ toInteger $ ord c 
+      unEither f = fst . either error id . f
   in case t of
   TyMono (MonoTyPrim p) -> case p of
-    PrimInt bits  -> let Int i = l in C.Int (fromIntegral bits) i
-    PrimFloat fTy -> let Frac f = l in case fTy of
+    PrimInt bits  -> let Int i = l
+      in C.Int (fromIntegral bits) (fromIntegral i) -- fromIntegral
+    PrimFloat fTy -> let Frac f = l
+      in case fTy of
       FloatTy  -> C.Float (LF.Single $ fromRational f)
-      DoubleTy -> C.Float (LF.Double $ fromRational f)
+      DoubleTy -> C.Float (LF.Double $ fromRational f) -- fromRational
     PrimArr ty -> let String s = l in
       C.Array (LLVM.AST.IntegerType 8) (mkChar <$> (s++['\0']))
   o -> error $ show o
@@ -260,9 +261,9 @@ literal2Stg :: Literal -> StgConst = \l ->
   let mkChar c = C.Int 8 $ toInteger $ ord c 
   in case l of
     Char c   -> mkChar c
-    Int i    -> C.Int 32 $ i
+--    Int i    -> C.Int 32 $ i
     String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))
-    Frac f   -> C.Float (LF.Double $ fromRational f)
+--    Frac f   -> C.Float (LF.Double $ fromRational f)
 
 -- most llvm instructions take flags, stg wants functions on operands
 prim2llvm :: PrimInstr -> StgPrimitive = \case
