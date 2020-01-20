@@ -23,7 +23,9 @@ ppType :: (IName -> String) -> Type -> String = \deref -> clCyan . \case
  TyPoly p        -> show p
  TyArrow tys     -> clNormal ++ "(" ++ (concat $ DL.intersperse " -> "
                            (ppType deref <$> tys)) ++ ")"
- TyPAp tys ty -> "PAp (" ++ ppType deref (TyArrow tys) ++ ") -> " ++ ppType deref (TyArrow tys)
+-- TyPAp tys ty -> "PAp (" ++ ppType deref (TyArrow tys) ++ ") -> "
+--                  ++ ppType deref (TyArrow tys)
+ TyInstance ty o -> show ty ++ " ! " ++ show o
  TyExpr coreExpr -> show coreExpr
  TyUnknown       -> "TyUnknown"
  TyBroken        -> "tyBroken"
@@ -39,12 +41,12 @@ ppCoreExpr :: (IName -> String) -> (IName -> String)
   Lit l -> show l
   App f args ->
     let parenthesize x = "(" ++ ppCoreExpr' x ++ ")" 
-    in ppCoreExpr' f ++" "++ concat (DL.intersperse " " (parenthesize <$> args))
+    in ppCoreExpr' (Var f) ++" "++ concat (DL.intersperse " " (parenthesize <$> args))
   -- Let binds e -> error "let in coreexpr" --"let "++ppBinds (\x->Nothing) binds++"in "++ ppCoreExpr e
   Case c a -> case a of
     Switch alts -> "case "++ppCoreExpr' c++show alts
     Decon  alts -> "case " ++ ppCoreExpr' c ++ " of" ++ "\n" ++ (concat $ DL.intersperse "\n" $ (ppDataAlt deref (indent++"  "))<$> alts)
-  TypeExpr ty -> ppType' ty
+  TypeExpr ty -> "TypeExpr: " ++ ppType' ty
   l -> show l
 
 ppDataAlt :: (IName -> String) -> String -> (IName, [IName], CoreExpr) -> String
@@ -60,27 +62,29 @@ ppBind f derefTy indent lineNumber b =
   let ppEntity' = ppEntity derefTy
   in clGreen indent ++ show lineNumber ++ ": " ++ case b of
   LTypeVar e -> "tyVar " ++ showMaybeName (named e) ++ ": " ++ show (typed e)
-  LLit  entity l -> "# " ++ show l
   LBind entity args e -> showMaybeName (named entity)
     ++ " " ++ show args 
     ++ " : " ++ ppType derefTy (typed entity)
     ++ {-indent ++-} " = " ++ ppCoreExpr f derefTy "" e
-  LArg a u  -> "larg: "    ++ ppEntity' a ++ " * " ++ show u
+  LArg a u  -> "larg: "    ++ ppEntity' a ++ " used " ++ show u
   LCon a    -> "lcon: "    ++ ppEntity' a
   LClass a b c-> "lclass: "  ++ ppEntity' a ++ " >= " ++ show b ++ show c
   LExtern a -> "lextern: " ++ ppEntity' a
+  LInstr a instr -> "LInstr: " ++ ppEntity' a ++ " = " ++ show instr
   Inline a e-> "inline: " ++ ppEntity' a ++ " = " ++ ppCoreExpr f derefTy "" e
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule hNm typeMap bindings classDecls defaults fixities tyConInstances _ _) ->
+ = \(CoreModule hNm typeMap bindings n classDecls defaults fixities tyConInstances _ _) ->
   let derefTy  i = bind2HName        (typeMap  V.! i) i
       derefVar i = bind2HName (info (bindings V.! i)) i
       ppEntity'  = ppEntity derefTy
   in
      clCyan "-- types --\n"
   ++ concat (V.imap (\i x->show i ++ " " ++ ppEntity' x ++ "\n")typeMap)
-  ++ "\n"   ++ clGreen "-- bindings --"
-  ++ concat (V.imap (ppBind derefVar derefTy "\n") bindings)
+  ++ clGreen "\n-- Top bindings --"
+  ++ concat (V.imap (ppBind derefVar derefTy "\n") $ V.take n bindings)
+  ++ clGreen "\n-- locals --"
+  ++ concat (V.imap (\i->ppBind derefVar derefTy "\n" (n+i) ) $ V.drop n bindings)
   ++ "\n\n" ++ clMagenta "-- defaults --\n" ++ show defaults
   ++ "\n" ++ clRed "-- Class decls --\n"++ ppClassDecls classDecls
 
@@ -98,11 +102,11 @@ bind2HName entity i = case named entity  of
 --          top = V.filter (\case { LBind{} -> True ; _ -> False }) binds
 --      in concat ((ppBind (bind2HName binds) "\n") <$> top)
 
-ppEntity derefTy (Entity nm ty) = 
-  case nm of
+ppEntity derefTy ent = --(Entity nm ty) = 
+  case named ent of
     Just nm -> show nm
     Nothing -> show ""
-  ++ " := " ++ ppType derefTy ty -- ++ " (" ++ show uni ++ ")"
+  ++ " := " ++ ppType derefTy (typed ent)
 
 clBlack   x = "\x1b[30m" ++ x ++ "\x1b[0m"
 clRed     x = "\x1b[31m" ++ x ++ "\x1b[0m" 

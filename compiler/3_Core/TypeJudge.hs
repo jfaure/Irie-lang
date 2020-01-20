@@ -13,7 +13,7 @@
 -- skolemization = remove existential quantifiers
 --   boxy matching: fill boxes with monotypes
 --   (no instantiation/skolemization)
---
+
 -- Flexible Vs rigid
 -- flexible = subsume a type (<=)
 -- rigid    = all must be exactly the same type (=)
@@ -33,6 +33,7 @@ import qualified Data.Vector.Mutable as MV -- mutable vectors
 import Control.Monad.ST
 import qualified Data.Vector as V
 import qualified Data.Map as M
+import qualified Data.HashMap.Strict as HM
 import qualified Data.IntMap as IM
 import qualified Data.Text as T
 import Data.Functor
@@ -40,11 +41,9 @@ import Control.Monad
 import Control.Applicative
 import Control.Monad.Trans.State.Strict
 import Data.Char (ord)
-import Data.List (foldl')
+import Data.List (foldl', intersect)
 import GHC.Exts (groupWith)
 
---import qualified LLVM.AST.Constant as LC
---import qualified LLVM.AST as L
 import Debug.Trace
 
 dump :: TCEnv ()
@@ -69,7 +68,7 @@ judgeModule cm =
         = \st -> case errors st of
         [] -> (coreModule st) { tyConInstances = dataInstances st }
         errs -> error $ show errs
-      go = V.imapM (judgeBind cm) (bindings cm)
+      go = V.imapM (judgeBind cm) (V.take (nTopBinds cm) (bindings cm))
   in handleErrors $ execState go startState
 
 -- functions used by judgeBind and judgeExpr
@@ -80,21 +79,21 @@ typeOfM :: IName -> TCEnv Type
 lookupHNameM :: IName -> TCEnv (Maybe HName)
  = \n -> named . info . CU.lookupBinding n
           <$> gets (bindings . coreModule)
--- modify a binding's type annotation
-updateBindTy :: IName -> Type -> TCEnv () = \n newTy ->
- let doUpdate cm =
-      let binds = bindings cm
-          b = CU.lookupBinding n binds
-          newBind = b { info = (info b) { typed=newTy } }
-          binds' = V.modify (\v->MV.write v n newBind) binds
-      in cm { bindings=binds' }
- in modify (\x->x{ coreModule = doUpdate (coreModule x) })
 
-updateBind :: IName -> Binding -> TCEnv () = \n newBind ->
- let doUpdate cm =
-      let binds = V.modify (\v->MV.write v n newBind) (bindings cm)
-      in  cm { bindings=binds }
- in modify (\x->x{ coreModule = doUpdate (coreModule x) })
+-- modify a binding's type annotation
+_updateBind :: IName -> Binding -> Type -> CoreModule -> CoreModule
+_updateBind n b newTy cm =
+  let binds = bindings cm
+      newBind = b{ info = (info b) { typed=newTy , checked=True } }
+      binds' = V.modify (\v->MV.write v n newBind) binds
+  in cm { bindings=binds' }
+
+updateBindTy :: IName -> Type -> TCEnv () = \n newTy -> do
+   b <- gets $ CU.lookupBinding n . bindings . coreModule
+-- traceM $ show (typed $ info b) ++ " => " ++ show newTy
+   let isPoly = \case { TyPoly{}->True ; _->False }
+-- when (not $ checked $ info $ b) $
+   modify (\x->x{ coreModule = _updateBind n b newTy (coreModule x) })
 
 -- Rule lambda: propagate (maybe partial) type annotations downwards
 -- let-I, let-S, lambda ABS1, ABS2 (pure inference case)
@@ -102,13 +101,6 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
  = \cm bindINm ->
   let unVar = CU.unVar (algData cm)
   in \case
-  LArg    i uc       -> pure () -- pure $ typed i
-  LCon    i          -> pure () -- pure $ typed i
-  LClass i decl insts-> pure () -- pure $ traceShowId $ typed i
-  LExtern i          -> pure () -- pure $ typed i
-  Inline i e         -> pure ()
-  LLit  inf l        -> pure ()
-  LTypeVar{}         -> pure ()
   LBind inf args e ->
     let judgeFnBind arrowTys = do
           zipWithM updateBindTy args arrowTys
@@ -127,7 +119,7 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
           updateBindTy bindINm fnTy
     in case unVar (typed inf) of
       TyArrow arrowTys -> judgeFnBind arrowTys
-      TyPAp{} -> error "pap" -- judgeFnBind True  arrowTys
+      TyInstance _ TyPAp{} -> error "pap" -- judgeFnBind True  arrowTys
       -- notFnTys can still be 'proxy' functions that pass on all args
       notFnTy -> judgeExpr e notFnTy cm >>= \ty -> case args of
         [] -> updateBindTy bindINm ty
@@ -137,6 +129,14 @@ judgeBind :: CoreModule -> IName -> Binding -> TCEnv ()
           let argTys = typed . info <$> binds
               fnTy = TyArrow $ argTys ++ [ty]
           updateBindTy bindINm fnTy
+  _ -> pure ()
+--LChecked i -> pure ()
+--LArg    i uc       -> pure () -- pure $ typed i
+--LCon    i          -> pure () -- pure $ typed i
+--LClass i decl insts-> pure () -- pure $ traceShowId $ typed i
+--LExtern i          -> pure () -- pure $ typed i
+--Inline i e         -> pure ()
+--LTypeVar{}         -> pure ()
 
 -- type judgements
 -- a UserType of TyUnknown needs to be inferred. otherwise check it.
@@ -147,6 +147,12 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
   unVar :: Type -> Type = CU.unVar (algData cm)
   subsume' a b = subsume a b unVar
   judgeExpr' got expected = judgeExpr got expected cm
+
+  (numCls , realCls) =
+    let unJ j = case j of { Just x -> TyAlias x ;
+          Nothing-> error $ "prim "++ show j ++" not in scope"}
+        getClass clsNm = unJ $ T.pack clsNm `HM.lookup` hNameTypes cm
+    in (getClass "Num" , getClass "Real")
 
   -- case expressions have the type of their most general alt
   mostGeneralType :: [Type] -> Maybe Type =
@@ -161,6 +167,15 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
            | True           -> Nothing
    in foldr (\t1 t2 -> mostGeneral t1 =<< t2) (Just TyUnknown)
 
+  fillBoxes :: Type -> Type -> Type
+  fillBoxes got TyUnknown = got -- pure inference case
+  fillBoxes got known = case unVar got of
+    TyUnknown -> known -- trust the annotation
+    TyArrow tys ->
+      let TyArrow knownTys = unVar known
+      in  TyArrow $ zipWith fillBoxes tys knownTys
+    t -> got
+
   -- inference should never return TyUnknown
   -- ('got TyUnknown' fails to subsume)
   checkOrInfer :: Type -> Type
@@ -173,42 +188,47 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       else error ("subsumption failure:"
                    ++ "\nExpected: " ++ ppType' expected
                    ++ "\nGot:      " ++ ppType' gotTy
-                   ++ "\n" ++ show expected ++ " <:? " ++ show gotTy
+                   ++ "\n" ++ show (unVar gotTy) ++ " <:? " ++ show expected
                    ++ "\nIn the expression: " ++ show got
                    )
 
   in checkOrInfer <$> case got of
 
-  Lit l    -> pure $ expected
+  Lit l    ->
+    let ty = case l of
+          String{} -> TyMono $ MonoTyPrim $ PtrTo (PrimInt 8) --"CharPtr"
+          Array{}  -> TyMono $ MonoTyPrim $ PtrTo (PrimInt 8) --"CharPtr"
+          PolyFrac{} -> realCls
+          _ -> numCls
+    in pure $ ty
   WildCard -> pure expected
   -- prims must have an expected type, exception is made for ExtractVal
   -- since that is autogenerated by patternmatches before type is known.
-  Instr p  -> case expected of
+  Instr p args -> pure $ case p of
+    MkNum  -> numCls
+    MkReal -> realCls
+    _ -> case expected of
       TyUnknown -> error ("primitive has unknown type: " ++ show p)
-      t         -> pure expected
+      t         -> expected
   Var nm ->
     -- 1. lookup type of the var in the environment
     -- 2. in checking mode, update env by filling var's boxes
-    let fillBoxes :: Type -> Type -> Type
-        fillBoxes got TyUnknown = got -- pure inference case
-        fillBoxes got known = case unVar got of
-          TyUnknown -> known -- trust the annotation
-          TyArrow tys ->
-            let TyArrow knownTys = unVar known
-            in  TyArrow $ zipWith fillBoxes tys knownTys
-          t -> got
-    in do
+    do -- TODO this may duplicate work
+      bind <- lookupBindM nm
+      judgeBind cm nm bind
       bindTy <- typed . info <$> lookupBindM nm
       let newTy = fillBoxes bindTy expected
-      updateBindTy nm newTy
+--    updateBindTy nm newTy -- this is done in App ,
+--    since we do not immediately know polymorphism at lookup there
       pure newTy
 
-  -- APP expr: unify argTypes , instantiate and remove left arrows
-  App fn args -> let
+  -- APP expr: unify argTypes , instantiate and return arrows - args
+  App fnName args -> let
+    fn = Var fnName -- for printing errors
     -- instanciate: propagate information about instanciated polytypes
     -- eg. if ((neg) : Num -> Num) $ (3 : Int), then Num = Int here.
     instantiate :: IName -> [Type] -> [Type] -> TCEnv [Type]
-    instantiate fnName argTys remTys = lookupBindM fnName >>= \case
+    instantiate (fnName) argTys remTys = lookupBindM fnName >>= \case
       LClass classInfo _ allOverloads ->
         let
         isValidOverload candidateTy v
@@ -218,16 +238,58 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           0 -> error $ "no valid overloads: "
             ++ show argTys ++ "\n<:?\n" ++ show allOverloads
           1 -> -- TODO return tys change ?
-            let instanceId = head $ M.elems candidates
-            in (unVar . typed . info <$> lookupBindM instanceId)
+            let instId = head $ M.elems candidates
+            in (unVar . typed . info <$> lookupBindM instId)
             <&> \case
-              TyArrow tys ->
-                 let retTys = drop (length argTys) tys
-                 in [TyInstance instanceId (TyArrow retTys)]
-              _ -> error "panic, expected function"
+            TyArrow tys ->
+              [TyInstance (TyArrow remTys) (TyOverload instId)]
+            _ -> error "panic, expected function"
           _ -> error $ "ambiguous function call: "
                ++ show argTys ++ "\n" ++ show candidates
       _ -> pure $ remTys
+
+    -- verify all arguments subsume the expected types,
+    -- also reduce polymorphism and verify rigids are the same type
+    polySubsumeArgs :: [Type] -> [Type] -> [Type] -> TCEnv [Type]
+    polySubsumeArgs consumedTys remTys judgedArgTys = let
+      insertLookup kx x t = IM.insertLookupWithKey (\_ a _ -> a) kx x t
+      addPossibles i t tys mp = case IM.lookup i mp of
+        Nothing  -> IM.insert i tys mp
+        Just prevTys  -> -- TODO intersectBy (maybe can cmp TyAliases)
+          let unInst = \case { TyInstance t _ -> t ; t -> t}
+              possible = intersect (unVar <$> tys) prevTys
+          in IM.insert i (filter (`subsume'` t) possible) mp
+      doPoly (t@(TyAlias i) , judged) mp = case (unVar judged) of
+--      TyRigid r -> if i == r then mp else error "TODO"
+        TyPoly (PolyUnion tys) -> addPossibles i t tys mp        
+        j -> if subsume' judged t then addPossibles i t [j] mp
+             else error $ "cannot unify function args"
+                ++ show judged ++ "\n <:?\n" ++ show t
+      doPoly _ mp = mp
+      expected' = case expected of
+        TyUnknown -> case remTys of { [r] -> r ; r -> TyArrow r}
+        t         -> t
+      polyMap = foldr doPoly IM.empty -- $ traceShowId
+        $ zip (consumedTys) (judgedArgTys ++ [expected'])
+      oneSolution = \case
+        []  -> error $ "No instance: "++show fn++" : "++show expected
+        [t] -> t
+        tys -> error $ "ambiguous instance: "
+                 ++ show fnName ++ " :? " ++ show tys
+      rigidsMap = oneSolution <$> polyMap
+
+      args'  =  fst . betaReduce rigidsMap unVar <$> consumedTys
+      remTys' = fst . betaReduce rigidsMap unVar <$> remTys
+
+      updateTy ty  = \case -- TODO cancerous
+        Var i -> case ty of
+          TyUnknown -> pure ()
+          ty  -> updateBindTy i ty
+        _     -> pure ()
+      in do
+      -- expected ?
+      zipWithM_ updateTy args' args
+      instantiate fnName args' remTys'
 
     judgeApp arrowTys isVA =
       let appArity = length args
@@ -235,22 +297,19 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           (consumedTys , remTys) = splitAt splitIndx arrowTys
           checkArity = \case -- (saturated | PAp | VarArgs)
             []  -> last arrowTys -- TODO ensure fn is ExternVA
-            [TyInstance i (TyArrow ret)] -> TyInstance i $ checkArity ret
+            [TyInstance (TyArrow ret) inst] ->
+              TyInstance (checkArity ret) inst
             [t] -> t
-            tys -> TyPAp consumedTys remTys
+            tys -> TyInstance (TyArrow remTys) $ TyPAp consumedTys remTys
           arrowTys' = if isVA --appArity >= length arrowTys
-            then consumedTys ++ replicate 2 TyUnknown
+            then consumedTys ++ repeat TyUnknown
             else arrowTys
       in do
-        judgedArgs <- zipWithM judgeExpr' args arrowTys'
-        checkArity <$> judgeApp' arrowTys' remTys judgedArgs
-
-    judgeApp' consumedTys remTys judgedArgTys =
-      let Var fnName = fn
-      in if all id (zipWith subsume' judgedArgTys consumedTys)
-      then instantiate fnName judgedArgTys remTys
-      else error $ "cannot unify function arguments\n"
-          ++ show judgedArgTys ++ "\n<:?\n" ++ show consumedTys
+      judgedArgs <- zipWithM judgeExpr' args arrowTys'
+      let inst = any (\case {TyInstance{}->True ; _->False}) judgedArgs
+          mkInst t = if inst
+            then TyInstance t (TyArgInsts judgedArgs) else t
+      mkInst . checkArity <$> polySubsumeArgs arrowTys' remTys judgedArgs
 
     -- use term arg types to gather info on the tyFn's args here
     judgeTyFnApp argNms arrowTys = do
@@ -263,7 +322,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           prepareIM (TyRigid i, x) = (i , x)
           tyFnArgs = IM.fromList $ prepareIM <$> tyFnArgVals
           -- recursively replace all rigid type variables
-      retTy_ <- judgeApp' arrowTys remTys judgedArgs
+      retTy_ <- polySubsumeArgs arrowTys remTys judgedArgs
       let [retTy] = retTy_ -- TODO
 
       -- generate newtype
@@ -281,26 +340,28 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           newNm = mkNm hNm
           newAlts = (\(nm,t) -> (mkNm nm , t)) <$> alts
           newData = TyPoly $ PolyData p (DataDef newNm newAlts)
-          ent = Entity (Just newNm) newData
+          ent = CU.mkEntity newNm newData
       modify (\x->x{ dataInstances=V.snoc (dataInstances x) ent })
       -- TODO !!
       let conIdx = 0
           sub    = head subs
-      pure $ TyDynInstance idx conIdx (TyAlias dataINm)
+      pure $ TyInstance (TyAlias dataINm) $ TyDynInstance idx conIdx
 
     judgeFn expFnTy =
       let judgeExtern eTys isVA
             = judgeApp (TyMono . MonoTyPrim <$> eTys) isVA
+          notVA = False
+          va    = True
       in case expFnTy of
-      TyArrow arrowTys -> judgeApp arrowTys False
-      TyPAp    t1s t2s -> judgeApp t2s False
+      TyArrow arrowTys -> judgeApp arrowTys notVA
+      TyInstance t _ -> judgeFn t
       TyExpr (TyTrivialFn argNms (TyArrow tys))->judgeTyFnApp argNms tys
-      TyMono (MonoTyPrim (PrimExtern   eTys)) -> judgeExtern eTys False
-      TyMono (MonoTyPrim (PrimExternVA eTys)) -> judgeExtern eTys True
+      TyMono (MonoTyPrim (PrimExtern   eTys)) -> judgeExtern eTys notVA
+      TyMono (MonoTyPrim (PrimExternVA eTys)) -> judgeExtern eTys va
       TyUnknown -> error ("failed to infer function type: "++show fn)
       t -> error ("not a function: "++show fn++" : "++show t)
 
-    in judgeExpr' fn TyUnknown >>= judgeFn . unVar
+    in judgeExpr' (Var fnName) TyUnknown >>= judgeFn . unVar
 
 ----------------------
 -- Case expressions --
@@ -317,7 +378,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
     exprTys <- mapM (\(_,_,expr) -> judgeExpr' expr expected) alts
     patTys  <- mapM (\(con,args,_) -> case args of
         [] -> judgeExpr' (Var con) expected
-        _  -> judgeExpr' (App (Var con) (Var <$> args)) expected
+        _  -> judgeExpr' (App con (Var <$> args)) expected
       ) alts
 
     let expScrutTy = case mostGeneralType patTys of
@@ -356,7 +417,7 @@ subsume got exp unVar = subsume' got exp
     TyMono exp' -> case got of
       TyMono got' -> subsumeMM got' exp'
       TyPoly got' -> subsumePM got' exp'
-      TyInstance _ got' -> subsume' got' exp
+      TyInstance got' _ -> subsume' (unVar got') exp
       TyRigid{} -> True
       a -> error ("subsume: unexpected type: " ++ show a ++ " <:? " ++ show exp)
     TyPoly exp' -> case got of
@@ -391,6 +452,7 @@ subsume got exp unVar = subsume' got exp
 
   subsumePM :: PolyType  -> MonoType -> Bool
 --subsumePM (PolyData p _) m@(MonoRigid r) = subsumeMP m p
+  subsumePM (PolyUnion [t]) m = subsume' t (TyMono m)
   subsumePM _ _ = False -- Everything else is invalid
 
   subsumePP :: PolyType  -> PolyType -> Bool
@@ -440,8 +502,9 @@ _betaReduce rigidsMap unVar ty =
   TyRigid i -> pure $ maybe ty id (IM.lookup i rigidsMap)
   TyMono (MonoSubTy sub parent c)-> betaReduce' (unVar (TyAlias parent))
   TyArrow tys -> TyArrow <$> mapM betaReduce' tys
-  TyPoly tyPoly -> TyPoly <$> case tyPoly of
-    PolyUnion tys -> PolyUnion <$> mapM betaReduce' tys
+  TyPoly tyPoly -> case tyPoly of
+    PolyUnion [t] -> pure t
+    PolyUnion tys -> pure $ TyPoly $ PolyUnion tys --mapM betaReduce' tys
   TyExpr tyFn -> case tyFn of
     TyTrivialFn tyArgs tyVal -> if length tyArgs /= IM.size rigidsMap
       then error $ "tyCon pap: " ++ show ty
@@ -449,7 +512,7 @@ _betaReduce rigidsMap unVar ty =
 --  TyApp ty argsMap -> betaReduce (IM.union argsMap rigidsMap) ty
   -- aliases are ignored,
   -- we cannot beta reduce anything not directly visibile
-  TyAlias i -> case unVar (TyAlias i) of
-    TyRigid i -> pure $ maybe ty id (IM.lookup i rigidsMap)
-    t -> pure t
+  TyAlias i -> {-case unVar (TyAlias i) of
+    TyRigid i -> -} pure $ maybe ty id (IM.lookup i rigidsMap)
+    --t -> pure t
   ty -> pure ty

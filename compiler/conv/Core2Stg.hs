@@ -1,3 +1,4 @@
+-- {-#LANGUAGE Strict#-}
 -- core2Stg
 -- * all LBinds must have a type annotation
 -- * all types must be monotypes
@@ -16,7 +17,7 @@ import qualified CoreUtils as CU
 
 import Data.Char (ord)
 import qualified Data.Text as T
-import qualified Data.Text.Read as T
+import qualified Data.Text.Read as TR
 import qualified Data.Vector as V
 import qualified LLVM.AST as L -- (Operand, Instruction, Type, Name, mkName)
 --import GHC.Word
@@ -35,19 +36,19 @@ type DynTyMap = TypeMap
 
 -- TODO filter all functions from CoreModule.bindings
 core2stg :: CoreModule -> StgModule
-core2stg (CoreModule hNm algData coreBinds overloads defaults _ tyConInstances _ _) =
-  let (normalData, stgTypedefs) = convData algData tyConInstances
-      getDynInst i conIdx = case named (tyConInstances V.! i) of
+core2stg cm@(CoreModule hNm algData coreBinds nTopBinds overloads defaults _ tyConInsts _ _) =
+  let (normalData, stgTypedefs) = convData algData tyConInsts
+      getDynInst i conIdx = case named (tyConInsts V.! i) of
         Nothing -> error "impossible"
         Just  h -> h
   in StgModule {
      stgData  = normalData
    , typeDefs = V.fromList stgTypedefs
-   , binds    = doBinds getDynInst coreBinds algData tyConInstances overloads
+   , binds    = doBinds getDynInst coreBinds nTopBinds algData tyConInsts overloads
   }
 
 doExtern :: TypeMap -> DynTyMap -> IName -> Entity -> StgBinding
-doExtern tyMap dynTyMap iNm (Entity (Just nm) ty) =
+doExtern tyMap dynTyMap iNm (Entity (Just nm) ty _) =
   let stgId      = convName iNm (Just nm)
   in StgBinding stgId $ case convTy tyMap dynTyMap ty of
     StgLlvmType llvmFnTy -> StgExt llvmFnTy
@@ -59,7 +60,7 @@ convData :: TypeMap -> DynTyMap -> (V.Vector StgData, [(StgId, StgType)])
 convData tyMap dynTyMap = mkLists $ foldr f ([],[]) (tyMap V.++ dynTyMap)
   where
   mkLists (a,b) = (V.fromList a, b)
-  f (Entity (Just hNm) ty) (d, a) = 
+  f (Entity (Just hNm) ty _) (d, a) = 
     let nm = LLVM.AST.mkName (CU.hNm2Str hNm)
     in case ty of
       TyPoly (PolyData ty dataDef) ->
@@ -68,7 +69,7 @@ convData tyMap dynTyMap = mkLists $ foldr f ([],[]) (tyMap V.++ dynTyMap)
       -- ignore tycons
       TyExpr{} -> (d , a)
       rawTy -> (d, (nm, convTy tyMap dynTyMap rawTy):a)
-  f (Entity Nothing ty) (d,a) = case ty of
+  f (Entity Nothing ty _) (d,a) = case ty of
     TyRigid i -> (d , (convName i Nothing , StgPolyType) : a)
     _ -> (d,a)
 --f o (d,a) = error $ show o ++ " :" ++ show d ++ " , " ++ show a
@@ -114,34 +115,37 @@ convTy tyMap dynTyMap =
   TyRigid{}    -> StgPolyType
   t@(TyCon ty tys) -> StgPolyType --convTy' $ head tys --error $ show t
 
-  TyPAp t1s t2s ->
-    let st1s = convTy' <$> t1s
-        st2s = convTy' <$> t2s
-    in StgPApTy st1s st2s
-  TyInstance fId ty    -> convTy' ty
-  TyDynInstance fId conIdx ty -> StgTypeAlias
-    $ convName (fId + V.length tyMap) (named (dynTyMap V.! fId))
+  TyInstance ty inst -> case inst of
+    TyNum -> convTy' ty
+    TyArgInsts tys -> convTy' ty
+    TyPAp t1s t2s ->
+      let st1s = convTy' <$> t1s
+          st2s = convTy' <$> t2s
+      in StgPApTy st1s st2s
+    TyOverload fId       -> convTy' ty
+    TyDynInstance fId conIdx -> StgTypeAlias
+      $ convName (fId + V.length tyMap) (named (dynTyMap V.! fId))
 
-  TyPoly (PolyUnion alts) -> error "core2stg: polytype" -- convTy' $ head alts
+  TyPoly (PolyUnion alts) -> StgPolyType -- error $ "core2stg: polyunion: " ++ show alts -- convTy' $ head alts
   TyPoly (PolyAny) -> StgPolyType
   -- Note any other type is illegal at this point
   t -> error ("internal error: core2Stg: not a monotype: " ++ show t)
 
 -- the V.imap will give us the right inames since it contains all terms
-doBinds :: (Int->Int->HName) -> V.Vector Binding
+doBinds :: (Int->Int->HName) -> V.Vector Binding -> Int
         -> TypeMap -> DynTyMap -> V.Vector ClassDecl
         -> V.Vector StgBinding
-doBinds getDynInst binds tyMap dynTyMap classDecls
-  = V.fromList $ V.ifoldr f [] binds
+doBinds getDynInst binds nTopBinds tyMap dynTyMap classDecls
+  = V.fromList $ V.ifoldr f [] binds --(V.take nTopBinds binds)
   where
   convTy'      = convTy tyMap dynTyMap
   lookupBind i = CU.lookupBinding i binds
   lookupTy     = typed . (tyMap V.!)
-  unVar        = \case { TyAlias i->lookupTy i ; t -> t}
+  unVar        = CU.unVar tyMap -- \case { TyAlias i->lookupTy i ; t -> t}
   convName' i  = convName i $ named $ info $ lookupBind i
-  convExpr' = convExpr binds classDecls getDynInst lookupTy
+  convExpr'    = convExpr binds tyMap classDecls getDynInst lookupTy
   f iNm        = \case
---  LBind args (Instr i) info  -> id -- don't try to gen primitives
+    LBind _ _ Lit{} -> id
     LBind info args expr -> let
       nm       = convName iNm (named info)
       argNames = StgVarArg . convName' <$> args
@@ -150,22 +154,10 @@ doBinds getDynInst binds tyMap dynTyMap classDecls
           t -> ([], [t])
       stgArgTys = convTy' <$> argTys
       stgRetTy  = convTy' retTy
-      rhs :: StgRhs = case expr of
-        Instr (SizeOf) ->
-          let [arg] = stgArgTys
-          in StgPrim (StgSizeOf arg) [] stgRetTy
-        Instr i -> StgPrim (prim2llvm i) stgArgTys stgRetTy
-        e       ->
-          let stgExpr = convExpr' retTy expr
-          in StgTopRhs argNames stgArgTys stgRetTy stgExpr
+      rhs = StgTopRhs argNames stgArgTys stgRetTy $ convExpr' retTy expr
       in (StgBinding nm rhs :)
-    LLit i lit ->
-      let nm = (convName iNm (named i))
-          e  = StgLit $ StgConstArg $ -- literal2Stg lit
-                              typedLit2Stg lit (unVar $ typed i)
-          rhs = StgTopRhs [] [] (convTy' $ typed i) e
-      in  (StgBinding nm rhs :)
     Inline{}   -> id
+    LInstr{}   -> id
     LExtern ty -> (doExtern tyMap dynTyMap iNm ty :) -- id
     LArg{}     -> id
     LCon{}     -> id
@@ -173,24 +165,33 @@ doBinds getDynInst binds tyMap dynTyMap classDecls
     LTypeVar e -> error $ "tyVar: " ++ show e
 --  wht -> error $ show wht
 
-convExpr :: BindMap -> V.Vector ClassDecl
-         -> (IName->IName->HName) -> w
+convExpr :: BindMap -> TypeMap -> V.Vector ClassDecl
+         -> (IName->IName->HName) -> (ITName -> Type)
          -> Type -> CoreExpr
          -> StgExpr
-convExpr bindMap classDecls getDynInst lookupTy ty =
+convExpr bindMap tyMap classDecls getDynInst lookupTy ty =
  let lookup      = (bindMap V.!)
-     convExpr''  = convExpr bindMap classDecls getDynInst lookupTy
+     convExpr''  = convExpr bindMap tyMap classDecls getDynInst lookupTy
      convExpr'   = convExpr'' ty
      convName' i = convName i $ named $ info $ lookup i
      typeOf      = typed . info . lookup
+     unVar       = CU.unVar tyMap
  in \case
  Var nm -> case lookup nm of
    Inline i e -> convExpr' e
+   LBind i _ l@Lit{} -> convExpr'' (typed i) l
    _ -> StgLit $ StgVarArg $ convName' nm
- Lit lit -> error "unbound literal"
+ Lit lit -> StgLit $ StgConstArg $ typedLit2Stg lit (unVar $ ty)
             -- StgLit $ StgConstArg $ literal2Stg lit
- -- App: need to check the retTy; for instantiation markers
- App fn@(Var fId) args ->
+ -- App: need to check the retTy for instantiation markers
+ Instr MkNum  [n] -> convExpr'' ty n
+ Instr MkReal [n] -> convExpr'' ty n
+ -- ! shares logic with App
+ Instr x args ->
+   let mkStgExprArg t x = StgExprArg $ convExpr'' t x
+   in  StgInstr (prim2llvm x)
+       $ (zipWith mkStgExprArg (repeat ty) args) -- TODO repeat
+ App fId args ->
    let fnTy = typed $ info $ lookup fId
        (argTys, [retTy]) = case fnTy of
          TyArrow tys -> splitAt (length tys-1) $ tys
@@ -199,23 +200,28 @@ convExpr bindMap classDecls getDynInst lookupTy ty =
          t -> ([], [t])
        arity = length args
        tyArity = length argTys
-       stgArgs = --trace (show args ++ " :: " ++ show argTys)
-         if arity > tyArity
+
        -- TODO temp hack since VarArgs functions short the zipWith
-         then zipWith (\t x-> StgExprArg $ convExpr'' t x)
-                      (argTys ++ repeat TyUnknown) args
-         else zipWith (\t x-> StgExprArg $ convExpr'' t x) argTys args
-   in case fn of
-    Var fId -> case ty of
-      TyInstance instId ty -> StgApp (convName' instId) stgArgs
-      TyDynInstance i conIdx _ ->
-        StgApp (convName i (Just $ getDynInst i conIdx)) stgArgs
-      TyPAp{}-> StgInstr (StgPApApp (trace "careful"$arity-tyArity))
-                 $ StgVarArg (convName' fId) : stgArgs
-      _ -> if tyArity > arity
-       then StgInstr StgPAp (StgVarArg (convName' fId) : stgArgs)
-       else StgApp (convName' fId) stgArgs
-    notFn -> error ("panic: core2Stg: not a function: " ++ show notFn)
+       argTys' = argTys ++ repeat TyUnknown
+       mkStgExprArg t x = StgExprArg $ convExpr'' t x
+       stgArgs = zipWith mkStgExprArg argTys' args
+   in case ty of
+     TyInstance ty inst -> case inst of
+       TyArgInsts tys ->
+         let instArgs = zipWith mkStgExprArg tys args
+         in StgApp (convName' fId) instArgs
+       TyOverload instId -> -- TODO temp hack (repeat ty)
+         let instArgs = zipWith mkStgExprArg (repeat ty) args
+         in case lookup instId of
+           LInstr i instr -> convExpr'' ty (Instr instr args)
+           _ -> StgApp (convName' instId) instArgs
+       TyDynInstance i conIdx ->
+         StgApp (convName i (Just $ getDynInst i conIdx)) stgArgs
+       TyPAp{}-> StgInstr (StgPApApp (trace "careful"$arity-tyArity))
+                  $ StgVarArg (convName' fId) : stgArgs
+     _ -> if tyArity > arity
+      then StgInstr StgPAp (StgVarArg (convName' fId) : stgArgs)
+      else StgApp (convName' fId) stgArgs
 
  -- TODO default case alt
  Case expr a -> case a of
@@ -229,7 +235,6 @@ convExpr bindMap classDecls getDynInst lookupTy ty =
 
  TypeExpr t -> error "internal error: core2Stg: unexpected typeExpr"
  WildCard   -> error "found hole"
- Instr i    -> error ("core2Stg: unsaturated primInstr: " ++ show i)
 
 -- cancerous llvm-hs Name policy
 -- TODO name clashes ?
@@ -247,22 +252,25 @@ typedLit2Stg :: Literal -> Type -> StgConst = \l t ->
       unEither f = fst . either error id . f
   in case t of
   TyMono (MonoTyPrim p) -> case p of
-    PrimInt bits  -> let Int i = l
-      in C.Int (fromIntegral bits) (fromIntegral i) -- fromIntegral
-    PrimFloat fTy -> let Frac f = l
+    PrimInt bits  -> let ti = case l of { PolyInt i -> i }
+      in C.Int (fromIntegral bits) $ unEither TR.decimal ti
+    PrimFloat fTy -> let tf = case l of { PolyInt t->t ; PolyFrac t->t}
       in case fTy of
-      FloatTy  -> C.Float (LF.Single $ fromRational f)
-      DoubleTy -> C.Float (LF.Double $ fromRational f) -- fromRational
+      FloatTy  -> C.Float (LF.Single $ unEither TR.rational tf)
+      DoubleTy -> C.Float (LF.Double $ unEither TR.rational tf) -- fromRational
     PrimArr ty -> let String s = l in
       C.Array (LLVM.AST.IntegerType 8) (mkChar <$> (s++['\0']))
-  o -> error $ show o
+    x -> literal2Stg l -- no overrides fancy
+  TyInstance t2 _ -> typedLit2Stg l t2
+  o -> literal2Stg l
+--o -> error $ "bad type for literal: " ++ show l ++ " : " ++ show o
 
 literal2Stg :: Literal -> StgConst = \l ->
   let mkChar c = C.Int 8 $ toInteger $ ord c 
   in case l of
     Char c   -> mkChar c
---    Int i    -> C.Int 32 $ i
     String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))
+--    Int i    -> C.Int 32 $ i
 --    Frac f   -> C.Float (LF.Double $ fromRational f)
 
 -- most llvm instructions take flags, stg wants functions on operands

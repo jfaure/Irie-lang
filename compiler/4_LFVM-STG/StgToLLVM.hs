@@ -137,9 +137,12 @@ fnToLlvm :: (CodeGenModuleConstraints m)
   => StgId -> StgRhs -> m Operand
 fnToLlvm iden rhs =
  let
-  updateBind bind = modify (\x->x{bindMap = Map.insert iden bind (bindMap x)})
+  updateBind bind
+    = modify (\x->x{bindMap = Map.insert iden bind (bindMap x)})
   tryLookup rhs backup = gets ((iden `Map.lookup`) . bindMap) >>= \case
-    { Nothing -> backup rhs ; Just f -> case f of { ContFn f->pure f ; ContLi f->pure f ; _ -> backup rhs } }
+    Nothing -> backup rhs
+    Just f -> case f of 
+      { ContFn f->pure f ; ContLi f->pure f ; _ -> backup rhs }
  in tryLookup rhs $ \case
   StgTopRhs [] [] stgRetType (StgLit (StgConstArg global)) -> do
     s <- ConstantOperand <$> globalArray iden global
@@ -295,7 +298,7 @@ stgToIR (StgLit lit) =
      Just f -> pure f
      Nothing -> wrapPrim p argTys retTy
  in case lit of
-   StgConstArg l -> pure $ ConstantOperand l -- fresh >>= \nm -> ConstantOperand <$> globalArray nm l
+   StgConstArg l -> fresh >>= \nm -> ConstantOperand <$> globalArray nm l
    StgSsaArg s   -> pure s
    -- some varArgs are constructors or lazy closures that we must resolve (call) now.
    StgVarArg i   ->  gets ((Map.!? i) . bindMap) >>= \case

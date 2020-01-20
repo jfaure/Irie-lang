@@ -8,6 +8,10 @@ import Control.Monad.State.Strict
 
 import Debug.Trace
 
+mkAnonEntity ty     = Entity Nothing ty   False
+mkNamedEntity nm ty = Entity (Just nm) ty False
+mkEntity = mkNamedEntity
+
 lookupBinding :: IName -> BindMap -> Binding
  = \n binds -> binds V.! n
 
@@ -24,6 +28,7 @@ unVar :: TypeMap -> Type -> Type = \tyMap x ->
           TyAlias n -> if n `elem` seen
             then error ("alias loop: " ++ show n)
             else checkLoop (typed $ lookupType n tyMap) (n:seen)
+          TyInstance t _ -> checkLoop t seen
           t -> t  -- trivial case
   in  checkLoop x []
 
@@ -32,7 +37,7 @@ localState f = get >>= \s -> f <* put s
 
 getArity :: Type -> Int = \case
   TyArrow t   -> length t - 1
-  TyPAp t1 t2 -> length t2 - 1
+  TyInstance t _ -> getArity t
   TyMono (MonoTyPrim p) -> case p of
     PrimExternVA l -> length l -- at least
     PrimExtern   l -> length l - 1

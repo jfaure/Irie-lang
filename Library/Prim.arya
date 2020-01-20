@@ -15,6 +15,8 @@ type Double    = #!Double
 
 infix 6 +
 infix 7 *
+
+class Real <: Num where
 class Num where
   (+)  : Num->Num->Num
   (-)  : Num->Num->Num
@@ -32,7 +34,7 @@ instance Num Int where
 --(/?) : Int->Int->Int = #!srem
 --(==) : Int->Int->Int = #!icmp
 
-instance Num Double where
+instance Real Double where
   (+)  : Double->Double->Double = #!fadd
   (-)  : Double->Double->Double = #!fsub
 --  (*)  : Float->Float->Float = #!fmul
@@ -53,20 +55,10 @@ instance Num Double where
 --  (/?): ROp2 = #!frem
 --  (==): ROp2 = #!fcmp
 
--- TODO tuples
-----------------------
--- Array primitives --
-----------------------
---(.) : n*e -> i -> e = \arr i -> #!atIndex arr i
---(len) : n*e -> Nat = n
-
----- ! requires type functions
---type Ptr e           = #!Ptr e
---type (n:Nat) * eType = #!Array n eType
--- #!Struct tyList -- takes a tuple of types.. scary
-
 -- C extern functions --
-extern puts : (#!CharPtr) -> Int
+--extern puts : (#!CharPtr) -> Int
 externVarArg printf : (#!CharPtr) -> Int
-putNumber n = printf "%d\n" n
-putDouble f = printf "%f\n" f
+--putNumber : Int -> Int
+--putNumber n = printf "%d\n" n
+--putDouble : Double -> Int
+--putDouble f = printf "%f\n" f

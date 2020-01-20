@@ -9,6 +9,6 @@ SRC	:=	$(shell find $(SrcDir) -type f -name '*.hs')
 all: $(NAME)
 
 $(NAME): $(SRC)
-	stack -j4 build --fast &&\
+	stack -j9 build --fast &&\
 	ln -sf $(EXE) ./$(NAME)
 	@touch $(NAME) # since stack does nothing if you modify a file without changing code

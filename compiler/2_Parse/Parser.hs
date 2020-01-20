@@ -12,6 +12,7 @@ import Control.Applicative (liftA2)
 import Data.Void
 import Data.List (isInfixOf)
 import qualified Data.Text as T
+import qualified Data.Text.Read as TR
 --import qualified Data.ByteString.Char8 as C -- so ghc realises char ~ Word8
 import Control.Monad.State.Strict as ST
 import Control.Monad.Reader
@@ -301,12 +302,16 @@ indentedItems ref lvl scn p finished = go where
      | pos == lvl -> (:) <$> p <*> go
      | otherwise  -> L.incorrectIndent EQ lvl pos
 
-pExp :: Parser PExp = dbg "pexp" $
+pExp = _pExp >>= \exp -> choice
+ [ (`Typed` exp) <$> (reservedOp ":" *> pType)
+ , pure exp
+ ]
+_pExp :: Parser PExp = dbg "pexp" $
   notFn <|>
   appOrSingle >>= \app ->
-    optional (infixTrain app) >>= \case
-      Nothing      -> pure app
-      Just infixes -> pure infixes
+    optional (infixTrain app) <&> \case
+      Nothing      -> app
+      Just infixes -> infixes
   where
   appOrSingle = maybeFn >>= \fn -> choice
    [ App fn <$> some maybeFn
@@ -368,7 +373,6 @@ pExp :: Parser PExp = dbg "pexp" $
     local (const lvl) $ do
       alts <- indentedItems ref lvl scn alt eof
       pure $ Case scrut alts
-  typeSig e = reserved ":" *> pType >>= \t -> pure (Typed t e)
   typeExp = TypeExp <$> pType
   asPat = AsPat <$> lIden <* reservedOp "@" <*> pat
 
@@ -507,4 +511,4 @@ numP :: Parser Literal = --T.Text =
   e <- optional exponent_
   pure $ case (f , e) of
     (Nothing , Nothing) -> PolyInt c
-    _ -> PolyFrac $ c `T.append` unJ f `T.append` unJ e
+    _ -> PolyFrac $ c `T.snoc` '.' `T.append` unJ f `T.append` unJ e

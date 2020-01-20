@@ -66,6 +66,8 @@ pName2Text = \case
 pQName2Text (P.UnQual (P.Ident s)) = s
 pQName2Text (P.UnQual (P.Symbol s)) = s
 
+--insertLookup kx x t = HM.insertLookupWithKey (\_ a _ -> a) kx x t
+
 addLocalTy  :: IName -> Entity -> ToCoreEnv IName =
  \iNm ty -> do
 --  modify (\x->x{localTys=(localTys x `V.snoc` ty)})
@@ -135,35 +137,40 @@ moduleLookup imports hNm = let
           addHName hNm nm
           addLocal nm bind
     in Just <$> case bind of
-      LClass inf classNm overloads -> -- class, need to import overloads
-        let importTy = importType cm
-            importBind i = do -- TODO update the type
-              let bind = bindings cm V.! i
-              ty <- importTy $ typed (info bind)
-              let bind' = bind{info=(info bind){typed=ty}}
-              freshName >>= (`addLocal` bind')
-            importOverload (iTy , indx)
-              = liftA2 (,) (importTyAlias cm iTy) (importBind indx)
-        in do
-        lookupTyHNm classNm -- add class polytype
-        overloads' <- traverse importOverload $ M.toList overloads
-        t <- importTy $ typed inf
-        addNm hNm (LClass inf{typed=t} classNm (M.fromList overloads'))
-      _ -> addNm hNm bind
+    LClass inf classNm overloads -> -- class, need to import overloads
+      let importTy = importType cm
+          importBind i = do -- TODO update the type
+            let bind = bindings cm V.! i
+            ty <- importTy $ typed (info bind)
+            let bind' = bind{info=(info bind){typed=ty}}
+            freshName >>= (`addLocal` bind')
+          importOverload (iTy , indx)
+            = liftA2 (,) (importTyAlias cm iTy) (importBind indx)
+      in do
+      lookupTyHNm classNm -- add class polytype
+      overloads' <- traverse importOverload $ M.toList overloads
+      t <- importTy $ typed inf
+      addNm hNm (LClass inf{typed=t} classNm (M.fromList overloads'))
+    _ -> addNm hNm bind
 --    error "untested support for external bindings"
+
+addTy t = freshTyName >>= (`addLocalTy` t)
 
 importTyAlias :: CoreModule -> ITName -> ToCoreEnv ITName
 importTyAlias cm i = let ty = (algData cm V.! i)
   in case named ty of
-  Nothing-> importType cm (typed ty) *> freshTyName >>= (`addLocalTy` ty)
+  Nothing-> freshTyName >>= (`addLocalTy` ty)
   Just n -> lookupTyHNm n <&> \case
      { Just x->x ; Nothing -> error "impossible" }
 
 -- recursively bring in all references to the type
 importType :: CoreModule -> Type -> ToCoreEnv Type
 importType cm t = case t of
-  TyAlias i ->   TyAlias <$> importTyAlias cm i
+  TyAlias i   -> TyAlias <$> importTyAlias cm i
   TyArrow tys -> TyArrow <$> mapM (importType cm) tys
+  TyPoly (PolyUnion tys) ->
+    TyPoly . PolyUnion <$>  mapM (importType cm) tys
+  t -> pure t
 
 lookupTyHNm hNm = gets hTyNames >>=
   \hs -> case (hs `localTyLookup` hNm) of

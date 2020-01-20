@@ -19,6 +19,7 @@ import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy.IO as TL.IO
 
 import Control.Monad.Trans (lift)
+import Control.Applicative
 import System.Console.Haskeline
 import System.Exit
 import Data.Functor
@@ -27,14 +28,15 @@ import qualified Data.Vector as V
 import LLVM.Pretty
 import Debug.Trace
 
-preludeFNames = V.fromList ["Library/Prim.arya"]
+preludeFNames = V.empty -- V.fromList ["Library/Prim.arya"]
 searchPath    = ["Library/"]
 
 xd = let f = "trivial/sum.arya" in doProgText defaultCmdLine{emitCore=True} f =<< T.IO.readFile f
 main = parseCmdLine >>= \cmdLine ->
   case files cmdLine of
     []  -> repl cmdLine
-    [f] -> doProgText cmdLine f =<< T.IO.readFile f
+    [f] -> doProgText cmdLine f =<< liftA2 T.append (T.IO.readFile "Library/Prim.arya") (T.IO.readFile f)
+--  [f] -> doProgText cmdLine f =<< T.IO.readFile f
     av  -> error "one file pls"
 --  av -> mapM_ (doFile cmdLine) av
 

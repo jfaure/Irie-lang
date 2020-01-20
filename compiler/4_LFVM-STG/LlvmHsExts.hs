@@ -73,7 +73,7 @@ externStringPtr strVal iden =
    , linkage = Private
    , isConstant = True
    , initializer = Just charArray
---   , unnamedAddr = Just GlobalAddr
+   , unnamedAddr = Just GlobalAddr
    }
   pure $ C.GetElementPtr True (C.GlobalReference (ptr ty) iden)
                               [(C.Int 32 0) , (C.Int 32 0)]

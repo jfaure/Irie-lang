@@ -1,14 +1,23 @@
+type Int    = #!Int 32
+type Double = #!Double
+type CharPtr = #!CharPtr
+
 class Num where
   (+) : Num->Num->Num
 
 class Real <: Num where
 
-type Int    = #!Int 32
-type Double = #!Double
-
 instance Num Int where
   (+) : Int->Int->Int = #!add
 instance Real Double where
-  (+) : Double->Double->Double = #!add
+  (+) : Double->Double->Double = #!fadd
 
-main = 3.0 + 2
+externVarArg printf : CharPtr -> Int
+
+putN : Int -> Int
+putN x = printf "%d\n" x
+
+putFloat : Double ->  Int
+putFloat f = printf "%f\n" f
+
+main = putFloat (3+2)

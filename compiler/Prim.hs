@@ -6,8 +6,12 @@ where
 import Data.Text as T
 
 data Literal
- = Char Char | Int Integer | Frac Rational | String String
- | PolyInt T.Text | PolyFrac T.Text
+ = Char Char
+ | Int Integer -- convenience
+-- | Frac Rational
+ | PolyInt   T.Text
+ | PolyFrac  T.Text
+ | String String
  | Array [Literal] -- incl. tuples ?
 -- | Tuple [Literal]
 -- | WildCard      -- errors on evaluation
@@ -34,6 +38,8 @@ data PrimInstr
  | NatInstr   NatInstrs
  | FracInstr  FracInstrs
  | MemInstr   ArrayInstrs
+ | MkNum      -- instantiation must happen via function call
+ | MkReal
  | MkTuple
  | Alloc
  | SizeOf

@@ -39,6 +39,7 @@ data CoreModule     = CoreModule {
  , algData    :: TypeMap -- data and aliases
  -- binds: constructors, locals, and class Fns (+ overloads!)
  , bindings   :: BindMap
+ , nTopBinds  :: Int -- amount of relevent binds in the bindMap
 
  , classDecls :: V.Vector ClassDecl -- so importers can check instances
  , defaults   :: IM.IntMap MonoType
@@ -77,7 +78,7 @@ data Binding
  -- always inline this binding (esp. to access freevars)
  -- only used internally for pattern match deconstructions
  | Inline { info :: Entity , expr :: CoreExpr }
- | LLit   { info :: Entity , lit  :: Literal }
+ | LInstr { info :: Entity , instrBind :: PrimInstr } -- instrs need a type annotation
  | LArg   {  --local vars via (lambda|case|expr:tysig)
    info :: Entity
  , useCount :: Int -- for calculating linear types
@@ -97,6 +98,7 @@ data Binding
 data Entity = Entity { -- entity info
    named    :: Maybe HName
  , typed    :: Type
+ , checked  :: Bool
 -- , source :: Maybe SourceEntity
  }
 
@@ -107,10 +109,9 @@ data Entity = Entity { -- entity info
 
 data CoreExpr
  = Var      IName
--- | ExtVar   IName IName -- lookup in other module
  | Lit      Literal
- | Instr    PrimInstr
- | App      CoreExpr [CoreExpr]
+ | Instr    PrimInstr [CoreExpr] -- must be fully saturated
+ | App      IName [CoreExpr]
  | Case     CoreExpr CaseAlts
  | TypeExpr Type -- as return of `TypeFunction`
  | WildCard
@@ -133,20 +134,22 @@ data Type
  | TyExpr  TypeFunction -- [IName] Type
  | TyDep   CoreExpr
  | TyCon   Type [Type]  -- make a new type from a TyFun
- | TyTy
 
  | TyUnknown    -- needs to be inferred - the so-called box type.
- -- markers for internal use
- | TyInstance IName Type -- name of overload and return type
+ | TyBroken              -- typejudge couldn't infer a coherent type
+
+ | TyInstance Type Instance -- markers for instantiation (in core2Stg)
+
+data Instance
+ = TyOverload IName
+ | TyNum
+ | TyArgInsts [Type] -- don't fold argument types at App.
  | TyDynInstance { --binding doesn't exist before tyjudge
    -- because it's a specialized data constructor
    dataIdx :: IName
  , conIdx  :: IName
- , ty      :: Type
  }
-
- | TyPAp [Type] [Type]   -- for internal use
- | TyBroken              -- typejudge couldn't infer a coherent type
+ | TyPAp [Type] [Type] -- ?
 
 -- type functions: eg `data a = ..`
 data TypeFunction
@@ -192,27 +195,13 @@ deriving instance Show ClassFn
 deriving instance Show Binding
 deriving instance Show MonoType
 deriving instance Show Type
+deriving instance Show Instance
 deriving instance Show TypeFunction
 deriving instance Show CoreExpr
 deriving instance Show CaseAlts
 deriving instance Show Entity
 deriving instance Show CoreModule
 deriving instance Show Fixity
-
-deriving instance Ord PolyType
-deriving instance Ord DataDef
-deriving instance Ord ClassDecl
-deriving instance Ord ClassFn
-deriving instance Ord Binding
-deriving instance Ord MonoType
-deriving instance Ord Type
-deriving instance Ord TypeFunction
-deriving instance Ord CoreExpr
-deriving instance Ord CaseAlts
-deriving instance Ord Entity
-deriving instance Ord CoreModule
-deriving instance Ord Fixity
-deriving instance Ord Assoc
 
 deriving instance Eq PolyType
 deriving instance Eq DataDef
@@ -222,6 +211,7 @@ deriving instance Eq Binding
 deriving instance Eq MonoType
 deriving instance Eq Type
 deriving instance Eq TypeFunction
+deriving instance Eq Instance
 deriving instance Eq CoreExpr
 deriving instance Eq CaseAlts
 deriving instance Eq Entity
