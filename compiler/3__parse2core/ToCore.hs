@@ -47,8 +47,8 @@ convTy :: (HName -> Maybe IName) -> P.Type -> Either ConvTyError Type
  let convTy' = convTy findNm
  in \case
   P.TyPrim t               -> Right$TyMono$MonoTyPrim t
-  P.TyPoly (P.PolyAnd   f) -> TyPoly . PolyConstrain <$> mapM convTy' f
-  P.TyPoly (P.PolyUnion f) -> TyPoly . PolyUnion     <$> mapM convTy' f
+  P.TyPoly (P.PolyAnd   f) -> TyPoly . PolyMeet <$> mapM convTy' f
+  P.TyPoly (P.PolyUnion f) -> TyPoly . PolyJoin     <$> mapM convTy' f
   P.TyPoly (P.PolyAny)     -> Right $ TyPoly $ PolyAny
   P.TySet                  -> Right $ TyPoly $ PolyAny
   P.TyName n ->
@@ -120,11 +120,11 @@ doTyFun tyFnHNm tyFunINm argHNms ty = do
     Left t -> error $ "unexpected return type of tyFunction: " ++ show t
   mapM rmTyHName argHNms
 
-  let tyFn  = TyTrivialFn argNms fnBody
-      tyEnt = CU.mkEntity tyFnHNm $ TyExpr tyFn
+  let tyFn  = TyFn argNms fnBody
+      tyEnt = CU.mkEntity tyFnHNm tyFn
 
   -- if TyFun returns data, wrap it's constructor types
-  let mkTyFn ty = TyExpr $ TyTrivialFn argNms ty
+  let mkTyFn ty = TyFn argNms ty
       dataCon2TyFun (LCon ent) =
         LCon ent{ typed = mkTyFn (typed ent) }
       cons' = dataCon2TyFun <$> cons
@@ -179,7 +179,7 @@ _convData :: IName -> HName -> P.Type
             mkSubEnts hNm ty = CU.mkEntity hNm ty
             subEnts          = zipWith mkSubEnts subTyHNames subTypes
         let dataDef      = DataDef dataNm (zip conHNames conTys)
-            dataPolyType = PolyData (PolyUnion subTypes) dataDef
+            dataPolyType = PolyData (PolyJoin subTypes) dataDef
             dataEnt      = CU.mkEntity dataNm (TyPoly dataPolyType)
         pure (subTypes, subEnts, dataEnt)
 
@@ -493,7 +493,7 @@ genPolyTypes instVars supers = do
   polyNames <- freshTyNames (HM.size subTyMap)
   zipWithM addTyHName (HM.keys subTyMap) polyNames
   let addTy i (hNm,tys) =
-        let ent = CU.mkEntity hNm (TyPoly$PolyUnion (TyAlias <$> tys))
+        let ent = CU.mkEntity hNm (TyPoly$PolyJoin (TyAlias <$> tys))
         in addLocalTy i ent
   zipWithM addTy polyNames (HM.toList subTyMap)
 

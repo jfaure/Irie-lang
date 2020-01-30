@@ -66,8 +66,8 @@ convData tyMap dynTyMap = mkLists $ foldr f ([],[]) (tyMap V.++ dynTyMap)
       TyPoly (PolyData ty dataDef) ->
         let (newData, subTys) = convDataDef tyMap dynTyMap dataDef
         in  (newData : d, subTys ++ a)
-      -- ignore tycons
-      TyExpr{} -> (d , a)
+      -- ignore tycon defs
+      TyFn{} -> (d , a)
       rawTy -> (d, (nm, convTy tyMap dynTyMap rawTy):a)
   f (Entity Nothing ty _) (d,a) = case ty of
     TyRigid i -> (d , (convName i Nothing , StgPolyType) : a)
@@ -98,7 +98,7 @@ convTy tyMap dynTyMap =
         stgAlias = convName iNm (named tyInfo)
     in case typed tyInfo of
       -- polytypes will need to be bitcasted in llvm
-      TyPoly (PolyUnion{}) -> StgPolyType
+      TyPoly (PolyJoin{}) -> StgPolyType
       TyPoly PolyAny       -> StgPolyType
 --    TyMono (MonoRigid ri) -> StgRigid ri
       o                    -> StgTypeAlias stgAlias
@@ -108,15 +108,13 @@ convTy tyMap dynTyMap =
 --  MonoRigid  riNm -> StgRigid riNm -- arguments of tycons
     MonoSubTy  r p ci -> convTy' (TyAlias p) --StgPolyType $ mkAlias r
 
-  TyExpr tyfun -> case tyfun of
-      TyTrivialFn args val -> error ("tycon definition")
+  TyFn args val -> error ("tycon definition")
 --    TyApp       ty args  -> StgTyCon (convTy' ty) (convTy' <$> args)
 --    TyDependent args expr-> error ("dependent type: " ++ show tyfun)
   TyRigid{}    -> StgPolyType
   t@(TyCon ty tys) -> StgPolyType --convTy' $ head tys --error $ show t
 
   TyInstance ty inst -> case inst of
-    TyNum -> convTy' ty
     TyArgInsts tys -> convTy' ty
     TyPAp t1s t2s ->
       let st1s = convTy' <$> t1s
@@ -126,7 +124,7 @@ convTy tyMap dynTyMap =
     TyDynInstance fId conIdx -> StgTypeAlias
       $ convName (fId + V.length tyMap) (named (dynTyMap V.! fId))
 
-  TyPoly (PolyUnion alts) -> StgPolyType -- error $ "core2stg: polyunion: " ++ show alts -- convTy' $ head alts
+  TyPoly (PolyJoin alts) -> StgPolyType -- error $ "core2stg: polyunion: " ++ show alts -- convTy' $ head alts
   TyPoly (PolyAny) -> StgPolyType
   -- Note any other type is illegal at this point
   t -> error ("internal error: core2Stg: not a monotype: " ++ show t)
@@ -195,7 +193,7 @@ convExpr bindMap tyMap classDecls getDynInst lookupTy ty =
    let fnTy = typed $ info $ lookup fId
        (argTys, [retTy]) = case fnTy of
          TyArrow tys -> splitAt (length tys-1) $ tys
-         TyExpr (TyTrivialFn _ (TyArrow tys)) ->
+         TyFn _ (TyArrow tys) ->
            splitAt (length tys-1) tys
          t -> ([], [t])
        arity = length args

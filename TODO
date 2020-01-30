@@ -1,46 +1,39 @@
+# sponsor
 # expr2Core
+  * no inline polytypes (force use of typevar?)
+  * imports
   * array prims + patterns
-  * linear types
-  * generate function wrappers for remaining primitives (stgtollvm:258)
   * nested patterns
-  * freeVars
-  * register subtypes (to handle recursive refs)
+  * linear types + freeVars
+  * register data subtypes (for recursive refs)
+  * polymorphic fns (boxed | unboxed)
   * error reporting
-  * precompiled modules
-  * Names::importType generates superfluous INames
 
 # Typeclass
   * default typeclass signatures/decls
-  * use a fromString function for literals
   * check instances <= class
-  * check subsumption of rigids
-
-# core2Stg
-  * tyFunctions
-  * polymorphic fns (boxed vs unboxed)
 
 # parser
-  * move all type parse logic to pExp
+  * lambda case
+  * move all type parse logic to the term parser
   * linefolds
-  * rec
   * source locations
-
-# Clean
-  * toCore::typeclass
-  * tyJudge::instantiate
-  * match->case->core
 
 # Prelude
   * fold-build ~ lazy
   * effects
-  * memory (eg. inplace modifications undo as stack unravels eg. sudoku)
-  * distribution
+  * distributed computing
+
+# Low priority
+  * precompiled modules (sv them where?)
+  * generate function wrappers for remaining primitives (stgtollvm.wrapPrim:275)
+  * View patterns
+  * a , b : t -- syntax
 
 # Maybe
-  * a , b : t -- syntax
-  * GADT style
-  * View patterns
+  * rec
+  * parse GADT style
   * GuardedRhs
-  * Case -> Case optimizations
   * ContPrim may be unecessary
   * optimize convFixities
+  * use Vector.Bundle in toCore ? (have to register names early though)

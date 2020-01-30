@@ -1,0 +1,54 @@
+Functional programming involves collecting arguments with which to tail-call functions. Thus programs form acyclic graphs (except. rec bindings) and data flow can be seen clearly.
+
+```mermaid
+graph TD
+
+A2((A2)) -.-> L1
+L2 -.-> L1
+L2 --> AA1(("AA1"))
+L1 --> AA1
+R1 -.-> R2
+R2 -.-> R1
+R1 --> AA2
+A2 --> AA1
+A1(("A1")) --> AA1
+
+AA2(("AA2")) --> D1{Decon}
+AA1 --> D1
+D1 ==> S1
+D1 ==> S2
+
+S1 --switch--> If1>"S1|S2"]
+S2 --switch --> If1
+```
+
+### Algorithm
+Fn stack (program) and Data stack (memory) are duals. Unfortunately, they can become desynced.
+* Data stack changes slower and can grow in a tree shape (product types)
+* Sum types are a form of delayed branching
+* Case decons know how they want to use the data
+
+Basic idea is to passdown memory (^Mem) to any function that returns data. Data of unclear sizes (recursive data / dynamic lists) must use the heap. Sum type data can be allocated pessimistically as the upper bound of it's alts. In what follows we discuss only non-copyable data.
+* If a fn uses an argument to construct it's return, then that argument must be allocated early enough - here we must count the layers of desync (eg. `case Circle 3 of Circle 3 -> _` has a desync of 0
+```
+Constructor --> write to ^mem.
+Arg -- already alloced = pass null pointers down to subdata extractors
+    -- if (partly) returned at depth n? --> copy to ^Mem
+Decon -- copy to ^Mem if not nullptr; else return subdata
+Let -- Find out if building return value
+```
+
+Thoughts
+* 2 stacks: usual function call stack + subdata stack
+* arg lifetimes vs return lifetime: count cons + decons ? conditionals ?
+* memory flows down (via args), and up (via return)
+* laziness can defer heap allocations, even allow allocas. Esp. fold-build schemes
+* tail-call memory management ?
+* structural linearity ( switch forces either copying / heap allocation )
+* types of case: quantitative product decon (like fn args) + special case for arrays, where elem extraction is complicated
+* mixture of memory techniques ?
+* Let's may cause sharing of data (and worse, subdata)
+* Rec's force use of heap
+* choice is in the type - llvm representation may be different (ref counts / inline subdata..) and conversions nontrivial
+* Arrays == Var args
+

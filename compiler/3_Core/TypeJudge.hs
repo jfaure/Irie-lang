@@ -228,15 +228,13 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
     -- instanciate: propagate information about instanciated polytypes
     -- eg. if ((neg) : Num -> Num) $ (3 : Int), then Num = Int here.
     instantiate :: IName -> [Type] -> [Type] -> TCEnv [Type]
-    instantiate (fnName) argTys remTys = lookupBindM fnName >>= \case
+    instantiate fnName argTys remTys = lookupBindM fnName >>= \case
       LClass classInfo _ allOverloads ->
         let
         isValidOverload candidateTy v
           = all (subsume' $ TyAlias candidateTy) argTys
         candidates = M.filterWithKey isValidOverload allOverloads
         in case M.size candidates of
-          0 -> error $ "no valid overloads: "
-            ++ show argTys ++ "\n<:?\n" ++ show allOverloads
           1 -> -- TODO return tys change ?
             let instId = head $ M.elems candidates
             in (unVar . typed . info <$> lookupBindM instId)
@@ -244,8 +242,10 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
             TyArrow tys ->
               [TyInstance (TyArrow remTys) (TyOverload instId)]
             _ -> error "panic, expected function"
-          _ -> error $ "ambiguous function call: "
-               ++ show argTys ++ "\n" ++ show candidates
+          n -> let msg = if n==0
+                         then "no valid types: "
+                         else "ambiguous function instance: "
+            in error $ msg ++ show argTys ++ "\n<:?\n" ++ show allOverloads
       _ -> pure $ remTys
 
     -- verify all arguments subsume the expected types,
@@ -261,7 +261,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           in IM.insert i (filter (`subsume'` t) possible) mp
       doPoly (t@(TyAlias i) , judged) mp = case (unVar judged) of
 --      TyRigid r -> if i == r then mp else error "TODO"
-        TyPoly (PolyUnion tys) -> addPossibles i t tys mp        
+        TyPoly (PolyJoin tys) -> addPossibles i t tys mp        
         j -> if subsume' judged t then addPossibles i t [j] mp
              else error $ "cannot unify function args"
                 ++ show judged ++ "\n <:?\n" ++ show t
@@ -274,18 +274,15 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
       oneSolution = \case
         []  -> error $ "No instance: "++show fn++" : "++show expected
         [t] -> t
-        tys -> error $ "ambiguous instance: "
-                 ++ show fnName ++ " :? " ++ show tys
+        tys -> error $"ambiguous instance: "++show fnName++" :? "++show tys
       rigidsMap = oneSolution <$> polyMap
 
       args'  =  fst . betaReduce rigidsMap unVar <$> consumedTys
       remTys' = fst . betaReduce rigidsMap unVar <$> remTys
 
-      updateTy ty  = \case -- TODO cancerous
-        Var i -> case ty of
-          TyUnknown -> pure ()
-          ty  -> updateBindTy i ty
-        _     -> pure ()
+      updateTy TyUnknown _ = pure ()
+      updateTy ty (Var i) = updateBindTy i ty
+      updateTy _ _ = pure ()
       in do
       -- expected ?
       zipWithM_ updateTy args' args
@@ -331,7 +328,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
         [newData] -> doDynInstance newData
         _ -> pure retTy'
 
-    doDynInstance (TyPoly (PolyData p@(PolyUnion subs)
+    doDynInstance (TyPoly (PolyData p@(PolyJoin subs)
                           (DataDef hNm alts))) = do
       let dataINm = parentTy $ (\(TyMono m) -> m) $ head subs
       insts <- gets dataInstances
@@ -353,9 +350,9 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           notVA = False
           va    = True
       in case expFnTy of
-      TyArrow arrowTys -> judgeApp arrowTys notVA
+      TyArrow tys -> judgeApp tys notVA
       TyInstance t _ -> judgeFn t
-      TyExpr (TyTrivialFn argNms (TyArrow tys))->judgeTyFnApp argNms tys
+      TyFn argNms (TyArrow tys)->judgeTyFnApp argNms tys
       TyMono (MonoTyPrim (PrimExtern   eTys)) -> judgeExtern eTys notVA
       TyMono (MonoTyPrim (PrimExternVA eTys)) -> judgeExtern eTys va
       TyUnknown -> error ("failed to infer function type: "++show fn)
@@ -428,7 +425,7 @@ subsume got exp unVar = subsume' got exp
       TyArrow tysGot -> subsumeArrow tysGot tysExp
       TyPoly PolyAny -> True
       _ -> False
-    TyExpr _ -> _
+    TyFn _ _ -> _
     TyUnknown -> True -- 'got' was inferred, so assume it's ok
 
     TyCon{} -> True -- TODO
@@ -446,27 +443,27 @@ subsume got exp unVar = subsume' got exp
   subsumeMP :: MonoType -> PolyType -> Bool
    = \got exp            -> case exp of
     PolyAny              -> True
-    PolyConstrain tys    -> all (`subsume'` (TyMono got)) tys
-    PolyUnion  tys       -> any (`subsume'` (TyMono got)) tys
+    PolyMeet tys    -> all (`subsume'` (TyMono got)) tys
+    PolyJoin  tys       -> any (`subsume'` (TyMono got)) tys
     PolyData p _         -> subsumeMP got p
 
   subsumePM :: PolyType  -> MonoType -> Bool
 --subsumePM (PolyData p _) m@(MonoRigid r) = subsumeMP m p
-  subsumePM (PolyUnion [t]) m = subsume' t (TyMono m)
+  subsumePM (PolyJoin [t]) m = subsume' t (TyMono m)
   subsumePM _ _ = False -- Everything else is invalid
 
   subsumePP :: PolyType  -> PolyType -> Bool
    = \got exp            -> case got of
     PolyAny              -> True
-    PolyConstrain gTys   -> _ -- all $ f <$> tys
+    PolyMeet gTys   -> _ -- all $ f <$> tys
     -- data: use the polytypes for subsumption
     PolyData p1 _        -> case exp of
       PolyData p2 _ -> subsumePP p1 p2
       _             -> False
-    PolyUnion  gTys      -> case exp of
+    PolyJoin  gTys      -> case exp of
       PolyAny            -> False
-      PolyConstrain eTys -> _
-      PolyUnion  eTys    -> hasAnyBy subsume' eTys gTys -- TODO check order
+      PolyMeet eTys -> _
+      PolyJoin  eTys    -> hasAnyBy subsume' eTys gTys -- TODO check order
     where
     hasAnyBy :: (a->a->Bool) -> [a] -> [a] -> Bool
     hasAnyBy _ [] _ = False
@@ -503,10 +500,9 @@ _betaReduce rigidsMap unVar ty =
   TyMono (MonoSubTy sub parent c)-> betaReduce' (unVar (TyAlias parent))
   TyArrow tys -> TyArrow <$> mapM betaReduce' tys
   TyPoly tyPoly -> case tyPoly of
-    PolyUnion [t] -> pure t
-    PolyUnion tys -> pure $ TyPoly $ PolyUnion tys --mapM betaReduce' tys
-  TyExpr tyFn -> case tyFn of
-    TyTrivialFn tyArgs tyVal -> if length tyArgs /= IM.size rigidsMap
+    PolyJoin [t] -> pure t
+    PolyJoin tys -> pure $ TyPoly $ PolyJoin tys --mapM betaReduce' tys
+  TyFn tyArgs tyVal -> if length tyArgs /= IM.size rigidsMap
       then error $ "tyCon pap: " ++ show ty
       else betaReduce' tyVal
 --  TyApp ty argsMap -> betaReduce (IM.union argsMap rigidsMap) ty

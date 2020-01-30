@@ -26,7 +26,7 @@ ppType :: (IName -> String) -> Type -> String = \deref -> clCyan . \case
 -- TyPAp tys ty -> "PAp (" ++ ppType deref (TyArrow tys) ++ ") -> "
 --                  ++ ppType deref (TyArrow tys)
  TyInstance ty o -> show ty ++ " ! " ++ show o
- TyExpr coreExpr -> show coreExpr
+ t@TyFn{}   -> show t
  TyUnknown       -> "TyUnknown"
  TyBroken        -> "tyBroken"
  other           -> show other

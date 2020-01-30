@@ -102,11 +102,6 @@ data Entity = Entity { -- entity info
 -- , source :: Maybe SourceEntity
  }
 
--- source info
---data SourceEntity = SourceEntity 
--- { src :: Maybe srcLoc
--- }
-
 data CoreExpr
  = Var      IName
  | Lit      Literal
@@ -124,6 +119,7 @@ data CaseAlts
 ----------- Types -- ---------
 -- note. alias vs name:
 type UserType = Type -- user supplied type annotation
+data TyPiArg = TyArg ITName | PiArg IName deriving(Show, Eq)
 data Type
  = TyAlias IName    -- aliases (esp. to MonoTyData)
  | TyRigid IName    -- correspond to arguments of type constructors
@@ -131,18 +127,32 @@ data Type
  | TyPoly  PolyType -- constrained polytypes 'p', 's'
  | TyArrow [Type]   -- Kind 'function' incl. Sum/Product cons
 
- | TyExpr  TypeFunction -- [IName] Type
- | TyDep   CoreExpr
+ | TyKinded Type Kind
+
+ | TyPi  { piArgs   :: [TyPiArg] -- incl. term binders
+         , piVal    :: Type }
+ -- special case of non-dependent type-level computations
+ | TyFn  { tyArgs :: [ITName] -- type placeholders
+         , tyVal  :: Type }
  | TyCon   Type [Type]  -- make a new type from a TyFun
 
- | TyUnknown    -- needs to be inferred - the so-called box type.
- | TyBroken              -- typejudge couldn't infer a coherent type
+ | TyUnknown    -- to be inferred
+ | TyVoid       -- eg. to beta reduce with a null type
+ | TyBroken     -- typejudge couldn't infer a coherent type
 
  | TyInstance Type Instance -- markers for instantiation (in core2Stg)
 
+-- Universes: types may freely increase universe, but not dec
+data Kind -- classification for types
+ = KPrim -- int | float
+ | KArrow
+ | KPi   -- generalization of KArrow (with possible pi binder)
+ | KPlus | KMinus -- polar types
+ | KTerm -- terms may appear in types
+ | KData deriving (Show , Eq)
+
 data Instance
  = TyOverload IName
- | TyNum
  | TyArgInsts [Type] -- don't fold argument types at App.
  | TyDynInstance { --binding doesn't exist before tyjudge
    -- because it's a specialized data constructor
@@ -150,13 +160,6 @@ data Instance
  , conIdx  :: IName
  }
  | TyPAp [Type] [Type] -- ?
-
--- type functions: eg `data a = ..`
-data TypeFunction
- = TyTrivialFn { -- trivial case: App (Con n) (TypeExp e)
-   tyArgs :: [ITName]
- , tyVal  :: Type
- }
 
 data MonoType
  = MonoTyPrim   PrimType
@@ -167,9 +170,10 @@ data MonoType
  }
 
 data PolyType
- = PolyConstrain  [Type] -- (&) multiple typeclass constraints
- | PolyUnion      [Type] -- (|) union types (esp. typeclass var)
- | PolyAny               -- some fns merely pass on polymorhism (void*)
+ = PolyMeet  [Type] -- (&) multiple typeclass constraints
+ | PolyJoin  [Type] -- (|) union types (esp. typeclass var)
+ | PolyAny          -- some fns merely pass on polymorhism
+ -- TODO custom PolyAny for Type|Arrow|Data
  -- Data is a polytype (of it's alts)
  | PolyData PolyType DataDef
 
@@ -178,7 +182,7 @@ data DataDef
  = DataDef    HName [(HName, [Type])]
 -- | RecordDef HName [(HName, [FieldDecl])] -- FieldDecl HName Type
 -- | NewTypeDef [IName] DataDef
- | ModuleDef  HName CoreModule
+-- | ModuleDef  HName CoreModule
 -- data NewType = NewType { parentData :: DataDef , newType :: DataDef }
 
 data Fixity = Fixity Int Assoc
@@ -196,7 +200,6 @@ deriving instance Show Binding
 deriving instance Show MonoType
 deriving instance Show Type
 deriving instance Show Instance
-deriving instance Show TypeFunction
 deriving instance Show CoreExpr
 deriving instance Show CaseAlts
 deriving instance Show Entity
@@ -210,7 +213,6 @@ deriving instance Eq ClassFn
 deriving instance Eq Binding
 deriving instance Eq MonoType
 deriving instance Eq Type
-deriving instance Eq TypeFunction
 deriving instance Eq Instance
 deriving instance Eq CoreExpr
 deriving instance Eq CaseAlts

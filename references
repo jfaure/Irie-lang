@@ -52,6 +52,15 @@ https://www.cl.cam.ac.uk/~sd601/thesis.pdf
 
 Syntax and semantics of QTT
 https://bentnib.org/quantitative-type-theory.pdf
+
+Use-once variables and linear objects -- storage management, reflection and multi-threading
+http://www.pipeline.com/~hbaker1/Use1Var.html
+
+algebraic subtyping
+https://www.cl.cam.ac.uk/~sd601/thesis.pdf
+
+Dependent types with subtyping and late-overloading
+https://www.irif.fr/~gc/papers/infcomp99.pdf
 --
 
 Zip Fusion with Hyperfunctions

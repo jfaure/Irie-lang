@@ -168,8 +168,8 @@ importType :: CoreModule -> Type -> ToCoreEnv Type
 importType cm t = case t of
   TyAlias i   -> TyAlias <$> importTyAlias cm i
   TyArrow tys -> TyArrow <$> mapM (importType cm) tys
-  TyPoly (PolyUnion tys) ->
-    TyPoly . PolyUnion <$>  mapM (importType cm) tys
+  TyPoly (PolyJoin tys) ->
+    TyPoly . PolyJoin <$>  mapM (importType cm) tys
   t -> pure t
 
 lookupTyHNm hNm = gets hTyNames >>=
