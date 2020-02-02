@@ -62,6 +62,7 @@ executables:
     - TupleSections
     - ConstraintKinds
     - RecursiveDo
+    - OverloadedStrings
 #   - PolyKinds
 #   - GADTs -- Parser.hs crashes ghc with this
 #   - DataKinds

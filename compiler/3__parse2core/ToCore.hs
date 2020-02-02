@@ -121,7 +121,7 @@ doTyFun tyFnHNm tyFunINm argHNms ty = do
   mapM rmTyHName argHNms
 
   let tyFn  = TyFn argNms fnBody
-      tyEnt = CU.mkEntity tyFnHNm tyFn
+      tyEnt = CU.mkNamedEntity tyFnHNm tyFn
 
   -- if TyFun returns data, wrap it's constructor types
   let mkTyFn ty = TyFn argNms ty
@@ -167,27 +167,26 @@ _convData :: IName -> HName -> P.Type
          -> ToCoreEnv (V.Vector Binding, Entity, V.Vector Entity)
  = \dataINm dataNm ty ->
   let 
-      -- Functions for converting data/record
-      mkSubTypes :: HName -> Int -> [HName] -> [[Type]]
-                 -> ToCoreEnv ([Type], [Entity], Entity)
-      mkSubTypes qual nAlts conHNames conTys = do
-        let subTyHNames      = (qual `T.append`) <$> conHNames
-        subTyINames <- freshTyNames nAlts
-        zipWithM addTyHName subTyHNames subTyINames
-        let mkSubTy i conIdx = TyMono (MonoSubTy i dataINm conIdx)
-            subTypes         = zipWith mkSubTy subTyINames [0..]
-            mkSubEnts hNm ty = CU.mkEntity hNm ty
-            subEnts          = zipWith mkSubEnts subTyHNames subTypes
-        let dataDef      = DataDef dataNm (zip conHNames conTys)
-            dataPolyType = PolyData (PolyJoin subTypes) dataDef
-            dataEnt      = CU.mkEntity dataNm (TyPoly dataPolyType)
-        pure (subTypes, subEnts, dataEnt)
+    -- Functions for converting data/record
+    mkSubTypes :: HName -> Int -> [HName] -> [[Type]]
+               -> ToCoreEnv ([Type], [Entity], Entity)
+    mkSubTypes qual nAlts conHNames conTys = do
+      let subTyHNames      = (qual `T.append`) <$> conHNames
+      subTyINames <- freshTyNames nAlts
+      zipWithM addTyHName subTyHNames subTyINames
+      let mkSubTy i conIdx = TyMono (MonoSubTy i dataINm conIdx)
+          subTypes = zipWith mkSubTy subTyINames [0..]
+          subEnts  = zipWith CU.mkNamedEntity subTyHNames subTypes
+      let dataDef      = DataDef dataNm (zip conHNames conTys)
+          dataPolyType = PolyData (PolyJoin subTypes) dataDef
+          dataEnt      = CU.mkNamedEntity dataNm (TyPoly dataPolyType)
+      pure (subTypes, subEnts, dataEnt)
 
-      mkConstructors conHNames conTys subTypes = 
-        let mkCon prodNm [] subTy = LCon $ CU.mkEntity prodNm subTy
-            mkCon prodNm prodTy subTy =
-              LCon $ CU.mkEntity prodNm (TyArrow $ prodTy ++ [subTy])
-        in V.fromList $ zipWith3 mkCon conHNames conTys subTypes
+    mkConstructors conHNames conTys subTypes = 
+      let mkCon prodNm [] subTy = LCon $ CU.mkNamedEntity prodNm subTy
+          mkCon prodNm prodTy subTy =
+            LCon $ CU.mkNamedEntity prodNm (TyArrow $ prodTy ++ [subTy])
+      in V.fromList $ zipWith3 mkCon conHNames conTys subTypes
 
   in case ty of
   P.TyRecord recordAlts -> do
@@ -206,14 +205,15 @@ _convData :: IName -> HName -> P.Type
 
     -- record field accessor functions
     let emitAccessors :: Type-> [HName] -> [Type] -> ToCoreEnv ()
-         = \subTy a b-> sequence_$zipWith3 (oneAccessor subTy) [0..] a b
+         = \subTy a b-> sequence_
+            $ zipWith3 (oneAccessor subTy) [0..] a b
         oneAccessor subTy i hNm ty = do
           argINm <- freshName
           addLocal argINm (LArg (CU.mkAnonEntity subTy) 0)
           accessorINm <- freshName
-          let entity = CU.mkEntity hNm (TyArrow [subTy, ty])
+          let ent = CU.mkNamedEntity hNm (TyArrow [subTy, ty])
               e = Instr (MemInstr ExtractVal) [Lit $ Int i]
-              bind = LBind entity [argINm] e
+              bind = LBind ent [argINm] e
           addHName hNm accessorINm
           addLocal accessorINm bind
     sequence_ $ zipWith3 emitAccessors subTypes fieldNames conTys
@@ -222,8 +222,8 @@ _convData :: IName -> HName -> P.Type
     pure (cons, dataEnt, V.fromList subEnts)
 
   -- simple alias
-  t -> convTyM t >>= \ty -> pure
-      (V.empty, CU.mkEntity dataNm ty, V.empty)
+  t -> convTyM t <&> \ty ->
+      (V.empty, CU.mkNamedEntity dataNm ty, V.empty)
 
 -- getFns: generate bindings from a [P.Decl]
 -- both normal fns and typeclass funs use this
@@ -272,8 +272,8 @@ pats2Bind pats rhsE fNm fnSig = do
   iNames <- freshNames (length pats)
   hNms <- zipWithM mkLArg iNames pats
   case pExp of
-    P.PrimOp instr -> pure $ LInstr (Entity fNm ty False) instr
-    _ -> LBind (Entity fNm ty False) iNames <$> expr2Core pExp
+    P.PrimOp instr -> pure $ LInstr (CU.mkEntity fNm ty) instr
+    _ -> LBind (CU.mkEntity fNm ty) iNames <$> expr2Core pExp
 --traverse (maybe (pure ()) rmHName) hNms
 
 -- Note. all patterns are given 1 (!) name corresponding to the
@@ -283,7 +283,7 @@ mkLArg :: IName -> P.Pat -> ToCoreEnv (Maybe HName)
   P.PVar hNm -> let h = pName2Text hNm
     in do -- we can sometimes give a type, but it may be wrong.
        addHName h argINm
-       addLocal argINm $ LArg (CU.mkEntity h TyUnknown) 0
+       addLocal argINm $ LArg (CU.mkNamedEntity h TyUnknown) 0
        pure (Just h)
   P.PTuple pNms -> deconTuple argINm pNms *> pure Nothing
   p -> error ("unknown pattern: " ++ show p)
@@ -294,13 +294,13 @@ deconTuple argINm pNms =
       deconTupleArg :: IName -> HName -> Int -> ToCoreEnv IName
       deconTupleArg tupleINm hNm idx  = do
         let instr = Instr $ MemInstr ExtractVal
-            entity = CU.mkEntity hNm TyUnknown
+            entity = CU.mkNamedEntity hNm TyUnknown
             expr = instr [Lit (Int $ fromIntegral idx) , Var tupleINm]
         elemNm <- freshName
         addHName hNm elemNm
         addLocal elemNm (Inline entity expr)
   in do
-    addLocal argINm $ LArg (Entity Nothing TyUnknown False) 0
+    addLocal argINm $ LArg (CU.mkAnonEntity TyUnknown) 0
     zipWithM (deconTupleArg argINm) hNms [0..]
     pure argINm
 
@@ -322,7 +322,7 @@ doExtern tyMap = let
     freshName >>= addHName (pName2Text nm)
     tys <- getFn <$> convTyM ty
     let externTy = TyMono $ MonoTyPrim $ primCon $ prim <$> tys
-    pure $ CU.mkEntity hNm externTy
+    pure $ CU.mkNamedEntity hNm externTy
   in \case
     P.Extern   nm ty -> addExtern PrimExtern   nm ty
     P.ExternVA nm ty -> addExtern PrimExternVA nm ty
@@ -422,25 +422,26 @@ partitionFns = partition $ \case { P.TypeSigDecl{}->True ; _-> False }
 -------------
 -- Classes --
 -------------
+-- * ClassDecl: a description of the interface that must be satisfied by instances
+--   ie. function signatures, defaults and superclasses
+-- * classFn: a jointyped function shared by all instances.
+--   includes a map InstanceType->InstanceId for instantiation purposes (in typejudge)
 doClassDecl :: P.Decl -> ToCoreEnv ClassDecl
 doClassDecl (P.TypeClass classNm [] supers decls) =
   let
     (sigs, defaultBinds) = partitionFns decls
-
     registerClassFns sigs =
       let registerFn (P.TypeSigDecl nms sig) =
             mapM (\h -> addHName (pName2Text h) =<< freshName) nms
       in  mapM registerFn sigs
-
     sig2ClassFn (P.TypeSigDecl [nm] sig) = do
       sigTy <- convTyM sig
       pure $ ClassFn {
-        classFnInfo = CU.mkEntity (pName2Text nm) sigTy
+        classFnInfo = CU.mkNamedEntity (pName2Text nm) sigTy
       , defaultFn   = Nothing }
   in do
     registerClassFns sigs
     classFnEntities <- mapM sig2ClassFn sigs
-
     pure $ ClassDecl
       { className = pName2Text classNm
       , classFns  = V.fromList classFnEntities
@@ -473,16 +474,15 @@ doTypeClasses p_TyClasses p_classInsts = do
 
       mkLClasses classDecl overloadMap = let
         mkLCls clsInf = LClass clsInf (className classDecl) overloadMap
-        in V.map mkLCls (classFnInfo <$> classFns classDecl)
+        in mkLCls <$> (classFnInfo <$> classFns classDecl)
       classFs = V.zipWith mkLClasses classDecls $ M.fromList <$> mps
 
-  genPolyTypes instVars supers -- produce union type for each class
+  genPolyTypes instVars supers -- produce join type for each class
 
   pure (classDecls , vconcat classFs)
 
 -- produce union types for each class polytype, eg:
--- Num  := BigInt | Int | Real
--- Real := Float  | BigFloat
+-- Num  := BigInt u Int u Real
 genPolyTypes :: V.Vector IName -> V.Vector [T.Text]
   -> ToCoreEnv [IName]
 genPolyTypes instVars supers = do
@@ -493,7 +493,7 @@ genPolyTypes instVars supers = do
   polyNames <- freshTyNames (HM.size subTyMap)
   zipWithM addTyHName (HM.keys subTyMap) polyNames
   let addTy i (hNm,tys) =
-        let ent = CU.mkEntity hNm (TyPoly$PolyJoin (TyAlias <$> tys))
+        let ent = CU.mkNamedEntity hNm (TyPoly$PolyJoin (TyAlias <$> tys))
         in addLocalTy i ent
   zipWithM addTy polyNames (HM.toList subTyMap)
 
@@ -700,7 +700,7 @@ getCaseAlts :: [P.Alt] -> CoreExpr -> ToCoreEnv CoreExpr
                 Just x -> x
                 Nothing -> error "failed to convert pattern"
           registerLArg i hNm = addHName hNm i
-            *> addLocal i (LArg (CU.mkEntity hNm TyUnknown) 0)
+            *> addLocal i (LArg (CU.mkNamedEntity hNm TyUnknown) 0)
         in do
         iArgs <- freshNames (length args)
         zipWithM registerLArg iArgs args

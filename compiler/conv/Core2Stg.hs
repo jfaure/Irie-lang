@@ -48,7 +48,7 @@ core2stg cm@(CoreModule hNm algData coreBinds nTopBinds overloads defaults _ tyC
   }
 
 doExtern :: TypeMap -> DynTyMap -> IName -> Entity -> StgBinding
-doExtern tyMap dynTyMap iNm (Entity (Just nm) ty _) =
+doExtern tyMap dynTyMap iNm (Entity (Just nm) ty _ _) =
   let stgId      = convName iNm (Just nm)
   in StgBinding stgId $ case convTy tyMap dynTyMap ty of
     StgLlvmType llvmFnTy -> StgExt llvmFnTy
@@ -60,7 +60,7 @@ convData :: TypeMap -> DynTyMap -> (V.Vector StgData, [(StgId, StgType)])
 convData tyMap dynTyMap = mkLists $ foldr f ([],[]) (tyMap V.++ dynTyMap)
   where
   mkLists (a,b) = (V.fromList a, b)
-  f (Entity (Just hNm) ty _) (d, a) = 
+  f (Entity (Just hNm) ty _ _) (d, a) = 
     let nm = LLVM.AST.mkName (CU.hNm2Str hNm)
     in case ty of
       TyPoly (PolyData ty dataDef) ->
@@ -69,7 +69,7 @@ convData tyMap dynTyMap = mkLists $ foldr f ([],[]) (tyMap V.++ dynTyMap)
       -- ignore tycon defs
       TyFn{} -> (d , a)
       rawTy -> (d, (nm, convTy tyMap dynTyMap rawTy):a)
-  f (Entity Nothing ty _) (d,a) = case ty of
+  f (Entity Nothing ty _ _) (d,a) = case ty of
     TyRigid i -> (d , (convName i Nothing , StgPolyType) : a)
     _ -> (d,a)
 --f o (d,a) = error $ show o ++ " :" ++ show d ++ " , " ++ show a

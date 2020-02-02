@@ -1,4 +1,4 @@
-{- LANGUAGE OverloadedLists -}
+{-# LANGUAGE OverloadedLists , OverloadedStrings #-}
 import CmdLine
 import ParseSyntax
 import Parser
@@ -31,11 +31,14 @@ import Debug.Trace
 preludeFNames = V.empty -- V.fromList ["Library/Prim.arya"]
 searchPath    = ["Library/"]
 
-xd = let f = "trivial/sum.arya" in doProgText defaultCmdLine{emitCore=True} f =<< T.IO.readFile f
+yoloPrependPrelude f = liftA2 T.append
+  (T.IO.readFile "Library/Prim.arya") (T.IO.readFile f)
+
+
 main = parseCmdLine >>= \cmdLine ->
   case files cmdLine of
     []  -> repl cmdLine
-    [f] -> doProgText cmdLine f =<< liftA2 T.append (T.IO.readFile "Library/Prim.arya") (T.IO.readFile f)
+    [f] -> doProgText cmdLine f =<< yoloPrependPrelude f
 --  [f] -> doProgText cmdLine f =<< T.IO.readFile f
     av  -> error "one file pls"
 --  av -> mapM_ (doFile cmdLine) av
@@ -62,6 +65,7 @@ doProgText flags fName progText = do
  let importList = autoImports V.++ customImports
      headers    = CU.mkHeader <$> importList
      llvmObjs   = V.toList $ stgToIRTop . core2stg <$> headers
+     pp         = printPass flags
  let core       = parseTree2Core headers thisMod
      judged     = judgeModule core
      stg        = core2stg judged
@@ -69,14 +73,14 @@ doProgText flags fName progText = do
  if
   | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags)
                                            $ llvmMod
-  | emitSourceFile flags -> putStr =<< readFile fName
-  | emitParseTree  flags -> print pTree
-  | emitParseCore  flags -> putStrLn $ ppCoreModule core
-  | emitCore       flags -> putStrLn $ ppCoreModule judged
-  | emitStg        flags -> putStrLn $ show stg
-  | emitLlvm       flags -> TL.IO.putStrLn $ ppllvm llvmMod
+  | pp == "source"    -> putStr =<< readFile fName
+  | pp == "parseTree" -> print pTree
+  | pp == "preCore"   -> putStrLn $ ppCoreModule core
+  | pp == "core"      -> putStrLn $ ppCoreModule judged
+  | pp == "stg"       -> putStrLn $ show stg
+  | pp == "llvm"      -> TL.IO.putStrLn $ ppllvm llvmMod
                             -- LD.dumpModule llvmMod
-  | jit            flags -> LD.runJIT (optlevel flags) llvmObjs llvmMod
+  | jit flags -> LD.runJIT (optlevel flags) llvmObjs llvmMod
   | otherwise            -> putStrLn $ ppCoreModule judged
 
 repl :: CmdLine -> IO ()

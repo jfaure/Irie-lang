@@ -242,8 +242,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
             TyArrow tys ->
               [TyInstance (TyArrow remTys) (TyOverload instId)]
             _ -> error "panic, expected function"
-          n -> let msg = if n==0
-                         then "no valid types: "
+          n -> let msg = if n==0 then "no valid types: "
                          else "ambiguous function instance: "
             in error $ msg ++ show argTys ++ "\n<:?\n" ++ show allOverloads
       _ -> pure $ remTys
@@ -337,7 +336,7 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
           newNm = mkNm hNm
           newAlts = (\(nm,t) -> (mkNm nm , t)) <$> alts
           newData = TyPoly $ PolyData p (DataDef newNm newAlts)
-          ent = CU.mkEntity newNm newData
+          ent = CU.mkNamedEntity newNm newData
       modify (\x->x{ dataInstances=V.snoc (dataInstances x) ent })
       -- TODO !!
       let conIdx = 0

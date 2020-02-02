@@ -1,12 +1,13 @@
 # sponsor
 # expr2Core
-  * no inline polytypes (force use of typevar?)
+  * redo typeclasses : different [classFns] causes problems
+  * are there ever inline polytypes ? (force use of typevar?)
   * imports
-  * array prims + patterns
-  * nested patterns
-  * linear types + freeVars
+  * array prims + patterns + nested patterns
   * register data subtypes (for recursive refs)
   * polymorphic fns (boxed | unboxed)
+  * debruijn indexes for type-level computations?
+  * GADT's (apparently non-trivial interactions with subtyping because equality constraints eg. Sum a a => a == a)
   * error reporting
 
 # Typeclass

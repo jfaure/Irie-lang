@@ -8,9 +8,10 @@ import Control.Monad.State.Strict
 
 import Debug.Trace
 
-mkAnonEntity ty     = Entity Nothing ty   False
-mkNamedEntity nm ty = Entity (Just nm) ty False
-mkEntity = mkNamedEntity
+mkEntity maybeNm ty = Entity maybeNm ty   False ThisModule
+mkAnonEntity ty     = Entity Nothing ty   False ThisModule
+mkNamedEntity nm ty = Entity (Just nm) ty False ThisModule
+--mkEntity = mkNamedEntity
 
 lookupBinding :: IName -> BindMap -> Binding
  = \n binds -> binds V.! n

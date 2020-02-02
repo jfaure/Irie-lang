@@ -65,14 +65,22 @@ data ClassDecl = ClassDecl {
 }
 data ClassFn = ClassFn {
    classFnInfo :: Entity      -- the tyFunction TODO use TyFunction
- , defaultFn   :: Maybe IName --Overload
+ , defaultFn   :: Maybe IName -- jointype or instance type ??
 }
-type ClassDefaults  = IM.IntMap MonoType
+
+-- an entity = info about anything we give an IName to.
+data Entity = Entity { -- entity info
+   named    :: Maybe HName
+ , typed    :: Type
+ , checked  :: Bool
+ , source   :: SourceEntity
+ }
+data SourceEntity = ThisModule | Import | Private
 
 data Binding
  = LBind { -- let binding
    info  :: Entity  -- hname, type, source
- , args  :: [IName] -- the unique arg Names used locally by 'expr'
+ , args  :: [IName] -- the unique argINames used locally by
  , expr  :: CoreExpr
  }
  -- always inline this binding (esp. to access freevars)
@@ -83,7 +91,7 @@ data Binding
    info :: Entity
  , useCount :: Int -- for calculating linear types
  }
- | LCon   { info :: Entity } --Term level GADT constructor(Type is known)
+ | LCon   { info :: Entity } --Term level GADT constructor
  | LExtern{ info :: Entity }
  | LClass {
    info        :: Entity -- TypeFunction
@@ -91,16 +99,8 @@ data Binding
  , overloads   :: M.Map ITName IName -- instanceIds
  }
  -- typevar is accessed in the function signature
- | LTypeVar { info :: Entity }
+ | LTypeVar { info :: Entity } -- TODO unused
 -- | LBuiltinSizeof
-
--- an entity = info about anything we give an IName to.
-data Entity = Entity { -- entity info
-   named    :: Maybe HName
- , typed    :: Type
- , checked  :: Bool
--- , source :: Maybe SourceEntity
- }
 
 data CoreExpr
  = Var      IName
@@ -203,6 +203,7 @@ deriving instance Show Instance
 deriving instance Show CoreExpr
 deriving instance Show CaseAlts
 deriving instance Show Entity
+deriving instance Show SourceEntity
 deriving instance Show CoreModule
 deriving instance Show Fixity
 
@@ -217,5 +218,6 @@ deriving instance Eq Instance
 deriving instance Eq CoreExpr
 deriving instance Eq CaseAlts
 deriving instance Eq Entity
+deriving instance Eq SourceEntity
 deriving instance Eq CoreModule
 deriving instance Eq Fixity
