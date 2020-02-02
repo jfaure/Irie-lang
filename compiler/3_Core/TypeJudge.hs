@@ -233,10 +233,10 @@ judgeExpr :: CoreExpr -> UserType -> CoreModule -> TCEnv Type
         let
         isValidOverload candidateTy v
           = all (subsume' $ TyAlias candidateTy) argTys
-        candidates = M.filterWithKey isValidOverload allOverloads
-        in case M.size candidates of
+        candidates = IM.filterWithKey isValidOverload allOverloads
+        in case IM.size candidates of
           1 -> -- TODO return tys change ?
-            let instId = head $ M.elems candidates
+            let instId = head $ IM.elems candidates
             in (unVar . typed . info <$> lookupBindM instId)
             <&> \case
             TyArrow tys ->

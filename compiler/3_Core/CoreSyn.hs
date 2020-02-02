@@ -64,7 +64,7 @@ data ClassDecl = ClassDecl {
  , supers    :: [HName]
 }
 data ClassFn = ClassFn {
-   classFnInfo :: Entity      -- the tyFunction TODO use TyFunction
+   classFnInfo :: Entity      -- TODO use TyFunction
  , defaultFn   :: Maybe IName -- jointype or instance type ??
 }
 
@@ -96,7 +96,7 @@ data Binding
  | LClass {
    info        :: Entity -- TypeFunction
  , classNm     :: HName  -- change to IName ?
- , overloads   :: M.Map ITName IName -- instanceIds
+ , overloads   :: ITMap IName -- instanceIds
  }
  -- typevar is accessed in the function signature
  | LTypeVar { info :: Entity } -- TODO unused

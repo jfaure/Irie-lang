@@ -1,6 +1,5 @@
 # sponsor
 # expr2Core
-  * redo typeclasses : different [classFns] causes problems
   * are there ever inline polytypes ? (force use of typevar?)
   * imports
   * array prims + patterns + nested patterns

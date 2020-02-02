@@ -148,9 +148,9 @@ moduleLookup imports hNm = let
             = liftA2 (,) (importTyAlias cm iTy) (importBind indx)
       in do
       lookupTyHNm classNm -- add class polytype
-      overloads' <- traverse importOverload $ M.toList overloads
+      overloads' <- traverse importOverload $ IM.toList overloads
       t <- importTy $ typed inf
-      addNm hNm (LClass inf{typed=t} classNm (M.fromList overloads'))
+      addNm hNm (LClass inf{typed=t} classNm (IM.fromList overloads'))
     _ -> addNm hNm bind
 --    error "untested support for external bindings"
 

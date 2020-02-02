@@ -31,7 +31,7 @@ cmdLineDecls :: Parser CmdLine
 cmdLineDecls = CmdLine
   <$> option parsePrintPass
       (short 'p' <> long "print"
-      <> help "print a pass"
+      <> help "print a pass: source|parseTree|preCore|core|stg|llvm"
       <> value "")
   <*> switch
       (short 'j' <> long "jit"

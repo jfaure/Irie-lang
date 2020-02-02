@@ -19,7 +19,7 @@ import qualified Data.Map.Strict     as M
 import qualified Data.HashMap.Strict as HM
 import qualified Data.IntMap.Strict  as IM
 import Control.Monad.Trans.State.Strict
-import Data.List (partition)
+import Data.List (partition, sortOn)
 import Data.Foldable (foldrM)
 import Control.Monad (zipWithM)
 import Control.Applicative
@@ -27,10 +27,6 @@ import Data.Functor
 import Data.Foldable
 import GHC.Exts (groupWith)
 import Debug.Trace
-
-transpose []             = []
-transpose ([]    : xss)  = transpose xss
-transpose ((x:xs) : xss) = (x : [h | (h:_) <- xss]) : transpose (xs : [ t | (_:t) <- xss])
 
 ------------
 -- ConvTy --
@@ -448,57 +444,46 @@ doClassDecl (P.TypeClass classNm [] supers decls) =
       , supers    = pName2Text <$> supers }
 
 doTypeClasses :: V.Vector P.Decl -> V.Vector P.Decl
- -> ToCoreEnv (  V.Vector ClassDecl -- exported classDecl info
-               , V.Vector Binding)  -- class tycons (top bindings)
+ -> ToCoreEnv (  V.Vector ClassDecl
+               , V.Vector Binding)  -- classFns
 doTypeClasses p_TyClasses p_classInsts = do
   classDecls <- V.mapM doClassDecl p_TyClasses
-  let classNms = className <$> classDecls
-      declMap  = HM.fromList $ V.toList $ V.zip classNms classDecls
-      doInstance inst@(P.TypeClassInst instNm _ _) =
+  let declMap = HM.fromList $ V.toList $ V.zip (className <$> classDecls) classDecls
+      p_instancesByClass = groupWith (\(P.TypeClassInst hNm _ _)->hNm) $ V.toList p_classInsts
+      doInstances insts@(P.TypeClassInst instNm _ _ : rem) =
         let classDecl = case HM.lookup (pName2Text instNm) declMap of
               Just h -> h
               Nothing -> error ("class not in scope: " ++ show instNm)
-        in doClassInstance inst classDecl
-  perInstOverloads <- V.mapM doInstance p_classInsts
+        in  do
+        insts <- mapM (`doClassInstance` classDecl) insts
+        let (instTys , supers , clsFn2Inst) = unzip3 insts
+        genPolyTypes instTys supers
+        pure $ zip instTys clsFn2Inst
+  instances <- mapM doInstances p_instancesByClass
+  let classFns = mkClassFns classDecls (concat instances)
+  pure (classDecls , classFns)
 
-  -- class2Overmaps : foreach ClassNm ; [classFn]
-  -- mps = foreach classFn; ITName --> instFn
-  let (instVars , supers , class2OverloadMaps)= V.unzip3 perInstOverloads
-      vconcat = V.foldl' (V.++) V.empty
-      -- mkmap : use instTys rather than classTys in the map
-      mkMap :: ITName -> ITMap IName -> [(ITName, IName)]
-      mkMap instTys classFn2OverloadMap =
-        (instTys , ) <$> (IM.elems classFn2OverloadMap)
-      overloadMaps = V.zipWith mkMap instVars class2OverloadMaps
-      mps = V.fromList $ transpose $ V.toList overloadMaps
+-- A class has multiple instances
+-- classFns need a (Map ITName InstanceId), so they can be instantiated based on type.
+-- we have (instTyVar , supers , Map InstTyName Overload)
+-- and want (Map ITName Overload) for each classFn
+-- [[(0,["Num"],fromList [(1,3),(2,4)])],[(3,["Real","Num"],fromList [(1,5),(2,6)])]]
+mkClassFns :: V.Vector ClassDecl -> [(ITName , [(IName , IName)])] -> V.Vector Binding
+mkClassFns classDecls instances =
+  let top = map (\(instTy , lists) -> (\(clsFn , instId) -> (clsFn , (instTy , instId))) <$> lists) instances
+      byClassFn = map (\(clsFn,(instTy,instId))->(instTy,instId)) <$> groupWith fst (concat top)
+      instMaps = IM.fromList <$> byClassFn
 
-      mkLClasses classDecl overloadMap = let
-        mkLCls clsInf = LClass clsInf (className classDecl) overloadMap
-        in mkLCls <$> (classFnInfo <$> classFns classDecl)
-      classFs = V.zipWith mkLClasses classDecls $ M.fromList <$> mps
-
-  genPolyTypes instVars supers -- produce join type for each class
-
-  pure (classDecls , vconcat classFs)
-
--- produce union types for each class polytype, eg:
--- Num  := BigInt u Int u Real
-genPolyTypes :: V.Vector IName -> V.Vector [T.Text]
-  -> ToCoreEnv [IName]
-genPolyTypes instVars supers = do
-  -- small complication: need to add instances to superclasses
-  let addInst = \mp (instVar , supers) ->
-        foldl' (\m s -> HM.insertWith (++) s [instVar] m) mp supers
-      subTyMap = V.foldl' addInst HM.empty (V.zip instVars supers)
-  polyNames <- freshTyNames (HM.size subTyMap)
-  zipWithM addTyHName (HM.keys subTyMap) polyNames
-  let addTy i (hNm,tys) =
-        let ent = CU.mkNamedEntity hNm (TyPoly$PolyJoin (TyAlias <$> tys))
-        in addLocalTy i ent
-  zipWithM addTy polyNames (HM.toList subTyMap)
+      classFnInfos = V.foldl' (V.++) V.empty $ (classFnInfo <$>) . classFns <$> classDecls
+      mkLClasses classDecl overloadMap =
+        let mkLCls clsInf = LClass clsInf (className classDecl) overloadMap
+        in  mkLCls <$> (classFnInfo <$> classFns classDecl)
+      classFs = V.concat $ zipWith mkLClasses (V.toList classDecls) $ instMaps
+      cfs = V.zipWith (\inf mp -> LClass inf T.empty mp) classFnInfos (V.fromList instMaps)
+  in cfs
 
 doClassInstance :: P.Decl{-.TypeClassInst-} -> ClassDecl
-  -> ToCoreEnv (ITName , [HName] , ITMap IName) -- ClassINm -> INm
+  -> ToCoreEnv (IName, [HName], [(IName, IName)])
  -- tycon args , classINms, overloadINms
  = \(P.TypeClassInst instNm [instTyNm] decls)
     (ClassDecl classNm classFns superClasses) ->
@@ -506,9 +491,9 @@ doClassInstance :: P.Decl{-.TypeClassInst-} -> ClassDecl
       supers = classNm : superClasses
       (sigs, fnBinds) = partitionFns decls
       genOverload (P.FunBind [(P.Match fName pats rhs)]) =
-        let fHName = pName2Text fName
+        let fHName     = pName2Text fName
             scopedName = P.Ident $ fHName `T.append` T.cons '.' instTyHNm
-            match' = P.Match scopedName pats rhs
+            match'     = P.Match scopedName pats rhs
         in do
          classFnNm <- lookupHNm fHName <&> \case
            Nothing -> error $ "unknown class function: " ++ show fName
@@ -530,7 +515,23 @@ doClassInstance :: P.Decl{-.TypeClassInst-} -> ClassDecl
         overloadINms = take nOverloads [startOverloadId..]
     modify (\x->x{ nameCount = nameCount x + nOverloads })
     zipWithM addLocal overloadINms overloadBinds
-    pure $ (instTy, supers, IM.fromList (zip classFnINms overloadINms))
+    pure $ (instTy , supers , (zip classFnINms overloadINms))
+
+-- produce union types for each class polytype, eg:
+-- Num  := BigInt u Int u Real
+genPolyTypes :: [IName] -> [[T.Text]]
+  -> ToCoreEnv [IName]
+genPolyTypes instVars supers = do
+  -- small complication: need to add instances to superclasses
+  let addInst = \mp (instVar , supers) ->
+        foldl' (\m s -> HM.insertWith (++) s [instVar] m) mp supers
+      subTyMap = foldl' addInst HM.empty (zip instVars supers)
+  polyNames <- freshTyNames (HM.size subTyMap)
+  zipWithM addTyHName (HM.keys subTyMap) polyNames
+  let addTy i (hNm,tys) =
+        let ent = CU.mkNamedEntity hNm (TyPoly$PolyJoin (TyAlias <$> tys))
+        in addLocalTy i ent
+  zipWithM addTy polyNames (HM.toList subTyMap)
 
 expr2Core :: P.PExp -> ToCoreEnv CoreExpr = \case
   P.Var (P.UnQual hNm) -> lookupName hNm >>= \case

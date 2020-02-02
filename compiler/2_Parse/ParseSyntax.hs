@@ -12,6 +12,7 @@ import qualified Data.Vector as V
 data Name        -- variables (incl constructors and symbols)
  = Ident  Text -- varid/conid
  | Symbol Text -- varsym/consym
+ deriving (Eq , Ord)
 data QName -- QName: qualified name: '::' namespace operator
  = QName [Name] Name
  | UnQual Name
