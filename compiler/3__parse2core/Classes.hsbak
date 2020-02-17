@@ -1,0 +1,121 @@
+module Classes
+where
+
+-- TODO remove
+partitionFns = partition $ \case { P.TypeSigDecl{}->True ; _-> False }
+
+-------------
+-- Classes --
+-------------
+-- * ClassDecl: a description of the interface that must be satisfied by instances
+--   ie. function signatures, defaults and superclasses
+-- * classFn: a jointyped function shared by all instances.
+--   includes a map InstanceType->InstanceId for instantiation purposes (in typejudge)
+doClassDecl :: P.Decl -> ToCoreEnv ClassDecl
+doClassDecl (P.TypeClass classNm [] supers decls) =
+  let
+    (sigs, defaultBinds) = partitionFns decls
+    registerClassFns sigs =
+      let registerFn (P.TypeSigDecl nms sig) =
+            mapM (\h -> addHName (pName2Text h) =<< freshName) nms
+      in  mapM registerFn sigs
+    sig2ClassFn (P.TypeSigDecl [nm] sig) = do
+      sigTy <- convTyM sig
+      pure $ ClassFn {
+        classFnInfo = CU.mkNamedEntity (pName2Text nm) sigTy
+      , defaultFn   = Nothing }
+  in do
+    startPolyFns <- gets nameCount
+    registerClassFns sigs
+    modify(\x->x{isPolyFn = \i-> i>=startPolyFns && i<nameCount x})
+    classFnEntities <- mapM sig2ClassFn sigs
+    pure $ ClassDecl
+      { className = pName2Text classNm
+      , classFns  = V.fromList classFnEntities
+      , supers    = pName2Text <$> supers }
+
+doTypeClasses :: V.Vector P.Decl -> V.Vector P.Decl
+ -> ToCoreEnv (  V.Vector ClassDecl
+               , V.Vector Binding)  -- classFns
+doTypeClasses p_TyClasses p_classInsts = do
+  classDecls <- V.mapM doClassDecl p_TyClasses
+  let declMap = HM.fromList $ V.toList $ V.zip (className <$> classDecls) classDecls
+      p_instancesByClass = groupWith (\(P.TypeClassInst hNm _ _)->hNm) $ V.toList p_classInsts
+      doInstances insts@(P.TypeClassInst instNm _ _ : rem) =
+        let classDecl = case HM.lookup (pName2Text instNm) declMap of
+              Just h -> h
+              Nothing -> error ("class not in scope: " ++ show instNm)
+        in  do
+        insts <- mapM (`doClassInstance` classDecl) insts
+        let (instTys , supers , clsFn2Inst) = unzip3 insts
+        genPolyTypes instTys supers
+        pure $ zip instTys clsFn2Inst
+  instances <- mapM doInstances p_instancesByClass
+  let classFns = mkClassFns classDecls (concat instances)
+  pure (classDecls , classFns)
+
+-- A class has multiple instances
+-- classFns need a (Map ITName InstanceId), so they can be instantiated based on type.
+-- we have (instTyVar , supers , Map InstTyName Overload)
+-- and want (Map ITName Overload) for each classFn
+-- [[(0,["Num"],fromList [(1,3),(2,4)])],[(3,["Real","Num"],fromList [(1,5),(2,6)])]]
+mkClassFns :: V.Vector ClassDecl -> [(ITName , [(IName , IName)])] -> V.Vector Binding
+mkClassFns classDecls instances =
+  let top = map (\(instTy , lists) -> (\(clsFn , instId) -> (clsFn , (instTy , instId))) <$> lists) instances
+      byClassFn = map (\(clsFn,(instTy,instId))->(instTy,instId)) <$> groupWith fst (concat top)
+      instMaps = IM.fromList <$> byClassFn
+
+      classFnInfos = V.foldl' (V.++) V.empty $ (classFnInfo <$>) . classFns <$> classDecls
+      clsFs = V.zipWith (\inf mp -> LClass inf T.empty mp) classFnInfos (V.fromList instMaps)
+  in clsFs
+
+doClassInstance :: P.Decl{-.TypeClassInst-} -> ClassDecl
+  -> ToCoreEnv (IName, [HName], [(IName, IName)])
+ -- tycon args , classINms, overloadINms
+ = \(P.TypeClassInst instNm [instTyNm] decls)
+    (ClassDecl classNm classFns superClasses) ->
+  let instTyHNm = pName2Text instTyNm
+      supers = classNm : superClasses
+      (sigs, fnBinds) = partitionFns decls
+      genOverload (P.FunBind [(P.Match fName pats rhs)]) =
+        let fHName     = pName2Text fName
+            scopedName = P.Ident $ fHName `T.append` T.cons '.' instTyHNm
+            match'     = P.Match scopedName pats rhs
+        in do
+         classFnNm <- lookupHNm fHName <&> \case
+           Nothing -> error $ "unknown class function: " ++ show fName
+           Just i  -> i
+         (classFnNm , ) <$> match2LBind match' TyUnknown
+  in do
+    -- TODO check the instances respect classFnSigs
+    -- TODO minimum instance definition ?
+    sigMap <- mkSigMap (V.fromList sigs)
+    let findInstSig hNm = M.lookup hNm sigMap
+
+    let lookupINm hNm = lookupTyHNm hNm <&> \case
+          { Just i->i ; Nothing -> error "unknown type" }
+    instTy <- lookupINm instTyHNm
+
+    (classFnINms, overloadBinds) <- unzip <$> mapM genOverload fnBinds
+    startOverloadId <- gets nameCount
+    let nOverloads = length overloadBinds
+        overloadINms = take nOverloads [startOverloadId..]
+    modify (\x->x{ nameCount = nameCount x + nOverloads })
+    zipWithM addLocal overloadINms overloadBinds
+    pure $ (instTy , supers , (zip classFnINms overloadINms))
+
+-- produce union types for each class polytype, eg:
+-- Num  := BigInt u Int u Real
+genPolyTypes :: [IName] -> [[T.Text]]
+  -> ToCoreEnv [IName]
+genPolyTypes instVars supers = do
+  -- small complication: need to add instances to superclasses
+  let addInst = \mp (instVar , supers) ->
+        foldl' (\m s -> HM.insertWith (++) s [instVar] m) mp supers
+      subTyMap = foldl' addInst HM.empty (zip instVars supers)
+  polyNames <- freshTyNames (HM.size subTyMap)
+  zipWithM addTyHName (HM.keys subTyMap) polyNames
+  let addTy i (hNm,tys) =
+        let ent = CU.mkNamedEntity hNm (TyPoly$Join (TyAlias <$> tys))
+        in addLocalTy i ent
+  zipWithM addTy polyNames (HM.toList subTyMap)

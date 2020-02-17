@@ -16,6 +16,7 @@ description:         Please see the README on GitHub at <https://github.com/jfau
 
 dependencies:
 - base >= 4.7 && < 5
+- lens
 - filepath
 - directory
 - llvm-hs-pure >= 9.0.0
@@ -30,6 +31,7 @@ dependencies:
 - text
 - bytestring
 - containers
+- hashmap
 - unordered-containers
 - mtl
 
@@ -41,8 +43,8 @@ executables:
     source-dirs:
     - compiler/
     - compiler/1_Main/
-    - compiler/2_Parse/
     - compiler/3_Core/
+    - compiler/2_Parse/
     - compiler/3__parse2core/
     - compiler/4_LFVM-STG/
     - compiler/conv

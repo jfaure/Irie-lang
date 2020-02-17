@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase, ScopedTypeVariables , MultiWayIf , StandaloneDeriving #-}
 -- Primitives: literals and instructions
 -- conversions from Prim to llvm instructions/types
 -- PrimInstr are roughly equivalent to LLVM.AST.Instructions
@@ -38,6 +39,7 @@ data PrimInstr
  | NatInstr   NatInstrs
  | FracInstr  FracInstrs
  | MemInstr   ArrayInstrs
+ | ExprHole   -- errors on eval, but will typecheck
  | MkNum      -- instantiation must happen via function call
  | MkReal
  | MkTuple

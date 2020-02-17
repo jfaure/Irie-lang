@@ -1,13 +1,15 @@
 # sponsor
+# New
+  * set of record labels
+  * sum-of-product construction ?!
+  * add inplaceable vector for lambda-bound typevars =~ scheme automaton ?
+
 # expr2Core
-  * are there ever inline polytypes ? (force use of typevar?)
   * imports
   * array prims + patterns + nested patterns
   * register data subtypes (for recursive refs)
-  * polymorphic fns (boxed | unboxed)
-  * debruijn indexes for type-level computations?
-  * GADT's (apparently non-trivial interactions with subtyping because equality constraints eg. Sum a a => a == a)
-  * error reporting
+  * GADT's (apparently tricky because of equality constraints eg. Sum a a => a == a)
+  * (generate primitive fn wrappers somewhere)
 
 # Typeclass
   * default typeclass signatures/decls
@@ -25,14 +27,15 @@
   * distributed computing
 
 # Low priority
+  * error reporting
   * precompiled modules (sv them where?)
-  * generate function wrappers for remaining primitives (stgtollvm.wrapPrim:275)
-  * View patterns
   * a , b : t -- syntax
 
 # Maybe
   * rec
+  * disallow inline polytypes; (force use of typevars / flow edges)
   * parse GADT style
+  * View patterns
   * GuardedRhs
   * ContPrim may be unecessary
   * optimize convFixities

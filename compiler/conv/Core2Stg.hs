@@ -1,4 +1,4 @@
--- {-#LANGUAGE Strict#-}
+-- {-# LANGUAGE Strict #-}
 -- core2Stg
 -- * all LBinds must have a type annotation
 -- * all types must be monotypes
@@ -6,8 +6,9 @@
 --
 -- ? how to make dependent types static by this point ?
 -- ? also type functions etc..
-module Core2Stg (core2stg)
+module Core2Stg -- (core2stg)
 where
+{-
 import Debug.Trace
 
 import Prim
@@ -36,7 +37,7 @@ type DynTyMap = TypeMap
 
 -- TODO filter all functions from CoreModule.bindings
 core2stg :: CoreModule -> StgModule
-core2stg cm@(CoreModule hNm algData coreBinds nTopBinds overloads defaults _ tyConInsts _ _) =
+core2stg cm@(CoreModule hNm algData coreBinds nTopBinds tyConInsts (ParseDetails overloads defaults _ _ _)) =
   let (normalData, stgTypedefs) = convData algData tyConInsts
       getDynInst i conIdx = case named (tyConInsts V.! i) of
         Nothing -> error "impossible"
@@ -48,7 +49,7 @@ core2stg cm@(CoreModule hNm algData coreBinds nTopBinds overloads defaults _ tyC
   }
 
 doExtern :: TypeMap -> DynTyMap -> IName -> Entity -> StgBinding
-doExtern tyMap dynTyMap iNm (Entity (Just nm) ty _ _) =
+doExtern tyMap dynTyMap iNm (Entity (Just nm) ty _ _ _) =
   let stgId      = convName iNm (Just nm)
   in StgBinding stgId $ case convTy tyMap dynTyMap ty of
     StgLlvmType llvmFnTy -> StgExt llvmFnTy
@@ -60,7 +61,7 @@ convData :: TypeMap -> DynTyMap -> (V.Vector StgData, [(StgId, StgType)])
 convData tyMap dynTyMap = mkLists $ foldr f ([],[]) (tyMap V.++ dynTyMap)
   where
   mkLists (a,b) = (V.fromList a, b)
-  f (Entity (Just hNm) ty _ _) (d, a) = 
+  f (Entity (Just hNm) ty _ _ _) (d, a) = 
     let nm = LLVM.AST.mkName (CU.hNm2Str hNm)
     in case ty of
       TyPoly (PolyData ty dataDef) ->
@@ -69,7 +70,7 @@ convData tyMap dynTyMap = mkLists $ foldr f ([],[]) (tyMap V.++ dynTyMap)
       -- ignore tycon defs
       TyFn{} -> (d , a)
       rawTy -> (d, (nm, convTy tyMap dynTyMap rawTy):a)
-  f (Entity Nothing ty _ _) (d,a) = case ty of
+  f (Entity Nothing ty _ _ _) (d,a) = case ty of
     TyRigid i -> (d , (convName i Nothing , StgPolyType) : a)
     _ -> (d,a)
 --f o (d,a) = error $ show o ++ " :" ++ show d ++ " , " ++ show a
@@ -98,7 +99,7 @@ convTy tyMap dynTyMap =
         stgAlias = convName iNm (named tyInfo)
     in case typed tyInfo of
       -- polytypes will need to be bitcasted in llvm
-      TyPoly (PolyJoin{}) -> StgPolyType
+      TyPoly (Join{}) -> StgPolyType
       TyPoly PolyAny       -> StgPolyType
 --    TyMono (MonoRigid ri) -> StgRigid ri
       o                    -> StgTypeAlias stgAlias
@@ -114,17 +115,7 @@ convTy tyMap dynTyMap =
   TyRigid{}    -> StgPolyType
   t@(TyCon ty tys) -> StgPolyType --convTy' $ head tys --error $ show t
 
-  TyInstance ty inst -> case inst of
-    TyArgInsts tys -> convTy' ty
-    TyPAp t1s t2s ->
-      let st1s = convTy' <$> t1s
-          st2s = convTy' <$> t2s
-      in StgPApTy st1s st2s
-    TyOverload fId       -> convTy' ty
-    TyDynInstance fId conIdx -> StgTypeAlias
-      $ convName (fId + V.length tyMap) (named (dynTyMap V.! fId))
-
-  TyPoly (PolyJoin alts) -> StgPolyType -- error $ "core2stg: polyunion: " ++ show alts -- convTy' $ head alts
+  TyPoly (Join alts) -> StgPolyType -- error $ "core2stg: polyunion: " ++ show alts -- convTy' $ head alts
   TyPoly (PolyAny) -> StgPolyType
   -- Note any other type is illegal at this point
   t -> error ("internal error: core2Stg: not a monotype: " ++ show t)
@@ -160,12 +151,11 @@ doBinds getDynInst binds nTopBinds tyMap dynTyMap classDecls
     LArg{}     -> id
     LCon{}     -> id
     LClass{}   -> id
-    LTypeVar e -> error $ "tyVar: " ++ show e
 --  wht -> error $ show wht
 
 convExpr :: BindMap -> TypeMap -> V.Vector ClassDecl
          -> (IName->IName->HName) -> (ITName -> Type)
-         -> Type -> CoreExpr
+         -> Type -> Term 
          -> StgExpr
 convExpr bindMap tyMap classDecls getDynInst lookupTy ty =
  let lookup      = (bindMap V.!)
@@ -203,36 +193,33 @@ convExpr bindMap tyMap classDecls getDynInst lookupTy ty =
        argTys' = argTys ++ repeat TyUnknown
        mkStgExprArg t x = StgExprArg $ convExpr'' t x
        stgArgs = zipWith mkStgExprArg argTys' args
-   in case ty of
-     TyInstance ty inst -> case inst of
-       TyArgInsts tys ->
-         let instArgs = zipWith mkStgExprArg tys args
-         in StgApp (convName' fId) instArgs
-       TyOverload instId -> -- TODO temp hack (repeat ty)
-         let instArgs = zipWith mkStgExprArg (repeat ty) args
-         in case lookup instId of
-           LInstr i instr -> convExpr'' ty (Instr instr args)
-           _ -> StgApp (convName' instId) instArgs
-       TyDynInstance i conIdx ->
-         StgApp (convName i (Just $ getDynInst i conIdx)) stgArgs
-       TyPAp{}-> StgInstr (StgPApApp (trace "careful"$arity-tyArity))
-                  $ StgVarArg (convName' fId) : stgArgs
-     _ -> if tyArity > arity
-      then StgInstr StgPAp (StgVarArg (convName' fId) : stgArgs)
-      else StgApp (convName' fId) stgArgs
+   in  StgApp (convName' fId) stgArgs
+--   TyInstance ty inst -> case inst of
+--     TyArgInsts tys ->
+--       let instArgs = zipWith mkStgExprArg tys args
+--       in StgApp (convName' fId) instArgs
+--     TyOverload instId -> -- TODO temp hack (repeat ty)
+--       let instArgs = zipWith mkStgExprArg (repeat ty) args
+--       in case lookup instId of
+--         LInstr i instr -> convExpr'' ty (Instr instr args)
+--         _ -> StgApp (convName' instId) instArgs
+--     TyDynInstance i conIdx ->
+--       StgApp (convName i (Just $ getDynInst i conIdx)) stgArgs
+--     TyPAp{}-> StgInstr (StgPApApp (trace "careful"$arity-tyArity))
+--                $ StgVarArg (convName' fId) : stgArgs
+--   _ -> if tyArity > arity
+--    then StgInstr StgPAp (StgVarArg (convName' fId) : stgArgs)
+--    else StgApp (convName' fId) stgArgs
 
  -- TODO default case alt
  Case expr a -> case a of
    Switch alts ->
     let convAlt (c, e) = (literal2Stg c, convExpr' e)
     in StgCase (convExpr' expr) Nothing (StgSwitch$convAlt <$> alts)
-   Decon  alts   -> -- [(IName, [IName], CoreExpr)]
+   Decon  alts   -> -- [(IName, [IName], Term)]
     let convAlt (con, arg, e)
               = (convName' con, convName' <$> arg, convExpr' e)
     in StgCase (convExpr' expr) Nothing (StgDeconAlts$convAlt<$>alts)
-
- TypeExpr t -> error "internal error: core2Stg: unexpected typeExpr"
- WildCard   -> error "found hole"
 
 -- cancerous llvm-hs Name policy
 -- TODO name clashes ?
@@ -259,7 +246,6 @@ typedLit2Stg :: Literal -> Type -> StgConst = \l t ->
     PrimArr ty -> let String s = l in
       C.Array (LLVM.AST.IntegerType 8) (mkChar <$> (s++['\0']))
     x -> literal2Stg l -- no overrides fancy
-  TyInstance t2 _ -> typedLit2Stg l t2
   o -> literal2Stg l
 --o -> error $ "bad type for literal: " ++ show l ++ " : " ++ show o
 
@@ -268,6 +254,7 @@ literal2Stg :: Literal -> StgConst = \l ->
   in case l of
     Char c   -> mkChar c
     String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))
+    x -> error $ show x
 --    Int i    -> C.Int 32 $ i
 --    Frac f   -> C.Float (LF.Double $ fromRational f)
 
@@ -324,3 +311,4 @@ primTy2llvm :: PrimType -> LLVM.AST.Type =
   PrimTuple tys -> -- StgTuple (primTy2llvm <$> tys)
     let structTy = LT.StructureType False (primTy2llvm <$> tys)
     in  LT.PointerType structTy (AddrSpace 0)
+-}

@@ -1,182 +1,116 @@
--- vs Core:
--- - no state (qnames/typeclasses...)
--- - PSyn has infix operators
--- - PSyn delays figuring out applications/infix applications
+{-# LANGUAGE LambdaCase, ScopedTypeVariables , MultiWayIf , StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module ParseSyntax where -- import qualified as PSyn
 
 import Prim
-import Data.Text as T -- Names are Text
+import Data.Text as T -- Names are Text (ShortText ?)
+import qualified Data.Map
 import qualified Data.Vector as V
+import Control.Lens
 
-data Name        -- variables (incl constructors and symbols)
- = Ident  Text -- varid/conid
- | Symbol Text -- varsym/consym
- deriving (Eq , Ord)
-data QName -- QName: qualified name: '::' namespace operator
- = QName [Name] Name
- | UnQual Name
- | ExprHole --
-type Op = Name
-type QOp = QName
+type IName = Int
+type HName = Text
+type FName = IName -- record  fields
+type LName = IName -- sumtype labels
 
--- modules as extensions of records ?
--- So they can be returned by type functions
+type Op = IName
+type ImportDecl = IName
+-- externs can't be checked (eg. syscalls / C apis etc..)
+data Extern = Extern IName PrimType | ExternVA IName PrimType
+
+data Fixity = Fixity Assoc (Maybe Int) [Op] -- info for infix operators
+data Assoc = AssocNone | AssocLeft | AssocRight
+
 data Module = Module {
-   moduleName :: Name
--- , decls      :: [Decl]
- , parseTree  :: ParseTree
+   _moduleName :: HName
+
+ , _imports    :: [ImportDecl]
+-- , _externs    :: [Extern]
+ , _bindings   :: [TopBind] -- top binds
+ , _locals     :: [TopBind] -- locals (incl args)
+
+ , _parseDetails :: ParseDetails
 }
 
-data ImportDecl
- = Open    Name -- open import
- | Require Name -- qualified import
- | ImportAs ImportDecl Name
- | ImportCustom {
-   importMod :: Name
- , hiding    :: [Name]
- , renaming  :: [(Name, Name)]
- }
- -- | Extern | ExternVA
+type NameMap = Data.Map.Map HName IName
+data ParseDetails = ParseDetails {
+   _hNameBinds   :: NameMap
+ , _hNameArgs    :: NameMap
+ , _hNameImports :: NameMap
+ , _fields       :: NameMap
+ , _labels       :: NameMap
+-- , fixities     :: V.Vector Fixity
+}
 
-data Decl
- = Import        ImportDecl
- -- type decls
- | TypeAlias     Name Type          -- note. type includes data
- | TypeFun       Name [Name] PExp   -- TODO move this to Type
- | TypeClass     Name [Name] [Name] [Decl] -- haskell newtype ?
- | TypeClassInst Name [Name] [Decl]
+data TopBind
+ = FunBind    [FnMatch] (Maybe TT)
+ | ExternBind Extern
+data FnMatch = FnMatch { fnArgs :: [Pattern] , expr :: TT }
 
- -- top bindings (seperate because sigs may be in sigModules)
- | Extern        Name Type
- | ExternVA      Name Type
- | TypeSigDecl   [Name] Type
- | FunBind       [Match]
--- | FunBinds      [[Match]]
-
- -- auxilary decls
- | InfixDecl     Assoc (Maybe Int) [Op] --info for infix operators
- | DefaultDecl   Type Type -- eg: default Num Integer
-
--- associativity of infix/infixr/infixl decls
-data Assoc = AssocNone | AssocLeft | AssocRight
-newtype Binds = BDecls [Decl] -- let or where clauses
-data Match -- clauses of a function binding
- = Match Name [Pat] Rhs
- | InfixMatch Pat Name [Pat] Rhs
--- | TypeMatch Name Rhs -- f : Int->Float = cast -- TODO
-data Rhs
- = UnGuardedRhs PExp
- | GuardedRhss [GuardedRhs]
-data GuardedRhs = GuardedRhs [Stmt] PExp
-
--- note. Types may be parsed as TyFunction if they take arguments
-data Type
- = TyPrim PrimType -- primitive
- | TyPoly PolyType
-
- | TyName Name    -- alias / data name / binding (TyExpr)
- | TyVar  Name    -- introduced by TyFunction
-
- | TyArrow [Type] -- function type
- | TyApp Type [Type]
- | TyPtr Type     -- builtin
- | TySet          -- type of types
-
- -- GADTs
- -- These subsume Type so they can be returned by TyFunctions
- | TyRecord [(Name, Record)]
--- | TyData   [(Name, [Type])]
- | TyInfixData Type Name Type
- | TyModule Module
-
- | TyExpr PExp       -- type functions (maybe dependent on values)
- | TyTyped Type Type -- user gave a type (kind?) annotation
- | TyUnknown         -- including '_' type given / no type sig
-
--- type DataDef = Type -- TyRecord, TyData, TyInfixData
-data Record
-  = RecordTuple  [Type]
-  | RecordFields [(Name, Type)]
--- type RecordField = (Name, Type)
-
-data PolyType
- = PolyAnd   [Type] -- & constraints
- | PolyUnion [Type] -- | constraints
- | PolyAny          -- existential type
-
--- Parser Expressions
-data PExp
- = Var QName
- | Con QName
- | Lit Literal
- | PrimOp PrimInstr
--- | Infix QName     -- `name` or symbols
- | App PExp [PExp]
- | InfixTrain PExp [(QName, PExp)] -- `name` or symbolName
- | Lambda [Pat] PExp
- | SectionL PExp QName -- operator sections
- | SectionR QName PExp
--- | Let Binds PExp
- | Let ParseTree PExp
- | Rec Module PExp
- | MultiIf [(PExp, PExp)] -- ghc accepts [GuardedRhs]
- | Case PExp [Alt]
- | LambdaCase [Alt]
- | AsPat Name Pat
+-- Parser Expressions (types and terms are syntactically equivalent)
+data TT
+ -- vars
+ = VBind   IName -- top-bound
+ | VLocal  IName -- (lambda, let)-bound
+ | VExtern IName -- imported (aka. not in scope)
  | WildCard -- "_" as an expression
 
- | TypeExp Type -- first class types.
- | Typed Type PExp -- user supplied type annotation
+ -- lambda-calculus
+ | Abs FnMatch   -- can we eagerly lift type abstractions ? TODO
+ | App TT [TT]
+ | InfixTrain TT [(IName, TT)] -- `name` or symbolName (must be resolved later, when we have fixities)
 
-data Alt = Alt Pat Rhs -- (Maybe Binds) -- case alternatives
+ -- Constructions (sum , product , list) types
+ | Cons   [(FName , TT)]
+ | Proj   TT FName
+ | Label  LName TT
+ | Match  [(LName , TT)]
+ | List   [TT]
 
-data Pat
- = PVar Name
- | PApp QName [Pat]         -- decon
- | PInfixApp Pat QName Pat
--- | ViewPattern PExp Pat
+ -- term primitives
+ | Lit    Literal
+ | PrimOp PrimInstr
+ | MultiIf [(TT, TT)]
 
- | PLit Literal
- | PTuple [Pat]
- | PList [Pat]
+ -- type primitives (Terms aren't allowed here, eg. `Int -> 3` is nonsense)
+ | TyPrim   PrimType
+ | TyArrow  [TT]
+
+ | Typed    { t :: TT , typeOf :: TT }
+
+-- patterns represent arguments of abstractions
+data Pattern
+ = PArg  IName -- introduce VLocal arguments
+ | PLit  Literal
  | PWildCard
+ | PTyped Pattern TT
+ -- rank-n patterns ?
+-- | PAs   IName Pattern
+-- | match sum-of-product ?
 
-data Stmt -- in 'do' / in pattern guard
- = Generator Pat PExp -- pat <- exp
- | Qualifier PExp -- exp alone in do expr
- | LetStmt   Binds
+makeLenses ''Module
+makeLenses ''ParseDetails
 
--- subtyping would be nice, but in the meantime I won't make a data
--- for every single subtype
-data ParseTree = ParseTree {
-   tyAliases  :: V.Vector Decl
- , tyFuns     :: V.Vector Decl
- , classes    :: V.Vector Decl
- , classInsts :: V.Vector Decl
- , topSigs    :: V.Vector Decl
- , topBinds   :: V.Vector Decl
- , fixities   :: V.Vector Decl
- , defaults   :: V.Vector Decl
- , externs    :: V.Vector Decl
- , modImports :: V.Vector Decl
-}
-
-deriving instance Show Name
-deriving instance Show QName 
-deriving instance Show Module
-deriving instance Show ParseTree
-deriving instance Show Decl
-deriving instance Show ImportDecl
+showL ind = Prelude.concatMap $ (('\n' : ind) ++) . show
+instance Show Module where
+  show m = show (m^.moduleName) ++ " {\n"
+    ++ "imports: " ++ showL "  " (m^.imports)  ++ "\n"
+    ++ "binds:   " ++ showL "  " (m^.bindings) ++ "\n"
+    ++ "locals:  " ++ showL "  " (m^.locals)   ++ "\n"
+    ++ show (m^.parseDetails) ++ "\n}"
+instance Show ParseDetails where
+  show p = Prelude.concatMap ("\n  " ++) 
+    [ "binds:  " ++ show (p^.hNameBinds)
+    , "args:   " ++ show (p^.hNameArgs)
+    , "extern: " ++ show (p^.hNameImports)
+    , "fields: " ++ show (p^.fields)
+    , "labels: " ++ show (p^.labels)
+    ]
+deriving instance Show TopBind
+deriving instance Show Fixity
 deriving instance Show Assoc
-deriving instance Show Binds
-deriving instance Show Match 
-deriving instance Show Rhs
-deriving instance Show GuardedRhs
-deriving instance Show Type
-deriving instance Show Record
-deriving instance Show PolyType
-deriving instance Show PExp
-deriving instance Show Alt
-deriving instance Show Pat
-deriving instance Show Stmt
+deriving instance Show Extern
+deriving instance Show FnMatch 
+deriving instance Show TT
+deriving instance Show Pattern

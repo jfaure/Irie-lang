@@ -8,9 +8,6 @@
 -- > no free variables (explicit function arguments)
 -- > all entities are annotated with a type (can be TyUnknown)
 -- - ultimately stg must have only monotypes
---
--- despite dependent types, core seperates terms and types
--- source/origin annotations (for error msgs)
 
 module CoreSyn
 where
@@ -22,42 +19,50 @@ import qualified Data.Text           as T
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
+import qualified Data.IntSet as IS
 
-type HName   = T.Text -- human readable name
-type IName   = Int    -- Int name: index into bind|type vectors
-type ITName  = IName  -- IName of a type
-type IMap    = IM.IntMap -- bind iname map
-type ITMap   = IM.IntMap -- type iname map
+type HName    = T.Text -- human readable name
+type IName    = Int    -- Int name: index into bind|type vectors
+type ITName   = IName  -- IName of a type
+type SLabel   = IName  -- IName for labels
+type PLabel   = IName
+type INameSet = IS.IntSet
 
 type TypeMap = V.Vector Entity
 type BindMap = V.Vector Binding
+type IMap    = IM.IntMap -- bind iname map
+type ITMap   = IM.IntMap -- type iname map
 
 data ImportList     = ImportList [CoreModule]
 data CoreModule     = CoreModule {
-   moduleName :: HName
+   moduleName  :: HName
 
- , algData    :: TypeMap -- data and aliases
+ , algData     :: TypeMap -- data and aliases
  -- binds: constructors, locals, and class Fns (+ overloads!)
- , bindings   :: BindMap
- , nTopBinds  :: Int -- amount of relevent binds in the bindMap
-
- , classDecls :: V.Vector ClassDecl -- so importers can check instances
- , defaults   :: IM.IntMap MonoType
- , fixities   :: HM.HashMap HName Fixity
+ , bindings    :: BindMap
+ , nTopBinds   :: Int -- amount of relevent binds in the bindMap
 
  -- specialized alg data instances (created by typejudge)
  -- TyDynInstances contains indexes into this
  , tyConInstances :: V.Vector Entity
-
- -- lookup tables (Used when module is imported and in the repl)
- , hNameBinds :: HM.HashMap HName IName
- , hNameTypes :: HM.HashMap HName IName
+ , parseDetails   :: ParseDetails
 }
 
--------------
--- classes --
--------------
--- classdecl: used to check instances / make overloads
+-- info for parsing files importing this module / the repl
+data ParseDetails = ParseDetails {
+   _classDecls :: V.Vector ClassDecl -- so importers can check instances
+-- , _defaults   :: IM.IntMap MonoType
+ , _fixities   :: HM.HashMap HName Fixity
+ -- HName lookup tables
+ , _hNameBinds :: HM.HashMap HName IName
+ , _hNameTypes :: HM.HashMap HName IName
+}
+-- TODO rm
+hNameBinds = _hNameBinds . parseDetails
+hNameTypes = _hNameTypes . parseDetails
+
+data Fixity = Fixity Int Assoc
+data Assoc = LAssoc | RAssoc deriving (Eq, Show)
 data ClassDecl = ClassDecl {
    className :: HName
  , classFns  :: V.Vector ClassFn
@@ -68,11 +73,12 @@ data ClassFn = ClassFn {
  , defaultFn   :: Maybe IName -- jointype or instance type ??
 }
 
+data TypeAnn = TyNone | TyUser TyPlus | TyJudged TyPlus
 -- an entity = info about anything we give an IName to.
 data Entity = Entity { -- entity info
    named    :: Maybe HName
- , typed    :: Type
- , checked  :: Bool
+-- , typed    :: Type
+ , ty       :: TypeAnn
  , source   :: SourceEntity
  }
 data SourceEntity = ThisModule | Import | Private
@@ -81,16 +87,15 @@ data Binding
  = LBind { -- let binding
    info  :: Entity  -- hname, type, source
  , args  :: [IName] -- the unique argINames used locally by
- , expr  :: CoreExpr
+ , expr  :: Term
  }
- -- always inline this binding (esp. to access freevars)
- -- only used internally for pattern match deconstructions
- | Inline { info :: Entity , expr :: CoreExpr }
- | LInstr { info :: Entity , instrBind :: PrimInstr } -- instrs need a type annotation
- | LArg   {  --local vars via (lambda|case|expr:tysig)
+ | LArg   {  -- lambda-bound
    info :: Entity
- , useCount :: Int -- for calculating linear types
  }
+ -- always inline this binding (to access freevars)
+ -- only used internally for pattern match deconstructions
+ | Inline { info :: Entity , expr :: Term }
+ | LInstr { info :: Entity , instrBind :: PrimInstr } -- instrs need a type annotation
  | LCon   { info :: Entity } --Term level GADT constructor
  | LExtern{ info :: Entity }
  | LClass {
@@ -98,28 +103,21 @@ data Binding
  , classNm     :: HName  -- change to IName ?
  , overloads   :: ITMap IName -- instanceIds
  }
- -- typevar is accessed in the function signature
- | LTypeVar { info :: Entity } -- TODO unused
--- | LBuiltinSizeof
 
-data CoreExpr
- = Var      IName
- | Lit      Literal
- | Instr    PrimInstr [CoreExpr] -- must be fully saturated
- | App      IName [CoreExpr]
- | Case     CoreExpr CaseAlts
- | TypeExpr Type -- as return of `TypeFunction`
- | WildCard
+data Term
+ = Var    IName
+ | Lit    Literal
+ | Instr  PrimInstr [Term] -- must be fully saturated
+ | App    IName     [Term]
+ | Case   Term      CaseAlts
 
 data CaseAlts
- = Switch [(Literal, CoreExpr)]
- | Decon  [(IName, [IName], CoreExpr)] -- Con [args] -> expr
- | Tuple  ([IName], CoreExpr)
+ = Switch [(Literal, Term)]
+ | Decon  [(IName, [IName], Term)] -- Con [args] -> expr
+ | Tuple  ([IName], Term)
 
+{-
 ----------- Types -- ---------
--- note. alias vs name:
-type UserType = Type -- user supplied type annotation
-data TyPiArg = TyArg ITName | PiArg IName deriving(Show, Eq)
 data Type
  = TyAlias IName    -- aliases (esp. to MonoTyData)
  | TyRigid IName    -- correspond to arguments of type constructors
@@ -127,10 +125,6 @@ data Type
  | TyPoly  PolyType -- constrained polytypes 'p', 's'
  | TyArrow [Type]   -- Kind 'function' incl. Sum/Product cons
 
- | TyKinded Type Kind
-
- | TyPi  { piArgs   :: [TyPiArg] -- incl. term binders
-         , piVal    :: Type }
  -- special case of non-dependent type-level computations
  | TyFn  { tyArgs :: [ITName] -- type placeholders
          , tyVal  :: Type }
@@ -139,27 +133,6 @@ data Type
  | TyUnknown    -- to be inferred
  | TyVoid       -- eg. to beta reduce with a null type
  | TyBroken     -- typejudge couldn't infer a coherent type
-
- | TyInstance Type Instance -- markers for instantiation (in core2Stg)
-
--- Universes: types may freely increase universe, but not dec
-data Kind -- classification for types
- = KPrim -- int | float
- | KArrow
- | KPi   -- generalization of KArrow (with possible pi binder)
- | KPlus | KMinus -- polar types
- | KTerm -- terms may appear in types
- | KData deriving (Show , Eq)
-
-data Instance
- = TyOverload IName
- | TyArgInsts [Type] -- don't fold argument types at App.
- | TyDynInstance { --binding doesn't exist before tyjudge
-   -- because it's a specialized data constructor
-   dataIdx :: IName
- , conIdx  :: IName
- }
- | TyPAp [Type] [Type] -- ?
 
 data MonoType
  = MonoTyPrim   PrimType
@@ -170,54 +143,105 @@ data MonoType
  }
 
 data PolyType
- = PolyMeet  [Type] -- (&) multiple typeclass constraints
- | PolyJoin  [Type] -- (|) union types (esp. typeclass var)
+ = Meet  [Type] -- (&) multiple typeclass constraints
+ | Join  [Type] -- (|) union types (esp. typeclass var)
  | PolyAny          -- some fns merely pass on polymorhism
  -- TODO custom PolyAny for Type|Arrow|Data
  -- Data is a polytype (of it's alts)
  | PolyData PolyType DataDef
 
 -- Data saves HNames, so they are reachable from the typeMap
-data DataDef
- = DataDef    HName [(HName, [Type])]
--- | RecordDef HName [(HName, [FieldDecl])] -- FieldDecl HName Type
--- | NewTypeDef [IName] DataDef
--- | ModuleDef  HName CoreModule
--- data NewType = NewType { parentData :: DataDef , newType :: DataDef }
+data DataDef = DataDef HName [(HName, [Type])]
+-}
 
-data Fixity = Fixity Int Assoc
-data Assoc = LAssoc | RAssoc deriving (Eq, Show)
+------------------------
+-- TODO new formalism --
+------------------------
+-- Types are sampled from components of a coproduct of profinite distributive lattices
+-- typing schemes contain the (mono | abstract poly)-types of lambda-bound terms
+data TyScheme = TyScheme INameSet TyPlus -- always of the form [D-]t+
+type TCo      = [TyHead] -- same    polarity
+type TContra  = [TyHead] -- reverse polarity
+type TyMinus  = [TyHead]
+type TyPlus   = [TyHead]
 
-data TCError
- = UnifyFail { expected :: Entity, got :: Entity}
- deriving (Show)
+-- bisubs always reference themselves, so the m. binding is implicit
+type TVar   = ITName
+data BiSub  = BiSub { pSub :: [TyHead] , mSub :: [TyHead] }
+type BiSubs = V.Vector BiSub -- indexed by TVars
+type Labels = V.Vector TyScheme
+-- atomic Bisubstitution:
+-- a  <= t- solved by [m- b = a n [b/a-]t- /a-] 
+-- t+ <= a  solved by [m+ b = a u [b/a+]t+ /a+] 
+-- a  <= c  solved by [m- b = a n [b/a-]c  /a-] -- (or equivalently,  [a u b /b+])
 
-deriving instance Show PolyType
-deriving instance Show DataDef
+-- components of the profinite distributive lattice of types
+data TyHead -- head constructors for types.
+ = THPrim     PrimType
+ | THAlias    ITName
+ | THVar      TVar       -- individial typevars are 'atomic' components of the type lattice
+ | THArrow    [TContra] TCo
+ | THRec      ITName TCo -- guarded and covariant in a (ie. `Ma. (a->bool)->a` ok, but not `Ma. a->Bool`)
+ | THData     SumOfRecord -- tCO
+
+ -- THLam: parametrised type operators. notice this makes the order of lambda-bound types (somewhat) relevant
+ -- The lambda-bound types here are flexible ie. subsumption can occur before beta-reduction.
+ -- This can be weakened by instantiation to a (monomorphically abstracted) typing scheme
+ -- We unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred
+ -- ie. we cannot insert uses of THLam
+ | THLam      ITName TyHead
+ | THArg      ITName
+
+ | THPi       ITName Kind Term
+ | THSigma    ITName Kind Term
+-- Notes
+-- the type `a==b` of proofs that a and b are equal
+--
+data SumOfRecord = SumOfRecord [(SLabel , [(PLabel , TCo)])]
+
+data Kind -- label for different head constructors
+ = KPrim -- int | float
+ | KArrow
+ | KVar
+ | KPi   -- generalization of KArrow (with possible pi binder)
+ | KData
+
+---------------------------
+
 deriving instance Show ClassDecl
 deriving instance Show ClassFn
 deriving instance Show Binding
-deriving instance Show MonoType
-deriving instance Show Type
-deriving instance Show Instance
-deriving instance Show CoreExpr
+--deriving instance Show DataDef
+--deriving instance Show PolyType
+--deriving instance Show MonoType
+--deriving instance Show Type
+deriving instance Show Term
 deriving instance Show CaseAlts
 deriving instance Show Entity
 deriving instance Show SourceEntity
+deriving instance Show ParseDetails
 deriving instance Show CoreModule
 deriving instance Show Fixity
+deriving instance Show TyHead
+deriving instance Show Kind
+deriving instance Show SumOfRecord
+deriving instance Show TypeAnn
 
-deriving instance Eq PolyType
-deriving instance Eq DataDef
+deriving instance Eq SumOfRecord
+--deriving instance Eq MonoType
+--deriving instance Eq PolyType
+--deriving instance Eq Type
+--deriving instance Eq DataDef
+deriving instance Eq TyHead
+deriving instance Eq Kind
 deriving instance Eq ClassDecl
 deriving instance Eq ClassFn
 deriving instance Eq Binding
-deriving instance Eq MonoType
-deriving instance Eq Type
-deriving instance Eq Instance
-deriving instance Eq CoreExpr
+deriving instance Eq Term
 deriving instance Eq CaseAlts
 deriving instance Eq Entity
 deriving instance Eq SourceEntity
+deriving instance Eq ParseDetails
 deriving instance Eq CoreModule
 deriving instance Eq Fixity
+deriving instance Eq TypeAnn

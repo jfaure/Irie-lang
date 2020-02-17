@@ -1,8 +1,0 @@
-element {
-    padding: 0;
-        padding-right: 0px;
-        padding-left: 0px;
-    margin: 0;
-    width: 100%;
-    max-width: 100%;
-}

@@ -1,0 +1,12 @@
+-- (+) : Nat -> Nat -> Nat
+double x = x + x
+
+Vec n v = { len : n ; vals : v }
+
+fromMaybe d x = case x | Just v = v | _ = d
+
+--Bool = True | False
+--
+--not : Bool -> Bool
+--not True = False
+--not False = True

@@ -1,8 +1,20 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings , TemplateHaskell #-}
+{-# LANGUAGE LambdaCase, ScopedTypeVariables , MultiWayIf , StandaloneDeriving #-}
 module Parser where
 
+{-
+  Parsing is responsible for:
+  * converting all names to indexes into various vectors
+    1. VBind:   top-level let bindings
+    2. VLocal:  lambda-bound arguments (these don't index anything)
+    3. VExtern: out-ofscope variables to be resolved later
+  * Lifting all let-bindings (incl resolving free-vars)
+  * figuring out (relative) universes from context
+  * identifying functions that return terms
+-}
+
 import Prim
-import ParseSyntax
+import ParseSyntax as P
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
@@ -18,30 +30,72 @@ import Control.Monad.State.Strict as ST
 import Control.Monad.Reader
 import Data.Functor
 import Data.Char (isAlphaNum , isDigit)
-import qualified Data.Vector as V -- for groupDecls
+import qualified Data.Vector as V
+--import qualified Data.HashMap.Strict as HM
+import qualified Data.Map as M
 import GHC.Exts (groupWith)
 
+import Control.Lens
+import Control.Lens.Tuple
 import Debug.Trace
 import qualified Text.Megaparsec.Debug as DBG
 dbg i = id
 --dbg i = DBG.dbg i
+
+data ParseState = ParseState {
+   _indent   :: Pos  -- start of line indentation (need to save it for subparsers)
+ , _nBinds   :: Int
+ , _nArgs    :: Int
+ , _nImports :: Int
+ , _moduleWIP  :: Module
+}
+makeLenses ''ParseState
+
+type Parser = ParsecT Void T.Text (ST.State ParseState)
+
+-- Boilerplate name conversions
+newIndent new = indent .= new
+addBind b     = moduleWIP . bindings %= (b:)
+addImport i   = moduleWIP . imports  %= (i:)
+
+il = M.insertLookupWithKey (\k new old -> old)
+insertOrRetrieve h mp = let sz = M.size mp in case il h sz mp of 
+  (Just x, mp) -> (x  , mp)
+  (_,mp)       -> (sz , mp)
+
+pd = moduleWIP . parseDetails
+addArgName , addBindName , addImportName:: T.Text -> Parser IName
+addArgName    h = pd . hNameArgs    %%= insertOrRetrieve h
+addBindName   h = pd . hNameBinds   %%= insertOrRetrieve h
+addImportName h = pd . hNameImports %%= insertOrRetrieve h
+
+rmImportName h = moduleWIP . parseDetails . hNameImports %= M.delete h
+rmBindName h = (moduleWIP . parseDetails . hNameBinds) %= M.delete h
+
+newFLabel h = moduleWIP . parseDetails . fields %%= insertOrRetrieve h
+fLabel    h = _
+newSLabel h = moduleWIP . parseDetails . labels %%= insertOrRetrieve h
+sLabel    h = _
+-- try first the argmap, then the bindmap, finally assume the name is imported
+lookupBindName h = do
+  pd <- use $ moduleWIP . parseDetails
+  case M.lookup h (pd ^. hNameArgs) of
+    Just arg  -> pure $ VLocal arg
+    Nothing   -> case M.lookup h (pd ^. hNameBinds) of
+      Just bind -> pure $ VBind bind
+      Nothing   -> VExtern <$> addImportName h
+
+-----------
+-- Lexer --
+-----------
+-- A key convention: tokens consume trailing whitespace (use `symbol` or `lexeme`)
+-- so parsers can assume they start on a non-blank.
 
 --located :: Parser (Span -> a) -> Parser a = do
 --  start <- getPosition
 --  f <- p
 --  end <- getPosition
 --  pure $ f (Span (sourcePosToPos start) (sourcePosToPos end))
-
--- we need to save indentation in some expressions
--- because we may parse many expressions on a line before it becomes relevant
-type Parser = (ParsecT Void T.Text (Reader Pos))
-
------------
--- Lexer --
------------
--- A key convention: tokens should parse following whitespace
--- `symbol` and `lexeme` do that
--- so Parsers can assume no whitespace when they start.
 
 -- Space consumers: scn eats newlines, sc does not.
 lineComment = L.skipLineComment "--"
@@ -56,51 +110,55 @@ lexeme, lexemen :: Parser a -> Parser a -- parser then whitespace
 lexeme  = L.lexeme sc
 lexemen = L.lexeme scn
 symbol, symboln :: String -> Parser T.Text --verbatim strings
-symbol = L.symbol sc . T.pack
+symbol  = L.symbol sc . T.pack
 symboln = L.symbol scn . T.pack
 
 -- valid symbols in the language
 -- all symbol chars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 -- reserved: ():\{}"_'`.
-symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: String
-reservedOps   = ["=","->","|",":", "#!", "."]
-reservedNames = T.pack <$>
- ["type", "data", "record", "class", "extern", "externVarArg"
- , "let", "rec", "in", "where", "case", "of", "_"
- , "import", "require", "Set"]
+symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: T.Text
+reservedOps   = T.words "= -> | : #! . ;"
+reservedNames = T.words "type data record class extern externVarArg let rec in where case of _ import require Set"
 reservedName w = (lexeme . try) (string (T.pack w) *> notFollowedBy alphaNumChar)
-reservedOp w = lexeme (notFollowedBy (opLetter w) *> string (T.pack w))
-  where opLetter :: String -> Parser ()
-        opLetter w = void $ choice (string . T.pack <$> longerOps w)
-        longerOps w = filter (\x -> isInfixOf w x && x /= w) reservedOps
+reservedOp w = lexeme (notFollowedBy (opLetter w) *> string w)
+  where opLetter :: T.Text -> Parser ()
+        opLetter w = void $ choice (string <$> longerOps w)
+        longerOps w = filter (\x -> T.isInfixOf w x && x /= w) reservedOps
 reserved = reservedName
 
--- have to use try in case we parse part of a reserved word
-iden :: Parser Name = try $ lexeme (p >>= check) where
+-----------
+-- Names --
+-----------
+-- in general, we have to use try in case we parse part of a reserved word
+iden :: Parser HName = try $ lexeme (p >>= check) where
   p :: Parser T.Text
   p = lookAhead letterChar *> takeWhileP Nothing isAlphaNum
   check x = if x `elem` reservedNames
             then fail $ "keyword "++show x++" cannot be an identifier"
-            else pure (Ident x)
+            else pure x
+_lIden, _uIden, pModuleName :: Parser HName
+_lIden = lookAhead lowerChar *> iden
+_uIden = lookAhead upperChar *> iden
+newLIden = _lIden >>= addBindName
+newUIden = _uIden >>= addBindName
+pModuleName = _uIden
 
-symbolName :: Parser Name = lexeme (p >>= check) where
+_symbolName = lexeme (p >>= check) where
   p :: Parser T.Text
-  p = takeWhile1P Nothing (`elem` symbolChars)
-  check x = if x `elem` (T.pack <$> reservedOps)
+  p = takeWhile1P Nothing ((`T.any` symbolChars) . (==))
+  check x = if x `elem` reservedOps
             then fail $ "reserved Symbol: "++show x ++" cannot be an identifier"
-            else pure $ Symbol x
+            else pure  x
+symbolName :: Parser IName = addBindName =<< _symbolName
 
--- Names
-lIden, uIden, name, pModuleName :: Parser Name
-lIden = lookAhead lowerChar *> iden -- variables
-uIden = lookAhead upperChar *> iden -- constructors / types
-name = iden
-pModuleName = uIden
-infixName = between (symbol "`") (symbol "`") lIden <|> symbolName
-qualifier = lIden <|> uIden -- not a symbol
-qName p = lexeme (many (try (qualifier <* reservedOp ".")) >>= \case
-  []  -> UnQual <$> p
-  nms -> QName nms <$> p)
+infixName = between (symbol "`") (symbol "`") newLIden <|> symbolName
+qualifier = newLIden <|> newUIden -- not a symbol
+-- TODO add to importNames
+qName :: Parser IName -> Parser IName
+qName p = lexeme $ many (try (qualifier <* reservedOp "."))
+  >>= \case
+  []  -> p
+  nms -> p
 
 -- literals
 int    :: Parser Integer = lexeme L.decimal
@@ -115,16 +173,16 @@ parens, braces, bracesn :: Parser a -> Parser a
 parens  = between (symbol "(") (symbol ")")
 braces  = between (symbol "{") (symbol "}")
 bracesn = between (symboln "{") (symboln "}")
+p `sepBy2` sep = (:) <$> p <*> (some (sep *> p))
 
 endLine = lexeme (single '\n')
 
 -- indentation shortcuts
 noIndent = L.nonIndented scn . lexeme
 iB = L.indentBlock scn
---saveIndent = L.indentLevel >>= put
-svIndent f = L.indentLevel >>= \s -> local (const s) f
+--svIndent f = L.indentLevel >>= \s -> local (const s) f
+svIndent f = L.indentLevel >>= newIndent
 
-sepBy2 p sep = liftA2 (:) p (some (sep *> p))
 
 --debug functions
 dbgToEof = traceShowM =<< (getInput :: Parser T.Text)
@@ -138,161 +196,103 @@ db x = traceShowM x *> traceM ": " *> d
 parseModule :: FilePath -> T.Text
             -> Either (ParseErrorBundle T.Text Void) Module
   = \nm txt ->
-  let doParse = runParserT (between sc eof topPTree) nm txt
-      topPTree = noIndent $ doParseTree startIndent startIndent eof
-      startIndent = mkPos 1
-  in -- Module (Ident $ T.pack nm) <$> runReader doParse startIndent
---   mkModule (Ident $ T.pack nm) .groupDecls <$>
-     Module (Ident $ T.pack nm) <$> runReader doParse startIndent
+  let startModule = Module {
+          _moduleName = T.pack nm
+        , _imports = []
+        , _bindings= []
+        , _locals  = []
+        , _parseDetails = ParseDetails {
+             _hNameBinds   = M.empty
+           , _hNameArgs    = M.empty
+           , _hNameImports = M.empty
+           , _fields       = M.empty
+           , _labels       = M.empty
+        }
+      }
+  in runParserT (scn *> doParse *> eof *> use moduleWIP) nm txt
+  `evalState` ParseState {
+       _indent = mkPos 1
+     , _nBinds   = 0
+     , _nArgs    = 0
+     , _nImports = 0
+     , _moduleWIP  = startModule
+     }
 
 --parseProg :: Parser [Decl]
 -- = noIndent decl `sepEndBy` many endLine
 
 -- group declarations as they are parsed
-doParseTree :: Pos -> Pos -> (Parser ()) -> Parser ParseTree
-doParseTree refIndent lvlIndent finish = go emptyPTree
-  where
-  emptyPTree = let v = V.empty in ParseTree v v v v v v v v v v
-  go p = optional endLine *> scn *> do
-   pos <- L.indentLevel
-   lookAhead (eof <|> finish) *> pure p <|> if pos /= lvlIndent
-    then L.incorrectIndent EQ lvlIndent pos -- linefold ?
-    else choice
-    [ svIndent importDecl>>=
-        \x->go p{modImports=modImports p `V.snoc` (Import x)}
-    , svIndent extern>>=
-        \x->go p{externs=externs p `V.snoc` x}
-    , svIndent typeAlias >>=
-        (\case
-         x@TypeAlias{} -> go p{tyAliases=tyAliases p `V.snoc` x}
-         x@TypeFun{}   -> go p{tyFuns=tyFuns p `V.snoc` x})
-    , svIndent infixDecl     >>=
-        \x->go p{fixities=fixities p `V.snoc` x}
-    , svIndent defaultDecl   >>=
-        \x->go p{defaults=defaults p `V.snoc` x}
-    , svIndent typeClass >>=
-        \x->go p{classes=classes p `V.snoc` x}
-    , svIndent typeClassInst>>=
-        \x->go p{classInsts=classInsts p `V.snoc` x}
-    , svIndent (try funBind)   >>=
-        \x->go p{topBinds=topBinds p `V.snoc` x}
-    , svIndent typeSigDecl   >>= \case
-        x@TypeSigDecl{} -> go p{topSigs=topSigs p `V.snoc` x}
-        x@FunBind{}     -> go p{topBinds=topBinds p `V.snoc` x}
-    , pure p
-    ]
+doParse :: Parser ()
+doParse = void $ decl `sepEndBy` (endLine *> scn)
+decl = (newIndent =<< L.indentLevel) *> choice
+   [ importDecl
+   , bindDecl
+   ]
 
-decl :: Parser Decl -- top level
- = svIndent parseDecl
-  where
-  parseDecl = choice
-   [ Import <$> importDecl, extern
-   , typeAlias, infixDecl, defaultDecl
-   , typeClass, typeClassInst
-   , try funBind, typeSigDecl]
+-- infixDecl ?
+importDecl = void $ reserved "import" *> pModuleName
+bindDecl = choice
+ [ extern
+ , funBind
+-- , infixDecl
+ ]
 
--- Note "renaming", "hiding", "as" and "to" are not reserved
--- since import lists are independent from bindings
-importDecl = let
-  require  = Require <$ reserved "require" <*> pModuleName
-  open = let unMaybe = \case {Nothing->[] ; Just x -> x}
-    in do
-    openImport <- reserved "import"  *> pModuleName
-    hides   <-optional (symbol "hiding" *> iden `sepBy2` symbol ",")
-    renames <-
-      let rename = (,) <$> iden <* symbol "to" <*> iden
-      in optional (symbol "renaming"*>rename `sepBy2` symbol ",")
-    pure $ case (unMaybe renames, unMaybe hides) of
-      ([], []) -> Open openImport
-      (renames, hides) -> ImportCustom openImport hides renames
-  importAs = ImportAs <$> importDecl <* symbol "as" <*> pModuleName
-  in do
-    importDecl <- choice [require, open]
-    (optional $ symbol "as" *> pModuleName) <&> \case
-      Just as -> ImportAs importDecl as
-      Nothing -> importDecl
+extern =
+ let _typed = reservedOp ":" *> primType
+ in addBind =<< ExternBind <$> choice
+ [ Extern   <$ reserved "extern"      <*> newLIden <*> _typed
+ , ExternVA <$ reserved "externVarArg"<*> newLIden <*> _typed
+ ]
+--infixDecl = let
+--  pInfix = choice
+--    [ reserved "infix"  $> AssocNone
+--    , reserved "infixr" $> AssocRight
+--    , reserved "infixl" $> AssocLeft]
+--  opNames = (\x->[x]) <$> symbolName --`sepBy` symbol ","
+--  in InfixDecl <$> pInfix <*> optional (lexeme L.decimal) <*> opNames
 
-extern = choice
- [ Extern  <$reserved "extern"      <*> name<*reservedOp ":"<*>pType
- , ExternVA<$reserved "externVarArg"<*> name<*reservedOp ":"<*>pType]
-typeAlias :: Parser Decl
-typeAlias = let
-  defOrFun pTy = try (tyFun (TypeExp <$> pTy)) <|> tyDef pTy
-  tyFun pTy= TypeFun   <$> tyName <*> some tyVar<* symboln "=" <*> pTy
-  tyDef pTy= TypeAlias <$> tyName               <* symboln "=" <*> pTy
-  in choice
-  [ reserved "type"   *> defOrFun pType
-  , reserved "data"   *> defOrFun tyData
-  , reserved "record" *> defOrFun tyRecord]
+fnName = newLIden <|> parens symbolName
 
-infixDecl = let
-  pInfix = choice
-    [ reserved "infix"  $> AssocNone
-    , reserved "infixr" $> AssocRight
-    , reserved "infixl" $> AssocLeft]
-  opNames = (\x->[x]) <$> symbolName --`sepBy` symbol ","
-  in InfixDecl <$> pInfix <*> optional (lexeme L.decimal) <*> opNames
-fnName = name <|> parens symbolName
+--  let super = many $ reservedOp "<:" *> tyName
+--  in reserved "class" $> TypeClass <*>
+--       tyName <*> many tyVar <*> super <*> pWhere decl
+--reserved "instance" $> TypeClassInst
+--  <*> tyName <*> some tyName <*> pWhere decl
 
-typeClass =
-  let super = many $ reservedOp "<:" *> tyName
-  in reserved "class" $> TypeClass <*>
-       tyName <*> many tyVar <*> super <*> pWhere decl
-typeClassInst =
-  reserved "instance" $> TypeClassInst
-    <*> tyName <*> some tyName <*> pWhere decl
+--pWhere x = fail "no where" :: Parser [Decl]
+--pWhere :: Parser Decl -> Parser [Decl]
+--pWhere pdecl = reserved "where" *> do
+--  bracesn ((decl <* scn) `sepBy2` symboln ";") <|> do
+--    ref <- ask <* scn
+--    lvl <- L.indentLevel
+--    local (const lvl) $ indentedItems ref lvl scn pdecl (fail "_")
 
-pWhere :: Parser Decl -> Parser [Decl]
-pWhere pdecl = reserved "where" *> do
-  bracesn ((decl <* scn) `sepBy2` symboln ";") <|> do
-    ref <- ask <* scn
-    lvl <- L.indentLevel
-    local (const lvl) $ indentedItems ref lvl scn pdecl (fail "_")
+funBind = _funBind iden <|> _funBind (parens _symbolName)
+_funBind nameParser = do
+    m    <- nameParser
+    iNm  <- addBindName m -- need to handle recursive references
+    exps <- liftA2 (:) (fnMatch (pure ())) (many (fnMatch nameParser))
+    --(exps , letBounds) <- unzip <$> tt
+    addBind =<< FunBind exps <$> optional (reservedOp ":" *> tt)
+--  mapM addBind (concat letBounds)
 
-typeSigDecl = (<?> "typeSig") $ do
-  fns <- fnName `sepBy` symbol ","
-  reservedOp ":"
-  ty <- dbg "sig" pType
-  boundExp <- optional (try (scn *> symbol "=" *> pExp))
-  case boundExp of
-    Nothing -> pure $ TypeSigDecl fns ty -- normal typesig
-    Just e  -> case fns of        -- scopedTypeVar style binding
-      [fnName] ->
-        pure $ FunBind [Match fnName [] (UnGuardedRhs (Typed ty e))]
-      _        -> fail "multiple function bindings at once"
-
--- funBinds parses multiple binds and groups them by match name
-funBind = 
-  let matchName = (name <|> parens symbolName)
-  in FunBind <$> some (fnMatch matchName infixName)
---funBinds = do
---  matches <- some fnMatch
---  let matchName = \case
---        Match nm _ _ -> nm
---        InfixMatch _ nm _ _ -> nm
---      fnMatches = groupWith matchName matches
---  pure $ FunBinds <$> fnMatches
-
-fnMatch matchName infixName = dbg "match" $ choice
-  [ Match <$> matchName <*> many (lexeme pat)
-  , InfixMatch <$> lexeme pat <*> infixName <*> many (lexeme pat)
-  ] <*  reservedOp "=" <*> rhs
-
-defaultDecl = DefaultDecl <$ reserved "default" <*> singleType <*> singleType
+fnMatch thisName = dbg "match" $ do
+  args <- choice
+    [ FnMatch <$> many (thisName *> lexeme pattern)
+--  , InfixMatch <$> (lexeme pat *> parens thisName) <*> many (lexeme pat)
+    ] <* reservedOp "="
+  args <$> tt
 
 -- needs to return an Exp so we can give the literal a polytype
-literalExp :: Parser PExp = Lit <$> literalP
+literalExp :: Parser TT = Lit <$> literalP
 literalP = lexeme $ choice
  [ Char   <$> charLiteral
  , String <$> stringLiteral
  , numP
  ]
--- , Frac . toRational <$> try L.float -- can we avoid the try ?
--- , Int    <$> int]
 
-binds :: Parser Binds = BDecls <$> many decl
 -- ref = reference indent level
--- lvl = lvl of first indented item (probably lookahead)
+-- lvl = lvl of first indented item (often == pos)
 indentedItems ref lvl scn p finished = go where
  go = do
   scn
@@ -302,140 +302,82 @@ indentedItems ref lvl scn p finished = go where
      | pos == lvl -> (:) <$> p <*> go
      | otherwise  -> L.incorrectIndent EQ lvl pos
 
-pExp = _pExp >>= \exp -> choice
- [ (`Typed` exp) <$> (reservedOp ":" *> pType)
- , pure exp
- ]
-_pExp :: Parser PExp = dbg "pexp" $
-  notFn <|>
-  appOrSingle >>= \app ->
-    optional (infixTrain app) <&> \case
-      Nothing      -> app
-      Just infixes -> infixes
+-- Note. we have 2 'states' when parsing a tt
+-- 1. `maybeApp` we may parse a fn app
+-- 2. `arg` we are parsing arguments to an app. (don't parse another app except between parens/let..)
+-- infix trains are also possible: for now simply parse out infix apps assuming equal precedence
+tt :: Parser TT = dbg "tt" $ choice
+  [ letIn
+  , multiIf
+  , match
+  , maybeApp >>= \app -> choice
+    [ Proj app <$ reservedOp "." <*> (fLabel =<< iden) -- record projection (access)
+    , infixTrain app
+    , pure app
+    ]
+  ] >>= \exp -> choice [reservedOp ":" $> Typed exp <*> tt , pure exp]
   where
-  appOrSingle = maybeFn >>= \fn -> choice
-   [ App fn <$> some maybeFn
-   , pure fn
-   ]
-  maybeFn = dbg "pSingleExp" $ choice
+  maybeApp = arg >>= \fn -> choice [App fn <$> some arg , pure fn]
+  infixTrain lArg = InfixTrain lArg <$> some ((,) <$> qName infixName <*> maybeApp)
+  arg = dbg "pSingleExp" $ choice
    [ WildCard <$ reserved "_"
-   , PrimOp <$> dbg "primInstr" primInstr
--- , doExpr , mdoExpr
-   , literalExp
-   , try someName
-   , parens (try opSection <|> notFn <|> pExp)
+   , termPrim
+   , con
+   , label
+   , try iden >>= lookupBindName
+   , parens tt
    ]
-  notFn = choice
-   [ letIn
-   , multiIf
-   , try lambdaCase
-   , lambda
-   , caseExpr
+  label = P.Label <$> try (iden >>= newSLabel) <*> braces tt
+  con = let
+    fieldDecl = (,) <$> (newFLabel =<< iden) <* reservedOp ":" <*> arg
+    in Cons <$> (braces $ fieldDecl `sepBy1` reservedOp ";")
+  match = Match <$> sLabel tt `sepBy1` reservedOp "|"
+  termPrim = choice [literalExp , PrimOp <$> dbg "primInstr" primInstr]
+  typePrim = choice
+   [ TyPrim  <$> primType
+-- , TyArrow <$> try (liftA2 (:) tt (some (arg <* reservedOp "->")))
    ]
-  infixTrain lArg =
-    let infixOp = qName infixName
-    in  InfixTrain lArg <$> some ((,) <$> infixOp <*> appOrSingle)
-  opSection = SectionR <$> qName infixName <*> pExp
-  someName = dbg "someName" $ choice
-    [ Con . UnQual <$> uIden
-    , Var <$> qName lIden
-    , Var <$> try (qName (parens symbolName)) ]
-  lambda = Lambda <$ char '\\' <*> many pat <* symbol "->" <*> pExp
-  lambdaCase = LambdaCase <$> (char '\\' <* reserved "case"
-                                         *> many (alt <* scn))
-  letIn = reserved "let" *> do
-    ref <- ask -- reference indentation
-    scn
-    lvl <- L.indentLevel
-    local (const lvl) $ dbg "letBinds" $ do -- save this indent
---    binds <- BDecls <$> indentedItems ref lvl scn decl (reserved "in")
-      pTree <- doParseTree ref lvl (reserved "in")
-      reserved "in"
-      Let pTree <$> pExp
-  -- it's assumed later that there is at least one if alt
+--lambda = Abs <$ char '\\' <*> many pat <* symbol "->" <*> tt
+--lambdaCase = LambdaCase <$> (char '\\' <* reserved "case"
+--                                       *> many (alt <* scn))
   multiIf = reserved "if" *> choice [normalIf , multiIf]
     where
     normalIf = do
-      ifE   <- pExp
-      thenE <- reserved "then" *> pExp
-      elseE <- reserved "else" *> pExp
-      pure (MultiIf [(ifE, thenE), (WildCard, elseE)])
-    subIf = (,) <$ reservedOp "|" <*> pExp <* reservedOp "=" <*> pExp
+      ifThen <- (,) <$> tt <* reserved "then" <*> tt
+      elseE  <- reserved "else" *> tt
+      pure (MultiIf [ifThen, (WildCard, elseE)])
+    subIf = (,) <$ reservedOp "|" <*> tt <* reservedOp "=" <*> tt
     multiIf = do
       l <- L.indentLevel
       iB (pure $ L.IndentSome (Just l) (pure . MultiIf) subIf)
 
-  caseExpr = do
-    reserved "case"
-    scrut <- pExp <* reserved "of"
-    ref <- ask <* scn
-    lvl <- L.indentLevel
-    local (const lvl) $ do
-      alts <- indentedItems ref lvl scn alt eof
-      pure $ Case scrut alts
-  typeExp = TypeExp <$> pType
-  asPat = AsPat <$> lIden <* reservedOp "@" <*> pat
+-- need to lift bindings ?
+  letIn = reserved "let" *> fail "nolet"
+--   reserved "let" *> do
+--    ref <- use indent <* scn
+--    lvl <- L.indentLevel
+--    local (const lvl) $ dbg "letBinds" $ do -- save this indent
+----    binds <- BDecls <$> indentedItems ref lvl scn decl (reserved "in")
+--      pTree <- doParseTree ref lvl (reserved "in")
+--      reserved "in"
+--      Let pTree <$> tt
+  -- it's assumed later that there is at least one if alt
+--caseExpr = do
+--  reserved "case"
+--  scrut <- tt <* reserved "of"
+--  ref <- use indent <* scn
+--  l <- L.indentLevel
+--  newIndent l *> (Case scrut <$> indentedItems ref l scn alt eof) <* newIndent ref
 
-rhs :: Parser Rhs = UnGuardedRhs <$> dbg "rhs" pExp
-alt :: Parser Alt = Alt <$> pat <* reservedOp "->" <*> rhs
-pat :: Parser Pat = choice
- [ parens (PTuple <$> singlePat `sepBy2` symbol ",")
- , singlePat
- ] where
-  singlePat = dbg "singlePat" $ choice
-   [ PWildCard <$ reserved "_"
-   , PLit <$> literalP
-   , PVar <$> dbg "patIden" lIden
-   , PApp <$> (UnQual <$> uIden) <*> many pat -- constructor
-  --    <|> PInfixApp <$> pat <*> (UnQual <$> lIden) <*> pat
-   ]
-
------------
--- Types --
------------
-typeAnn  :: Parser Type = reserved ":" *> pType <|> pure TyUnknown
-pType :: Parser Type -- must be a type (eg. after ':')
- = dbg "ptype" $ choice
-   [ try tyArrow
-   , try forall
-   , appOrSingle]
-   where
-   appOrSingle = dbg "app" $ singleType >>= \fn ->
-     TyApp fn <$> some singleType <|> pure fn
-   tyArrow = TyArrow <$> dbg "arrow" singleType `sepBy2` symbol "->"
-
-singleType :: Parser Type = choice
- [ TyPrim    <$> try primType
- , TyName    <$> uIden
- , TyVar     <$> lIden
- , TyPtr     <$  primDef *> reserved "ptr" *> pType
- , TySet     <$  reserved "Set"
- , parens pType
- , TyUnknown <$  reserved "_"]
-forall :: Parser Type
- = TyPoly <$> (PolyAnd <$> try (singleType `sepBy2` symbol "&")
-            <|> PolyUnion  <$> singleType `sepBy2` symbol "|")
-
--- Note this only parses data to the right of the '=' !
--- Because to the left there be type functions..
-tyData :: Parser Type =
- let parseAlts alt = ((,) <$> tyName <*> alt) `sepBy1` symboln "|"
-     recordFields :: Parser [(Name, Type)] =
-       let field = (,) <$> tyVar <* reservedOp ":" <*> pType
-       in  lexemen field `sepBy` lexemen ","
-     record = choice
-       [ RecordFields <$> bracesn (recordFields)
-       , RecordTuple <$> many singleType]
- in choice
- [ TyRecord    <$> parseAlts record
--- , TyData      <$> try (parseAlts (many singleType))
- , TyInfixData <$> singleType <*> infixName <*> singleType
+singlePattern = dbg "pattern" $ choice
+ [ PLit <$> literalP
+ , PArg <$> (iden >>= addArgName)
+ , PWildCard <$ reserved "_"
+ , parens pattern
  ]
-
-tyRecord = fail "use haskell style records for now pls"
-
-tyName   :: Parser Name = uIden
-tyVar    :: Parser Name = lIden
+pattern = singlePattern >>= \p -> choice
+  [ PTyped p <$ reservedOp ":" <*> tt
+  , pure p]
 
 ----------------
 -- Primitives  -
@@ -447,7 +389,7 @@ primTuple = symbol "#!,"
 
 primType = dbg "primType" $ do try (parens (PrimTuple <$> trivialType `sepBy2` primTuple))
         <|> trivialType
-trivialType :: Parser PrimType = (<?> "prim Type") $
+trivialType :: Parser PrimType = (<?> "Builtin Type") $
   primDef *> choice
   [ symbol "Int"      *> (PrimInt <$> L.decimal)
   , symbol "Float"    *> pure (PrimFloat FloatTy)
@@ -457,7 +399,7 @@ trivialType :: Parser PrimType = (<?> "prim Type") $
   ] <|> parens primType
 
 primInstr :: Parser PrimInstr
-primInstr = (<?> "Primitive Instruction") $
+primInstr = (<?> "Builtin Instr") $
   primDef *> choice
   [ IntInstr   <$> intInstr
   , NatInstr   <$> natInstr
@@ -495,9 +437,9 @@ primInstr = (<?> "Primitive Instruction") $
     , symbol "extractVal"  $> ExtractVal
     , symbol "insertVal"   $> InsertVal]
 
------------------
--- Experiments --
------------------
+--------------------
+-- number parsers --
+--------------------
 decimal_ , dotDecimal_ , exponent_ :: Parser T.Text
 decimal_    = takeWhile1P (Just "digit") isDigit
 dotDecimal_ = char '.' *> takeWhile1P (Just "digit") isDigit

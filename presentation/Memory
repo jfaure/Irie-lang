@@ -21,34 +21,48 @@ D1 ==> S2
 S1 --switch--> If1>"S1|S2"]
 S2 --switch --> If1
 ```
+### Memory Flow
+```mermaid
+graph TD
+
+Extractor --> This
+PrevArgs --shared--> Con
+Ret["PrevFrame(s)"] --args-->This{"This frame"}
+This --args--> F
+F["Fn call"] --Scrutinee--> Decon
+This --"Local mem" --> Con((Con))
+Ret --"upstream mem"--> Con
+Decon-->Con
+```
 
 ### Algorithm
-Fn stack (program) and Data stack (memory) are duals. Unfortunately, they can become desynced.
+Fn stack (program) and Data stack (memory) are closely related. Unfortunately, they easily desync.
 * Data stack changes slower and can grow in a tree shape (product types)
-* Sum types are a form of delayed branching
-* Case decons know how they want to use the data
+* Sum types are like saved conditionals
+* Case decons alone know how data will be used (and freed!)
 
-Basic idea is to passdown memory (^Mem) to any function that returns data. Data of unclear sizes (recursive data / dynamic lists) must use the heap. Sum type data can be allocated pessimistically as the upper bound of it's alts. In what follows we discuss only non-copyable data.
-* If a fn uses an argument to construct it's return, then that argument must be allocated early enough - here we must count the layers of desync (eg. `case Circle 3 of Circle 3 -> _` has a desync of 0
+Basic idea is to passdown memory (^Mem) to any function that returns data. Data of unclear sizes (recursive data / dynamic lists) must use the heap. Sum type data can be allocated pessimistically as the upper bound of it's alts. In what follows we discuss only non-copyable (large) data.
+* If a fn uses an argument to construct it's return, then that argument must be allocated early enough - ie. we must count the layers of desync (eg. `case Circle 3 of Circle 3 -> _` has a desync of 0
+* Conditionals: either we copy, use the heap, or delay allocation
 ```
+Global --> pass down ^Mem to fns returning data.
+       |-  arguments have a nesting val for args (0 = not returned)
+       |-  memory is allocated/passed down at case deconstructions 
+       `-  sum types + branching create static indecidability
 Constructor --> write to ^mem.
 Arg -- already alloced = pass null pointers down to subdata extractors
     -- if (partly) returned at depth n? --> copy to ^Mem
 Decon -- copy to ^Mem if not nullptr; else return subdata
-Let -- Find out if building return value
+Let -- Find out if building return valuel
 ```
-
 Thoughts
-* 2 stacks: usual function call stack + subdata stack
-* arg lifetimes vs return lifetime: count cons + decons ? conditionals ?
-* memory flows down (via args), and up (via return)
-* laziness can defer heap allocations, even allow allocas. Esp. fold-build schemes
-* tail-call memory management ?
-* structural linearity ( switch forces either copying / heap allocation )
-* types of case: quantitative product decon (like fn args) + special case for arrays, where elem extraction is complicated
-* mixture of memory techniques ?
+* Extraction (nullmemptr ^Mem) of subdata
+* copies allow shared inplaceing
+* extraction outlives it's parent ?
+* pass functions down (inexpensive) ?!
+* Sum types: we know which alt is used at construction, do we need to branch on it later ? branching is expensive, particularly since it complicates memory management
+* extracting something from deep data tree ? which may or may not need to outlive the tree
+* tail-call-elim ?
 * Let's may cause sharing of data (and worse, subdata)
-* Rec's force use of heap
-* choice is in the type - llvm representation may be different (ref counts / inline subdata..) and conversions nontrivial
-* Arrays == Var args
-
+* Rec's ~force use of heap if cannot fold-build
+* Arrays ~ Var args

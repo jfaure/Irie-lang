@@ -7,8 +7,8 @@ import CoreSyn
 import qualified CoreUtils as CU
 import ToCore
 import PrettyCore
-import TypeJudge
-import Core2Stg
+import BiUnify
+--import Core2Stg
 --import StgSyn
 import StgToLLVM (stgToIRTop)
 import qualified LlvmDriver as LD
@@ -29,17 +29,16 @@ import LLVM.Pretty
 import Debug.Trace
 
 preludeFNames = V.empty -- V.fromList ["Library/Prim.arya"]
-searchPath    = ["Library/"]
+searchPath    = ["Library/"] :: [T.Text]
 
 yoloPrependPrelude f = liftA2 T.append
   (T.IO.readFile "Library/Prim.arya") (T.IO.readFile f)
 
-
 main = parseCmdLine >>= \cmdLine ->
   case files cmdLine of
     []  -> repl cmdLine
-    [f] -> doProgText cmdLine f =<< yoloPrependPrelude f
---  [f] -> doProgText cmdLine f =<< T.IO.readFile f
+--  [f] -> doProgText cmdLine f =<< yoloPrependPrelude f
+    [f] -> doProgText cmdLine f =<< T.IO.readFile f
     av  -> error "one file pls"
 --  av -> mapM_ (doFile cmdLine) av
 
@@ -59,29 +58,28 @@ doProgText flags fName progText = do
  thisMod <- case parseModule fName progText of
     Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
     Right r -> pure r
- let pTree = parseTree thisMod
- inclPaths <- getModulePaths searchPath $ modImports pTree
- customImports <- mapM doImport inclPaths
- let importList = autoImports V.++ customImports
-     headers    = CU.mkHeader <$> importList
-     llvmObjs   = V.toList $ stgToIRTop . core2stg <$> headers
-     pp         = printPass flags
- let core       = parseTree2Core headers thisMod
+-- inclPaths <- getModulePaths searchPath $ modImports pTree
+-- customImports <- mapM doImport inclPaths
+--   importList = autoImports V.++ customImports
+--   headers    = CU.mkHeader <$> importList
+--   llvmObjs   = V.toList $ stgToIRTop . core2stg <$> headers
+ let pp         = printPass flags
+ let core       = parseTree2Core [] thisMod
      judged     = judgeModule core
-     stg        = core2stg judged
-     llvmMod    = stgToIRTop stg
+--   stg        = core2stg judged
+--   llvmMod    = stgToIRTop stg
  if
-  | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags)
-                                           $ llvmMod
+-- | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags)
+--                                         $ llvmMod
   | pp == "source"    -> putStr =<< readFile fName
-  | pp == "parseTree" -> print pTree
+  | pp == "parseTree" -> print thisMod
   | pp == "preCore"   -> putStrLn $ ppCoreModule core
   | pp == "core"      -> putStrLn $ ppCoreModule judged
-  | pp == "stg"       -> putStrLn $ show stg
-  | pp == "llvm"      -> TL.IO.putStrLn $ ppllvm llvmMod
+-- | pp == "stg"       -> putStrLn $ show stg
+-- | pp == "llvm"      -> TL.IO.putStrLn $ ppllvm llvmMod
                             -- LD.dumpModule llvmMod
-  | jit flags -> LD.runJIT (optlevel flags) llvmObjs llvmMod
-  | otherwise            -> putStrLn $ ppCoreModule judged
+-- | jit flags -> LD.runJIT (optlevel flags) llvmObjs llvmMod
+  | otherwise         -> putStrLn $ ppCoreModule judged
 
 repl :: CmdLine -> IO ()
 repl cmdLine = let

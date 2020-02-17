@@ -3,6 +3,7 @@
 -- 2. synthesize needed declarations (types + fn sigs)
 module Modules where
 
+{-
 import qualified ParseSyntax as P
 import CoreSyn
 
@@ -46,3 +47,4 @@ modName = \case
 -- , hiding    :: [Name]
 -- , renaming  :: [(Name, Name)]
 -- }
+-}

@@ -1,7 +1,0 @@
-1. systems level performance (no lazy, no gc)
-1. array + lens (+ TDNR + subtyping)
-1. higher rank types + impredicative polymorphism type judgements
-1. fusion (rm intermediate data via patternmatching)
-
-2. effects
-2. liquid/dependent types
