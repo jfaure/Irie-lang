@@ -17,7 +17,6 @@ import Prim
 import qualified Data.Vector         as V
 import qualified Data.Text           as T
 import qualified Data.IntMap.Strict  as IM
-import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
 import qualified Data.IntSet as IS
 
@@ -40,11 +39,8 @@ data CoreModule     = CoreModule {
  , algData     :: TypeMap -- data and aliases
  -- binds: constructors, locals, and class Fns (+ overloads!)
  , bindings    :: BindMap
- , nTopBinds   :: Int -- amount of relevent binds in the bindMap
+ , nTopBinds   :: Int -- number of relevent binds in the bindMap
 
- -- specialized alg data instances (created by typejudge)
- -- TyDynInstances contains indexes into this
- , tyConInstances :: V.Vector Entity
  , parseDetails   :: ParseDetails
 }
 
@@ -52,10 +48,10 @@ data CoreModule     = CoreModule {
 data ParseDetails = ParseDetails {
    _classDecls :: V.Vector ClassDecl -- so importers can check instances
 -- , _defaults   :: IM.IntMap MonoType
- , _fixities   :: HM.HashMap HName Fixity
+ , _fixities   :: M.Map HName Fixity
  -- HName lookup tables
- , _hNameBinds :: HM.HashMap HName IName
- , _hNameTypes :: HM.HashMap HName IName
+ , _hNameBinds :: M.Map HName IName
+ , _hNameTypes :: M.Map HName IName
 }
 -- TODO rm
 hNameBinds = _hNameBinds . parseDetails
@@ -73,15 +69,15 @@ data ClassFn = ClassFn {
  , defaultFn   :: Maybe IName -- jointype or instance type ??
 }
 
-data TypeAnn = TyNone | TyUser TyPlus | TyJudged TyPlus
+data TypeAnn = TyNone | TyUser Type | TyJudged TyPlus
 -- an entity = info about anything we give an IName to.
 data Entity = Entity { -- entity info
    named    :: Maybe HName
--- , typed    :: Type
  , ty       :: TypeAnn
  , source   :: SourceEntity
  }
-data SourceEntity = ThisModule | Import | Private
+ent = Entity Nothing TyNone Export
+data SourceEntity = Export | Import | Private | ThisModule
 
 data Binding
  = LBind { -- let binding
@@ -89,9 +85,14 @@ data Binding
  , args  :: [IName] -- the unique argINames used locally by
  , expr  :: Term
  }
- | LArg   {  -- lambda-bound
-   info :: Entity
+ | LetType {
+   uni     :: Uni
+ , info    :: Entity
+ , args    :: [IName]
+ , typeAbs :: TyPlus
  }
+ | LArg   { info :: Entity }  -- lambda-bound
+ | LNoScope { info :: Entity }
  -- always inline this binding (to access freevars)
  -- only used internally for pattern match deconstructions
  | Inline { info :: Entity , expr :: Term }
@@ -106,6 +107,7 @@ data Binding
 
 data Term
  = Var    IName
+ | Arg    IName -- lambda-bound (no forall quantifiers)
  | Lit    Literal
  | Instr  PrimInstr [Term] -- must be fully saturated
  | App    IName     [Term]
@@ -113,53 +115,14 @@ data Term
 
 data CaseAlts
  = Switch [(Literal, Term)]
- | Decon  [(IName, [IName], Term)] -- Con [args] -> expr
- | Tuple  ([IName], Term)
+-- | Decon  [(IName, [IName], Term)] -- Con [args] -> expr
+-- | Tuple  ([IName], Term)
 
-{-
------------ Types -- ---------
-data Type
- = TyAlias IName    -- aliases (esp. to MonoTyData)
- | TyRigid IName    -- correspond to arguments of type constructors
- | TyMono  MonoType -- monotypes 't'
- | TyPoly  PolyType -- constrained polytypes 'p', 's'
- | TyArrow [Type]   -- Kind 'function' incl. Sum/Product cons
-
- -- special case of non-dependent type-level computations
- | TyFn  { tyArgs :: [ITName] -- type placeholders
-         , tyVal  :: Type }
- | TyCon   Type [Type]  -- make a new type from a TyFun
-
- | TyUnknown    -- to be inferred
- | TyVoid       -- eg. to beta reduce with a null type
- | TyBroken     -- typejudge couldn't infer a coherent type
-
-data MonoType
- = MonoTyPrim   PrimType
- | MonoSubTy {
-   rigidSubNm :: IName
- , parentTy   :: IName -- case expressions need the parent type info
- , conIndx    :: Int   -- indx of constructor in the data
- }
-
-data PolyType
- = Meet  [Type] -- (&) multiple typeclass constraints
- | Join  [Type] -- (|) union types (esp. typeclass var)
- | PolyAny          -- some fns merely pass on polymorhism
- -- TODO custom PolyAny for Type|Arrow|Data
- -- Data is a polytype (of it's alts)
- | PolyData PolyType DataDef
-
--- Data saves HNames, so they are reachable from the typeMap
-data DataDef = DataDef HName [(HName, [Type])]
--}
-
-------------------------
--- TODO new formalism --
-------------------------
 -- Types are sampled from components of a coproduct of profinite distributive lattices
 -- typing schemes contain the (mono | abstract poly)-types of lambda-bound terms
-data TyScheme = TyScheme INameSet TyPlus -- always of the form [D-]t+
+--data TyScheme = TyScheme INameSet TyPlus -- always of the form [D-]t+
+type Uni      = Int
+data Type     = Type Uni TyPlus
 type TCo      = [TyHead] -- same    polarity
 type TContra  = [TyHead] -- reverse polarity
 type TyMinus  = [TyHead]
@@ -169,7 +132,6 @@ type TyPlus   = [TyHead]
 type TVar   = ITName
 data BiSub  = BiSub { pSub :: [TyHead] , mSub :: [TyHead] }
 type BiSubs = V.Vector BiSub -- indexed by TVars
-type Labels = V.Vector TyScheme
 -- atomic Bisubstitution:
 -- a  <= t- solved by [m- b = a n [b/a-]t- /a-] 
 -- t+ <= a  solved by [m+ b = a u [b/a+]t+ /a+] 
@@ -184,19 +146,10 @@ data TyHead -- head constructors for types.
  | THRec      ITName TCo -- guarded and covariant in a (ie. `Ma. (a->bool)->a` ok, but not `Ma. a->Bool`)
  | THData     SumOfRecord -- tCO
 
- -- THLam: parametrised type operators. notice this makes the order of lambda-bound types (somewhat) relevant
- -- The lambda-bound types here are flexible ie. subsumption can occur before beta-reduction.
- -- This can be weakened by instantiation to a (monomorphically abstracted) typing scheme
- -- We unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred
- -- ie. we cannot insert uses of THLam
  | THLam      ITName TyHead
+ | THIndexed  ITName Term
  | THArg      ITName
 
- | THPi       ITName Kind Term
- | THSigma    ITName Kind Term
--- Notes
--- the type `a==b` of proofs that a and b are equal
---
 data SumOfRecord = SumOfRecord [(SLabel , [(PLabel , TCo)])]
 
 data Kind -- label for different head constructors
@@ -206,7 +159,13 @@ data Kind -- label for different head constructors
  | KPi   -- generalization of KArrow (with possible pi binder)
  | KData
 
----------------------------
+-- Notes --
+{- THLam: parametrised type operators. notice this makes the order of lambda-bound types (somewhat) relevant
+  The lambda-bound types here are flexible ie. subsumption can occur before beta-reduction.
+  This can be weakened by instantiation to a (monomorphically abstracted) typing scheme
+  We unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred
+  ie. we cannot insert uses of THLam
+-}
 
 deriving instance Show ClassDecl
 deriving instance Show ClassFn
@@ -216,6 +175,7 @@ deriving instance Show Binding
 --deriving instance Show MonoType
 --deriving instance Show Type
 deriving instance Show Term
+deriving instance Show BiSub
 deriving instance Show CaseAlts
 deriving instance Show Entity
 deriving instance Show SourceEntity
@@ -226,6 +186,7 @@ deriving instance Show TyHead
 deriving instance Show Kind
 deriving instance Show SumOfRecord
 deriving instance Show TypeAnn
+deriving instance Show Type
 
 deriving instance Eq SumOfRecord
 --deriving instance Eq MonoType
@@ -237,6 +198,7 @@ deriving instance Eq Kind
 deriving instance Eq ClassDecl
 deriving instance Eq ClassFn
 deriving instance Eq Binding
+deriving instance Eq BiSub
 deriving instance Eq Term
 deriving instance Eq CaseAlts
 deriving instance Eq Entity
@@ -245,3 +207,4 @@ deriving instance Eq ParseDetails
 deriving instance Eq CoreModule
 deriving instance Eq Fixity
 deriving instance Eq TypeAnn
+deriving instance Eq Type

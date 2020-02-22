@@ -23,7 +23,7 @@ parsePrintPass = eitherReader $ \str ->
   case filter (T.isInfixOf (T.pack str)) printPasses of
   []  -> Left $ "Unrecognized print pass: '" ++ str ++ "'"
   [p] -> Right p
-  tooMany -> Left $ "Ambiguous print pass: '" ++ str ++ "'"
+  tooMany -> Left $ "Ambiguous print pass: '" ++ str ++ "' : " ++ show tooMany
 
 defaultCmdLine = CmdLine "" False 0 False Nothing []
 

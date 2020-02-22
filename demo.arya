@@ -1,12 +1,17 @@
--- (+) : Nat -> Nat -> Nat
 double x = x + x
+Bool = Int 1
+f = double 1 : Bool -- 0
 
-Vec n v = { len : n ; vals : v }
+--x = { b=3 ; h=4 }
+--c = x.b
 
-fromMaybe d x = case x | Just v = v | _ = d
+-- Fn [parameters] : -> [indexes]
+--data Vec v : Nat -> Set where
+-- empty  : Vec v 0
+-- append : v -> Vec v {n} -> Vec v (n + 1)
 
---Bool = True | False
---
---not : Bool -> Bool
---not True = False
---not False = True
+--Bool = True | False -- 2 labels (label =? type)
+--not x = x ? { True => False ; False => True }
+
+--Op2 t = (->) % [t t t]
+--(+) : Op2 Nat

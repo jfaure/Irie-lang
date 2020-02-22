@@ -69,21 +69,19 @@ addArgName    h = pd . hNameArgs    %%= insertOrRetrieve h
 addBindName   h = pd . hNameBinds   %%= insertOrRetrieve h
 addImportName h = pd . hNameImports %%= insertOrRetrieve h
 
-rmImportName h = moduleWIP . parseDetails . hNameImports %= M.delete h
-rmBindName h = (moduleWIP . parseDetails . hNameBinds) %= M.delete h
-
 newFLabel h = moduleWIP . parseDetails . fields %%= insertOrRetrieve h
-fLabel    h = _
+--fLabel    h = _
 newSLabel h = moduleWIP . parseDetails . labels %%= insertOrRetrieve h
-sLabel    h = _
+--sLabel    h = _
 -- try first the argmap, then the bindmap, finally assume the name is imported
 lookupBindName h = do
   pd <- use $ moduleWIP . parseDetails
-  case M.lookup h (pd ^. hNameArgs) of
+  Var <$> case M.lookup h (pd ^. hNameArgs) of
     Just arg  -> pure $ VLocal arg
     Nothing   -> case M.lookup h (pd ^. hNameBinds) of
       Just bind -> pure $ VBind bind
-      Nothing   -> VExtern <$> addImportName h
+      Nothing   -> addImport (NoScope h) *> (VExtern <$> addImportName h)
+clearLocals = moduleWIP . parseDetails . hNameArgs .= M.empty
 
 -----------
 -- Lexer --
@@ -117,7 +115,7 @@ symboln = L.symbol scn . T.pack
 -- all symbol chars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 -- reserved: ():\{}"_'`.
 symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: T.Text
-reservedOps   = T.words "= -> | : #! . ;"
+reservedOps   = T.words "= | : #! . ;" -- ->
 reservedNames = T.words "type data record class extern externVarArg let rec in where case of _ import require Set"
 reservedName w = (lexeme . try) (string (T.pack w) *> notFollowedBy alphaNumChar)
 reservedOp w = lexeme (notFollowedBy (opLetter w) *> string w)
@@ -136,12 +134,12 @@ iden :: Parser HName = try $ lexeme (p >>= check) where
   check x = if x `elem` reservedNames
             then fail $ "keyword "++show x++" cannot be an identifier"
             else pure x
-_lIden, _uIden, pModuleName :: Parser HName
+_lIden, _uIden :: Parser HName
 _lIden = lookAhead lowerChar *> iden
 _uIden = lookAhead upperChar *> iden
+pIden = iden      >>= lookupBindName
 newLIden = _lIden >>= addBindName
 newUIden = _uIden >>= addBindName
-pModuleName = _uIden
 
 _symbolName = lexeme (p >>= check) where
   p :: Parser T.Text
@@ -149,10 +147,10 @@ _symbolName = lexeme (p >>= check) where
   check x = if x `elem` reservedOps
             then fail $ "reserved Symbol: "++show x ++" cannot be an identifier"
             else pure  x
-symbolName :: Parser IName = addBindName =<< _symbolName
+symbolName :: Parser TT = lookupBindName =<< _symbolName
 
-infixName = between (symbol "`") (symbol "`") newLIden <|> symbolName
-qualifier = newLIden <|> newUIden -- not a symbol
+infixName = between (symbol "`") (symbol "`") pIden <|> symbolName
+qualifier = pIden -- not a symbol
 -- TODO add to importNames
 qName :: Parser IName -> Parser IName
 qName p = lexeme $ many (try (qualifier <* reservedOp "."))
@@ -174,15 +172,12 @@ parens  = between (symbol "(") (symbol ")")
 braces  = between (symbol "{") (symbol "}")
 bracesn = between (symboln "{") (symboln "}")
 p `sepBy2` sep = (:) <$> p <*> (some (sep *> p))
-
 endLine = lexeme (single '\n')
 
 -- indentation shortcuts
 noIndent = L.nonIndented scn . lexeme
 iB = L.indentBlock scn
---svIndent f = L.indentLevel >>= \s -> local (const s) f
 svIndent f = L.indentLevel >>= newIndent
-
 
 --debug functions
 dbgToEof = traceShowM =<< (getInput :: Parser T.Text)
@@ -209,7 +204,8 @@ parseModule :: FilePath -> T.Text
            , _labels       = M.empty
         }
       }
-  in runParserT (scn *> doParse *> eof *> use moduleWIP) nm txt
+      finish = (bindings %~ reverse) . (imports %~ reverse)
+  in finish <$> runParserT (scn *> doParse *> eof *> use moduleWIP) nm txt
   `evalState` ParseState {
        _indent = mkPos 1
      , _nBinds   = 0
@@ -218,30 +214,26 @@ parseModule :: FilePath -> T.Text
      , _moduleWIP  = startModule
      }
 
---parseProg :: Parser [Decl]
--- = noIndent decl `sepEndBy` many endLine
-
 -- group declarations as they are parsed
 doParse :: Parser ()
 doParse = void $ decl `sepEndBy` (endLine *> scn)
 decl = (newIndent =<< L.indentLevel) *> choice
-   [ importDecl
+   [ extern
+   , void $ reserved "import" *> _uIden
    , bindDecl
    ]
 
--- infixDecl ?
-importDecl = void $ reserved "import" *> pModuleName
 bindDecl = choice
- [ extern
- , funBind
+ [ funBind
 -- , infixDecl
  ]
 
 extern =
  let _typed = reservedOp ":" *> primType
- in addBind =<< ExternBind <$> choice
- [ Extern   <$ reserved "extern"      <*> newLIden <*> _typed
- , ExternVA <$ reserved "externVarArg"<*> newLIden <*> _typed
+     doName = iden >>= \i -> addBindName i *> pure i
+ in addImport =<< choice
+ [ Extern   <$ reserved "extern"      <*> doName <*> _typed
+ , ExternVA <$ reserved "externVarArg"<*> doName <*> _typed
  ]
 --infixDecl = let
 --  pInfix = choice
@@ -251,7 +243,6 @@ extern =
 --  opNames = (\x->[x]) <$> symbolName --`sepBy` symbol ","
 --  in InfixDecl <$> pInfix <*> optional (lexeme L.decimal) <*> opNames
 
-fnName = newLIden <|> parens symbolName
 
 --  let super = many $ reservedOp "<:" *> tyName
 --  in reserved "class" $> TypeClass <*>
@@ -259,21 +250,22 @@ fnName = newLIden <|> parens symbolName
 --reserved "instance" $> TypeClassInst
 --  <*> tyName <*> some tyName <*> pWhere decl
 
---pWhere x = fail "no where" :: Parser [Decl]
---pWhere :: Parser Decl -> Parser [Decl]
+--pWhere :: Parser a -> Parser [a]
 --pWhere pdecl = reserved "where" *> do
---  bracesn ((decl <* scn) `sepBy2` symboln ";") <|> do
---    ref <- ask <* scn
+--  bracesn ((pdecl <* scn) `sepBy2` symboln ";") <|> do
+--    ref <- use indent <* scn
 --    lvl <- L.indentLevel
 --    local (const lvl) $ indentedItems ref lvl scn pdecl (fail "_")
 
+--fnName = (iden <|> _symbolName) >>= addBindName
 funBind = _funBind iden <|> _funBind (parens _symbolName)
 _funBind nameParser = do
     m    <- nameParser
     iNm  <- addBindName m -- need to handle recursive references
     exps <- liftA2 (:) (fnMatch (pure ())) (many (fnMatch nameParser))
     --(exps , letBounds) <- unzip <$> tt
-    addBind =<< FunBind exps <$> optional (reservedOp ":" *> tt)
+    addBind =<< FunBind m exps <$> optional (reservedOp ":" *> tt)
+    clearLocals
 --  mapM addBind (concat letBounds)
 
 fnMatch thisName = dbg "match" $ do
@@ -309,32 +301,32 @@ indentedItems ref lvl scn p finished = go where
 tt :: Parser TT = dbg "tt" $ choice
   [ letIn
   , multiIf
-  , match
+--  , match
   , maybeApp >>= \app -> choice
-    [ Proj app <$ reservedOp "." <*> (fLabel =<< iden) -- record projection (access)
+    [ Proj app <$ reservedOp "." <*> (newFLabel =<< iden) -- record projection (access)
     , infixTrain app
     , pure app
     ]
-  ] >>= \exp -> choice [reservedOp ":" $> Typed exp <*> tt , pure exp]
+  ] -- >>= \exp -> choice [reservedOp ":" $> Typed exp <*> tt , pure exp]
   where
   maybeApp = arg >>= \fn -> choice [App fn <$> some arg , pure fn]
-  infixTrain lArg = InfixTrain lArg <$> some ((,) <$> qName infixName <*> maybeApp)
+  infixTrain lArg = InfixTrain lArg <$> some ((,) <$> infixName <*> maybeApp)
   arg = dbg "pSingleExp" $ choice
    [ WildCard <$ reserved "_"
    , termPrim
    , con
-   , label
    , try iden >>= lookupBindName
+-- , label
    , parens tt
    ]
   label = P.Label <$> try (iden >>= newSLabel) <*> braces tt
   con = let
-    fieldDecl = (,) <$> (newFLabel =<< iden) <* reservedOp ":" <*> arg
+    fieldDecl = (,) <$> (newFLabel =<< iden) <* reservedOp "=" <*> arg
     in Cons <$> (braces $ fieldDecl `sepBy1` reservedOp ";")
-  match = Match <$> sLabel tt `sepBy1` reservedOp "|"
+--  match = Match <$> newSLabel tt `sepBy1` reservedOp "|"
   termPrim = choice [literalExp , PrimOp <$> dbg "primInstr" primInstr]
   typePrim = choice
-   [ TyPrim  <$> primType
+   [ TyLit   <$> primType
 -- , TyArrow <$> try (liftA2 (:) tt (some (arg <* reservedOp "->")))
    ]
 --lambda = Abs <$ char '\\' <*> many pat <* symbol "->" <*> tt

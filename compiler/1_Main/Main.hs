@@ -5,7 +5,7 @@ import Parser
 import Modules
 import CoreSyn
 import qualified CoreUtils as CU
-import ToCore
+import Parse2Core
 import PrettyCore
 import BiUnify
 --import Core2Stg
@@ -43,7 +43,7 @@ main = parseCmdLine >>= \cmdLine ->
 --  av -> mapM_ (doFile cmdLine) av
 
 doImport :: FilePath -> IO CoreModule
-doImport fName = (judgeModule . parseTree2Core V.empty) <$> do
+doImport fName = (judgeModule . parseTree2Core) <$> do
   putStrLn ("Compiling " ++ show fName)
   progText <- T.IO.readFile fName
   case parseModule fName progText of
@@ -64,7 +64,7 @@ doProgText flags fName progText = do
 --   headers    = CU.mkHeader <$> importList
 --   llvmObjs   = V.toList $ stgToIRTop . core2stg <$> headers
  let pp         = printPass flags
- let core       = parseTree2Core [] thisMod
+ let core       = parseTree2Core thisMod
      judged     = judgeModule core
 --   stg        = core2stg judged
 --   llvmMod    = stgToIRTop stg

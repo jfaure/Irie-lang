@@ -3,11 +3,12 @@
 -- 1. resolve infix apps (including precedence)
 -- 2. convert all HNames to INames (indexes into vectors)
 -- 3. desugar language expressions
-module ToCore (parseTree2Core)
+module ToCore -- (parseTree2Core)
 where
+{-
 import Prim
 import CoreSyn
-import Names
+--import Names
 import qualified CoreUtils as CU
 import qualified ParseSyntax as P
 
@@ -26,7 +27,6 @@ import Data.Foldable
 import GHC.Exts (groupWith)
 import Debug.Trace
 
-{-
 convTy :: (HName -> Maybe IName) -> P.Type -> TyPlus
  = \findHNm -> \case
  _ -> []
@@ -57,19 +57,6 @@ convTyM :: P.Type -> ToCoreEnv TyPlus = \pTy -> mkFindTyHName <&> (`convTy` pTy)
 --            pure $ foldr (\k m->M.insert (pName2Text k) t m) mp nms
 --    in foldrM f M.empty sigs
 
---doExtern :: TypeMap -> P.Decl -> ToCoreEnv Entity
---doExtern tyMap = let
---  addExtern primCon nm ty =
---    let hNm = pName2Text nm
---    in do
---    freshName >>= addHName (pName2Text nm)
---    ty <- convTyM ty
---    pure $ CU.mkNamedEntity hNm ty
---  in \case
---    P.Extern   nm ty -> addExtern PrimExtern   nm ty
---    P.ExternVA nm ty -> addExtern PrimExternVA nm ty
-
--}
 ------------------------
 -- Main conv function --
 ------------------------
@@ -118,7 +105,7 @@ _parseTree2Core startConvState topImports (P.Module mName imports topBinds typeD
   (binds, nTopBinds' , dataTys, classDecls') = val
   (val, endState) = runState toCoreM startConvState
   toCoreM = pure (V.empty, 0, V.empty , V.empty)
-{-
+
   toCoreM :: ToCoreEnv (BindMap, Int , TypeMap, V.Vector ClassDecl) = do
   -- Note. types and binds vectors must match iNames
   -- topBindings;typeDecls;localBindings;overloads;externs
@@ -326,7 +313,7 @@ defaultPrec = 9
 defaultFixity = Fixity defaultPrec LAssoc
 
 convFixities = HM.empty
---convFixities :: V.Vector P.Decl{- .InfixDecl-} -> HM.HashMap HName Fixity
+--convFixities :: V.Vector P.Decl -> HM.HashMap HName Fixity
 --convFixities decls = 
 --  let convAssoc = \case
 --        P.AssocRight -> RAssoc
@@ -336,4 +323,6 @@ convFixities = HM.empty
 --      infix2pair (P.InfixDecl a f [op])
 --        = (pName2Text op , Fixity (convFixity f) (convAssoc a))
 --  in HM.fromList $ V.toList $ infix2pair <$> decls
---  -}
+--
+
+-}

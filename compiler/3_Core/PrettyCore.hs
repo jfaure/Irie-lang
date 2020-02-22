@@ -45,7 +45,6 @@ ppCoreExpr :: (IName -> String) -> (IName -> String)
   -- Let binds e -> error "let in coreexpr" --"let "++ppBinds (\x->Nothing) binds++"in "++ ppCoreExpr e
   Case c a -> case a of
     Switch alts -> "case "++ppCoreExpr' c++show alts
-    Decon  alts -> "case " ++ ppCoreExpr' c ++ " of" ++ "\n" ++ (concat $ DL.intersperse "\n" $ (ppDataAlt deref (indent++"  "))<$> alts)
   l -> show l
 
 ppDataAlt :: (IName -> String) -> String -> (IName, [IName], Term) -> String
@@ -71,9 +70,10 @@ ppBind f derefTy indent lineNumber b =
   LExtern a -> "lextern: " ++ ppEntity' a
   LInstr a instr -> "LInstr: " ++ ppEntity' a ++ " = " ++ show instr
   Inline a e-> "inline: " ++ ppEntity' a ++ " = " ++ ppCoreExpr f derefTy "" e
+  LNoScope a -> "noscope: " ++ ppEntity' a
 
 ppCoreModule :: CoreModule -> String
- = \(CoreModule hNm typeMap bindings n tyConInstances (ParseDetails classDecls {-defaults-} fixities _ _)) ->
+ = \(CoreModule hNm typeMap bindings n (ParseDetails classDecls {-defaults-} fixities _ _)) ->
   let derefTy  i = bind2HName        (typeMap  V.! i) i
       derefVar i = bind2HName (info (bindings V.! i)) i
       ppEntity'  = ppEntity derefTy
@@ -82,10 +82,10 @@ ppCoreModule :: CoreModule -> String
   ++ concat (V.imap (\i x->show i ++ " " ++ ppEntity' x ++ "\n")typeMap)
   ++ clGreen "\n-- Top bindings --"
   ++ concat (V.imap (ppBind derefVar derefTy "\n") $ V.take n bindings)
-  ++ clGreen "\n-- locals --"
+  ++ clGreen "\n-- externs --"
   ++ concat (V.imap (\i->ppBind derefVar derefTy "\n" (n+i) ) $ V.drop n bindings)
 --  ++ "\n\n" ++ clMagenta "-- defaults --\n" ++ show defaults
-  ++ "\n" ++ clRed "-- Class decls --\n"++ ppClassDecls classDecls
+--  ++ "\n" ++ clRed "-- Class decls --\n"++ ppClassDecls classDecls
 
 ppClassDecls classDecls
  = DL.intercalate "\n" $ show <$> V.toList classDecls

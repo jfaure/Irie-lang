@@ -102,8 +102,8 @@ infer :: Term -> TCEnv TyPlus
   Case ofExpr a -> case a of -- biunify the intersection
    -- If has constraints   (t1+ <= bool , t2+<=a , t3+<=a)
    Switch alts -> _ -- sugar for if ?
+
    -- Proj has constraints (t+ <= {l:a})
-   Decon alts -> _  -- biunify the intersection
 
 -- Biunification handles constraints of the form t+ <= t- by substitution
 -- Atomic: (join/meet a type to the var)
@@ -147,8 +147,8 @@ reduceType t = t
 -- reduced form: the join/meets need are all between different components of the type lattice
 -- additionally, subsumption <===> equivalence of typing schemes
 -- ie. to decide [d1]t1 <= [d2]t2, we check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
-check :: [TyHead] -> [TyHead] -> TCEnvState -> Bool
-check gotRaw expRaw delta = let
+check :: [TyHead] -> Type -> TCEnvState -> Bool
+check gotRaw (Type uni expRaw) delta = let
   gotTy = reduceType gotRaw ; expTy = reduceType expRaw
   _check ty = True
   in  all _check gotTy

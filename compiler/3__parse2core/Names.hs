@@ -6,6 +6,7 @@
 -- to import something, all it's local refs must be imported
 
 module Names where
+{-
 import CoreSyn
 import qualified ParseSyntax as P
 
@@ -53,7 +54,6 @@ data Imports = Imports {
 --   customMod :: Name
 -- , hiding  :: Name
 -- , renaming :: [(Name , Name)]
---}
 
 data ToCoreErrors = ToCoreErrors {
    notInScope :: [P.IName]
@@ -115,10 +115,10 @@ lookupName   n = lookupHNm   (pName2Text n)
 lookupTyName n = lookupTyHNm (pName2Text n)
 
 lookupHNm hNm = gets hNames >>= \hs -> case (hs `localLookup` hNm) of
-  Nothing-> gets (asum . (letLookup hNm <$>) . localModules) {- >>= \case
-    Nothing -> gets imports >>= (`moduleLookup` hNm)
-    x -> pure x
-    -}
+  Nothing-> gets (asum . (letLookup hNm <$>) . localModules)
+ --  >>= \case
+ -- Nothing -> gets imports >>= (`moduleLookup` hNm)
+ -- x -> pure x
   x->pure x
 
 letLookup hNm letModule = hNm `HM.lookup` hNameBinds letModule
@@ -182,3 +182,4 @@ moduleTyLookup imports hNm = let
     nm <- freshTyName
     addTyHName hNm nm
     addLocalTy nm (algData cm V.! iNm)
+-}

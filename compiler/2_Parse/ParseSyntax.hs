@@ -15,9 +15,13 @@ type FName = IName -- record  fields
 type LName = IName -- sumtype labels
 
 type Op = IName
-type ImportDecl = IName
+
 -- externs can't be checked (eg. syscalls / C apis etc..)
-data Extern = Extern IName PrimType | ExternVA IName PrimType
+data ImportDecl
+ = Extern   { externName :: HName , externType :: PrimType }
+ | ExternVA { externName :: HName , externType :: PrimType }
+ | Import  HName -- a record
+ | NoScope HName -- temporarily out of scope
 
 data Fixity = Fixity Assoc (Maybe Int) [Op] -- info for infix operators
 data Assoc = AssocNone | AssocLeft | AssocRight
@@ -26,9 +30,8 @@ data Module = Module {
    _moduleName :: HName
 
  , _imports    :: [ImportDecl]
--- , _externs    :: [Extern]
  , _bindings   :: [TopBind] -- top binds
- , _locals     :: [TopBind] -- locals (incl args)
+ , _locals     :: [TopBind] -- locals (not incl. args)
 
  , _parseDetails :: ParseDetails
 }
@@ -43,25 +46,26 @@ data ParseDetails = ParseDetails {
 -- , fixities     :: V.Vector Fixity
 }
 
-data TopBind
- = FunBind    [FnMatch] (Maybe TT)
- | ExternBind Extern
-data FnMatch = FnMatch { fnArgs :: [Pattern] , expr :: TT }
+data TopBind = FunBind HName [FnMatch] (Maybe TT)
+data FnMatch = FnMatch [Pattern] TT
+
+data TTName
+ = VBind   IName
+ | VLocal  IName
+ | VExtern IName
+ | VQual   [IName] IName
 
 -- Parser Expressions (types and terms are syntactically equivalent)
 data TT
- -- vars
- = VBind   IName -- top-bound
- | VLocal  IName -- (lambda, let)-bound
- | VExtern IName -- imported (aka. not in scope)
+ = Var TTName
  | WildCard -- "_" as an expression
 
  -- lambda-calculus
  | Abs FnMatch   -- can we eagerly lift type abstractions ? TODO
  | App TT [TT]
- | InfixTrain TT [(IName, TT)] -- `name` or symbolName (must be resolved later, when we have fixities)
+ | InfixTrain TT [(TT, TT)] -- `name` or symbolName
 
- -- Constructions (sum , product , list) types
+ -- other tt primitives (sum , product , list)
  | Cons   [(FName , TT)]
  | Proj   TT FName
  | Label  LName TT
@@ -69,13 +73,13 @@ data TT
  | List   [TT]
 
  -- term primitives
- | Lit    Literal
- | PrimOp PrimInstr
+ | Lit     Literal
+ | PrimOp  PrimInstr
  | MultiIf [(TT, TT)]
 
- -- type primitives (Terms aren't allowed here, eg. `Int -> 3` is nonsense)
- | TyPrim   PrimType
- | TyArrow  [TT]
+ -- type primitives
+ | TyLit    PrimType
+ | TyArrow  [TT] -- type of an Abs
 
  | Typed    { t :: TT , typeOf :: TT }
 
@@ -108,9 +112,15 @@ instance Show ParseDetails where
     , "labels: " ++ show (p^.labels)
     ]
 deriving instance Show TopBind
+deriving instance Show ImportDecl
+instance Show TTName where
+  show = \case
+    VBind x -> show x 
+    VLocal  x -> "\\" ++ show x
+    VExtern x -> "(ext " ++ show x ++ ")"
+    VQual a b -> show a ++ "." ++ show b
 deriving instance Show Fixity
 deriving instance Show Assoc
-deriving instance Show Extern
 deriving instance Show FnMatch 
 deriving instance Show TT
 deriving instance Show Pattern
