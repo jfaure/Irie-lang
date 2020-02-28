@@ -61,7 +61,7 @@ data TT
  | WildCard -- "_" as an expression
 
  -- lambda-calculus
- | Abs FnMatch   -- can we eagerly lift type abstractions ? TODO
+ | Abs FnMatch
  | App TT [TT]
  | InfixTrain TT [(TT, TT)] -- `name` or symbolName
 
@@ -74,7 +74,7 @@ data TT
 
  -- term primitives
  | Lit     Literal
- | PrimOp  PrimInstr
+ | PrimOp  PrimInstr -- probably rm
  | MultiIf [(TT, TT)]
 
  -- type primitives

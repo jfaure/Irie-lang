@@ -9,6 +9,7 @@
 -- > all entities are annotated with a type (can be TyUnknown)
 -- - ultimately stg must have only monotypes
 
+{-# LANGUAGE TemplateHaskell #-}
 module CoreSyn
 where
 
@@ -19,6 +20,7 @@ import qualified Data.Text           as T
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.Map.Strict as M
 import qualified Data.IntSet as IS
+import Control.Lens
 
 type HName    = T.Text -- human readable name
 type IName    = Int    -- Int name: index into bind|type vectors
@@ -38,7 +40,7 @@ data CoreModule     = CoreModule {
 
  , algData     :: TypeMap -- data and aliases
  -- binds: constructors, locals, and class Fns (+ overloads!)
- , bindings    :: BindMap
+ , bindings__    :: BindMap
  , nTopBinds   :: Int -- number of relevent binds in the bindMap
 
  , parseDetails   :: ParseDetails
@@ -105,13 +107,15 @@ data Binding
  , overloads   :: ITMap IName -- instanceIds
  }
 
+-- terms become output code
 data Term
  = Var    IName
  | Arg    IName -- lambda-bound (no forall quantifiers)
  | Lit    Literal
  | Instr  PrimInstr [Term] -- must be fully saturated
- | App    IName     [Term]
+ | App    Term      [Term]  -- IName [Term]
  | Case   Term      CaseAlts
+ | PrimOp PrimInstr
 
 data CaseAlts
  = Switch [(Literal, Term)]
@@ -122,15 +126,18 @@ data CaseAlts
 -- typing schemes contain the (mono | abstract poly)-types of lambda-bound terms
 --data TyScheme = TyScheme INameSet TyPlus -- always of the form [D-]t+
 type Uni      = Int
-data Type     = Type Uni TyPlus
-type TCo      = [TyHead] -- same    polarity
-type TContra  = [TyHead] -- reverse polarity
+type Type     = TyPlus
+--data Set = Set Uni Type 
+type Set = Type -- with uni annotation ?
+type TyCo     = [TyHead] -- same    polarity
+type TyContra = [TyHead] -- reverse polarity
 type TyMinus  = [TyHead]
 type TyPlus   = [TyHead]
 
 -- bisubs always reference themselves, so the m. binding is implicit
 type TVar   = ITName
-data BiSub  = BiSub { pSub :: [TyHead] , mSub :: [TyHead] }
+data BiSub  = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
+newBiSub    = BiSub [] []
 type BiSubs = V.Vector BiSub -- indexed by TVars
 -- atomic Bisubstitution:
 -- a  <= t- solved by [m- b = a n [b/a-]t- /a-] 
@@ -139,34 +146,64 @@ type BiSubs = V.Vector BiSub -- indexed by TVars
 
 -- components of the profinite distributive lattice of types
 data TyHead -- head constructors for types.
+ -- primitives (directly type terms)
  = THPrim     PrimType
- | THAlias    ITName
- | THVar      TVar       -- individial typevars are 'atomic' components of the type lattice
- | THArrow    [TContra] TCo
- | THRec      ITName TCo -- guarded and covariant in a (ie. `Ma. (a->bool)->a` ok, but not `Ma. a->Bool`)
+ | THVar      TVar       -- index into bisubs
+ | THArrow    [TyContra] TyCo
+ | THRec      IName TyCo -- guarded and covariant in a 
+   -- (ie. `Ma. (a->bool)->a` ok, but not `Ma. a->Bool`)
  | THData     SumOfRecord -- tCO
+ | THAlias    IName       -- index into bindings
 
- | THLam      ITName TyHead
- | THIndexed  ITName Term
- | THArg      ITName
+ -- calculus of constructions
+ | THArg      IName         -- lambda bound
+ -- Apps
+ | THIxType   Type Type
+ | THIxTerm   Type (Term , Type)
+ | THEta      Term Type -- term is a universe polymorphic function
 
-data SumOfRecord = SumOfRecord [(SLabel , [(PLabel , TCo)])]
+ | THHigher   Uni -- what universe something is in
 
-data Kind -- label for different head constructors
+data THArg
+ = THArgType [TyHead]
+ | THArgTerm Term
+
+data SumOfRecord = SumOfRecord [(SLabel , [(PLabel , TyCo)])]
+
+data Kind -- the type of types: labels for different head constructors
  = KPrim -- int | float
  | KArrow
  | KVar
  | KPi   -- generalization of KArrow (with possible pi binder)
  | KData
 
+-- tagged tt
+data Expr
+ = Core Term Type
+ | Ty   Set
+
+data Bind
+ = WIP
+ | E [IName] Term -- eta expansion (universe polymorphic operation)
+ | B [IName] Term Type -- a term binding
+ | T [TArg]  Set       -- a type binding
+
+data TArg -- argument to type function
+ = ArgEta  IName
+ | ArgTerm IName
+ | ArgType Uni IName
+
+makeLenses ''BiSub
+
 -- Notes --
-{- THLam: parametrised type operators. notice this makes the order of lambda-bound types (somewhat) relevant
-  The lambda-bound types here are flexible ie. subsumption can occur before beta-reduction.
+{-   The lambda-bound types here are flexible ie. subsumption can occur before beta-reduction.
   This can be weakened by instantiation to a (monomorphically abstracted) typing scheme
-  We unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred
-  ie. we cannot insert uses of THLam
+  We unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred (we cannot insert type abstractions)
 -}
 
+deriving instance Show Expr
+deriving instance Show Bind
+deriving instance Show TArg
 deriving instance Show ClassDecl
 deriving instance Show ClassFn
 deriving instance Show Binding
@@ -186,12 +223,10 @@ deriving instance Show TyHead
 deriving instance Show Kind
 deriving instance Show SumOfRecord
 deriving instance Show TypeAnn
-deriving instance Show Type
 
 deriving instance Eq SumOfRecord
 --deriving instance Eq MonoType
 --deriving instance Eq PolyType
---deriving instance Eq Type
 --deriving instance Eq DataDef
 deriving instance Eq TyHead
 deriving instance Eq Kind
@@ -207,4 +242,3 @@ deriving instance Eq ParseDetails
 deriving instance Eq CoreModule
 deriving instance Eq Fixity
 deriving instance Eq TypeAnn
-deriving instance Eq Type

@@ -51,4 +51,4 @@ mkHeader cm = let
     l@(LBind i a Instr{}) -> l
     LBind i a e -> LExtern i 
     l -> l
-  in cm { bindings = mkExtern <$> bindings cm }
+  in cm { bindings__ = mkExtern <$> bindings__ cm }

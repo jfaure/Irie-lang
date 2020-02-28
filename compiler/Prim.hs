@@ -58,7 +58,17 @@ data ArrayInstrs = ExtractVal | InsertVal | Gep
 --deriving instance Eq FloatTy
 
 deriving instance Show Literal
-deriving instance Show PrimType
+instance Show PrimType where
+ show = \case
+   PrimInt x -> "%i" ++ show x
+   PrimFloat f -> "%f" ++ show f
+   PrimArr prim -> "%[" ++ show prim ++ "]"
+   PrimTuple prim -> "%tuple(" ++ show prim ++ ")"
+   PtrTo t -> "%ptr(" ++ show t ++ ")"
+   PrimExtern   tys -> "%extern(" ++ show tys ++ ")"
+   PrimExternVA tys-> "%externVA(" ++ show tys ++ ")"
+
+
 deriving instance Show FloatTy
 deriving instance Show PrimInstr
 deriving instance Show IntInstrs

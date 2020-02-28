@@ -41,7 +41,7 @@ ppCoreExpr :: (IName -> String) -> (IName -> String)
   Lit l -> show l
   App f args ->
     let parenthesize x = "(" ++ ppCoreExpr' x ++ ")" 
-    in ppCoreExpr' (Var f) ++" "++ concat (DL.intersperse " " (parenthesize <$> args))
+    in ppCoreExpr' f ++" "++ concat (DL.intersperse " " (parenthesize <$> args))
   -- Let binds e -> error "let in coreexpr" --"let "++ppBinds (\x->Nothing) binds++"in "++ ppCoreExpr e
   Case c a -> case a of
     Switch alts -> "case "++ppCoreExpr' c++show alts

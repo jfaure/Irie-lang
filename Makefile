@@ -7,6 +7,9 @@ EXE	=	$$(stack path --local-install-root)/bin/$(NAME)-exe
 SRC	:=	$(shell find $(SrcDir) -type f -name '*.hs')
 
 all: $(NAME)
+fast: $(SRC)
+	stack -j9 ghci --no-build --ghc-options="-fbyte-code"
+# look into: --with-ghc=ghcid 
 
 $(NAME): $(SRC)
 	stack -j9 build --fast &&\

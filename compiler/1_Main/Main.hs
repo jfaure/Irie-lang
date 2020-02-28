@@ -5,7 +5,6 @@ import Parser
 import Modules
 import CoreSyn
 import qualified CoreUtils as CU
-import Parse2Core
 import PrettyCore
 import BiUnify
 --import Core2Stg
@@ -20,6 +19,7 @@ import qualified Data.Text.Lazy.IO as TL.IO
 
 import Control.Monad.Trans (lift)
 import Control.Applicative
+import Control.Monad
 import System.Console.Haskeline
 import System.Exit
 import Data.Functor
@@ -42,20 +42,11 @@ main = parseCmdLine >>= \cmdLine ->
     av  -> error "one file pls"
 --  av -> mapM_ (doFile cmdLine) av
 
-doImport :: FilePath -> IO CoreModule
-doImport fName = (judgeModule . parseTree2Core) <$> do
-  putStrLn ("Compiling " ++ show fName)
-  progText <- T.IO.readFile fName
-  case parseModule fName progText of
-    Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
-    Right r -> pure r
-
 doProgText :: CmdLine -> FilePath -> T.Text -> IO ()
 doProgText flags fName progText = do
  let preludes = if noPrelude flags then V.empty else preludeFNames
- autoImports <- mapM doImport preludes
 
- thisMod <- case parseModule fName progText of
+ parsed <- case parseModule fName progText of
     Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
     Right r -> pure r
 -- inclPaths <- getModulePaths searchPath $ modImports pTree
@@ -64,22 +55,23 @@ doProgText flags fName progText = do
 --   headers    = CU.mkHeader <$> importList
 --   llvmObjs   = V.toList $ stgToIRTop . core2stg <$> headers
  let pp         = printPass flags
- let core       = parseTree2Core thisMod
-     judged     = judgeModule core
+     judged     = judgeModule parsed
 --   stg        = core2stg judged
 --   llvmMod    = stgToIRTop stg
- if
--- | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags)
---                                         $ llvmMod
-  | pp == "source"    -> putStr =<< readFile fName
-  | pp == "parseTree" -> print thisMod
-  | pp == "preCore"   -> putStrLn $ ppCoreModule core
-  | pp == "core"      -> putStrLn $ ppCoreModule judged
+     printOut = case printPass flags of
+       "source"    -> putStr =<< readFile fName
+       "parseTree" -> print parsed
+       "core"      -> putStrLn $ show judged --(ppCoreModule judged)
+       _ -> putStrLn $ show judged --ppCoreModule judged
+ printOut -- we will want to do more than output to stdout
+ putStrLn "\n ---"
+ putStrLn $ V.foldl1 (\a b -> a++"\n"++b) $ show <$> judged
+
+-- | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags) $ llvmMod
 -- | pp == "stg"       -> putStrLn $ show stg
 -- | pp == "llvm"      -> TL.IO.putStrLn $ ppllvm llvmMod
                             -- LD.dumpModule llvmMod
 -- | jit flags -> LD.runJIT (optlevel flags) llvmObjs llvmMod
-  | otherwise         -> putStrLn $ ppCoreModule judged
 
 repl :: CmdLine -> IO ()
 repl cmdLine = let

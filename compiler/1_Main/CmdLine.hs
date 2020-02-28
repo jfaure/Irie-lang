@@ -16,7 +16,7 @@ data CmdLine = CmdLine
   , files          :: [String]
   } deriving (Show)
 
-printPasses = ["source", "parseTree", "preCore", "core", "stg", "llvm"] :: [T.Text]
+printPasses = ["source", "parseTree", "core", "stg", "llvm"] :: [T.Text]
 
 parsePrintPass :: ReadM T.Text
 parsePrintPass = eitherReader $ \str ->

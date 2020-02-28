@@ -1,6 +1,7 @@
-double x = x + x
-Bool = Int 1
-f = double 1 : Bool -- 0
+Bool = Int 32
+
+--double x = x + x
+--f = double 1 : Bool -- 0
 
 --x = { b=3 ; h=4 }
 --c = x.b
