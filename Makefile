@@ -8,10 +8,10 @@ SRC	:=	$(shell find $(SrcDir) -type f -name '*.hs')
 
 all: $(NAME)
 fast: $(SRC)
-	stack -j9 ghci --no-build --ghc-options="-fbyte-code"
+	stack -j9 ghci --no-build --ghc-options="-fbyte-code -dynamic"
 # look into: --with-ghc=ghcid 
 
 $(NAME): $(SRC)
-	stack -j9 build --fast &&\
+	stack -j9 build --fast --ghc-options="-dynamic" &&\
 	ln -sf $(EXE) ./$(NAME)
 	@touch $(NAME) # since stack does nothing if you modify a file without changing code

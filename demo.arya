@@ -1,15 +1,26 @@
-Bool = Int 32
+-- Basic functions
+-- g y = y + 2
+-- f x = x + g x
 
---double x = x + x
---f = double 1 : Bool -- 0
+-- l x = if x.p then x.q else x.q
 
---x = { b=3 ; h=4 }
---c = x.b
+-- Higher rank
+-- auto i = (i i) 3
+-- id x = x
+-- g = auto id
 
--- Fn [parameters] : -> [indexes]
+-- Records
+-- x = { b=3 ; h=4 }
+-- c = x.b
+
+-- Sums
+-- num = int @ 3 -- : [| int Int |]
+-- f x = case x | int @ n => n
+
+-- Classic Dependent vector
 --data Vec v : Nat -> Set where
--- empty  : Vec v 0
--- append : v -> Vec v {n} -> Vec v (n + 1)
+--  empty  : Vec v 0
+--  append : v -> Vec v {n} -> Vec v (n + 1)
 
 --Bool = True | False -- 2 labels (label =? type)
 --not x = x ? { True => False ; False => True }

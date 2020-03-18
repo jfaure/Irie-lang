@@ -16,27 +16,23 @@ description:         Please see the README on GitHub at <https://github.com/jfau
 
 dependencies:
 - base >= 4.7 && < 5
+- text
+- vector
+- containers
 - lens
-- filepath
-- directory
-- llvm-hs-pure >= 9.0.0
-- llvm-hs >= 9.0.0
-- llvm-hs-pretty
 - parser-combinators
 - megaparsec > 7.0
 - transformers
-- vector
-- haskeline
 - optparse-applicative
-- text
 - bytestring
-- containers
-- hashmap
-- unordered-containers
 - mtl
-
-  # library:
-  #   source-dirs:
+- unordered-containers
+- filepath
+- directory
+- haskeline
+- llvm-hs-pure >= 9.0.0
+- llvm-hs >= 9.0.0
+- llvm-hs-pretty
 
 executables:
   arya-exe:
@@ -65,8 +61,8 @@ executables:
     - ConstraintKinds
     - RecursiveDo
     - OverloadedStrings
+#   - GADTs
 #   - PolyKinds
-#   - GADTs -- Parser.hs crashes ghc with this
 #   - DataKinds
    #    dependencies: arya
 

@@ -2,16 +2,14 @@
 {-# LANGUAGE LambdaCase, ScopedTypeVariables , MultiWayIf , StandaloneDeriving #-}
 module Parser where
 
-{-
-  Parsing is responsible for:
-  * converting all names to indexes into various vectors
-    1. VBind:   top-level let bindings
-    2. VLocal:  lambda-bound arguments (these don't index anything)
-    3. VExtern: out-ofscope variables to be resolved later
-  * Lifting all let-bindings (incl resolving free-vars)
-  * figuring out (relative) universes from context
-  * identifying functions that return terms
--}
+-- Parsing is responsible for:
+-- * converting all names to indexes into various vectors
+--   1. VBind:   top-level let bindings
+--   2. VLocal:  lambda-bound arguments (these don't index anything)
+--   3. VExtern: out-ofscope variables to be resolved later
+-- * Lifting all let-bindings (incl resolving free-vars)
+-- * figuring out (relative) universes from context
+-- * identifying functions that return terms
 
 import Prim
 import ParseSyntax as P
@@ -65,9 +63,9 @@ insertOrRetrieve h mp = let sz = M.size mp in case il h sz mp of
 
 pd = moduleWIP . parseDetails
 addArgName , addBindName , addImportName:: T.Text -> Parser IName
-addArgName    h = pd . hNameArgs    %%= insertOrRetrieve h
-addBindName   h = pd . hNameBinds   %%= insertOrRetrieve h
-addImportName h = pd . hNameImports %%= insertOrRetrieve h
+addArgName    h = pd . hNameArgs     %%= insertOrRetrieve h
+addBindName   h = pd . hNameBinds    %%= insertOrRetrieve h
+addImportName h = pd . hNamesNoScope %%= insertOrRetrieve h
 
 newFLabel h = moduleWIP . parseDetails . fields %%= insertOrRetrieve h
 --fLabel    h = _
@@ -80,7 +78,7 @@ lookupBindName h = do
     Just arg  -> pure $ VLocal arg
     Nothing   -> case M.lookup h (pd ^. hNameBinds) of
       Just bind -> pure $ VBind bind
-      Nothing   -> addImport (NoScope h) *> (VExtern <$> addImportName h)
+      Nothing   -> VExtern <$> addImportName h
 clearLocals = moduleWIP . parseDetails . hNameArgs .= M.empty
 
 -----------
@@ -115,7 +113,7 @@ symboln = L.symbol scn . T.pack
 -- all symbol chars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 -- reserved: ():\{}"_'`.
 symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: T.Text
-reservedOps   = T.words "= | : #! . ;" -- ->
+reservedOps   = T.words "= @ | : . ; =>"
 reservedNames = T.words "type data record class extern externVarArg let rec in where case of _ import require Set"
 reservedName w = (lexeme . try) (string (T.pack w) *> notFollowedBy alphaNumChar)
 reservedOp w = lexeme (notFollowedBy (opLetter w) *> string w)
@@ -127,26 +125,26 @@ reserved = reservedName
 -----------
 -- Names --
 -----------
--- in general, we have to use try in case we parse part of a reserved word
+-- We must use try to backtrack if we parse a reserved word
 iden :: Parser HName = try $ lexeme (p >>= check) where
   p :: Parser T.Text
   p = lookAhead letterChar *> takeWhileP Nothing isAlphaNum
   check x = if x `elem` reservedNames
-            then fail $ "keyword "++show x++" cannot be an identifier"
-            else pure x
+    then fail $ "keyword "++show x++" cannot be an identifier"
+    else pure x
 _lIden, _uIden :: Parser HName
 _lIden = lookAhead lowerChar *> iden
 _uIden = lookAhead upperChar *> iden
-pIden = iden      >>= lookupBindName
+pIden    = iden   >>= lookupBindName
 newLIden = _lIden >>= addBindName
 newUIden = _uIden >>= addBindName
 
-_symbolName = lexeme (p >>= check) where
+_symbolName = try $ lexeme (p >>= check) where
   p :: Parser T.Text
   p = takeWhile1P Nothing ((`T.any` symbolChars) . (==))
   check x = if x `elem` reservedOps
-            then fail $ "reserved Symbol: "++show x ++" cannot be an identifier"
-            else pure  x
+    then fail $ "reserved Symbol: "++show x ++" cannot be an identifier"
+    else pure  x
 symbolName :: Parser TT = lookupBindName =<< _symbolName
 
 infixName = between (symbol "`") (symbol "`") pIden <|> symbolName
@@ -187,7 +185,6 @@ db x = traceShowM x *> traceM ": " *> d
 ------------
 -- Parser --
 ------------
--- See ParseSyntax
 parseModule :: FilePath -> T.Text
             -> Either (ParseErrorBundle T.Text Void) Module
   = \nm txt ->
@@ -197,15 +194,15 @@ parseModule :: FilePath -> T.Text
         , _bindings= []
         , _locals  = []
         , _parseDetails = ParseDetails {
-             _hNameBinds   = M.empty
-           , _hNameArgs    = M.empty
-           , _hNameImports = M.empty
-           , _fields       = M.empty
-           , _labels       = M.empty
+             _hNameBinds    = M.empty
+           , _hNameArgs     = M.empty
+           , _hNamesNoScope = M.empty
+           , _fields        = M.empty
+           , _labels        = M.empty
         }
       }
-      finish = (bindings %~ reverse) . (imports %~ reverse)
-  in finish <$> runParserT (scn *> doParse *> eof *> use moduleWIP) nm txt
+      end = (bindings %~ reverse) . (imports %~ reverse)
+  in end <$> runParserT (scn *> doParse *> eof *> use moduleWIP) nm txt
   `evalState` ParseState {
        _indent = mkPos 1
      , _nBinds   = 0
@@ -215,18 +212,13 @@ parseModule :: FilePath -> T.Text
      }
 
 -- group declarations as they are parsed
-doParse :: Parser ()
-doParse = void $ decl `sepEndBy` (endLine *> scn)
+doParse = void $ decl `sepEndBy` (endLine *> scn) :: Parser ()
 decl = (newIndent =<< L.indentLevel) *> choice
    [ extern
    , void $ reserved "import" *> _uIden
-   , bindDecl
-   ]
-
-bindDecl = choice
- [ funBind
+   , funBind
 -- , infixDecl
- ]
+   ]
 
 extern =
  let _typed = reservedOp ":" *> primType
@@ -294,18 +286,20 @@ indentedItems ref lvl scn p finished = go where
      | pos == lvl -> (:) <$> p <*> go
      | otherwise  -> L.incorrectIndent EQ lvl pos
 
--- Note. we have 2 'states' when parsing a tt
--- 1. `maybeApp` we may parse a fn app
--- 2. `arg` we are parsing arguments to an app. (don't parse another app except between parens/let..)
--- infix trains are also possible: for now simply parse out infix apps assuming equal precedence
+-- We often need to parse a 2nd token to know what we're parsing
+-- eg. we have 2 'states' when parsing a tt
+-- 1. `maybeApp` we may be parsing a fn app
+-- 2. `arg` we are parsing arguments to an app (eg. Lit | parens app ..)
+-- infix trains : parse out infix apps assuming equal precedence
 tt :: Parser TT = dbg "tt" $ choice
-  [ letIn
-  , multiIf
---  , match
-  , maybeApp >>= \app -> choice
-    [ Proj app <$ reservedOp "." <*> (newFLabel =<< iden) -- record projection (access)
-    , infixTrain app
-    , pure app
+  [ letIn      -- "let"
+  , multiIf    -- "if"
+  , match      -- "case"
+  , lambdaCase -- "\\case"
+  , maybeApp >>= \tt -> choice
+    [ Proj tt <$ reservedOp "." <*> (iden >>= newFLabel)
+    , infixTrain tt
+    , pure tt
     ]
   ] -- >>= \exp -> choice [reservedOp ":" $> Typed exp <*> tt , pure exp]
   where
@@ -313,37 +307,35 @@ tt :: Parser TT = dbg "tt" $ choice
   infixTrain lArg = InfixTrain lArg <$> some ((,) <$> infixName <*> maybeApp)
   arg = dbg "pSingleExp" $ choice
    [ WildCard <$ reserved "_"
-   , termPrim
    , con
-   , try iden >>= lookupBindName
--- , label
+   , iden >>= \i -> choice [label i, lookupBindName i]
+   , literalExp
    , parens tt
    ]
-  label = P.Label <$> try (iden >>= newSLabel) <*> braces tt
+  label i = P.Label <$ reservedOp "@" <*> newSLabel i <*> tt
   con = let
-    fieldDecl = (,) <$> (newFLabel =<< iden) <* reservedOp "=" <*> arg
+    fieldDecl = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> arg
     in Cons <$> (braces $ fieldDecl `sepBy1` reservedOp ";")
---  match = Match <$> newSLabel tt `sepBy1` reservedOp "|"
-  termPrim = choice [literalExp , PrimOp <$> dbg "primInstr" primInstr]
-  typePrim = choice
-   [ TyLit   <$> primType
--- , TyArrow <$> try (liftA2 (:) tt (some (arg <* reservedOp "->")))
-   ]
---lambda = Abs <$ char '\\' <*> many pat <* symbol "->" <*> tt
---lambdaCase = LambdaCase <$> (char '\\' <* reserved "case"
---                                       *> many (alt <* scn))
+
+  caseSplits = let
+    split = (,,) <$> (iden >>= newSLabel) <* reservedOp "@" <*> pattern <* reservedOp "=>" <*> tt
+    in Match <$> many (reservedOp "|" *> split)
+  match = reserved "case" *> do
+    scrut  <- tt
+    (`App` [scrut]) <$> caseSplits
+  lambdaCase = reserved "\\case" *> caseSplits
+
   multiIf = reserved "if" *> choice [normalIf , multiIf]
     where
     normalIf = do
       ifThen <- (,) <$> tt <* reserved "then" <*> tt
       elseE  <- reserved "else" *> tt
       pure (MultiIf [ifThen, (WildCard, elseE)])
-    subIf = (,) <$ reservedOp "|" <*> tt <* reservedOp "=" <*> tt
+    subIf = (,) <$ reservedOp "|" <*> tt <* reservedOp "=>" <*> tt
     multiIf = do
       l <- L.indentLevel
       iB (pure $ L.IndentSome (Just l) (pure . MultiIf) subIf)
 
--- need to lift bindings ?
   letIn = reserved "let" *> fail "nolet"
 --   reserved "let" *> do
 --    ref <- use indent <* scn
@@ -389,45 +381,6 @@ trivialType :: Parser PrimType = (<?> "Builtin Type") $
   , symbol "CharPtr"  *> pure (PtrTo $ PrimInt 8)
 --  , reserved "ptr"    *> (PtrTo <$> primType)
   ] <|> parens primType
-
-primInstr :: Parser PrimInstr
-primInstr = (<?> "Builtin Instr") $
-  primDef *> choice
-  [ IntInstr   <$> intInstr
-  , NatInstr   <$> natInstr
-  , FracInstr  <$> fracInstr
-  , MemInstr   <$> arrayInstr
-  , MkTuple    <$  reserved "MkTuple"
-  , Alloc      <$  reserved "alloc"
-  , SizeOf     <$  reserved "sizeof"
-  ]
-  where
-  intInstr = choice
-    [ symbol "add"  $> Add
-    , symbol "sub"  $> Sub
-    , symbol "mul"  $> Mul
-    , symbol "sdiv" $> SDiv
-    , symbol "srem" $> SRem
-    , symbol "icmp" $> ICmp
-    , symbol "and"  $> And
-    , symbol "or"   $> Or
-    , symbol "xor"  $> Xor
-    , symbol "shl"  $> Shl 
-    , symbol "shr"  $> Shr]
-  natInstr = choice
-    [symbol "udiv" $> UDiv
-    , symbol "urem" $> URem]
-  fracInstr = choice
-    [ symbol "fadd"  $> FAdd
-    , symbol "fsub"  $> FSub
-    , symbol "fmul"  $> FMul
-    , symbol "fdiv"  $> FDiv
-    , symbol "frem"  $> FRem
-    , symbol "fcmp"  $> FCmp]
-  arrayInstr = choice
-    [ symbol "gep"         $> Gep
-    , symbol "extractVal"  $> ExtractVal
-    , symbol "insertVal"   $> InsertVal]
 
 --------------------
 -- number parsers --

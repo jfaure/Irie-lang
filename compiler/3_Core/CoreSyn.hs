@@ -20,225 +20,179 @@ import qualified Data.Text           as T
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.Map.Strict as M
 import qualified Data.IntSet as IS
-import Control.Lens
+import Data.List
+import Control.Lens hiding (List)
 
-type HName    = T.Text -- human readable name
-type IName    = Int    -- Int name: index into bind|type vectors
-type ITName   = IName  -- IName of a type
-type SLabel   = IName  -- IName for labels
-type PLabel   = IName
-type INameSet = IS.IntSet
+type HName     = T.Text -- human readable name
+type IName     = Int    -- Int name: index into bind|type vectors
+type BiSubName = Int    -- index into bisubs
+type IField    = Int  -- product-type fields index
+type ILabel    = Int  -- sum-type labels     index
 
-type TypeMap = V.Vector Entity
-type BindMap = V.Vector Binding
-type IMap    = IM.IntMap -- bind iname map
-type ITMap   = IM.IntMap -- type iname map
+data VName
+ = VBind IName -- bind   map
+ | VArg  IName -- bisub  map
+ | VExt  IName -- extern map (and prim instrs)
 
-data ImportList     = ImportList [CoreModule]
-data CoreModule     = CoreModule {
-   moduleName  :: HName
-
- , algData     :: TypeMap -- data and aliases
- -- binds: constructors, locals, and class Fns (+ overloads!)
- , bindings__    :: BindMap
- , nTopBinds   :: Int -- number of relevent binds in the bindMap
-
- , parseDetails   :: ParseDetails
-}
-
--- info for parsing files importing this module / the repl
-data ParseDetails = ParseDetails {
-   _classDecls :: V.Vector ClassDecl -- so importers can check instances
--- , _defaults   :: IM.IntMap MonoType
- , _fixities   :: M.Map HName Fixity
- -- HName lookup tables
- , _hNameBinds :: M.Map HName IName
- , _hNameTypes :: M.Map HName IName
-}
--- TODO rm
-hNameBinds = _hNameBinds . parseDetails
-hNameTypes = _hNameTypes . parseDetails
-
-data Fixity = Fixity Int Assoc
-data Assoc = LAssoc | RAssoc deriving (Eq, Show)
-data ClassDecl = ClassDecl {
-   className :: HName
- , classFns  :: V.Vector ClassFn
- , supers    :: [HName]
-}
-data ClassFn = ClassFn {
-   classFnInfo :: Entity      -- TODO use TyFunction
- , defaultFn   :: Maybe IName -- jointype or instance type ??
-}
-
-data TypeAnn = TyNone | TyUser Type | TyJudged TyPlus
--- an entity = info about anything we give an IName to.
-data Entity = Entity { -- entity info
-   named    :: Maybe HName
- , ty       :: TypeAnn
- , source   :: SourceEntity
- }
-ent = Entity Nothing TyNone Export
-data SourceEntity = Export | Import | Private | ThisModule
-
-data Binding
- = LBind { -- let binding
-   info  :: Entity  -- hname, type, source
- , args  :: [IName] -- the unique argINames used locally by
- , expr  :: Term
- }
- | LetType {
-   uni     :: Uni
- , info    :: Entity
- , args    :: [IName]
- , typeAbs :: TyPlus
- }
- | LArg   { info :: Entity }  -- lambda-bound
- | LNoScope { info :: Entity }
- -- always inline this binding (to access freevars)
- -- only used internally for pattern match deconstructions
- | Inline { info :: Entity , expr :: Term }
- | LInstr { info :: Entity , instrBind :: PrimInstr } -- instrs need a type annotation
- | LCon   { info :: Entity } --Term level GADT constructor
- | LExtern{ info :: Entity }
- | LClass {
-   info        :: Entity -- TypeFunction
- , classNm     :: HName  -- change to IName ?
- , overloads   :: ITMap IName -- instanceIds
- }
-
--- terms become output code
 data Term
- = Var    IName
- | Arg    IName -- lambda-bound (no forall quantifiers)
- | Lit    Literal
- | Instr  PrimInstr [Term] -- must be fully saturated
- | App    Term      [Term]  -- IName [Term]
- | Case   Term      CaseAlts
- | PrimOp PrimInstr
+ = Var     VName
+ | Lit     Literal
+ | App     Term       [Term] -- IName [Term]
+ | MultiIf [(Term , Term)]
+ | Instr   PrimInstr
 
-data CaseAlts
- = Switch [(Literal, Term)]
--- | Decon  [(IName, [IName], Term)] -- Con [args] -> expr
--- | Tuple  ([IName], Term)
+ -- data constructions
+ | Cons    (M.Map IField Term)
+ | Proj    Term IField
+ | Label   ILabel Term
+ | Match   (M.Map ILabel Term) (Maybe Term)
+ | List    [Term]
 
--- Types are sampled from components of a coproduct of profinite distributive lattices
--- typing schemes contain the (mono | abstract poly)-types of lambda-bound terms
---data TyScheme = TyScheme INameSet TyPlus -- always of the form [D-]t+
-type Uni      = Int
+-- Types are sampled from a
+-- coproduct of profinite distributive lattices
+-- typing schemes contain the monotypes of lambda-bound terms
+-- a 'monotype' can be a typevar pointing to a polytype
+-- type polarity corresponds to input(-) vs output(+)
 type Type     = TyPlus
---data Set = Set Uni Type 
-type Set = Type -- with uni annotation ?
+type Uni      = Int
+type Set      = Type -- Set Uni Type
 type TyCo     = [TyHead] -- same    polarity
 type TyContra = [TyHead] -- reverse polarity
-type TyMinus  = [TyHead]
-type TyPlus   = [TyHead]
+type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
+type TyPlus   = [TyHead] -- output types (lattice join)
 
--- bisubs always reference themselves, so the m. binding is implicit
-type TVar   = ITName
-data BiSub  = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
-newBiSub    = BiSub [] []
+-- bisubs always reference themselves, so the mu. is implicit
+-- TODO bisubs should be either positive or negative
+data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
+newBiSub = BiSub [] []
 type BiSubs = V.Vector BiSub -- indexed by TVars
--- atomic Bisubstitution:
--- a  <= t- solved by [m- b = a n [b/a-]t- /a-] 
--- t+ <= a  solved by [m+ b = a u [b/a+]t+ /a+] 
--- a  <= c  solved by [m- b = a n [b/a-]c  /a-] -- (or equivalently,  [a u b /b+])
 
 -- components of the profinite distributive lattice of types
 data TyHead -- head constructors for types.
- -- primitives (directly type terms)
  = THPrim     PrimType
- | THVar      TVar       -- index into bisubs
+ | THVar      BiSubName   -- index into bisubs
  | THArrow    [TyContra] TyCo
- | THRec      IName TyCo -- guarded and covariant in a 
+ | THRec      IName TyCo  -- guarded and covariant in a 
    -- (ie. `Ma. (a->bool)->a` ok, but not `Ma. a->Bool`)
- | THData     SumOfRecord -- tCO
- | THAlias    IName       -- index into bindings
+ | THProd     ProdTy
+ | THSum      SumTy
+ | THAlias    IName         -- index into bindings
+ | THExt      IName         -- index into externs
 
  -- calculus of constructions
  | THArg      IName         -- lambda bound
  -- Apps
  | THIxType   Type Type
  | THIxTerm   Type (Term , Type)
- | THEta      Term Type -- term is a universe polymorphic function
+ | THEta      Term Type -- term is universe polymorphic
 
- | THHigher   Uni -- what universe something is in
+ | THHigher   Uni -- eg Set1
 
-data THArg
- = THArgType [TyHead]
- | THArgTerm Term
+type ProdTy = M.Map IField TyCo
+type SumTy  = M.Map ILabel TyCo
 
-data SumOfRecord = SumOfRecord [(SLabel , [(PLabel , TyCo)])]
+-- non-regular recursion ?
+-- isorecursive non-regular: add opaque roll/unroll primitives
 
-data Kind -- the type of types: labels for different head constructors
- = KPrim -- int | float
- | KArrow
- | KVar
- | KPi   -- generalization of KArrow (with possible pi binder)
- | KData
+-- label for the different head constructors
+data Kind = KPrim | KArrow | KVar | KSum | KProd | KAny
 
+-----------------------------
+-- BiUnification datatypes --
+-----------------------------
 -- tagged tt
 data Expr
  = Core Term Type
- | Ty   Set
+ | Ty   Type  -- Set0
+ | Set  Uni Type
 
-data Bind
+data Bind -- indexes in the bindmap
  = WIP
- | E [IName] Term -- eta expansion (universe polymorphic operation)
- | B [IName] Term Type -- a term binding
- | T [TArg]  Set       -- a type binding
-
-data TArg -- argument to type function
- = ArgEta  IName
- | ArgTerm IName
- | ArgType Uni IName
+ | BindTerm [IName] Term Type
+ | BindType [Expr]  Set
 
 makeLenses ''BiSub
+
+expr2Ty = \case
+  Core t ty -> ty
+  Ty   t    -> _
+  Set  i t  -> _
+tyExpr = \case
+  Ty t -> t
+  _ -> _
+
+instance Show VName where show = prettyVName
+instance Show Term where show = prettyTerm
+instance Show TyHead where show = prettyTyHead
+instance Show Bind where show = prettyBind
+
+deriving instance Show Expr
+deriving instance Show BiSub
+deriving instance Show Kind
+
+deriving instance Eq Kind
+
+------------
+-- Pretty --
+------------
+
+prettyBind = \case
+ WIP -> "WIP"
+ BindTerm args term ty -> show args ++ " => " ++ show term ++ clGreen (" : " ++ show ty)
+ BindType tyArgs set -> show tyArgs ++ " => " ++ show set
+
+prettyVName = \case
+    VArg i  -> "λ" ++ show i
+    VBind i -> "π" ++ show i
+
+prettyTerm = \case
+    Var     v -> show v
+    Lit     l -> show l
+    App     f args -> "(" ++ show f ++ " " ++ intercalate " " (show <$> args) ++ ")"
+    MultiIf ts -> "if " ++ show ts
+    Instr   p -> "(" ++ show p ++ ")"
+
+    Cons    ts -> "{" ++ show ts ++ "}"
+    Proj    t f -> show t ++ " . " ++ show f
+    Label   l t -> show l ++ "@" ++ show t
+    Match   ts d -> "\\case" ++ "| "
+      ++ intercalate " | " (show <$> M.toList ts) ++ " |_ " ++ show d
+    List    ts -> "[" ++ (concatMap show ts) ++ "]"
+
+prettyTyHead = \case
+ THPrim     p -> show p
+ THVar      i -> "Λ" ++ show i
+ THArrow    args ret -> intercalate " → " $ show <$> (args ++ [ret])
+ THRec      i ty  -> _
+ THProd     prodTy -> let
+   showField (f , t) = show f ++ ":" ++ show t
+   p = intercalate " ; " $ showField <$> M.toList prodTy
+   in "{" ++ p ++ "}"
+ THSum      sumTy ->  let
+   showLabel (l , t) = show l ++ "@" ++ show t
+   s  = intercalate " | " $ showLabel <$> M.toList sumTy
+   in "[| " ++ s ++ " |]"
+ THAlias    i -> "π" ++ show i
+ THExt      i -> "E" ++ show i
+
+ THArg      i -> "λ" ++ show i
+-- THIxType   t t2 -> _
+-- THIxTerm   t termTypePairs -> _
+
+ THHigher   uni -> "Set" ++ show uni
+
+clBlack   x = "\x1b[30m" ++ x ++ "\x1b[0m"
+clRed     x = "\x1b[31m" ++ x ++ "\x1b[0m" 
+clGreen   x = "\x1b[32m" ++ x ++ "\x1b[0m"
+clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
+clBlue    x = "\x1b[34m" ++ x ++ "\x1b[0m"
+clMagenta x = "\x1b[35m" ++ x ++ "\x1b[0m"
+clCyan    x = "\x1b[36m" ++ x ++ "\x1b[0m"
+clWhite   x = "\x1b[37m" ++ x ++ "\x1b[0m"
+clNormal = "\x1b[0m"
 
 -- Notes --
 {-   The lambda-bound types here are flexible ie. subsumption can occur before beta-reduction.
   This can be weakened by instantiation to a (monomorphically abstracted) typing scheme
   We unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred (we cannot insert type abstractions)
 -}
-
-deriving instance Show Expr
-deriving instance Show Bind
-deriving instance Show TArg
-deriving instance Show ClassDecl
-deriving instance Show ClassFn
-deriving instance Show Binding
---deriving instance Show DataDef
---deriving instance Show PolyType
---deriving instance Show MonoType
---deriving instance Show Type
-deriving instance Show Term
-deriving instance Show BiSub
-deriving instance Show CaseAlts
-deriving instance Show Entity
-deriving instance Show SourceEntity
-deriving instance Show ParseDetails
-deriving instance Show CoreModule
-deriving instance Show Fixity
-deriving instance Show TyHead
-deriving instance Show Kind
-deriving instance Show SumOfRecord
-deriving instance Show TypeAnn
-
-deriving instance Eq SumOfRecord
---deriving instance Eq MonoType
---deriving instance Eq PolyType
---deriving instance Eq DataDef
-deriving instance Eq TyHead
-deriving instance Eq Kind
-deriving instance Eq ClassDecl
-deriving instance Eq ClassFn
-deriving instance Eq Binding
-deriving instance Eq BiSub
-deriving instance Eq Term
-deriving instance Eq CaseAlts
-deriving instance Eq Entity
-deriving instance Eq SourceEntity
-deriving instance Eq ParseDetails
-deriving instance Eq CoreModule
-deriving instance Eq Fixity
-deriving instance Eq TypeAnn

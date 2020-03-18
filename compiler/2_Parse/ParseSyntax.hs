@@ -38,11 +38,11 @@ data Module = Module {
 
 type NameMap = Data.Map.Map HName IName
 data ParseDetails = ParseDetails {
-   _hNameBinds   :: NameMap
- , _hNameArgs    :: NameMap
- , _hNameImports :: NameMap
- , _fields       :: NameMap
- , _labels       :: NameMap
+   _hNameBinds    :: NameMap
+ , _hNameArgs     :: NameMap
+ , _hNamesNoScope :: NameMap
+ , _fields        :: NameMap
+ , _labels        :: NameMap
 -- , fixities     :: V.Vector Fixity
 }
 
@@ -58,10 +58,9 @@ data TTName
 -- Parser Expressions (types and terms are syntactically equivalent)
 data TT
  = Var TTName
- | WildCard -- "_" as an expression
+ | WildCard -- "_"
 
  -- lambda-calculus
- | Abs FnMatch
  | App TT [TT]
  | InfixTrain TT [(TT, TT)] -- `name` or symbolName
 
@@ -69,12 +68,11 @@ data TT
  | Cons   [(FName , TT)]
  | Proj   TT FName
  | Label  LName TT
- | Match  [(LName , TT)]
+ | Match  [(LName , Pattern , TT)]
  | List   [TT]
 
  -- term primitives
  | Lit     Literal
- | PrimOp  PrimInstr -- probably rm
  | MultiIf [(TT, TT)]
 
  -- type primitives
@@ -89,7 +87,6 @@ data Pattern
  | PLit  Literal
  | PWildCard
  | PTyped Pattern TT
- -- rank-n patterns ?
 -- | PAs   IName Pattern
 -- | match sum-of-product ?
 
@@ -107,7 +104,7 @@ instance Show ParseDetails where
   show p = Prelude.concatMap ("\n  " ++) 
     [ "binds:  " ++ show (p^.hNameBinds)
     , "args:   " ++ show (p^.hNameArgs)
-    , "extern: " ++ show (p^.hNameImports)
+    , "extern: " ++ show (p^.hNamesNoScope)
     , "fields: " ++ show (p^.fields)
     , "labels: " ++ show (p^.labels)
     ]
@@ -115,9 +112,9 @@ deriving instance Show TopBind
 deriving instance Show ImportDecl
 instance Show TTName where
   show = \case
-    VBind x -> show x 
-    VLocal  x -> "\\" ++ show x
-    VExtern x -> "(ext " ++ show x ++ ")"
+    VBind x   -> "π" ++ show x 
+    VLocal  x -> "λ" ++ show x
+    VExtern x -> "E" ++ show x
     VQual a b -> show a ++ "." ++ show b
 deriving instance Show Fixity
 deriving instance Show Assoc

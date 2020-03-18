@@ -1,6 +1,5 @@
 -- Type judgements: checking and inferring
--- To understand this, it is crucial to read "Algebraic subtyping" by Stephen Dolan
--- https://www.cl.cam.ac.uk/~sd601/thesis.pdf
+-- See "Algebraic subtyping" by Stephen Dolan <https://www.cl.cam.ac.uk/~sd601/thesis.pdf>
 
 module BiUnify where
 import Prim
@@ -10,9 +9,9 @@ import TCState
 import PrettyCore
 import qualified CoreUtils as CU
 import DesugarParse
+import Externs
 
 import qualified Data.Vector.Mutable as MV -- mutable vectors
-import Control.Monad.ST
 import qualified Data.Vector as V
 import qualified Data.Map as M
 import qualified Data.IntMap as IM
@@ -21,11 +20,8 @@ import Data.Functor
 import Control.Monad
 import Control.Applicative
 import Control.Monad.Trans.State.Strict
-import Data.Char (ord)
 import Data.List --(foldl', intersect)
-import GHC.Exts (groupWith)
 import Control.Lens
---import Data.Vector.Lens
 
 import Debug.Trace
 d_ x   = trace (clYellow (show x))
@@ -33,108 +29,152 @@ did_ x = d_ x x
 
 -- test1 x = x.foo.bar{foo=3}
 
--- output is a list of CBind's with type/kind annotation
--- type check environment
-
 judgeModule :: P.Module -> V.Vector Bind
 judgeModule pm = let
   nBinds = length $ pm ^. P.bindings
+  (externVars , externBinds) = resolveImports pm
   start = TCEnvState
-    { _pmodule = pm
-    , _biSubs  = V.empty
-    , _wip     = V.replicate nBinds WIP
+    { _pmodule  = pm
+    , _noScopes = externVars
+    , _externs  = traceShowId externBinds
+    , _biSubs   = V.empty
+    , _wip      = V.replicate nBinds WIP
     }
   go  = mapM_ judgeBind [0 .. nBinds-1]
   end = execState go start
   in end ^. wip
 
+-- Add fresh bisubs for lambda-bound vars and infer an expression
+-- Used by lambda-abs and case
+withNewBiSubs :: Int -> P.TT -> TCEnv (Expr , V.Vector Type)
+withNewBiSubs nArgs tt = do
+  biSubLen <- V.length <$> use biSubs
+  let genFn i = let x = i + biSubLen in BiSub [THVar x] [THVar x]
+  biSubs %= (V.++ V.generate nArgs genFn)
+  expr <- infer tt
+  (bis , argSubs) <- (\v -> V.splitAt (biSubLen) v) <$> use biSubs
+  biSubs .= bis
+  pure (expr , _mSub <$> argSubs)
+
 judgeBind :: IName -> TCEnv Bind
  = \bindINm -> (V.! bindINm) <$> use wip >>= \t -> case t of
-  E argNms eta     -> pure t
-  B arNms term ty  -> pure t
-  T tArgs ty       -> pure t
+  BindTerm arNms term ty  -> pure t
+  BindType tArgs ty       -> pure t
   WIP -> do
     P.FunBind hNm matches tyAnn <- (!! bindINm) <$> use (id . pmodule . P.bindings)
     let (args , tt) = matches2TT matches
         nArgs = length args
-    biSubs .= (V.generate nArgs (\i -> BiSub [THVar i] [THVar i]))
-    res <- infer tt
-    (argSubs , bis) <- (\v -> V.splitAt (V.length v - nArgs) v) <$> use biSubs
-    biSubs .= bis
-    let argTys = _mSub <$> argSubs
-    case tyAnn of
-      _ -> pure res
---    Nothing -> pure res
---    Just t  -> check res tyAnn <$> use wip >>= \case
---      True  -> pure res
---      False -> error $ "no unify" -- mkTCFailMsg e tyAnn res
-    let newBind = case res of
-          Core x t -> B args x [THArrow (V.toList argTys) t]
-          Ty   t   -> T [] t -- args ?
+    (expr , argTys) <- withNewBiSubs nArgs tt
+--  case tyAnn of
+--    Nothing -> pure expr
+--    Just t  -> check res tyAnn <$> use wip -- mkTCFailMsg e tyAnn res
+    let newBind = case expr of
+          Core x t -> if nArgs == 0
+            then  BindTerm args x t
+            else  BindTerm args x [THArrow (V.toList argTys) t]
+          Ty   t   -> BindType [] t -- args ? TODO
     wip %= V.modify (\v->MV.write v bindINm newBind)
     pure newBind
 
 infer :: P.TT -> TCEnv Expr
  = let
- dropArgTy = \case
-   Core x ty -> x
-   Ty t      -> error "can't drop type"
  getArgTy  = \case
    Core x ty -> ty
-   Ty t      -> [THHigher 1] -- type of types
+   Ty t      -> [THHigher 1]     -- type of types
+   Set u t   -> [THHigher (u+1)]
  in \case
+  P.WildCard -> _
   -- vars : lookup in the environment
   P.Var v -> case v of
     P.VBind b   ->    -- polytype env
-      judgeBind b <&> \case { B args e ty  -> Core (Var b) ty }
-    P.VLocal l  -> do -- monotype env
+      judgeBind b <&> \case { BindTerm args e ty
+        -> Core (Var $ VBind b) ty }
+    P.VLocal l  -> do -- monotype env (fn args)
       ty <- _pSub . (V.! l) <$> use biSubs
-      pure $ Core (Arg l) ty
-    P.VExtern i -> (!! i) <$> use (pmodule . P.imports) >>= \case
-      P.NoScope nm -> pure $ case nm of
-        "+"   -> Core (PrimOp (IntInstr Add)) [THArrow [[THPrim (PrimInt 32)]] [THPrim (PrimInt 32)]]
-        "Int" -> Ty   [THPrim (PrimInt 32)]
+      pure $ Core (Var $ VArg l) ty
+    P.VExtern i -> do
+      extIdx <- (V.! i)      <$> use noScopes
+      expr   <- (V.! extIdx) <$> use externs
+      pure expr
     x -> error $ show x
-    _ -> _
-  P.WildCard -> _
-
-  ---------------------
-  -- lambda calculus --
-  ---------------------
-  P.Abs fnmatch -> _
 
   -- APP: f : [Df-]ft+ , Pi ^x : [Df-]ft+ ==> e2:[Dx-]tx+
   -- |- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
   -- * introduce a typevar 'a', and biunify (tf+ <= tx+ -> a)
-  P.App f args -> do
+  P.App f args -> let
+    ttApp :: Expr -> Expr -> Expr
+    ttApp a b = case (a , b) of
+      (Core t ty , Core t2 ty2) -> case t of
+        App f x -> Core (App f (x++[t2])) [] -- dont' forget to set the return type
+        _       -> Core (App t [t2])      []
+      (Ty s , Ty s2)            -> Ty $ [THIxType s s2]       -- type index
+      (Ty s , c@(Core t ty))    -> Ty $ [THIxTerm s (t , ty)] -- term index
+      (c@(Core t ty) , Ty s)    -> Ty $ [THEta t s] -- only valid if c is an eta expansion
+    in do
     f'   <- infer f
     args'<- mapM infer args
     retTy <- do
       idx <- V.length <$> use biSubs
-      biSubs %= (`V.snoc` newBiSub) -- add a fresh typevar for the return type
-      biSub_ (getArgTy f') [THArrow (getArgTy <$> args') [THVar idx]] -- can fail
-      _pSub . (V.! idx) . did_ <$> use biSubs
+      biSubs %= (`V.snoc` BiSub [THVar idx] [THVar idx]) -- bisub for return type
+      biSub_ (getArgTy f') [THArrow (getArgTy <$> args') [THVar idx]]
+      (_pSub . (V.! idx) <$> use biSubs) <* (biSubs %= V.init)
     pure $ case foldl' ttApp f' args' of
       Core f _ -> Core f retTy
       t -> t
---  pure $ case f' of
---    (Core f'' ty) -> Core (App f'' (dropArgTy <$> args')) retTy
---    x -> error $ "not ready for " ++ show x
 
-  P.InfixTrain lArg train -> infer $ resolveInfixes _ lArg train
+  -- Record
+  P.Cons construct   -> do -- assign arg types to each label (cannot fail)
+    let (fields , rawTTs) = unzip construct
+    exprs <- mapM infer rawTTs
+    let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) }) <$> exprs
+    pure $ Core (Cons (M.fromList $ zip fields tts)) [THProd (M.fromList $ zip fields tys)]
 
-  -------------------
-  -- tt primitives --
-  -------------------
-  -- If has constraints   (t1+ <= bool , t2+<=a , t3+<=a) (biunify the intersection)
-  -- Proj has constraints (t+ <= {l:a})
-  -- proj, label, cons, match, list
+  P.Proj tt field -> do -- biunify (t+ <= {l:a})
+    recordTy <- infer tt
+    retTy <- do
+      idx <- V.length <$> use biSubs
+      biSubs %= (`V.snoc` newBiSub)
+      biSub_ (getArgTy recordTy) [THProd (M.singleton field [THVar idx])]
+      (_pSub . (V.! idx) <$> use biSubs) <* (biSubs %= V.init)
+    pure $ case recordTy of
+      Core f _ -> Core (Proj f field) retTy
+      t -> t
+
+  -- Sum
+  P.Label l tt -> do
+    (t , ty) <- (\case { Core t ty -> (t , ty) }) <$> infer tt
+    pure $ Core (Label l t) [THSum $ M.fromList [(l , ty)]]
+
+  P.Match alts -> do
+    -- * find the type of the sum type being deconstructed
+    -- * find the type of it's alts (~ lambda abstractions)
+    -- * type of Match is (sumTy -> Join altTys)
+    let (labels , patterns , rawTTs) = unzip3 alts
+    (exprs , vArgTys) <- unzip <$> mapM (withNewBiSubs 1) rawTTs
+    let (altTTs , altTys) = unzip
+          $ (\case { Core t ty -> (t , ty) }) <$> exprs
+        argTys  = (\[x]->x) . V.toList <$> vArgTys
+        sumTy   = [THSum . M.fromList $ zip labels argTys]
+        matchTy = [THArrow [sumTy] (concat $ altTys)]
+    pure $ Core (Match (M.fromList $ zip labels altTTs) Nothing) matchTy
+
+  P.MultiIf branches -> do -- Bool ?
+    let (rawConds , rawAlts) = unzip branches
+        boolTy = getPrimIdx "Bool" & \case
+          { Just i->THExt i; Nothing->error "panic: \"Bool\" not in scope" }
+        addBool = doSub (-1) boolTy
+    condExprs <- mapM infer rawConds
+    alts      <- mapM infer rawAlts
+    let retTy = foldr1 mergeTypes (getArgTy <$> alts) :: [TyHead]
+        ifTy = [THArrow (addBool . getArgTy <$> condExprs) retTy]
+        e2t (Core e ty) = e
+    pure $ Core (MultiIf (zip (e2t<$>condExprs) (e2t<$>alts))) ifTy
+    _
 
   ---------------------
   -- term primitives --
   ---------------------
   P.Lit l  -> pure $ Core (Lit l) [typeOfLit l] -- the type of primitives is non-negotiable
-  P.PrimOp p -> _
 
   ---------------------
   -- type primitives --
@@ -144,15 +184,11 @@ infer :: P.TT -> TCEnv Expr
   -- arrows may contain types or eta-expansions
   P.TyArrow tys  -> do -- type given to an Abs
     arrows <- mapM infer tys
---  (args , ret) = splitAt (length tys - 1) tys
---  mergeTT :: Bind -> Bind -> Bind
---  mergeTT b1 b2
---    E eta -> \case
---      E eta2 -> 
---    T ty
---    B term -> error $ "terms in tyArrow"
     _ --foldr mergeTT ret $ mapM infer tys
-  x -> error $ "top not ready for " ++ show x
+
+  -- desugar
+  P.InfixTrain lArg train -> infer $ resolveInfixes _ lArg train
+  x -> error $ "not ready for tt: " ++ show x
 
 -- Biunification handles constraints of the form t+ <= t- by substitution
 -- Atomic: (join/meet a type to the var)
@@ -161,31 +197,39 @@ infer :: P.TT -> TCEnv Expr
 -- a  <= c  solved by [m- b = a n [b/a-]c  /a-] -- (or equivalently,  [a u b /b+])
 -- SubConstraints:
 -- (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
-biSub_ a b = trace ("bisub: " ++ show a ++ " <--> " ++ show b) biSub a b
-biSub :: TyPlus -> TyMinus -> TCEnv Bool
--- lattice top and bottom
-biSub [] _ = pure False
-biSub _ [] = pure False
--- atomic constraints
-biSub [THVar p] m = (biSubs . (ix p) . mSub %= (m ++) ) *> pure True -- includes var1 <= var2 case
-biSub p [THVar m] = (biSubs . (ix m) . pSub %= (p ++) ) *> pure True
--- lattice subconstraints
-biSub (p1:p2:p3) m = biSub [p1] m *> biSub (p2:p3) m
-biSub p (m1:m2:m3) = biSub p [m1] *> biSub p (m2:m3)
--- head constructor subconstraints
-biSub [THArrow args1 ret1] [THArrow args2 ret2] = zipWithM biSub args2 args1 *> biSub ret1 ret2
-biSub [THRec i p] m = _
-biSub p [THRec i m] = _
+biSub_ a b = trace ("bisub: " ++ show a ++ " <==> " ++ show b) biSub a b
+biSub :: TyPlus -> TyMinus -> TCEnv ()
+biSub a b = case (a , b) of
+  -- lattice top and bottom
+  ([] ,  _) -> pure ()
+  (_  , []) -> pure ()
+  -- atomic constraints
+  ([THVar p] , m) -> (biSubs . (ix p) . mSub %= foldr (doSub p) m )
+  (p , [THVar m]) -> (biSubs . (ix m) . pSub %= foldr (doSub m) p )
+  ([THPrim p1] , [THPrim p2]) -> when (p1 /= p2) (failBiSub p1 p2)
 
--- primitives
-biSub [THPrim p1] [THPrim p2] = if p1 == p2 then pure True else failBiSub p1 p2
+  -- lattice subconstraints
+  ((p1:p2:p3) , m) -> biSub [p1] m *> biSub (p2:p3) m
+  (p , (m1:m2:m3)) -> biSub p [m1] *> biSub p (m2:m3)
+  (p , [THExt i])  -> biSub p =<< tyExpr . (V.! i) <$> use externs
+  ([THExt i] , m)  -> (`biSub` m) =<< tyExpr . (V.! i) <$> use externs
 
--- between lattice components
--- type function
-biSub h@[THHigher uni] [THArrow x ret] = biSub h ret
+  -- basic head constructor subconstraints
+  ([THArrow args1 ret1] , [THArrow args2 ret2]) -> zipWithM biSub args2 args1 *> biSub ret1 ret2
+  -- record: labels in the first must all be in the second
+  ([THProd fields1] , [THProd fields2]) -> let
+    go (l , ttm) = case M.lookup l fields1 of
+      Nothing  -> error $ "label not present"
+      Just ttp -> biSub ttp ttm --covariant
+    in mapM_ go (M.toList fields2)
 
--- lattice components mismatch; biSub is partial, since subtyping isn't defined between all type components
-biSub a b = failBiSub a b
+  ([THRec i p] , m) -> _
+  (p , [THRec i m]) -> _
+
+  (h@[THHigher uni] , [THArrow x ret]) -> biSub h ret
+
+  -- lattice components without subtyping relation
+  (a , b) -> failBiSub a b
 
 failBiSub a b = error $ "failed bisub: " ++ show a ++ "<-->" ++ show b --pure False
 
@@ -204,7 +248,6 @@ reduceType t = t
 
 -- biunification solves constraints `t+ <= t-` , but checking questions have the form `t- <= t+ ?`
 -- we have t1<=t2 and t1<=t3 ==> t1 <= t2ut3
--- reduced form: the join/meets need are all between different components of the type lattice
 -- additionally, subsumption <===> equivalence of typing schemes
 -- ie. to decide [d1]t1 <= [d2]t2, we check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
 check :: [TyHead] -> Set -> TCEnvState -> Bool
@@ -212,26 +255,6 @@ check gotRaw expRaw delta = let
   gotTy = reduceType gotRaw ; expTy = reduceType expRaw
   _check ty = True
   in  all _check gotTy
-
--- handle intricacies of merging types with terms
--- to distinguish indexed type and typecase, we need to know the return type
--- Int : T0 -> T1 -- indexed
--- TC  : T1 -> T0 -- type case, returns a term
--- TODO merge of lattice components ?
-ttApp :: Expr -> Expr -> Expr
-ttApp a b = case (a , b) of
-  (Core t ty , Core t2 ty2) -> case t of
-    App f x -> Core (App f (x++[t2])) [] -- dont' forget to set the return type
-    _       -> Core (App t [t2])      []
-  (Ty s , Ty s2)            -> Ty $ [THIxType s s2]       -- type index
-  (Ty s , c@(Core t ty))    -> Ty $ [THIxTerm s (t , ty)] -- term index
-  (c@(Core t ty) , Ty s)    -> Ty $ [THEta  t s] -- only valid if c is an eta expansion
-
-typeOf :: Bind -> [TyHead]
-typeOf = \case
-  WIP -> error "panic: impossibly found wip bound after inference"
-  B args  term ty -> ty
-  T targs set     -> set
 
 mkTcFailMsg gotTerm gotTy expTy =
   ("subsumption failure:"
@@ -241,17 +264,34 @@ mkTcFailMsg gotTerm gotTy expTy =
   ++ "\nIn the expression: " ++ show gotTy
   )
 
-typeOfLit = \case
-  String{}   -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
-  Array{}    -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
-  PolyInt{} -> THPrim (PrimInt 32)
-  x -> error $ "littype: " ++ show x
---  _ -> numCls
-
 eqTyHead a b = kindOf a == kindOf b
-kindOf THPrim{}  = KPrim
-kindOf THAlias{} = _ -- have to deref it
-kindOf THVar{}   = KVar
-kindOf THArrow{} = KArrow
-kindOf THRec{}   = _
-kindOf THData{}  = KData
+kindOf = \case
+  THPrim{}  -> KPrim
+  THAlias{} -> _ -- have to deref it
+  THVar{}   -> KVar
+  THArrow{} -> KArrow
+  THRec{}   -> _
+  _ -> KAny
+
+mergeTypes :: [TyHead] -> [TyHead] -> [TyHead]
+mergeTypes l1 l2 = foldr (\a b -> doSub (-1) a b) l2 l1
+
+-- merge a tyhead into a bisub ; remove the typevar if resolved
+-- mu binders ?
+-- doSub i = (:)
+doSub :: Int -> TyHead -> [TyHead] -> [TyHead]
+doSub i (THVar v) [] = if i == v then [] else [THVar v]
+doSub i newTy [] = [newTy]
+doSub i newTy (ty:tys) = if eqTyHead newTy ty
+  then mergeTyHead i newTy ty ++ tys
+  else (ty : doSub i newTy tys)
+
+mergeTyHead :: Int -> TyHead -> TyHead -> [TyHead]
+mergeTyHead int t1 t2 = let join = [t1 , t2] in case join of
+  [THPrim a , THPrim b]   -> if a == b then [t1] else join
+  [THVar a , THVar b]     -> if a == b then [t1] else join
+  [THAlias a , THAlias b] -> if a == b then [t1] else join
+  [THSum a , THSum b]   -> _
+  [THProd a , THProd b] -> _
+--[THArrow a , THArrow b] -> _
+  _ -> join
