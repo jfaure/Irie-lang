@@ -65,11 +65,15 @@ data TT
  | InfixTrain TT [(TT, TT)] -- `name` or symbolName
 
  -- other tt primitives (sum , product , list)
- | Cons   [(FName , TT)]
+ | Cons   [(FName , TT)] -- can be used to type itself
  | Proj   TT FName
- | Label  LName TT
+ | Label  LName [TT]
  | Match  [(LName , Pattern , TT)]
  | List   [TT]
+
+ -- aggregate types (note. Cons are given type Cons)
+ | TySum    [(LName , [TT])]
+ | TyListOf TT
 
  -- term primitives
  | Lit     Literal
@@ -77,7 +81,6 @@ data TT
 
  -- type primitives
  | TyLit    PrimType
- | TyArrow  [TT] -- type of an Abs
 
  | Typed    { t :: TT , typeOf :: TT }
 

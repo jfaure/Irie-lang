@@ -44,7 +44,7 @@ data Term
  -- data constructions
  | Cons    (M.Map IField Term)
  | Proj    Term IField
- | Label   ILabel Term
+ | Label   ILabel [Term] -- labels are heterogeneous lists
  | Match   (M.Map ILabel Term) (Maybe Term)
  | List    [Term]
 
@@ -62,34 +62,37 @@ type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
 type TyPlus   = [TyHead] -- output types (lattice join)
 
 -- bisubs always reference themselves, so the mu. is implicit
--- TODO bisubs should be either positive or negative
 data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
 newBiSub = BiSub [] []
 type BiSubs = V.Vector BiSub -- indexed by TVars
 
 -- components of the profinite distributive lattice of types
 data TyHead -- head constructors for types.
- = THPrim     PrimType
- | THVar      BiSubName   -- index into bisubs
+ = THVar         BiSubName  -- index into bisubs
+ | THAlias       IName      -- index into bindings
+ | THArg         IName      -- lambda bound
+ | THImplicit    IName      -- implicit lambda bound
+ | THExt         IName      -- index into externs
+
+ | THPrim     PrimType
  | THArrow    [TyContra] TyCo
  | THRec      IName TyCo  -- guarded and covariant in a 
    -- (ie. `Ma. (a->bool)->a` ok, but not `Ma. a->Bool`)
  | THProd     ProdTy
- | THSum      SumTy
- | THAlias    IName         -- index into bindings
- | THExt      IName         -- index into externs
+ | THSum      SumTy --incl tuples (~= var arity sum alt)
+ | THArray    TyCo
 
- -- calculus of constructions
- | THArg      IName         -- lambda bound
- -- Apps
  | THIxType   Type Type
  | THIxTerm   Type (Term , Type)
- | THEta      Term Type -- term is universe polymorphic
+
+ | THIx       Expr
+ | THEta      Term Type -- term is universe polymorphic (?!)
 
  | THHigher   Uni -- eg Set1
+ -- Dynamic residue of types after erasure ?
 
 type ProdTy = M.Map IField TyCo
-type SumTy  = M.Map ILabel TyCo
+type SumTy  = M.Map ILabel [TyCo]
 
 -- non-regular recursion ?
 -- isorecursive non-regular: add opaque roll/unroll primitives
@@ -109,7 +112,8 @@ data Expr
 data Bind -- indexes in the bindmap
  = WIP
  | BindTerm [IName] Term Type
- | BindType [Expr]  Set
+ | BindType [Expr] Set
+-- | BindType [Expr] [Expr] Set -- implicit args first
 
 makeLenses ''BiSub
 
@@ -162,6 +166,10 @@ prettyTerm = \case
 prettyTyHead = \case
  THPrim     p -> show p
  THVar      i -> "Λ" ++ show i
+ THImplicit i -> "∀" ++ show i
+ THAlias    i -> "π" ++ show i
+ THExt      i -> "E" ++ show i
+
  THArrow    args ret -> intercalate " → " $ show <$> (args ++ [ret])
  THRec      i ty  -> _
  THProd     prodTy -> let
@@ -169,15 +177,16 @@ prettyTyHead = \case
    p = intercalate " ; " $ showField <$> M.toList prodTy
    in "{" ++ p ++ "}"
  THSum      sumTy ->  let
-   showLabel (l , t) = show l ++ "@" ++ show t
+   showLabel (l , t) = show l ++ "#" ++ show t
    s  = intercalate " | " $ showLabel <$> M.toList sumTy
    in "[| " ++ s ++ " |]"
- THAlias    i -> "π" ++ show i
- THExt      i -> "E" ++ show i
 
+ THArray    t -> "@" ++ show t
  THArg      i -> "λ" ++ show i
--- THIxType   t t2 -> _
--- THIxTerm   t termTypePairs -> _
+
+ THIxType   t t2 -> "ixTy: " ++ show t ++ show t2
+ THIxTerm   t termTyPairs -> "ixTerm: " ++ show t ++ show termTyPairs
+ THEta      term ty -> error "eta"
 
  THHigher   uni -> "Set" ++ show uni
 

@@ -1,23 +1,35 @@
--- Basic functions
+---- Basic functions
 -- g y = y + 2
 -- f x = x + g x
-
 -- l x = if x.p then x.q else x.q
 
--- Higher rank
+---- Arrays
+l = 3 2 7
+z = l ! 1
+
+Array ty =
+ | PrimArray [ty] IntArray
+ | Generate (Int->ty) IntArray
+-- | Reversed (Array ty)
+
+id x   = x
+idot n = Generate @ id n
+t = idot (2 3)
+
+---- Higher rank
 -- auto i = (i i) 3
 -- id x = x
 -- g = auto id
 
--- Records
+---- Records
 -- x = { b=3 ; h=4 }
 -- c = x.b
 
--- Sums
--- num = int @ 3 -- : [| int Int |]
+---- Sums
+-- num = int @ 3 -- : | int Int
 -- f x = case x | int @ n => n
 
--- Classic Dependent vector
+---- Classic Dependent vector
 --data Vec v : Nat -> Set where
 --  empty  : Vec v 0
 --  append : v -> Vec v {n} -> Vec v (n + 1)

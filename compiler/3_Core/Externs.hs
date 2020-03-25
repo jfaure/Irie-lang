@@ -14,9 +14,13 @@ import TCState
 import Control.Applicative
 import qualified Data.Map as M
 import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as V
 import Data.Function
+import Data.Functor
 import Data.Foldable
+import Data.List
 import Control.Lens
+import Debug.Trace
 
 -- 1. vector of VNames for parsed NoScope vars
 -- 2. extra binds to append to module (tc convenience)
@@ -26,12 +30,19 @@ resolveImports pm = let
   resolveImport :: HName -> IName
    = \nm -> asum
     [ getPrimIdx nm
-    , M.lookup nm noScopeNames
+--  , M.lookup nm noScopeNames -- need to import all noScopeNames first
     ] & \case
       Just i  -> i
       Nothing -> error $ "not in scope: " ++ show nm
 
-  vNames = V.fromList $ resolveImport <$> M.keys noScopeNames
+  -- the noScopeNames map will have mixed up the iname ordering
+  -- no problem; we fill the vNames vector in the same 'random' order
+  vNames = let
+    doIndx v (nm , indx) = V.write v indx $ resolveImport nm
+    in V.create $ do
+      v <- V.unsafeNew (M.size noScopeNames)
+      doIndx v `mapM` M.toList noScopeNames
+      pure v
   in ( vNames
      , primBinds )
 
@@ -63,28 +74,36 @@ buildMaps list = let
   nmMap = M.fromList $ zipWith replaceSnd list [(0::Int)..]
   in (nmMap , vec)
 
-primTys =
- [ ("Bool"   , PrimInt 1)
- , ("Int"    , PrimInt 32)
- , ("Float"  , PrimFloat FloatTy )
- , ("Double" , PrimFloat DoubleTy)
- , ("CharPtr", PtrTo $ PrimInt 8 )
- ]
+primTys :: [(HName , PrimType)] =
+  [ ("Bool"    , PrimInt 1)
+  , ("Int"     , PrimInt 32)
+  , ("Float"   , PrimFloat FloatTy )
+  , ("Double"  , PrimFloat DoubleTy)
+  , ("CharPtr" , PtrTo $ PrimInt 8 )
+  , ("IntArray", PrimArr $ PrimInt 32)
+  , ("Set"     , PrimSet)
+  ]
+getPrimTy nm = case M.lookup nm primTyMap of
+  Nothing -> error $ "panic: badly setup primtables; "
+    ++ show nm ++ " not in scope"
+  Just i  -> i
 
 -- instrs are typed with indexes into the primty map
-instrs = let
- i = case M.lookup "Int" primTyMap of
-   Nothing -> error "panic: badly setup primtables"
-   Just i  -> i
- in
- [ ("+" , (IntInstr Add , ([i, i] , i) ))
- , ("-" , (IntInstr Add , ([i, i] , i) ))
- ]
+instrs :: [(HName , (PrimInstr , ([IName] , IName)))] = let
+  i   = getPrimTy "Int"
+  ia  = getPrimTy "IntArray"
+  set = getPrimTy "Set"
+  in
+  [ ("+" , (IntInstr Add , ([i, i] , i) ))
+  , ("-" , (IntInstr Add , ([i, i] , i) ))
+  , ("!" , (MemInstr ExtractVal , ([ia] , i) ))
+  , ("->", (ArrowTy , ([set] , set)))
+  ]
 
 typeOfLit = \case
   String{}   -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   Array{}    -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
-  PolyInt{} -> THPrim (PrimInt 32)
+  PolyInt{}  -> THPrim (PrimInt 32)
   x -> error $ "littype: " ++ show x
 --  _ -> numCls
 

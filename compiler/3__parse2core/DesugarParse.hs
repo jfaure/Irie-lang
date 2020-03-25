@@ -12,8 +12,11 @@ import Data.Functor
 import Debug.Trace
 
 -- output is a list of argument inames and the expression
-matches2TT :: [P.FnMatch] -> ([IName] , P.TT) = \case
-  [P.FnMatch f e] -> ( , e) $ (\(P.PArg i) -> i) <$> f
+matches2TT :: [P.FnMatch] -> ([IName] , P.TT) =
+  let convPat (P.PArg i) = i
+  in \case
+    [P.FnMatch f e] -> ( , e) $ convPat <$> f
+    x -> error $ concatMap show x
 
 --  P.Lit l   -> pure . Right $ case l of
 --    PolyInt{}  -> Instr MkNum  [Lit l]

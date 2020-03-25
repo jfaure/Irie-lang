@@ -6,7 +6,7 @@ import Modules
 import CoreSyn
 import qualified CoreUtils as CU
 import PrettyCore
-import BiUnify
+import Infer
 --import Core2Stg
 --import StgSyn
 import StgToLLVM (stgToIRTop)
@@ -63,9 +63,11 @@ doProgText flags fName progText = do
        "parseTree" -> print parsed
        "core"      -> putStrLn $ show judged --(ppCoreModule judged)
        _ -> putStrLn $ show judged --ppCoreModule judged
- printOut -- we will want to do more than output to stdout
+ printOut
  putStrLn "\n ---"
- putStrLn $ V.foldl1 (\a b -> a++"\n"++b) $ show <$> judged
+ let named = zipWith mkNm (_bindings parsed) (V.toList judged)
+     mkNm (FunBind nm _ _) j = show nm ++ show j
+ putStrLn $ foldl (\a b -> a++"\n"++b) "" named
 
 -- | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags) $ llvmMod
 -- | pp == "stg"       -> putStrLn $ show stg

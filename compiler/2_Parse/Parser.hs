@@ -113,7 +113,7 @@ symboln = L.symbol scn . T.pack
 -- all symbol chars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 -- reserved: ():\{}"_'`.
 symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: T.Text
-reservedOps   = T.words "= @ | : . ; =>"
+reservedOps   = T.words "= @ | : . ; => ( ) [ ] { }"
 reservedNames = T.words "type data record class extern externVarArg let rec in where case of _ import require Set"
 reservedName w = (lexeme . try) (string (T.pack w) *> notFollowedBy alphaNumChar)
 reservedOp w = lexeme (notFollowedBy (opLetter w) *> string w)
@@ -169,6 +169,8 @@ parens, braces, bracesn :: Parser a -> Parser a
 parens  = between (symbol "(") (symbol ")")
 braces  = between (symbol "{") (symbol "}")
 bracesn = between (symboln "{") (symboln "}")
+brackets  = between (symbol "[") (symbol "]")
+bracketsn  = between (symboln "[") (symboln "]")
 p `sepBy2` sep = (:) <$> p <*> (some (sep *> p))
 endLine = lexeme (single '\n')
 
@@ -176,6 +178,17 @@ endLine = lexeme (single '\n')
 noIndent = L.nonIndented scn . lexeme
 iB = L.indentBlock scn
 svIndent f = L.indentLevel >>= newIndent
+
+-- ref = reference indent level
+-- lvl = lvl of first indented item (often == pos)
+indentedItems ref lvl scn p finished = go where
+ go = do
+  scn
+  pos <- L.indentLevel
+  lookAhead (eof <|> finished) *> pure [] <|> if
+     | pos <= ref -> pure []
+     | pos == lvl -> (:) <$> p <*> go
+     | otherwise  -> L.incorrectIndent EQ lvl pos
 
 --debug functions
 dbgToEof = traceShowM =<< (getInput :: Parser T.Text)
@@ -201,7 +214,7 @@ parseModule :: FilePath -> T.Text
            , _labels        = M.empty
         }
       }
-      end = (bindings %~ reverse) . (imports %~ reverse)
+      end = (bindings %~ reverse)
   in end <$> runParserT (scn *> doParse *> eof *> use moduleWIP) nm txt
   `evalState` ParseState {
        _indent = mkPos 1
@@ -235,7 +248,6 @@ extern =
 --  opNames = (\x->[x]) <$> symbolName --`sepBy` symbol ","
 --  in InfixDecl <$> pInfix <*> optional (lexeme L.decimal) <*> opNames
 
-
 --  let super = many $ reservedOp "<:" *> tyName
 --  in reserved "class" $> TypeClass <*>
 --       tyName <*> many tyVar <*> super <*> pWhere decl
@@ -252,41 +264,22 @@ extern =
 --fnName = (iden <|> _symbolName) >>= addBindName
 funBind = _funBind iden <|> _funBind (parens _symbolName)
 _funBind nameParser = do
-    m    <- nameParser
-    iNm  <- addBindName m -- need to handle recursive references
-    exps <- liftA2 (:) (fnMatch (pure ())) (many (fnMatch nameParser))
+    m    <- nameParser    -- TODO use nameParser not string below
+    iNm  <- addBindName m -- handle recursive references
+    exps <- (:) <$> fnMatch <*> many (string m *> fnMatch)
     --(exps , letBounds) <- unzip <$> tt
     addBind =<< FunBind m exps <$> optional (reservedOp ":" *> tt)
     clearLocals
 --  mapM addBind (concat letBounds)
 
-fnMatch thisName = dbg "match" $ do
+fnMatch = dbg "match" $ do
   args <- choice
-    [ FnMatch <$> many (thisName *> lexeme pattern)
+    [ FnMatch <$> many (lexeme pattern)
 --  , InfixMatch <$> (lexeme pat *> parens thisName) <*> many (lexeme pat)
-    ] <* reservedOp "="
+    ] <* reservedOp "=" <* scn
   args <$> tt
 
--- needs to return an Exp so we can give the literal a polytype
-literalExp :: Parser TT = Lit <$> literalP
-literalP = lexeme $ choice
- [ Char   <$> charLiteral
- , String <$> stringLiteral
- , numP
- ]
-
--- ref = reference indent level
--- lvl = lvl of first indented item (often == pos)
-indentedItems ref lvl scn p finished = go where
- go = do
-  scn
-  pos <- L.indentLevel
-  lookAhead (eof <|> finished) *> pure [] <|> if
-     | pos <= ref -> pure []
-     | pos == lvl -> (:) <$> p <*> go
-     | otherwise  -> L.incorrectIndent EQ lvl pos
-
--- We often need to parse a 2nd token to know what we're parsing
+-- We often need to parse a 2nd token to find out more about the first
 -- eg. we have 2 'states' when parsing a tt
 -- 1. `maybeApp` we may be parsing a fn app
 -- 2. `arg` we are parsing arguments to an app (eg. Lit | parens app ..)
@@ -295,6 +288,7 @@ tt :: Parser TT = dbg "tt" $ choice
   [ letIn      -- "let"
   , multiIf    -- "if"
   , match      -- "case"
+  , tySum      -- " | lab tys
   , lambdaCase -- "\\case"
   , maybeApp >>= \tt -> choice
     [ Proj tt <$ reservedOp "." <*> (iden >>= newFLabel)
@@ -309,16 +303,23 @@ tt :: Parser TT = dbg "tt" $ choice
    [ WildCard <$ reserved "_"
    , con
    , iden >>= \i -> choice [label i, lookupBindName i]
-   , literalExp
+   , Lit <$> literalP
+   , TyListOf <$> brackets tt
    , parens tt
    ]
-  label i = P.Label <$ reservedOp "@" <*> newSLabel i <*> tt
+  label i = P.Label <$ reservedOp "@" <*> newSLabel i <*> some arg
+
+  tySum = let -- TODO check indent ?
+    labeledTTs = (,) <$> (iden >>= newSLabel) <*> many arg
+    in TySum <$> some (try (scn *> reservedOp "|" *> lexeme labeledTTs))
+
   con = let
     fieldDecl = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> arg
     in Cons <$> (braces $ fieldDecl `sepBy1` reservedOp ";")
 
   caseSplits = let
-    split = (,,) <$> (iden >>= newSLabel) <* reservedOp "@" <*> pattern <* reservedOp "=>" <*> tt
+    split = (,,) <$> (iden >>= newSLabel) <* reservedOp "@"
+      <*> pattern <* reservedOp "=>" <*> tt
     in Match <$> many (reservedOp "|" *> split)
   match = reserved "case" *> do
     scrut  <- tt
@@ -385,6 +386,13 @@ trivialType :: Parser PrimType = (<?> "Builtin Type") $
 --------------------
 -- number parsers --
 --------------------
+-- needs to return an Exp so we can give the literal a polytype
+literalP = lexeme $ choice
+ [ Char   <$> charLiteral
+ , String <$> stringLiteral
+ , numP
+ ]
+
 decimal_ , dotDecimal_ , exponent_ :: Parser T.Text
 decimal_    = takeWhile1P (Just "digit") isDigit
 dotDecimal_ = char '.' *> takeWhile1P (Just "digit") isDigit
