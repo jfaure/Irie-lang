@@ -13,11 +13,11 @@ Array ty =
 -- | Reversed (Array ty)
 
 id x   = x
-idot n = Generate @ id n
-t = idot (2 3)
+--idot n = Generate @ id n
+--t = idot (2 3)
 
 ---- Higher rank
--- auto i = (i i) 3
+auto i = (i i) 3
 -- id x = x
 -- g = auto id
 

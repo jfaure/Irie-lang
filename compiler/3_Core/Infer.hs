@@ -15,6 +15,7 @@ import Externs
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV -- mutable vectors
+import Control.Monad.ST
 import qualified Data.Map as M
 import qualified Data.IntMap as IM
 import qualified Data.Text as T
@@ -23,85 +24,88 @@ import Control.Monad
 import Control.Applicative
 import Control.Monad.Trans.State.Strict
 import Data.List --(foldl', intersect)
+import Data.STRef
 import Control.Lens
 
 import Debug.Trace
 
+dv_ f = traceShowM =<< (V.freeze f)
 -- test1 x = x.foo.bar{foo=3}
+
+getArgTy  = \case
+  Core x ty -> ty
+  Ty t      -> [THHigher 1]     -- type of types
+  Set u t   -> [THHigher (u+1)]
 
 judgeModule :: P.Module -> V.Vector Bind
 judgeModule pm = let
   nBinds = length $ pm ^. P.bindings
   (externVars , externBinds) = resolveImports pm
-  start         = TCEnvState
-    { _pmodule  = pm
-    , _noScopes = externVars
-    , _externs  = trace (clCyan $ show externBinds) externBinds
-    , _biSubs   = V.empty
-    , _polyVars = 0
-    , _wip      = V.replicate nBinds WIP
-    }
   go  = judgeBind `mapM_` [0 .. nBinds-1]
-  in execState go start ^. wip
+  in V.create $ do
+    v    <- MV.new 0
+    wips <- MV.replicate nBinds WIP
+    d    <- MV.new 0
+    execStateT go $ TCEnvState
+      { _pmodule  = pm
+      , _noScopes = externVars
+      , _externs  = trace (clCyan $ show externBinds) externBinds
+      , _wip      = wips
+      , _bis      = v
+      , _domain   = d
+      }
+    pure wips
 
-withBiSubs :: Int -> (Int->TCEnv a) -> TCEnv (a , BiSubs)
+-- add argument holes to monotype env, initialized at Top
+withDomain :: Int -> (TCEnv s a) -> TCEnv s (a , MV.MVector s Type)
+withDomain n action = do
+  oldD <- use domain
+  d <- MV.grow oldD n
+  let l = MV.length d
+  (\i->MV.write d i [THArg i]) `mapM` [l-n .. l-1]
+  domain .= d
+  r <- action
+  argTys <- MV.slice (l-n) n <$> use domain
+  domain %= MV.slice 0 (l-n)
+  pure (r , argTys)
+
+-- add biSub holes and execute an action (biSub or inference)
+withBiSubs :: Int -> (Int->TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
 withBiSubs n action = do
-  biSubLen <- V.length <$> use biSubs
-  let genFn i = let tv = [THVar $ i + biSubLen] in BiSub tv tv
-  biSubs %= (V.++ V.generate n genFn)
+  bisubs <- use bis
+  let biSubLen = MV.length bisubs
+      genFn i = let tv = [THVar i] in BiSub tv tv
+  bisubs <- MV.grow bisubs n
+  (\i->MV.write bisubs i (genFn i)) `mapM` [biSubLen .. biSubLen + n - 1]
+  bis .= bisubs
   ret <- action biSubLen
-
-  argSubs <- V.drop biSubLen <$> use biSubs
-
---bis <- use biSubs
---bis' <- solveBiSub `V.imapM` bis
---let (oldBis , argSubs) = V.splitAt biSubLen bis'
---biSubs .= oldBis
+  let argSubs = MV.slice biSubLen n bisubs
   pure (ret , argSubs)
 
---solveBiSub i (BiSub a b) = let
---  s = solveTVars bis
---  in BiSub <$> s _pSub i a <*> s _mSub i b
-
--- solveTVars: replace/remove all THVars
--- unresolved THVars become implicit type args (~= forall)
---solveTVars :: (BiSub->Type)-> Int -> Type -> TCEnv Type
---solveTVars getTy i ty =
---  case ty of
---  [THVar t] -> if i /= t
---    then getTy <$> solveBiSub i =<< (V.! t) <$> use biSubs
---    else do
---      p <- use polyVars
---      polyVars += 1
-----    biSubs . ix i . pSub %= [THImplicit p]
---      pure [THImplicit p]
---  t -> pure t
-
-judgeBind :: IName -> TCEnv Bind
- = \bindINm -> (V.! bindINm) <$> use wip >>= \t -> case t of
-  BindTerm arNms term ty  -> pure t
-  BindType tArgs ty       -> pure t
+judgeBind :: IName -> TCEnv s Bind
+judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
+  t@BindTerm{}  -> pure t
+  t@BindType{}  -> pure t
   WIP -> do
     P.FunBind hNm matches tyAnn <- (!! bindINm) <$> use (id . pmodule . P.bindings)
     let (args , tt) = matches2TT matches
         nArgs = length args
-    (expr , argSubs) <- withBiSubs nArgs (\_ -> infer tt)
-    let argTys = _mSub <$> argSubs
+    (expr , argSubs) <- withDomain nArgs (infer tt)
+    argTys <- V.freeze argSubs
 --  case tyAnn of
 --    Nothing -> pure expr
---    Just t  -> check res tyAnn <$> use wip
---      -- mkTCFailMsg e tyAnn res
-    let newBind = case expr of
-          Core x t -> do
-            if nArgs == 0
-              then BindTerm args x t
-              else BindTerm args x [THArrow (V.toList argTys) t]
-          Ty   t   -> BindType [] t -- args ? TODO
-    wip %= V.modify (\v->MV.write v bindINm newBind)
+--    Just t  -> check res tyAnn <$> use wip -- mkTCFailMsg e tyAnn res
+    newBind <- case expr of
+      Core x t -> do
+        if nArgs == 0
+          then pure $ BindTerm args x t
+          else pure $ BindTerm args x [THArrow (V.toList argTys) t]
+      Ty   t   -> pure $ BindType [] t -- args ? TODO
+    (\v -> MV.write v bindINm newBind) =<< use wip
     pure newBind
 
-infer :: P.TT -> TCEnv Expr
- = let
+infer :: P.TT -> TCEnv s Expr
+infer = let
  -- expr found in type context (should be a type or var)
  -- in product types, we fold ttApp to collect dependent sum/pi types
  yoloGetTy :: Expr -> Type
@@ -112,10 +116,6 @@ infer :: P.TT -> TCEnv Expr
      VArg  i -> [THArg i]
      VExt  i -> [THExt i]
    x -> error $ "type expected: " ++ show x
- getArgTy  = \case
-   Core x ty -> ty
-   Ty t      -> [THHigher 1]     -- type of types
-   Set u t   -> [THHigher (u+1)]
  in \case
   P.WildCard -> _
   -- vars : lookup in appropriate environment
@@ -124,7 +124,7 @@ infer :: P.TT -> TCEnv Expr
       judgeBind b <&> \case { BindTerm args e ty
         -> Core (Var $ VBind b) ty }
     P.VLocal l  -> do -- monotype env (fn args)
-      ty <- _pSub . (V.! l) <$> use biSubs
+      ty <- (`MV.read` l) =<< use domain
       pure $ Core (Var $ VArg l) ty
     P.VExtern i -> do
       extIdx <- (V.! i) <$> use noScopes
@@ -162,9 +162,9 @@ infer :: P.TT -> TCEnv Expr
 
       -- normal function app
       f' -> do
-        retTy <- do
-          _pSub . (V.! 0) . snd <$> withBiSubs 1 (\idx ->
+        bs <- snd <$> withBiSubs 1 (\idx ->
             biSub_ (getArgTy f') [THArrow (getArgTy <$> args') [THVar idx]])
+        retTy <- _pSub <$> (`MV.read` 0) bs
         pure $ case foldl' ttApp f' args' of
           Core f _ -> Core f retTy
           t -> t
@@ -178,9 +178,10 @@ infer :: P.TT -> TCEnv Expr
 
   P.Proj tt field -> do -- biunify (t+ <= {l:a})
     recordTy <- infer tt
-    retTy <- _pSub . (V.! 0) . snd <$> withBiSubs 1 (\ix ->
+    bs <- snd <$> withBiSubs 1 (\ix ->
       biSub_ (getArgTy recordTy)
              [THProd (M.singleton field [THVar ix])])
+    retTy <- _pSub <$> (`MV.read` 0) bs
     pure $ case recordTy of
       Core f _ -> Core (Proj f field) retTy
       t -> t
@@ -193,22 +194,22 @@ infer :: P.TT -> TCEnv Expr
         (terms , tys) = unzip $ unwrap <$> tts'
     pure $ Core (Label l terms) [THSum $ M.fromList [(l , tys)]]
 
-  P.Match alts -> let
-      (labels , patterns , rawTTs) = unzip3 alts
-    -- * find the type of the sum type being deconstructed
-    -- * find the type of it's alts (~ lambda abstractions)
-    -- * type of Match is (sumTy -> Join altTys)
-    in do
-    (exprs , vArgSubs) <-
-      unzip <$> (withBiSubs 1 . (\t _->infer t)) `mapM` rawTTs
-    let vArgTys = V.map _mSub <$> vArgSubs
-        (altTTs , altTys) = unzip
-          $ (\case { Core t ty -> (t , ty) }) <$> exprs
-        argTys  = V.toList <$> vArgTys
-        sumTy   = [THSum . M.fromList $ zip labels argTys]
-        matchTy = [THArrow [sumTy] (concat $ altTys)]
-        labelsMap = M.fromList $ zip labels altTTs
-    pure $ Core (Match labelsMap Nothing) matchTy
+--P.Match alts -> let
+--    (labels , patterns , rawTTs) = unzip3 alts
+--  -- * find the type of the sum type being deconstructed
+--  -- * find the type of it's alts (~ lambda abstractions)
+--  -- * type of Match is (sumTy -> Join altTys)
+--  in do
+--  (exprs , vArgSubs) <-
+--    unzip <$> (withBiSubs 1 . (\t _->infer t)) `mapM` rawTTs
+--  let vArgTys = (_mSub <$>) <$> vArgSubs
+--      (altTTs , altTys) = unzip
+--        $ (\case { Core t ty -> (t , ty) }) <$> exprs
+--      argTys  = V.toList <$> vArgTys
+--      sumTy   = [THSum . M.fromList $ zip labels argTys]
+--      matchTy = [THArrow [sumTy] (concat $ altTys)]
+--      labelsMap = M.fromList $ zip labels altTTs
+--  pure $ Core (Match labelsMap Nothing) matchTy
 
   P.MultiIf branches -> do -- Bool ?
     let (rawConds , rawAlts) = unzip branches

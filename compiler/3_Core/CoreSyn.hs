@@ -22,6 +22,9 @@ import qualified Data.Map.Strict as M
 import qualified Data.IntSet as IS
 import Data.List
 import Control.Lens hiding (List)
+import Data.STRef
+import Control.Monad.ST
+import Control.Monad.Primitive
 
 type HName     = T.Text -- human readable name
 type IName     = Int    -- Int name: index into bind|type vectors
@@ -37,7 +40,8 @@ data VName
 data Term
  = Var     VName
  | Lit     Literal
- | App     Term       [Term] -- IName [Term]
+-- | Abs     [IName] 
+ | App     Term    [Term] -- IName [Term]
  | MultiIf [(Term , Term)]
  | Instr   PrimInstr
 
@@ -90,7 +94,6 @@ data TyHead -- head constructors for types.
 
  | THHigher   Uni -- eg Set1
  -- Dynamic residue of types after erasure ?
-
 type ProdTy = M.Map IField TyCo
 type SumTy  = M.Map ILabel [TyCo]
 
@@ -113,6 +116,7 @@ data Bind -- indexes in the bindmap
  = WIP
  | BindTerm [IName] Term Type
  | BindType [Expr] Set
+
 -- | BindType [Expr] [Expr] Set -- implicit args first
 
 makeLenses ''BiSub

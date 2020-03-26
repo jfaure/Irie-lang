@@ -35,14 +35,23 @@ did_ x = d_ x x
 -- SubConstraints:
 -- (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
 biSub_ a b = trace ("bisub: " ++ show a ++ " <==> " ++ show b) biSub a b
-biSub :: TyPlus -> TyMinus -> TCEnv ()
+biSub :: TyPlus -> TyMinus -> TCEnv s ()
 biSub a b = case (a , b) of
   -- lattice top and bottom
   ([] ,  _) -> pure ()
   (_  , []) -> pure ()
   -- atomic constraints
-  ([THVar p] , m) -> (biSubs . (ix p) . mSub %= foldr (doSub p) m )
-  (p , [THVar m]) -> (biSubs . (ix m) . pSub %= foldr (doSub m) p )
+
+  -- Lambda-bound in negative position can now be guessed
+  (p , [THArg i]) -> use domain >>= \v->MV.modify v (++p) i
+  ([THVar p] , m) -> use bis >>= \v->MV.modify v
+    (over mSub (foldr (doSub p) m)) p
+  (p , [THVar m]) -> use bis >>= \v->MV.modify v
+    (over pSub (foldr (doSub m) p)) m
+
+  (p , [THImplicit i]) -> pure ()
+  ([THImplicit i] , p) -> pure ()
+
   ([THPrim p1] , [THPrim p2]) -> when (p1 /= p2) (failBiSub p1 p2)
   ([THArray t1] , [THPrim (PrimArr p1)]) -> biSub t1 [THPrim p1]
 
@@ -92,7 +101,7 @@ reduceType t = t
 -- we have t1<=t2 and t1<=t3 ==> t1 <= t2ut3
 -- additionally, subsumption <===> equivalence of typing schemes
 -- ie. to decide [d1]t1 <= [d2]t2, we check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
-check :: [TyHead] -> Set -> TCEnv a -> Bool
+check :: [TyHead] -> Set -> TCEnv s a -> Bool
 check gotRaw expRaw delta = let
   gotTy = reduceType gotRaw ; expTy = reduceType expRaw
   _check ty = True

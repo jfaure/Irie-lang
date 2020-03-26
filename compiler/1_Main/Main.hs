@@ -6,7 +6,7 @@ import Modules
 import CoreSyn
 import qualified CoreUtils as CU
 import PrettyCore
-import Infer
+import qualified Infer
 --import Core2Stg
 --import StgSyn
 import StgToLLVM (stgToIRTop)
@@ -55,7 +55,7 @@ doProgText flags fName progText = do
 --   headers    = CU.mkHeader <$> importList
 --   llvmObjs   = V.toList $ stgToIRTop . core2stg <$> headers
  let pp         = printPass flags
-     judged     = judgeModule parsed
+     judged     = Infer.judgeModule parsed
 --   stg        = core2stg judged
 --   llvmMod    = stgToIRTop stg
      printOut = case printPass flags of
