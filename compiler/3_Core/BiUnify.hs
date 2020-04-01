@@ -19,10 +19,7 @@ import Control.Applicative
 import Control.Monad.Trans.State.Strict
 import Data.List --(foldl', intersect)
 import Control.Lens
-
 import Debug.Trace
-d_ x   = trace (clYellow (show x))
-did_ x = d_ x x
 
 -------------------
 -- BiSubstitution --
@@ -40,42 +37,45 @@ biSub a b = case (a , b) of
   -- lattice top and bottom
   ([] ,  _) -> pure ()
   (_  , []) -> pure ()
-  -- atomic constraints
-
-  -- Lambda-bound in negative position can now be guessed
-  (p , [THArg i]) -> use domain >>= \v->MV.modify v (++p) i
+  -- vars
   ([THVar p] , m) -> use bis >>= \v->MV.modify v
     (over mSub (foldr (doSub p) m)) p
   (p , [THVar m]) -> use bis >>= \v->MV.modify v
     (over pSub (foldr (doSub m) p)) m
-
-  (p , [THImplicit i]) -> pure ()
-  ([THImplicit i] , p) -> pure ()
-
-  ([THPrim p1] , [THPrim p2]) -> when (p1 /= p2) (failBiSub p1 p2)
-  ([THArray t1] , [THPrim (PrimArr p1)]) -> biSub t1 [THPrim p1]
-
   -- lattice subconstraints
   ((p1:p2:p3) , m) -> biSub [p1] m *> biSub (p2:p3) m
   (p , (m1:m2:m3)) -> biSub p [m1] *> biSub p (m2:m3)
-  (p , [THExt i])  -> biSub p =<< tyExpr . (V.! i) <$> use externs
-  ([THExt i] , m)  -> (`biSub` m) =<< tyExpr . (V.! i) <$> use externs
+  ([p] , [m])      -> atomicBiSub p m
 
-  -- basic head constructor subconstraints
-  ([THArrow args1 ret1] , [THArrow args2 ret2]) -> zipWithM biSub args2 args1 *> biSub ret1 ret2
+atomicBiSub :: TyHead -> TyHead -> TCEnv s ()
+atomicBiSub p m = case (p , m) of
+  -- Lambda-bound in - position can be guessed
+  (p , THArg i) -> use domain >>= \v->MV.modify v (p:) i
+  -- lambda-bound in + position provides structural information
+  -- ie. may force higher-rank polymorphism
+  (THArg i , THArrow args ret) -> let
+      fa = [THImplicit i]
+      ty = THArrow (replicate (length args) fa) fa
+    in use domain >>= \v-> MV.modify v (ty:) i
+
+  (THPrim p1 , THPrim p2) -> when (p1 /= p2) (failBiSub p1 p2)
+  (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
+
+  (THArrow args1 ret1 , THArrow args2 ret2) ->
+    zipWithM biSub args2 args1 *> biSub ret1 ret2
+
   -- record: labels in the first must all be in the second
-  ([THProd fields1] , [THProd fields2]) -> let
+  (THProd fields1 , THProd fields2) -> let
     go (l , ttm) = case M.lookup l fields1 of
       Nothing  -> error $ "label not present"
       Just ttp -> biSub ttp ttm --covariant
     in go `mapM_` (M.toList fields2)
 
-  ([THRec i p] , m) -> _
-  (p , [THRec i m]) -> _
-
-  (h@[THHigher uni] , [THArrow x ret]) -> biSub h ret
-
-  -- lattice components without subtyping relation
+  (THRec i, m) -> error $ show i
+--(p , THRec i)  -> _
+  (p , THExt i)-> biSub [p]     =<< tyExpr . (`readExtern` i)<$>use externs
+  (THExt i , m)-> (`biSub` [m]) =<< tyExpr . (`readExtern` i)<$>use externs
+  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
   (a , b) -> failBiSub a b
 
 failBiSub a b = error $ "failed bisub: " ++ show a ++ "<-->" ++ show b --pure False
@@ -121,7 +121,7 @@ kindOf = \case
   THAlias{} -> _ -- have to deref it
   THVar{}   -> KVar
   THArrow{} -> KArrow
-  THRec{}   -> _
+  THRec{}   -> KRec
   _ -> KAny
 
 mergeTypes :: [TyHead] -> [TyHead] -> [TyHead]
@@ -145,4 +145,5 @@ mergeTyHead int t1 t2 = let join = [t1 , t2] in case join of
   [THSum a , THSum b]   -> _
   [THProd a , THProd b] -> _
 --[THArrow a , THArrow b] -> _
+--_ -> _
   _ -> join

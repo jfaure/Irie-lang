@@ -2,14 +2,19 @@ module MkStg
 where
 
 import Prim
+import Externs
 import CoreSyn
+import PrettyCore
 import StgSyn
 import qualified CoreUtils as CU
 import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as V
-import qualified LLVM.AST as L -- (Operand, Instruction, Type, Name, mkName)
---import GHC.Word
-import qualified LLVM.AST  -- (Operand, Instruction, Type, Name, mkName)
+import qualified Data.Vector.Mutable as MV
+import Control.Monad.ST
+import Data.STRef
+import Data.Functor
+
+import qualified LLVM.AST as L
+import qualified LLVM.AST
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.IntegerPredicate as IP
 import qualified LLVM.AST.FloatingPointPredicate as FP
@@ -24,23 +29,82 @@ data StgWIP -- T for temporary
  = TWip
  | TData  StgData
  | TAlias (StgId , StgType)
- | TBind
+ | TBind  StgBinding
 
-mkStg :: V.Vector Bind -> StgModule
-mkStg allBinds = let
-    (datas , tyAliases , binds) = _
+mkStg :: V.Vector Expr -> V.Vector Bind -> StgModule
+mkStg extBinds coreBinds = let
+  nBinds = V.length coreBinds
+  bindKind = \case { TData{}->0 ; TAlias{}->1 ; TBind{}->2 ; TWip -> error "stgwip"}
+  datas     = (\(TData s)->s) <$> V.filter ((==0).bindKind) all
+  tyAliases = (\(TAlias s)->s) <$> V.filter ((==1).bindKind) all
+  binds     = (\(TBind s)->s) <$> V.filter ((==2).bindKind) all
+  all = V.create $ do
+    v <- MV.replicate nBinds TWip
+    convBind extBinds coreBinds v `mapM` [0 .. nBinds-1]
+    pure v
   in StgModule {
       stgData  = datas
     , typeDefs = tyAliases
     , binds    = binds
     }
 
-convBind :: Bind -> V.Vector Bind -> V.Vector StgWIP
-convBind b coreBinds = case b of
-  BindTerm args term ty -> _
-  BindType args s -> _
-  WIP -> error "panic: wip binding"
+convBind :: V.Vector Expr -> V.Vector Bind -> MV.MVector s StgWIP -> Int
+         -> ST s StgWIP
+convBind extBinds coreBinds stgBinds i
+ = let
+   convTy' = convTy extBinds
+   convBind' = convBind extBinds coreBinds stgBinds
+ in MV.read stgBinds i >>= \case
+  TWip -> (\b -> MV.write stgBinds i b $> b) =<<
+    case coreBinds V.! i of
+    BindTerm ars t ty -> let
+      ty' = convTy' ty
+      in do
+      t' <- convTerm convBind' t
+      pure . TBind . StgBinding (LLVM.AST.UnName 0)
+          . did_ $ StgTopRhs [] [] ty' t'
+    BindType ars   ty -> pure
+      $ TAlias ((LLVM.AST.UnName 0) , (convTy' ty))
+  x -> pure x
 
+convTy :: V.Vector Expr -> [TyHead] -> StgType
+convTy extBinds [t] = let
+  convTy' = convTy extBinds
+  in case t of
+  THVar b  -> error $ "stg: THVar " ++ show b
+--THAlias i -> _
+--THArg i -> _
+--THImplicit -> _
+  THExt i -> convTy extBinds (tyExpr $ extBinds V.! i)
+  THPrim p -> StgLlvmType $ primTy2llvm p
+  THArrow tys t -> StgFnType $ (convTy'<$>tys) ++ [convTy' t]
+  THArray t -> StgArrayType $ convTy' t
+  x -> error $ "MkStg: not ready for ty: " ++ show x
+
+convTerm :: (IName -> ST s StgWIP) -> Term -> ST s StgExpr
+convTerm convBind = let
+  convTerm' = convTerm convBind
+  convTermName = \case
+    VBind i -> convBind i <&> \case
+      TBind (StgBinding nm _rhs) -> nm
+    VArg  i -> pure $ LLVM.AST.UnName (fromIntegral i)
+    VExt  i -> _
+  in \case
+  Var vNm          -> StgLit . StgVarArg <$> convTermName vNm
+  Lit l            -> pure $ StgLit (StgConstArg (literal2Stg l))
+  App (Var v) args -> StgApp <$> convTermName v
+    <*> ((fmap StgExprArg . convTerm') `mapM` args)
+  App (Instr i)args -> StgInstr (prim2llvm i)
+    <$> ((fmap StgExprArg . convTerm') `mapM` args)
+  MultiIf alts     -> _
+--Instr i          -> StgInstr (prim2llvm i)
+
+  Cons fields      -> _
+  Proj  t f        -> _
+  Label i args     -> _
+  Match labels def -> _
+  List  args       -> _
+  x -> error $ "MkStg: not ready for term: " ++ show x
 ----------------
 -- Primitives --
 ----------------
@@ -76,11 +140,12 @@ convName i = \case
 literal2Stg :: Literal -> StgConst = \l ->
   let mkChar c = C.Int 8 $ toInteger $ ord c 
   in case l of
-    Char c   -> mkChar c
-    String s -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))
+    Char c    -> mkChar c
+    String s  -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))
+    Array  x  -> C.Array (LLVM.AST.IntegerType 8) (literal2Stg <$> x)
+    Int i     -> C.Int 32 $ i
+--    Frac f    -> C.Float (LF.Double $ fromRational f)
     x -> error $ show x
---    Int i    -> C.Int 32 $ i
---    Frac f   -> C.Float (LF.Double $ fromRational f)
 
 -- most llvm instructions take flags, stg wants functions on operands
 prim2llvm :: PrimInstr -> StgPrimitive = \case

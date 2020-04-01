@@ -32,15 +32,9 @@ import Debug.Trace
 dv_ f = traceShowM =<< (V.freeze f)
 -- test1 x = x.foo.bar{foo=3}
 
-getArgTy  = \case
-  Core x ty -> ty
-  Ty t      -> [THHigher 1]     -- type of types
-  Set u t   -> [THHigher (u+1)]
-
-judgeModule :: P.Module -> V.Vector Bind
-judgeModule pm = let
+judgeModule :: P.Module -> Externs -> V.Vector Bind
+judgeModule pm exts@(Externs extNames extBinds) = let
   nBinds = length $ pm ^. P.bindings
-  (externVars , externBinds) = resolveImports pm
   go  = judgeBind `mapM_` [0 .. nBinds-1]
   in V.create $ do
     v    <- MV.new 0
@@ -48,35 +42,40 @@ judgeModule pm = let
     d    <- MV.new 0
     execStateT go $ TCEnvState
       { _pmodule  = pm
-      , _noScopes = externVars
-      , _externs  = trace (clCyan $ show externBinds) externBinds
+--    , _noScopes = extNames
+      , _externs  = exts
       , _wip      = wips
       , _bis      = v
       , _domain   = d
       }
     pure wips
 
--- add argument holes to monotype env, initialized at Top
-withDomain :: Int -> (TCEnv s a) -> TCEnv s (a , MV.MVector s Type)
-withDomain n action = do
+-- add argument holes to monotype env, anticipate recursion
+withDomain :: IName -> Int -> (TCEnv s a) -> TCEnv s (a , MV.MVector s Type)
+withDomain bindINm n action = do
   oldD <- use domain
   d <- MV.grow oldD n
   let l = MV.length d
-  (\i->MV.write d i [THArg i]) `mapM` [l-n .. l-1]
+      idxs = [l-n .. l-1]
+      tvars = (\x->[THVar x]) <$> idxs
+  (\i->MV.write d i [THArg i]) `mapM` idxs
+  -- anticipate recursive type
+  use wip >>= (\v -> MV.write v bindINm
+    $ Checking [THArrow tvars [THRec bindINm]])
   domain .= d
   r <- action
   argTys <- MV.slice (l-n) n <$> use domain
   domain %= MV.slice 0 (l-n)
   pure (r , argTys)
 
--- add biSub holes and execute an action (biSub or inference)
+-- do a bisub with typevars
 withBiSubs :: Int -> (Int->TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
 withBiSubs n action = do
   bisubs <- use bis
   let biSubLen = MV.length bisubs
       genFn i = let tv = [THVar i] in BiSub tv tv
   bisubs <- MV.grow bisubs n
-  (\i->MV.write bisubs i (genFn i)) `mapM` [biSubLen .. biSubLen + n - 1]
+  (\i->MV.write bisubs i (genFn i)) `mapM` [biSubLen .. biSubLen+n-1]
   bis .= bisubs
   ret <- action biSubLen
   let argSubs = MV.slice biSubLen n bisubs
@@ -84,14 +83,16 @@ withBiSubs n action = do
 
 judgeBind :: IName -> TCEnv s Bind
 judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
-  t@BindTerm{}  -> pure t
-  t@BindType{}  -> pure t
-  WIP -> do
-    P.FunBind hNm matches tyAnn <- (!! bindINm) <$> use (id . pmodule . P.bindings)
+  t@BindTerm{} -> pure t
+  t@BindType{} -> pure t
+  Checking  ty -> pure $ BindTerm [] (Var$VBind bindINm) ty
+  WIP -> mdo
+    P.FunBind hNm matches tyAnn
+      <- (!! bindINm) <$> use (id . pmodule . P.bindings)
     let (args , tt) = matches2TT matches
         nArgs = length args
-    (expr , argSubs) <- withDomain nArgs (infer tt)
-    argTys <- V.freeze argSubs
+    (expr , argSubs) <- withDomain bindINm nArgs (infer tt)
+    argTys <- V.toList <$> V.freeze argSubs
 --  case tyAnn of
 --    Nothing -> pure expr
 --    Just t  -> check res tyAnn <$> use wip -- mkTCFailMsg e tyAnn res
@@ -99,7 +100,7 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
       Core x t -> do
         if nArgs == 0
           then pure $ BindTerm args x t
-          else pure $ BindTerm args x [THArrow (V.toList argTys) t]
+          else pure $ BindTerm args x [THArrow argTys t]
       Ty   t   -> pure $ BindType [] t -- args ? TODO
     (\v -> MV.write v bindINm newBind) =<< use wip
     pure newBind
@@ -115,20 +116,23 @@ infer = let
      VBind i -> [THAlias i]
      VArg  i -> [THArg i]
      VExt  i -> [THExt i]
+   Core e ty -> [THEta e ty]
    x -> error $ "type expected: " ++ show x
  in \case
   P.WildCard -> _
   -- vars : lookup in appropriate environment
   P.Var v -> case v of
     P.VBind b   ->    -- polytype env
+     -- guard recursion
       judgeBind b <&> \case { BindTerm args e ty
         -> Core (Var $ VBind b) ty }
     P.VLocal l  -> do -- monotype env (fn args)
       ty <- (`MV.read` l) =<< use domain
       pure $ Core (Var $ VArg l) ty
     P.VExtern i -> do
-      extIdx <- (V.! i) <$> use noScopes
-      (V.! extIdx) <$> use externs
+--    extIdx <- (V.! i) <$> use noScopes
+--    (V.! extIdx) <$> use externs
+      (`readParseExtern` i) <$> use externs
     x -> error $ show x
 
   -- APP: f : [Df-]ft+ , Pi ^x : [Df-]ft+ ==> e2:[Dx-]tx+

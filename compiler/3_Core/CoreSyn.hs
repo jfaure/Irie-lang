@@ -1,13 +1,30 @@
 -- Core Language
--- recall: ParseSyn >> CoreExpr >> STG codegen
+-- recall: Text >> Parse >> Core >> STG (>> LLVM >> ..)
 -- The language for type judgements: checking and inferring
---
--- ParseSyn vs Core
--- > no local variables
--- > all vars have a unique name
--- > no free variables (explicit function arguments)
--- > all entities are annotated with a type (can be TyUnknown)
--- - ultimately stg must have only monotypes
+
+---------------------
+-- Recursive Types --
+---------------------
+-- Recursive types are usually guarded and covariant
+-- (ie. `Ma. (a->bool)->a` ok, but not `Ma. a->Bool`)
+-- however,
+-- FA t+ , EX t+a and tg+ where ta+ is Bottom or a,
+-- ta+ is guarded in tg+ and t+ = ta+ U tg+
+-- ie. guarded can be weakened to a least pre-fixed point operator mu+:
+-- `mu+ a. t+ = mu a. tg+`
+-- guardedness is only required to coincide mu+ and mu-
+-- covariance excludes `mu a. a->a` ?
+-- : look at 2 types: t1=t2->t1 and t2=t1->t2
+-- can introduce mus by covariances , and
+-- by substitution: `t1=mu a. (mu b. t1->b) -> a`
+-- mu is monotone, so t1 and t2 are still covariant;
+-- t1 = mu a'. mu a. (mu b. a' -> b) -> a
+-- t1 = mu a. (mu b. a->b) -> a
+-- guardedness is crucial here, to introduce mu in t2->t1
+-- otherwise mu+ and mu- wouldn't be the same
+
+--- non-regular recursion ?
+-- eg. isorecursive non-regular: add opaque roll/unroll primitives
 
 {-# LANGUAGE TemplateHaskell #-}
 module CoreSyn
@@ -17,30 +34,30 @@ import Prim
 
 import qualified Data.Vector         as V
 import qualified Data.Text           as T
-import qualified Data.IntMap.Strict  as IM
 import qualified Data.Map.Strict as M
-import qualified Data.IntSet as IS
-import Data.List
 import Control.Lens hiding (List)
-import Data.STRef
-import Control.Monad.ST
-import Control.Monad.Primitive
+import Data.List (intercalate)
+
+import Debug.Trace
+d_ x   = let
+  clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
+  in trace (clYellow (show x))
+did_ x = d_ x x
 
 type HName     = T.Text -- human readable name
 type IName     = Int    -- Int name: index into bind|type vectors
 type BiSubName = Int    -- index into bisubs
-type IField    = Int  -- product-type fields index
-type ILabel    = Int  -- sum-type labels     index
+type IField    = Int    -- product-type fields index
+type ILabel    = Int    -- sum-type labels     index
 
 data VName
  = VBind IName -- bind   map
  | VArg  IName -- bisub  map
- | VExt  IName -- extern map (and prim instrs)
+ | VExt  IName -- extern map (incl. prim instrs)
 
 data Term
  = Var     VName
  | Lit     Literal
--- | Abs     [IName] 
  | App     Term    [Term] -- IName [Term]
  | MultiIf [(Term , Term)]
  | Instr   PrimInstr
@@ -68,20 +85,18 @@ type TyPlus   = [TyHead] -- output types (lattice join)
 -- bisubs always reference themselves, so the mu. is implicit
 data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
 newBiSub = BiSub [] []
-type BiSubs = V.Vector BiSub -- indexed by TVars
 
 -- components of the profinite distributive lattice of types
 data TyHead -- head constructors for types.
- = THVar         BiSubName  -- index into bisubs
- | THAlias       IName      -- index into bindings
- | THArg         IName      -- lambda bound
- | THImplicit    IName      -- implicit lambda bound
- | THExt         IName      -- index into externs
+ = THVar      BiSubName  -- index into bisubs
+ | THAlias    IName      -- index into bindings
+ | THArg      IName      -- lambda bound (index into monotype env)
+ | THImplicit IName      -- implicit lambda bound
+ | THExt      IName      -- index into externs
 
  | THPrim     PrimType
  | THArrow    [TyContra] TyCo
- | THRec      IName TyCo  -- guarded and covariant in a 
-   -- (ie. `Ma. (a->bool)->a` ok, but not `Ma. a->Bool`)
+ | THRec      IName -- must be guarded (by other TyHead)
  | THProd     ProdTy
  | THSum      SumTy --incl tuples (~= var arity sum alt)
  | THArray    TyCo
@@ -92,21 +107,15 @@ data TyHead -- head constructors for types.
  | THIx       Expr
  | THEta      Term Type -- term is universe polymorphic (?!)
 
- | THHigher   Uni -- eg Set1
+ | THSet      Uni
  -- Dynamic residue of types after erasure ?
 type ProdTy = M.Map IField TyCo
 type SumTy  = M.Map ILabel [TyCo]
 
--- non-regular recursion ?
--- isorecursive non-regular: add opaque roll/unroll primitives
-
 -- label for the different head constructors
-data Kind = KPrim | KArrow | KVar | KSum | KProd | KAny
+data Kind = KPrim | KArrow | KVar | KSum | KProd | KAny | KRec
+  deriving Eq
 
------------------------------
--- BiUnification datatypes --
------------------------------
--- tagged tt
 data Expr
  = Core Term Type
  | Ty   Type  -- Set0
@@ -114,98 +123,18 @@ data Expr
 
 data Bind -- indexes in the bindmap
  = WIP
+ | Checking Type -- guard for recursive refs
  | BindTerm [IName] Term Type
  | BindType [Expr] Set
-
 -- | BindType [Expr] [Expr] Set -- implicit args first
 
 makeLenses ''BiSub
 
-expr2Ty = \case
-  Core t ty -> ty
-  Ty   t    -> _
-  Set  i t  -> _
+getArgTy  = \case
+  Core x ty -> ty
+  Ty t      -> [THSet 0]     -- type of types
+  Set u t   -> [THSet (u+1)]
+
 tyExpr = \case
   Ty t -> t
   _ -> _
-
-instance Show VName where show = prettyVName
-instance Show Term where show = prettyTerm
-instance Show TyHead where show = prettyTyHead
-instance Show Bind where show = prettyBind
-
-deriving instance Show Expr
-deriving instance Show BiSub
-deriving instance Show Kind
-
-deriving instance Eq Kind
-
-------------
--- Pretty --
-------------
-
-prettyBind = \case
- WIP -> "WIP"
- BindTerm args term ty -> show args ++ " => " ++ show term ++ clGreen (" : " ++ show ty)
- BindType tyArgs set -> show tyArgs ++ " => " ++ show set
-
-prettyVName = \case
-    VArg i  -> "λ" ++ show i
-    VBind i -> "π" ++ show i
-
-prettyTerm = \case
-    Var     v -> show v
-    Lit     l -> show l
-    App     f args -> "(" ++ show f ++ " " ++ intercalate " " (show <$> args) ++ ")"
-    MultiIf ts -> "if " ++ show ts
-    Instr   p -> "(" ++ show p ++ ")"
-
-    Cons    ts -> "{" ++ show ts ++ "}"
-    Proj    t f -> show t ++ " . " ++ show f
-    Label   l t -> show l ++ "@" ++ show t
-    Match   ts d -> "\\case" ++ "| "
-      ++ intercalate " | " (show <$> M.toList ts) ++ " |_ " ++ show d
-    List    ts -> "[" ++ (concatMap show ts) ++ "]"
-
-prettyTyHead = \case
- THPrim     p -> show p
- THVar      i -> "Λ" ++ show i
- THImplicit i -> "∀" ++ show i
- THAlias    i -> "π" ++ show i
- THExt      i -> "E" ++ show i
-
- THArrow    args ret -> intercalate " → " $ show <$> (args ++ [ret])
- THRec      i ty  -> _
- THProd     prodTy -> let
-   showField (f , t) = show f ++ ":" ++ show t
-   p = intercalate " ; " $ showField <$> M.toList prodTy
-   in "{" ++ p ++ "}"
- THSum      sumTy ->  let
-   showLabel (l , t) = show l ++ "#" ++ show t
-   s  = intercalate " | " $ showLabel <$> M.toList sumTy
-   in "[| " ++ s ++ " |]"
-
- THArray    t -> "@" ++ show t
- THArg      i -> "λ" ++ show i
-
- THIxType   t t2 -> "ixTy: " ++ show t ++ show t2
- THIxTerm   t termTyPairs -> "ixTerm: " ++ show t ++ show termTyPairs
- THEta      term ty -> error "eta"
-
- THHigher   uni -> "Set" ++ show uni
-
-clBlack   x = "\x1b[30m" ++ x ++ "\x1b[0m"
-clRed     x = "\x1b[31m" ++ x ++ "\x1b[0m" 
-clGreen   x = "\x1b[32m" ++ x ++ "\x1b[0m"
-clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
-clBlue    x = "\x1b[34m" ++ x ++ "\x1b[0m"
-clMagenta x = "\x1b[35m" ++ x ++ "\x1b[0m"
-clCyan    x = "\x1b[36m" ++ x ++ "\x1b[0m"
-clWhite   x = "\x1b[37m" ++ x ++ "\x1b[0m"
-clNormal = "\x1b[0m"
-
--- Notes --
-{-   The lambda-bound types here are flexible ie. subsumption can occur before beta-reduction.
-  This can be weakened by instantiation to a (monomorphically abstracted) typing scheme
-  We unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred (we cannot insert type abstractions)
--}

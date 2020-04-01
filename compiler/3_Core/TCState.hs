@@ -4,6 +4,7 @@ module TCState where
 
 import Prim
 import CoreSyn
+import Externs
 import qualified ParseSyntax as P
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -18,8 +19,9 @@ type TCEnv s a = StateT (TCEnvState s) (ST s) a
 data TCEnvState s = TCEnvState {
    _pmodule  :: P.Module       -- parsed module
 
- , _noScopes :: V.Vector IName -- resolveScopes
- , _externs  :: V.Vector Expr
+-- , _noScopes :: V.Vector IName -- resolveScopes
+-- , _externs  :: V.Vector Expr
+ , _externs :: Externs
 
  , _wip      :: MV.MVector s Bind
  , _bis      :: MV.MVector s BiSub -- typeVars

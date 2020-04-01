@@ -43,17 +43,19 @@ data StgType  -- All these must eventually become llvm equivalents
  | StgFnType    [StgType]     -- stg function type (not extern)
  | StgPApTy     [StgType] [StgType] -- partial application
 
+ -- TODO
  | StgPolyType -- just a name, valid types must be bitcasted
+ | StgArrayType StgType
 
--- StgArg = resolves (stgToIR) to an ssa passable to an llvm function
--- Note. this includes function pointers!
+-- StgArg = resolves (stgToIR) to an ssa passable to llvm function 
+-- (incl. function pointers etc..)
 data StgArg
   = StgConstArg  StgConst -- constant value
   | StgSsaArg    StgSsa   -- used only by union tags in case atm.
   | StgVarArg    StgId    -- ref to an SSA (or 0 arity function)
   | StgExprArg   StgExpr  -- full expr
 
--- Alg data is modeled as a sum type: it may have 0 alts or 0 fields.
+-- Alg data is modeled as a sum type: may have 0 alts or 0 fields.
 -- the sumType tag corresponds to the alts, in the order defined
 type StgData        = StgSumType -- Alg data
 
@@ -62,10 +64,10 @@ data StgSumType     = StgSumType     StgId [StgProductType]
 
 data StgBinding = StgBinding StgId StgRhs
 data StgRhs
- = StgTopRhs   [StgArg]  -- Arg Names
-               [StgType] -- Arg Types
-               StgType   -- return Type
-               StgExpr   -- Function body
+ = StgTopRhs [StgArg]  -- Arg Names
+             [StgType] -- Arg Types
+             StgType   -- return Type
+             StgExpr   -- Function body
  -- closure: function uses free vars, to be passed as extra arguments
  -- | StgClosure  FreeVars [StgArg] [StgType] StgType StgExpr
  | StgExt      LLVM.AST.Type -- extern function
@@ -107,7 +109,7 @@ data StgExpr
             StgCaseAlts     -- Switch or Data deconstruction
 
 data StgCaseAlts
- = StgSwitch    [(LLVM.AST.Constant.Constant, StgExpr)] -- values -> alt
+ = StgSwitch    [(LLVM.AST.Constant.Constant, StgExpr)] --tag , alt
  | StgDeconAlts [(StgId, [StgId], StgExpr)] -- decon [args] -> alt
 
 -- Cheap show instances

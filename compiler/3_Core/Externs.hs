@@ -9,7 +9,7 @@ module Externs where
 import Prim
 import qualified ParseSyntax as P
 import CoreSyn
-import TCState
+--import TCState
 
 import Control.Applicative
 import qualified Data.Map as M
@@ -23,28 +23,36 @@ import Control.Lens
 import Debug.Trace
 
 -- 1. vector of VNames for parsed NoScope vars
--- 2. extra binds to append to module (tc convenience)
-resolveImports :: P.Module -> (V.Vector IName , V.Vector Expr)
+-- 2. extra binds available in module (via VarExt names)
+data Externs = Externs {
+   extNames :: V.Vector IName -- index permuation for noscopeNames
+ , extBinds :: V.Vector Expr  -- extern table indexed by extNames
+}
+
+readParseExtern , readExtern :: Externs -> IName -> Expr
+readParseExtern = \(Externs nms binds) i -> binds V.! (nms V.! i)
+readExtern = \(Externs nms binds) i -> binds V.! i
+
+resolveImports :: P.Module -> Externs
 resolveImports pm = let
   noScopeNames = pm ^. P.parseDetails . P.hNamesNoScope
   resolveImport :: HName -> IName
    = \nm -> asum
     [ getPrimIdx nm
---  , M.lookup nm noScopeNames -- need to import all noScopeNames first
+--  , M.lookup nm noScopeNames -- need to import non-primitive  noScopeNames
     ] & \case
       Just i  -> i
       Nothing -> error $ "not in scope: " ++ show nm
 
   -- the noScopeNames map will have mixed up the iname ordering
-  -- no problem; we fill the vNames vector in the same 'random' order
+  -- so we fill the vNames vector in that 'random' order
   vNames = let
     doIndx v (nm , indx) = V.write v indx $ resolveImport nm
     in V.create $ do
       v <- V.unsafeNew (M.size noScopeNames)
       doIndx v `mapM` M.toList noScopeNames
       pure v
-  in ( vNames
-     , primBinds )
+  in Externs { extNames = vNames , extBinds = primBinds }
 
 -- Primitives
 -- We vastly prefer handling INames over inlining primitives
@@ -104,6 +112,7 @@ typeOfLit = \case
   String{}   -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   Array{}    -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   PolyInt{}  -> THPrim (PrimInt 32)
+  Int{}      -> THPrim (PrimInt 32)
   x -> error $ "littype: " ++ show x
 --  _ -> numCls
 

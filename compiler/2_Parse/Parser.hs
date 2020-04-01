@@ -390,6 +390,7 @@ trivialType :: Parser PrimType = (<?> "Builtin Type") $
 literalP = lexeme $ choice
  [ Char   <$> charLiteral
  , String <$> stringLiteral
+ , Int    <$> L.decimal
  , numP
  ]
 

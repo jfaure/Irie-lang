@@ -3,10 +3,12 @@ import CmdLine
 import ParseSyntax
 import Parser
 import Modules
+import Externs
 import CoreSyn
 import qualified CoreUtils as CU
 import PrettyCore
-import qualified Infer
+import Infer
+import MkStg
 --import Core2Stg
 --import StgSyn
 import StgToLLVM (stgToIRTop)
@@ -44,30 +46,36 @@ main = parseCmdLine >>= \cmdLine ->
 
 doProgText :: CmdLine -> FilePath -> T.Text -> IO ()
 doProgText flags fName progText = do
- let preludes = if noPrelude flags then V.empty else preludeFNames
-
- parsed <- case parseModule fName progText of
-    Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
-    Right r -> pure r
--- inclPaths <- getModulePaths searchPath $ modImports pTree
--- customImports <- mapM doImport inclPaths
---   importList = autoImports V.++ customImports
---   headers    = CU.mkHeader <$> importList
---   llvmObjs   = V.toList $ stgToIRTop . core2stg <$> headers
- let pp         = printPass flags
-     judged     = Infer.judgeModule parsed
---   stg        = core2stg judged
---   llvmMod    = stgToIRTop stg
-     printOut = case printPass flags of
-       "source"    -> putStr =<< readFile fName
-       "parseTree" -> print parsed
-       "core"      -> putStrLn $ show judged --(ppCoreModule judged)
-       _ -> putStrLn $ show judged --ppCoreModule judged
- printOut
- putStrLn "\n ---"
- let named = zipWith mkNm (_bindings parsed) (V.toList judged)
-     mkNm (FunBind nm _ _) j = show nm ++ show j
- putStrLn $ foldl (\a b -> a++"\n"++b) "" named
+  let preludes = if noPrelude flags then V.empty else preludeFNames
+ 
+  parsed <- case parseModule fName progText of
+     Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
+     Right r -> pure r
+ -- inclPaths <- getModulePaths searchPath $ modImports pTree
+ -- customImports <- mapM doImport inclPaths
+ --   importList = autoImports V.++ customImports
+ --   headers    = CU.mkHeader <$> importList
+ --   llvmObjs   = V.toList $ stgToIRTop . core2stg <$> headers
+  let pp         = printPass flags
+      exts       = resolveImports parsed
+      judged     = judgeModule parsed exts
+      namedBinds = let
+        mkNm (FunBind nm _ _) j = show nm ++ show j
+        in zipWith mkNm (_bindings parsed) (V.toList judged)
+      stg        = mkStg (extBinds exts) judged
+      llvmMod    = stgToIRTop stg
+      putPass    = \case
+        "source"   -> putStr =<< readFile fName
+        "parseTree"-> print parsed
+        "core"     -> putStrLn $ show judged
+        "namedCore"-> print $ foldl (\a b -> a++"\n"++b) "" namedBinds
+        "stg"      -> print stg
+        "llvm"     -> TL.IO.putStrLn $ ppllvm llvmMod
+        _ -> putStrLn $ show judged --ppCoreModule judged
+  putPass (printPass flags)
+  putStrLn "\n  ---  \n" *> putPass "namedCore"
+  putStrLn "\n  ---  \n" *> putPass "stg"
+  putStrLn "\n  ---  \n" *> putPass "llvm"
 
 -- | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags) $ llvmMod
 -- | pp == "stg"       -> putStrLn $ show stg
