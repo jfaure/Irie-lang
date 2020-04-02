@@ -114,7 +114,7 @@ symboln = L.symbol scn . T.pack
 -- reserved: ():\{}"_'`.
 symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: T.Text
 reservedOps   = T.words "= @ | : . ; => ( ) [ ] { }"
-reservedNames = T.words "type data record class extern externVarArg let rec in where case of _ import require Set"
+reservedNames = T.words "if then else type data record class extern externVarArg let rec in where case of _ import require"
 reservedName w = (lexeme . try) (string (T.pack w) *> notFollowedBy alphaNumChar)
 reservedOp w = lexeme (notFollowedBy (opLetter w) *> string w)
   where opLetter :: T.Text -> Parser ()
@@ -326,16 +326,16 @@ tt :: Parser TT = dbg "tt" $ choice
     (`App` [scrut]) <$> caseSplits
   lambdaCase = reserved "\\case" *> caseSplits
 
-  multiIf = reserved "if" *> choice [normalIf , multiIf]
+  multiIf = reserved "if" *> choice [try normalIf , multiIf]
     where
     normalIf = do
       ifThen <- (,) <$> tt <* reserved "then" <*> tt
       elseE  <- reserved "else" *> tt
-      pure (MultiIf [ifThen, (WildCard, elseE)])
+      pure $ MultiIf [ifThen] elseE
     subIf = (,) <$ reservedOp "|" <*> tt <* reservedOp "=>" <*> tt
-    multiIf = do
-      l <- L.indentLevel
-      iB (pure $ L.IndentSome (Just l) (pure . MultiIf) subIf)
+    multiIf = do _
+--    l <- L.indentLevel
+--    iB (pure $ L.IndentSome (Just l) (pure . MultiIf) subIf)
 
   letIn = reserved "let" *> fail "nolet"
 --   reserved "let" *> do

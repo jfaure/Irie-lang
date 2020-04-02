@@ -59,7 +59,7 @@ data Term
  = Var     VName
  | Lit     Literal
  | App     Term    [Term] -- IName [Term]
- | MultiIf [(Term , Term)]
+ | MultiIf [(Term , Term)] Term
  | Instr   PrimInstr
 
  -- data constructions

@@ -42,7 +42,6 @@ judgeModule pm exts@(Externs extNames extBinds) = let
     d    <- MV.new 0
     execStateT go $ TCEnvState
       { _pmodule  = pm
---    , _noScopes = extNames
       , _externs  = exts
       , _wip      = wips
       , _bis      = v
@@ -51,14 +50,14 @@ judgeModule pm exts@(Externs extNames extBinds) = let
     pure wips
 
 -- add argument holes to monotype env, anticipate recursion
-withDomain :: IName -> Int -> (TCEnv s a) -> TCEnv s (a , MV.MVector s Type)
+withDomain :: IName -> Int -> (TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
 withDomain bindINm n action = do
   oldD <- use domain
   d <- MV.grow oldD n
   let l = MV.length d
       idxs = [l-n .. l-1]
       tvars = (\x->[THVar x]) <$> idxs
-  (\i->MV.write d i [THArg i]) `mapM` idxs
+  (\i->MV.write d i (BiSub [THArg i] [THArg i])) `mapM` idxs
   -- anticipate recursive type
   use wip >>= (\v -> MV.write v bindINm
     $ Checking [THArrow tvars [THRec bindINm]])
@@ -92,7 +91,7 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
     let (args , tt) = matches2TT matches
         nArgs = length args
     (expr , argSubs) <- withDomain bindINm nArgs (infer tt)
-    argTys <- V.toList <$> V.freeze argSubs
+    argTys <- V.toList . fmap _mSub <$> V.freeze argSubs
 --  case tyAnn of
 --    Nothing -> pure expr
 --    Just t  -> check res tyAnn <$> use wip -- mkTCFailMsg e tyAnn res
@@ -127,8 +126,7 @@ infer = let
       judgeBind b <&> \case { BindTerm args e ty
         -> Core (Var $ VBind b) ty }
     P.VLocal l  -> do -- monotype env (fn args)
-      ty <- (`MV.read` l) =<< use domain
-      pure $ Core (Var $ VArg l) ty
+      pure $ Core (Var $ VArg l) [THArg l]
     P.VExtern i -> do
 --    extIdx <- (V.! i) <$> use noScopes
 --    (V.! extIdx) <$> use externs
@@ -215,18 +213,21 @@ infer = let
 --      labelsMap = M.fromList $ zip labels altTTs
 --  pure $ Core (Match labelsMap Nothing) matchTy
 
-  P.MultiIf branches -> do -- Bool ?
+  P.MultiIf branches elseE -> do -- Bool ?
     let (rawConds , rawAlts) = unzip branches
         boolTy = getPrimIdx "Bool" & \case
           { Just i->THExt i; Nothing->error "panic: \"Bool\" not in scope" }
         addBool = doSub (-1) boolTy
     condExprs <- infer `mapM` rawConds
     alts      <- infer `mapM` rawAlts
-    let retTy = foldr1 mergeTypes (getArgTy <$> alts) :: [TyHead]
-        ifTy = [THArrow (addBool . getArgTy <$> condExprs) retTy]
+    elseE'    <- infer elseE
+    let retTy = foldr1 mergeTypes (getArgTy <$> (alts ++ [elseE'])) :: [TyHead]
+        condTys = getArgTy <$> condExprs
         e2t (Core e ty) = e
-    pure $ Core (MultiIf (zip (e2t<$>condExprs) (e2t<$>alts))) ifTy
-    _
+        ifE = MultiIf (zip (e2t<$>condExprs) (e2t<$>alts)) (e2t elseE') 
+
+    (`biSub_` [boolTy]) `mapM` condTys -- check the condTys all subtype bool
+    pure $ Core ifE retTy
 
   P.TySum alts -> let
     mkTyHead mp = Ty $ [THSum mp]

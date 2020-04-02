@@ -39,7 +39,7 @@ prettyTerm = \case
     Var     v -> show v
     Lit     l -> show l
     App     f args -> "(" ++ show f ++ " " ++ intercalate " " (show <$> args) ++ ")"
-    MultiIf ts -> "if " ++ show ts
+    MultiIf ts t -> "if " ++ show ts ++ " else " ++ show t
     Instr   p -> "(" ++ show p ++ ")"
 
     Cons    ts -> "{" ++ show ts ++ "}"
@@ -186,5 +186,3 @@ clNormal = "\x1b[0m"
 --    Just nm -> show nm
 --    Nothing -> show ""
 --  ++ " := " ++ ppType derefTy (ty ent)
-
-

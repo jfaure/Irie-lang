@@ -25,6 +25,6 @@ data TCEnvState s = TCEnvState {
 
  , _wip      :: MV.MVector s Bind
  , _bis      :: MV.MVector s BiSub -- typeVars
- , _domain   :: MV.MVector s Type  -- monotype env
+ , _domain   :: MV.MVector s BiSub -- Type  -- monotype env
  }
 makeLenses ''TCEnvState

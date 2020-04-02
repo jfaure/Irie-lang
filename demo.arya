@@ -4,21 +4,28 @@
 -- l x = if x.p then x.q else x.q
 -- r g = r (g 1) -- recursive principal type
 
----- Arrays
-l = 3 2 7
-z = l ! 1
+fib x = if x < 1 then x else fib (x-1) + fib (x-2)
 
---Array ty =
--- | PrimArray [ty] IntArray
--- | Generate (Int->ty) IntArray
+---- Arrays basic
+-- l = 3 2 7
+-- z = l ! 1
+
+--Shape = [Int]
+--Array ty shape =
+-- | PrimArray [ty]
+-- | Generate (Int->ty)
+-- | Tabulate ((Array Int [len shape]) -> ty)
 -- | Reversed (Array ty)
+
+--mean : [Int] -> Int
+--mean a = insert plus a / (len a)
 
 --id x   = x
 --idot n = Generate @ id n
 --t = idot (2 3)
 
 ---- Higher rank
---auto i = (i i) 3
+-- auto i = (i i) 3
 -- id x = x
 -- g = auto id
 

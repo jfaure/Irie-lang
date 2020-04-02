@@ -59,23 +59,30 @@ doProgText flags fName progText = do
   let pp         = printPass flags
       exts       = resolveImports parsed
       judged     = judgeModule parsed exts
-      namedBinds = let
-        mkNm (FunBind nm _ _) j = show nm ++ show j
-        in zipWith mkNm (_bindings parsed) (V.toList judged)
-      stg        = mkStg (extBinds exts) judged
+      bindNames  = let getNm (FunBind nm _ _) = nm
+        in getNm <$> V.fromList (_bindings parsed)
+      namedBinds = V.zipWith (\nm j -> show nm ++ show j) bindNames judged
+      stg        = mkStg (extBinds exts) (V.zip bindNames judged)
       llvmMod    = stgToIRTop stg
-      putPass    = \case
+      putPass :: T.Text -> IO ()   = \case
         "source"   -> putStr =<< readFile fName
         "parseTree"-> print parsed
         "core"     -> putStrLn $ show judged
-        "namedCore"-> print $ foldl (\a b -> a++"\n"++b) "" namedBinds
+        "namedCore"-> putStrLn $ V.foldl (\a b -> a++"\n"++b) "" namedBinds
         "stg"      -> print stg
         "llvm"     -> TL.IO.putStrLn $ ppllvm llvmMod
+        "llvm-print" -> LD.dumpModule llvmMod
+        "jit"      -> LD.runJIT (optlevel flags) [] llvmMod
         _ -> putStrLn $ show judged --ppCoreModule judged
+      addPass passNm = putStrLn "\n  ---  \n" *> putPass passNm
   putPass (printPass flags)
-  putStrLn "\n  ---  \n" *> putPass "namedCore"
-  putStrLn "\n  ---  \n" *> putPass "stg"
-  putStrLn "\n  ---  \n" *> putPass "llvm"
+  addPass `mapM_` (
+   [ "namedCore"
+-- , "stg"
+   , "llvm"
+   , "llvm-print"
+-- , "jit"
+   ] :: [T.Text])
 
 -- | isJust (outFile flags) -> LD.writeFile (fromJust $ outFile flags) $ llvmMod
 -- | pp == "stg"       -> putStrLn $ show stg

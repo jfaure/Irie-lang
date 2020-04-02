@@ -109,7 +109,7 @@ data StgExpr
             StgCaseAlts     -- Switch or Data deconstruction
 
 data StgCaseAlts
- = StgSwitch    [(LLVM.AST.Constant.Constant, StgExpr)] --tag , alt
+ = StgSwitch    [(LLVM.AST.Constant.Constant, StgExpr)] --tag,alt
  | StgDeconAlts [(StgId, [StgId], StgExpr)] -- decon [args] -> alt
 
 -- Cheap show instances

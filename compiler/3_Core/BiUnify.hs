@@ -21,10 +21,27 @@ import Data.List --(foldl', intersect)
 import Control.Lens
 import Debug.Trace
 
+--------------------------------------------
+-- Monotype environments (typing schemes) --
+--------------------------------------------
+-- 2 environments have a greatest lower bound: d1 n d2,
+-- where (d1 n d2) (x) = d1(x) n d2(x)
+-- interpret d1(x) = T for x not present in d1
+-- ! subsumption (on typing schemes)
+--   allows instantiation of type variables
+
+-------------------------------
+-- Note. Rank-n polymorphism --
+-------------------------------
+-- A constraint a <= t- gives a an upper bound ;
+-- which only affects a when used as an upper bound (negative position)
+-- The only exception is when inferring higher-rank polymorphism,
+-- since a- and a+ must have the same polymorphic rank
+
 -------------------
 -- BiSubstitution --
 -------------------
--- BiSubstitution solves constraints of the form t+ <= t-
+-- find substitution solving constraints of the form t+ <= t-
 -- Atomic: (join/meet a type to the var)
 -- a  <= t- solved by [m- b = a n [b/a-]t- /a-] 
 -- t+ <= a  solved by [m+ b = a u [b/a+]t+ /a+] 
@@ -50,13 +67,17 @@ biSub a b = case (a , b) of
 atomicBiSub :: TyHead -> TyHead -> TCEnv s ()
 atomicBiSub p m = case (p , m) of
   -- Lambda-bound in - position can be guessed
-  (p , THArg i) -> use domain >>= \v->MV.modify v (p:) i
-  -- lambda-bound in + position provides structural information
-  -- ie. may force higher-rank polymorphism
-  (THArg i , THArrow args ret) -> let
-      fa = [THImplicit i]
-      ty = THArrow (replicate (length args) fa) fa
-    in use domain >>= \v-> MV.modify v (ty:) i
+  (THArg i , m) -> use domain >>= \v->MV.modify v (over mSub (m:)) i
+  (p , THArg i) -> use domain >>= \v->MV.modify v (over pSub (p:)) i
+
+---- lambda-bound in + position provides structural information
+---- ie. may force higher-rank polymorphism
+---- + position lambda-bounds don't affect the argument's type
+---- but multiple output uses must be taken into account (?)
+--(THArg i , THArrow args ret) -> let
+--    fa = [THImplicit i]
+--    ty = THArrow (replicate (length args) fa) fa
+--  in use domain >>= \v-> MV.modify v (ty:) i
 
   (THPrim p1 , THPrim p2) -> when (p1 /= p2) (failBiSub p1 p2)
   (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
@@ -71,8 +92,11 @@ atomicBiSub p m = case (p , m) of
       Just ttp -> biSub ttp ttm --covariant
     in go `mapM_` (M.toList fields2)
 
-  (THRec i, m) -> error $ show i
---(p , THRec i)  -> _
+  -- TODO
+  -- subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- }
+  -- mirror case for t+ <= mu a.t-
+  (THRec i, m)  -> pure () -- error $ "rec: " ++ show i
+--(p , THRec i) -> _
   (p , THExt i)-> biSub [p]     =<< tyExpr . (`readExtern` i)<$>use externs
   (THExt i , m)-> (`biSub` [m]) =<< tyExpr . (`readExtern` i)<$>use externs
   (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret

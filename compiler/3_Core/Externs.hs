@@ -99,11 +99,13 @@ getPrimTy nm = case M.lookup nm primTyMap of
 -- instrs are typed with indexes into the primty map
 instrs :: [(HName , (PrimInstr , ([IName] , IName)))] = let
   i   = getPrimTy "Int"
+  b   = getPrimTy "Bool"
   ia  = getPrimTy "IntArray"
   set = getPrimTy "Set"
   in
-  [ ("+" , (IntInstr Add , ([i, i] , i) ))
-  , ("-" , (IntInstr Add , ([i, i] , i) ))
+  [ ("+" , (IntInstr Add  , ([i, i] , i) ))
+  , ("-" , (IntInstr Sub  , ([i, i] , i) ))
+  , ("<" , (IntInstr ICmp , ([i, i] , b) ))
   , ("!" , (MemInstr ExtractVal , ([ia] , i) ))
   , ("->", (ArrowTy , ([set] , set)))
   ]

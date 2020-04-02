@@ -12,6 +12,8 @@ import qualified Data.Vector.Mutable as MV
 import Control.Monad.ST
 import Data.STRef
 import Data.Functor
+import Data.Foldable
+import qualified Data.Text as T
 
 import qualified LLVM.AST as L
 import qualified LLVM.AST
@@ -27,11 +29,12 @@ import Data.Char
 
 data StgWIP -- T for temporary
  = TWip
+ | TRec   LLVM.AST.Name -- recursive ref
  | TData  StgData
  | TAlias (StgId , StgType)
  | TBind  StgBinding
 
-mkStg :: V.Vector Expr -> V.Vector Bind -> StgModule
+mkStg :: V.Vector Expr -> V.Vector (HName , Bind) -> StgModule
 mkStg extBinds coreBinds = let
   nBinds = V.length coreBinds
   bindKind = \case { TData{}->0 ; TAlias{}->1 ; TBind{}->2 ; TWip -> error "stgwip"}
@@ -48,23 +51,32 @@ mkStg extBinds coreBinds = let
     , binds    = binds
     }
 
-convBind :: V.Vector Expr -> V.Vector Bind -> MV.MVector s StgWIP -> Int
+convBind :: V.Vector Expr -> V.Vector (HName , Bind)
+         -> MV.MVector s StgWIP -> Int
          -> ST s StgWIP
 convBind extBinds coreBinds stgBinds i
  = let
    convTy' = convTy extBinds
    convBind' = convBind extBinds coreBinds stgBinds
  in MV.read stgBinds i >>= \case
-  TWip -> (\b -> MV.write stgBinds i b $> b) =<<
-    case coreBinds V.! i of
-    BindTerm ars t ty -> let
-      ty' = convTy' ty
-      in do
-      t' <- convTerm convBind' t
-      pure . TBind . StgBinding (LLVM.AST.UnName 0)
-          . did_ $ StgTopRhs [] [] ty' t'
-    BindType ars   ty -> pure
-      $ TAlias ((LLVM.AST.UnName 0) , (convTy' ty))
+  TWip -> do
+   let (nm , bind) = coreBinds V.! i
+       llvmNm = LLVM.AST.mkName $ T.unpack nm
+   MV.write stgBinds i (TRec llvmNm) -- in case recursive
+   (\b -> MV.write stgBinds i b $> b) =<<
+    case bind of
+      BindTerm ars t ty -> let
+        ty' = convTy' ty
+        (argTys , [retTy]) = case ty' of
+          StgFnType ars -> splitAt (length ars-1) ars
+          s -> case ars of { [] -> ([] , [ty']) ; _ -> error $ show s }
+        argNms = did_ $ StgVarArg . LLVM.AST.UnName . fromIntegral <$> ars
+        in do
+        t' <- convTerm convBind' t
+        pure . TBind . StgBinding llvmNm
+          $ did_ $ StgTopRhs argNms argTys retTy t'
+      BindType ars ty -> pure
+        $ TAlias (llvmNm , convTy' ty)
   x -> pure x
 
 convTy :: V.Vector Expr -> [TyHead] -> StgType
@@ -81,12 +93,16 @@ convTy extBinds [t] = let
   THArray t -> StgArrayType $ convTy' t
   x -> error $ "MkStg: not ready for ty: " ++ show x
 
+-- TODO rm quickly
+convTy extBinds x = StgLlvmType $ LT.IntegerType $ 32
+
 convTerm :: (IName -> ST s StgWIP) -> Term -> ST s StgExpr
 convTerm convBind = let
   convTerm' = convTerm convBind
   convTermName = \case
     VBind i -> convBind i <&> \case
       TBind (StgBinding nm _rhs) -> nm
+      TRec i -> i
     VArg  i -> pure $ LLVM.AST.UnName (fromIntegral i)
     VExt  i -> _
   in \case
@@ -94,9 +110,15 @@ convTerm convBind = let
   Lit l            -> pure $ StgLit (StgConstArg (literal2Stg l))
   App (Var v) args -> StgApp <$> convTermName v
     <*> ((fmap StgExprArg . convTerm') `mapM` args)
-  App (Instr i)args -> StgInstr (prim2llvm i)
+  App (Instr i)args  -> StgInstr (prim2llvm i)
     <$> ((fmap StgExprArg . convTerm') `mapM` args)
-  MultiIf alts     -> _
+  MultiIf alts elseE -> let
+    llvmTrue  = C.Int 1 1
+    mkCase (ifScrut, ifE) last = do
+      scrut <- convTerm' ifScrut
+      ifE'  <- convTerm' ifE
+      pure $ StgCase scrut (Just last) (StgSwitch [(llvmTrue , ifE')])
+    in convTerm' elseE >>= \elseE' -> foldrM mkCase elseE' alts
 --Instr i          -> StgInstr (prim2llvm i)
 
   Cons fields      -> _
@@ -108,9 +130,8 @@ convTerm convBind = let
 ----------------
 -- Primitives --
 ----------------
-
 -- cancerous llvm-hs Name policy
--- TODO name clashes ?
+-- TODO solve lambda-bound + top-bound name clashes
 -- core inames are unique, but llvm will complain that they are
 -- not given sequentially (since they don't all end up in stg)
 -- prepending a '_' to force a string name is not ideal
@@ -142,7 +163,7 @@ literal2Stg :: Literal -> StgConst = \l ->
   in case l of
     Char c    -> mkChar c
     String s  -> C.Array (LLVM.AST.IntegerType 8) (mkChar<$>(s++['\0']))
-    Array  x  -> C.Array (LLVM.AST.IntegerType 8) (literal2Stg <$> x)
+    Array  x  -> C.Array (LLVM.AST.IntegerType 32) (literal2Stg <$> x)
     Int i     -> C.Int 32 $ i
 --    Frac f    -> C.Float (LF.Double $ fromRational f)
     x -> error $ show x

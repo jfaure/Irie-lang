@@ -77,7 +77,7 @@ data TT
 
  -- term primitives
  | Lit     Literal
- | MultiIf [(TT, TT)]
+ | MultiIf [(TT, TT)] TT -- if [elseif] else
 
  -- type primitives
  | TyLit    PrimType

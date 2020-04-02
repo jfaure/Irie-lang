@@ -1,23 +1,9 @@
 # sponsor
-# New
-  * set of record labels
-  * sum-of-product construction ?!
-  * add inplaceable vector for lambda-bound typevars =~ scheme automaton ?
-
 # expr2Core
-  * imports
-  * array prims + patterns + nested patterns
-  * register data subtypes (for recursive refs)
   * GADT's (apparently tricky because of equality constraints eg. Sum a a => a == a)
   * (generate primitive fn wrappers somewhere)
 
-# Typeclass
-  * default typeclass signatures/decls
-  * check instances <= class
-
 # parser
-  * lambda case
-  * move all type parse logic to the term parser
   * linefolds
   * source locations
 
@@ -29,14 +15,8 @@
 # Low priority
   * error reporting
   * precompiled modules (sv them where?)
-  * a , b : t -- syntax
 
 # Maybe
-  * rec
-  * disallow inline polytypes; (force use of typevars / flow edges)
+  * rec (as alt to let)
   * parse GADT style
-  * View patterns
-  * GuardedRhs
-  * ContPrim may be unecessary
   * optimize convFixities
-  * use Vector.Bundle in toCore ? (have to register names early though)
