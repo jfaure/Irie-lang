@@ -59,7 +59,7 @@ doProgText flags fName progText = do
   let pp         = printPass flags
       exts       = resolveImports parsed
       judged     = judgeModule parsed exts
-      bindNames  = let getNm (FunBind nm _ _) = nm
+      bindNames  = let getNm (FunBind nm _ _ _) = nm
         in getNm <$> V.fromList (_bindings parsed)
       namedBinds = V.zipWith (\nm j -> show nm ++ show j) bindNames judged
       stg        = mkStg (extBinds exts) (V.zip bindNames judged)
@@ -79,8 +79,8 @@ doProgText flags fName progText = do
   addPass `mapM_` (
    [ "namedCore"
 -- , "stg"
-   , "llvm"
-   , "llvm-print"
+-- , "llvm"
+-- , "llvm-print"
 -- , "jit"
    ] :: [T.Text])
 

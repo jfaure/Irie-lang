@@ -51,7 +51,7 @@ makeLenses ''ParseState
 
 type Parser = ParsecT Void T.Text (ST.State ParseState)
 
--- Boilerplate name conversions
+-- name conversions
 newIndent new = indent .= new
 addBind b     = moduleWIP . bindings %= (b:)
 addImport i   = moduleWIP . imports  %= (i:)
@@ -80,6 +80,13 @@ lookupBindName h = do
       Just bind -> pure $ VBind bind
       Nothing   -> VExtern <$> addImportName h
 clearLocals = moduleWIP . parseDetails . hNameArgs .= M.empty
+
+lookupImplicit :: T.Text -> Parser IName
+lookupImplicit h = do
+  pd <- use $ moduleWIP . parseDetails
+  case M.lookup h (pd ^. hNameArgs) of
+    Just arg -> pure $ arg
+    Nothing  -> fail ("Not in scope: implicit arg '" ++ (T.unpack h) ++ "'")
 
 -----------
 -- Lexer --
@@ -113,7 +120,7 @@ symboln = L.symbol scn . T.pack
 -- all symbol chars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 -- reserved: ():\{}"_'`.
 symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: T.Text
-reservedOps   = T.words "= @ | : . ; => ( ) [ ] { }"
+reservedOps   = T.words "= @ | : :: . ; => ( ) [ ] { }"
 reservedNames = T.words "if then else type data record class extern externVarArg let rec in where case of _ import require"
 reservedName w = (lexeme . try) (string (T.pack w) *> notFollowedBy alphaNumChar)
 reservedOp w = lexeme (notFollowedBy (opLetter w) *> string w)
@@ -266,18 +273,33 @@ funBind = _funBind iden <|> _funBind (parens _symbolName)
 _funBind nameParser = do
     m    <- nameParser    -- TODO use nameParser not string below
     iNm  <- addBindName m -- handle recursive references
-    exps <- (:) <$> fnMatch <*> many (string m *> fnMatch)
-    --(exps , letBounds) <- unzip <$> tt
-    addBind =<< FunBind m exps <$> optional (reservedOp ":" *> tt)
+    implicits  <- choice
+      [ reservedOp "::" *>
+        bracesn ((iden >>= addArgName) `sepBy` reservedOp ";")
+      , pure []
+      ]
+    ann <- optional $ reservedOp ":" *> tt
+    eqns <- case ann of
+     Just{} -> choice
+      [ lexemen (reservedOp "=") *> ((:[]) . FnMatch [] [] <$> tt)
+      , scn *> some (lexemen (string m) *> fnMatch)
+      ]
+     Nothing -> scn *> do
+       (:) <$> fnMatch <*> many (lexemen (string m) *> fnMatch)
+    addBind $ FunBind m implicits eqns ann
     clearLocals
---  mapM addBind (concat letBounds)
 
-fnMatch = dbg "match" $ do
-  args <- choice
-    [ FnMatch <$> many (lexeme pattern)
+fnMatch = (fnArgs <* lexemen (reservedOp "=")) <*> tt
+fnArgs = let
+  implicits = choice
+   [ reservedOp "@" *>
+       braces ((iden >>= lookupImplicit) `sepBy1` ";")
+   , pure []
+   ]
+  in choice
+    [ FnMatch <$> implicits <*> many (lexeme pattern)
 --  , InfixMatch <$> (lexeme pat *> parens thisName) <*> many (lexeme pat)
-    ] <* reservedOp "=" <* scn
-  args <$> tt
+    ]
 
 -- We often need to parse a 2nd token to find out more about the first
 -- eg. we have 2 'states' when parsing a tt
@@ -354,13 +376,14 @@ tt :: Parser TT = dbg "tt" $ choice
 --  l <- L.indentLevel
 --  newIndent l *> (Case scrut <$> indentedItems ref l scn alt eof) <* newIndent ref
 
+pattern = singlePattern
 singlePattern = dbg "pattern" $ choice
  [ PLit <$> literalP
  , PArg <$> (iden >>= addArgName)
  , PWildCard <$ reserved "_"
- , parens pattern
+ , parens typedPattern
  ]
-pattern = singlePattern >>= \p -> choice
+typedPattern = singlePattern >>= \p -> choice
   [ PTyped p <$ reservedOp ":" <*> tt
   , pure p]
 

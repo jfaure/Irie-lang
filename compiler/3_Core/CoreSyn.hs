@@ -1,6 +1,6 @@
 -- Core Language
--- recall: Text >> Parse >> Core >> STG (>> LLVM >> ..)
--- The language for type judgements: checking and inferring
+-- recall: Text >> Parse >> Core >> STG >> LLVM
+-- The target language of the inferer.
 
 ---------------------
 -- Recursive Types --
@@ -65,18 +65,13 @@ data Term
  -- data constructions
  | Cons    (M.Map IField Term)
  | Proj    Term IField
- | Label   ILabel [Term] -- labels are heterogeneous lists
+ | Label   ILabel [Term]
  | Match   (M.Map ILabel Term) (Maybe Term)
  | List    [Term]
 
--- Types are sampled from a
--- coproduct of profinite distributive lattices
--- typing schemes contain the monotypes of lambda-bound terms
--- a 'monotype' can be a typevar pointing to a polytype
--- type polarity corresponds to input(-) vs output(+)
 type Type     = TyPlus
 type Uni      = Int
-type Set      = Type -- Set Uni Type
+--type Set      = Type -- Set Uni Type
 type TyCo     = [TyHead] -- same    polarity
 type TyContra = [TyHead] -- reverse polarity
 type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
@@ -86,47 +81,41 @@ type TyPlus   = [TyHead] -- output types (lattice join)
 data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
 newBiSub = BiSub [] []
 
--- components of the profinite distributive lattice of types
+-- components of our profinite distributive lattice of types
 data TyHead -- head constructors for types.
- = THVar      BiSubName  -- index into bisubs
- | THAlias    IName      -- index into bindings
- | THArg      IName      -- lambda bound (index into monotype env)
+ = THVar      BiSubName  -- ix to bisubs
+ | THAlias    IName      -- ix to bindings
+ | THArg      IName      -- lambda bound (ix to monotype env)
  | THImplicit IName      -- implicit lambda bound
- | THExt      IName      -- index into externs
+ | THExt      IName      -- ix to externs
 
  | THPrim     PrimType
  | THArrow    [TyContra] TyCo
  | THRec      IName -- must be guarded (by other TyHead)
- | THProd     ProdTy
- | THSum      SumTy --incl tuples (~= var arity sum alt)
+ | THProd     (M.Map IField TyCo) -- incl sigma
+ | THSum      (M.Map ILabel [TyCo])
  | THArray    TyCo
-
- | THIxType   Type Type
- | THIxTerm   Type (Term , Type)
-
- | THIx       Expr
- | THEta      Term Type -- term is universe polymorphic (?!)
-
  | THSet      Uni
- -- Dynamic residue of types after erasure ?
-type ProdTy = M.Map IField TyCo
-type SumTy  = M.Map ILabel [TyCo]
+
+ | THIx       Type [Expr]
 
 -- label for the different head constructors
 data Kind = KPrim | KArrow | KVar | KSum | KProd | KAny | KRec
   deriving Eq
 
 data Expr
- = Core Term Type
- | Ty   Type  -- Set0
- | Set  Uni Type
+ = Core  Term Type
+ | Sigma Term [Term] Type -- (potential) dynamic type residue
+
+ | Ty    Type  -- Set0
+ | Set   Uni Type
 
 data Bind -- indexes in the bindmap
  = WIP
- | Checking Type -- guard for recursive refs
- | BindTerm [IName] Term Type
- | BindType [Expr] Set
--- | BindType [Expr] [Expr] Set -- implicit args first
+ | Checking  Type -- guard for recursive references
+
+ | BindTerm  [IName] Term Type
+ | BindType  [IName] Type
 
 makeLenses ''BiSub
 

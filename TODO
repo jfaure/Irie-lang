@@ -1,22 +1,13 @@
-# sponsor
 # expr2Core
   * GADT's (apparently tricky because of equality constraints eg. Sum a a => a == a)
-  * (generate primitive fn wrappers somewhere)
-
-# parser
-  * linefolds
-  * source locations
-
-# Prelude
-  * fold-build ~ lazy
-  * effects
-  * distributed computing
+  * parsing duplicate fn defs
+  * arity typecheck
 
 # Low priority
   * error reporting
+  * parser source locations
+  * parser linefolds
   * precompiled modules (sv them where?)
 
 # Maybe
-  * rec (as alt to let)
-  * parse GADT style
-  * optimize convFixities
+  * rec (let-rec)

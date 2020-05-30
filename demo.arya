@@ -4,18 +4,29 @@
 -- l x = if x.p then x.q else x.q
 -- r g = r (g 1) -- recursive principal type
 
-fib x = if x < 1 then x else fib (x-1) + fib (x-2)
+--fib x : Int -> Int = if x < 1 then x else fib (x-1) + fib (x-2)
+--fib x = if x < 1 then x else fib (x-1) + fib (x-2)
 
----- Arrays basic
--- l = 3 2 7
--- z = l ! 1
+-- Arrays basic
+--l = 3 2 7 -- : Array 3 Int
+--z = l ! 1
 
---Shape = [Int]
---Array ty shape =
+--Array : [Int] -> Set -> Set
+--Array shape ty =
 -- | PrimArray [ty]
 -- | Generate (Int->ty)
--- | Tabulate ((Array Int [len shape]) -> ty)
 -- | Reversed (Array ty)
+-- | Tabulate ((Array Int [len shape]) -> ty)
+
+--shapeOf :: { n ; X } : Array n X -> [Int]
+--shapeOf@{n} = n
+
+-- a = PrimArray @ (3 2 7)
+-- x = primLen (3 2 2)
+
+plus a b = a + b
+primFoldrN f x v n = if n < 1 then f (x!0) v else f (x!n) (primFoldrN f x v (n-1))
+xd = primFoldrN plus (2 3 3) 0 3
 
 --mean : [Int] -> Int
 --mean a = insert plus a / (len a)
@@ -24,14 +35,15 @@ fib x = if x < 1 then x else fib (x-1) + fib (x-2)
 --idot n = Generate @ id n
 --t = idot (2 3)
 
----- Higher rank
+-- Higher rank
 -- auto i = (i i) 3
 -- id x = x
--- g = auto id
+--g = auto id
 
 ---- Records
 -- x = { b=3 ; h=4 }
 -- c = x.b
+-- p x = if x.p then x.q else x.q -- : {p:Bool , q:a} -> a
 
 ---- Sums
 -- num = int @ 3 -- : | int Int

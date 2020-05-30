@@ -106,8 +106,10 @@ instrs :: [(HName , (PrimInstr , ([IName] , IName)))] = let
   [ ("+" , (IntInstr Add  , ([i, i] , i) ))
   , ("-" , (IntInstr Sub  , ([i, i] , i) ))
   , ("<" , (IntInstr ICmp , ([i, i] , b) ))
-  , ("!" , (MemInstr ExtractVal , ([ia] , i) ))
+  , ("!" , (MemInstr ExtractVal , ([ia, i] , i) ))
   , ("->", (ArrowTy , ([set] , set)))
+  , ("primLen" , (Len , ([ia] , i)))
+--  , ("plus" , (IntInstr Add  , ([i, i] , i) ))
   ]
 
 typeOfLit = \case

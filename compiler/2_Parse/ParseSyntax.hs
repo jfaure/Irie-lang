@@ -13,6 +13,7 @@ type IName = Int
 type HName = Text
 type FName = IName -- record  fields
 type LName = IName -- sumtype labels
+type ImplicitArg = IName
 
 type Op = IName
 
@@ -46,8 +47,8 @@ data ParseDetails = ParseDetails {
 -- , fixities     :: V.Vector Fixity
 }
 
-data TopBind = FunBind HName [FnMatch] (Maybe TT)
-data FnMatch = FnMatch [Pattern] TT
+data TopBind = FunBind HName [ImplicitArg] [FnMatch] (Maybe TT)
+data FnMatch = FnMatch [ImplicitArg] [Pattern] TT
 
 data TTName
  = VBind   IName
@@ -64,23 +65,18 @@ data TT
  | App TT [TT]
  | InfixTrain TT [(TT, TT)] -- `name` or symbolName
 
- -- other tt primitives (sum , product , list)
+ -- tt primitives (sum , product , list)
  | Cons   [(FName , TT)] -- can be used to type itself
  | Proj   TT FName
  | Label  LName [TT]
  | Match  [(LName , Pattern , TT)]
  | List   [TT]
-
- -- aggregate types (note. Cons are given type Cons)
  | TySum    [(LName , [TT])]
  | TyListOf TT
 
  -- term primitives
  | Lit     Literal
- | MultiIf [(TT, TT)] TT -- if [elseif] else
-
- -- type primitives
- | TyLit    PrimType
+ | MultiIf [(TT, TT)] TT -- if .. elseif .. else
 
  | Typed    { t :: TT , typeOf :: TT }
 

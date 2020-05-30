@@ -47,6 +47,7 @@ data PrimInstr
  | MkTuple
  | Alloc
  | SizeOf
+ | Len -- len of PrimArray
  -- TODO conversion instructions, bitcasts,
  -- Maybe va_arg, aggregate instrs, vector, SIMD
 

@@ -70,11 +70,11 @@ convBind extBinds coreBinds stgBinds i
         (argTys , [retTy]) = case ty' of
           StgFnType ars -> splitAt (length ars-1) ars
           s -> case ars of { [] -> ([] , [ty']) ; _ -> error $ show s }
-        argNms = did_ $ StgVarArg . LLVM.AST.UnName . fromIntegral <$> ars
+        argNms = StgVarArg . LLVM.AST.UnName . fromIntegral <$> ars
         in do
         t' <- convTerm convBind' t
         pure . TBind . StgBinding llvmNm
-          $ did_ $ StgTopRhs argNms argTys retTy t'
+          $ StgTopRhs argNms argTys retTy t'
       BindType ars ty -> pure
         $ TAlias (llvmNm , convTy' ty)
   x -> pure x

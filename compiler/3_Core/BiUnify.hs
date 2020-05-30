@@ -30,6 +30,13 @@ import Debug.Trace
 -- ! subsumption (on typing schemes)
 --   allows instantiation of type variables
 
+--------------------
+-- Generalization --
+--------------------
+-- suppose `e = let x = e1 in e2`. e1 must be typeable and have principal ty [D1-]t1+ under Pi
+-- the most general choice is to insert x into Pi with principal type of e1
+-- ie. x depends on lambda-bound vars, so those are moved into Pi (as monotype environments)
+
 -------------------------------
 -- Note. Rank-n polymorphism --
 -------------------------------
@@ -50,15 +57,21 @@ import Debug.Trace
 -- (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
 biSub_ a b = trace ("bisub: " ++ show a ++ " <==> " ++ show b) biSub a b
 biSub :: TyPlus -> TyMinus -> TCEnv s ()
-biSub a b = case (a , b) of
+biSub a b = let
+  solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
+  solveTVar _ newTy [] = [newTy]
+  solveTVar varI newTy (ty:tys) = if eqTyHead newTy ty
+    then mergeTyHead newTy ty ++ tys
+    else ty : solveTVar varI newTy tys
+  in case (a , b) of
   -- lattice top and bottom
   ([] ,  _) -> pure ()
   (_  , []) -> pure ()
   -- vars
   ([THVar p] , m) -> use bis >>= \v->MV.modify v
-    (over mSub (foldr (doSub p) m)) p
+    (over mSub (foldr (solveTVar p) m)) p
   (p , [THVar m]) -> use bis >>= \v->MV.modify v
-    (over pSub (foldr (doSub m) p)) m
+    (over pSub (foldr (solveTVar m) p)) m
   -- lattice subconstraints
   ((p1:p2:p3) , m) -> biSub [p1] m *> biSub (p2:p3) m
   (p , (m1:m2:m3)) -> biSub p [m1] *> biSub p (m2:m3)
@@ -67,18 +80,14 @@ biSub a b = case (a , b) of
 atomicBiSub :: TyHead -> TyHead -> TCEnv s ()
 atomicBiSub p m = case (p , m) of
   -- Lambda-bound in - position can be guessed
-  (THArg i , m) -> use domain >>= \v->MV.modify v (over mSub (m:)) i
-  (p , THArg i) -> use domain >>= \v->MV.modify v (over pSub (p:)) i
+  (THArg i , m) -> use domain >>= \v->MV.modify v (over mSub (doSub m)) i
+  (p , THArg i) -> pure () -- use domain >>= \v->MV.modify v (over pSub (doSub p)) i
+---- lambda-bound in + position is ignored except for info on rank-n polymorphism info
 
----- lambda-bound in + position provides structural information
----- ie. may force higher-rank polymorphism
----- + position lambda-bounds don't affect the argument's type
----- but multiple output uses must be taken into account (?)
 --(THArg i , THArrow args ret) -> let
---    fa = [THImplicit i]
---    ty = THArrow (replicate (length args) fa) fa
+--    fa = [THImplicit i] ; ty = THArrow (replicate (length args) fa) fa
 --  in use domain >>= \v-> MV.modify v (ty:) i
-
+  (THSet u , x) -> pure ()
   (THPrim p1 , THPrim p2) -> when (p1 /= p2) (failBiSub p1 p2)
   (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
 
@@ -92,14 +101,13 @@ atomicBiSub p m = case (p , m) of
       Just ttp -> biSub ttp ttm --covariant
     in go `mapM_` (M.toList fields2)
 
-  -- TODO
-  -- subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- }
-  -- mirror case for t+ <= mu a.t-
+  -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
   (THRec i, m)  -> pure () -- error $ "rec: " ++ show i
 --(p , THRec i) -> _
+
   (p , THExt i)-> biSub [p]     =<< tyExpr . (`readExtern` i)<$>use externs
   (THExt i , m)-> (`biSub` [m]) =<< tyExpr . (`readExtern` i)<$>use externs
-  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
+--  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
   (a , b) -> failBiSub a b
 
 failBiSub a b = error $ "failed bisub: " ++ show a ++ "<-->" ++ show b --pure False
@@ -121,15 +129,68 @@ reduceType t = t
 --  mergeTy (THRec i t) tList = t -- TODO unroll
 --  in foldr mergeTy t1 tys
 
--- biunification solves constraints `t+ <= t-` , but checking has the form `t- <= t+`
--- we have t1<=t2 and t1<=t3 ==> t1 <= t2ut3
+-- biunification solves constraints `t+ <= t-` ,
+-- checking has the form `t- <= t+`
+-- (the inferred type must subsume the annotation)
+-- we have `t1<=t2 and t1<=t3 ==> t1 <= t2ut3`
 -- additionally, subsumption <===> equivalence of typing schemes
--- ie. to decide [d1]t1 <= [d2]t2, we check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
-check :: [TyHead] -> Set -> TCEnv s a -> Bool
-check gotRaw expRaw delta = let
-  gotTy = reduceType gotRaw ; expTy = reduceType expRaw
-  _check ty = True
-  in  all _check gotTy
+-- ie. to decide [d1]t1 <= [d2]t2,
+--   * check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
+check :: Externs -> V.Vector [TyHead]
+     -> [TyHead] -> [TyHead] -> Bool
+check e ars inferred gotRaw
+  = check' e ars inferred (reduceType gotRaw)
+
+check' :: Externs -> V.Vector [TyHead]
+       -> [TyHead] -> [TyHead] -> Bool
+check' es ars inferred gotTy = let
+  check'' = check' es ars
+  readExt es x = case readExtern es x of
+    c@Core{} -> error $ "type expected, got: " ++ show c
+    Ty t -> t
+  checkAtomic :: TyHead -> TyHead -> Bool
+  checkAtomic inferred gotTy = case (inferred , gotTy) of
+    (THSet 0 , x) -> True -- TODO
+    (THArg x , gTy)       -> True -- check'' (ars V.! x) [gTy]
+    (THVar x , gTy)       -> True -- TODO
+    (THPrim x , THPrim y) -> x == y
+    (THArrow a1 r1 , THArrow a2 r2) ->
+      check'' r1 r2
+      && length a1 == length a2
+      && all id (zipWith check'' a2 a1)
+    (THSum x , THSum y)   -> _
+    (THProd x , THProd y) -> _
+    (THExt x , THExt y) -> x == y
+    (THExt x , t) -> check'' (readExt es x) [t]
+    (t , THExt x) -> check'' [t] (readExt es x)
+
+    (x , THArg y) -> True -- ?!
+    (a,b) -> error $ "checking: not ready for:" ++ show a ++ " <? " ++ show b
+  in case inferred of
+    []   -> False
+    tys  -> all (\t -> any (checkAtomic t) gotTy) tys
+
+mergeTypes :: [TyHead] -> [TyHead] -> [TyHead]
+mergeTypes l1 l2 = foldr doSub l2 l1
+
+-- add head constructors, transitions and flow edges
+doSub :: TyHead -> [TyHead] -> [TyHead]
+doSub newTy [] = [newTy]
+doSub newTy (ty:tys) = if eqTyHead newTy ty
+  then mergeTyHead newTy ty ++ tys
+  else (ty : doSub newTy tys)
+
+mergeTyHead :: TyHead -> TyHead -> [TyHead]
+mergeTyHead t1 t2 = let join = [t1 , t2] in case join of
+  [THPrim a , THPrim b]   -> if a == b then [t1] else join
+  [THExt  a , THExt  b]   -> if a == b then [t1] else join
+  [THVar a , THVar b]     -> if a == b then [t1] else join
+  [THAlias a , THAlias b] -> if a == b then [t1] else join
+  [THSum a , THSum b]     -> _
+  [THProd a , THProd b]   -> _
+--[THArrow a , THArrow b] -> _
+--_ -> _
+  _ -> join
 
 mkTcFailMsg gotTerm gotTy expTy =
   ("subsumption failure:"
@@ -147,27 +208,3 @@ kindOf = \case
   THArrow{} -> KArrow
   THRec{}   -> KRec
   _ -> KAny
-
-mergeTypes :: [TyHead] -> [TyHead] -> [TyHead]
-mergeTypes l1 l2 = foldr (\a b -> doSub (-1) a b) l2 l1
-
--- merge a tyhead into a bisub ; remove the typevar if resolved
--- mu binders ?
--- doSub i = (:)
-doSub :: Int -> TyHead -> [TyHead] -> [TyHead]
-doSub i (THVar v) [] = if i == v then [] else [THVar v]
-doSub i newTy [] = [newTy]
-doSub i newTy (ty:tys) = if eqTyHead newTy ty
-  then mergeTyHead i newTy ty ++ tys
-  else (ty : doSub i newTy tys)
-
-mergeTyHead :: Int -> TyHead -> TyHead -> [TyHead]
-mergeTyHead int t1 t2 = let join = [t1 , t2] in case join of
-  [THPrim a , THPrim b]   -> if a == b then [t1] else join
-  [THVar a , THVar b]     -> if a == b then [t1] else join
-  [THAlias a , THAlias b] -> if a == b then [t1] else join
-  [THSum a , THSum b]   -> _
-  [THProd a , THProd b] -> _
---[THArrow a , THArrow b] -> _
---_ -> _
-  _ -> join

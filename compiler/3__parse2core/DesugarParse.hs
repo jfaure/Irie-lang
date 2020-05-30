@@ -12,10 +12,15 @@ import Data.Functor
 import Debug.Trace
 
 -- output is a list of argument inames and the expression
-matches2TT :: [P.FnMatch] -> ([IName] , P.TT) =
-  let convPat (P.PArg i) = i
+matches2TT :: [P.FnMatch] -> ([IName] , [[P.TT]] , P.TT) =
+  let convPat = \case
+        P.PArg i -> (i , [])
+        P.PTyped (P.PArg i) ty -> _ --(i , [ty])
+        x -> error $ "unknown pattern: " ++ show x
   in \case
-    [P.FnMatch f e] -> ( , e) $ convPat <$> f
+    [P.FnMatch impls f e] -> let
+      (args , argTys) = unzip $ convPat <$> f
+      in (args , argTys , e)
     x -> error $ concatMap show x
 
 --  P.Lit l   -> pure . Right $ case l of
