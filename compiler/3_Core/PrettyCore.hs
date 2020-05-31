@@ -47,7 +47,7 @@ prettyTerm = \case
       in "{ "
         ++ (intercalate " ; " (sr <$> M.toList ts))
         ++ " }"
-    Proj    t f -> show t ++ " . " ++ show f
+    Proj    t f -> show t ++ "." ++ show f
     Label   l t -> show l ++ "@" ++ show t
     Match   ts d -> "\\case" ++ "| "
       ++ intercalate " | " (show <$> M.toList ts) ++ " |_ " ++ show d

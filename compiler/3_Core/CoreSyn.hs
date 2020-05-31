@@ -43,6 +43,7 @@ d_ x   = let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
 did_ x = d_ x x
+dv_ f = traceShowM =<< (V.freeze f)
 
 type HName     = T.Text -- human readable name
 type IName     = Int    -- Int name: index into bind|type vectors

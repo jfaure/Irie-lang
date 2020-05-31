@@ -1,9 +1,13 @@
 ---- Basic functions
--- g y = y + 2
--- f x = x + g x
--- l x = if x.p then x.q else x.q
--- r g = r (g 1) -- recursive principal type
+--g y = y + 2
+--f x = x + g x
+--l x = if x.p then x.q else x.q -- (puBool n {q:A} n {q:B}) -> (AnB) == {p:Bool;q:A} -> A
+--choose t a x = if t then a else x
+--r g = r (g 1) -- recursive principal type
+--x = {f=x}
+-- combY f = let f2 x = f (x x) in f2 f2
 
+id x = x
 --fib x : Int -> Int = if x < 1 then x else fib (x-1) + fib (x-2)
 --fib x = if x < 1 then x else fib (x-1) + fib (x-2)
 
@@ -11,9 +15,9 @@
 --l = 3 2 7 -- : Array 3 Int
 --z = l ! 1
 
---Array : [Int] -> Set -> Set
---Array shape ty =
--- | PrimArray [ty]
+Array : [Int] -> Set -> Set
+Array shape ty =
+ | PrimArray [ty]
 -- | Generate (Int->ty)
 -- | Reversed (Array ty)
 -- | Tabulate ((Array Int [len shape]) -> ty)
@@ -21,15 +25,13 @@
 --shapeOf :: { n ; X } : Array n X -> [Int]
 --shapeOf@{n} = n
 
--- a = PrimArray @ (3 2 7)
--- x = primLen (3 2 2)
-
-plus a b = a + b
 primFoldrN f x v n = if n < 1 then f (x!0) v else f (x!n) (primFoldrN f x v (n-1))
-xd = primFoldrN plus (2 3 3) 0 3
+primFoldr f x v = primFoldrN f x v (primLen x)
+plus a b = a + b
+--t = primFoldrN plus (2 3 3) 0 3
 
 --mean : [Int] -> Int
---mean a = insert plus a / (len a)
+mean a = primFoldr plus a 0 + (primLen a)
 
 --id x   = x
 --idot n = Generate @ id n

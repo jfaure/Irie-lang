@@ -30,7 +30,6 @@ import Control.Lens
 
 import Debug.Trace
 
-dv_ f = traceShowM =<< (V.freeze f)
 -- test1 x = x.foo.bar{foo=3}
 
 judgeModule :: P.Module -> Externs -> V.Vector Bind
@@ -79,8 +78,8 @@ withBiSubs n action = do
   (\i->MV.write bisubs i (genFn i)) `mapM` [biSubLen .. biSubLen+n-1]
   bis .= bisubs
   ret <- action biSubLen
-  let argSubs = MV.slice biSubLen n bisubs
-  pure (ret , argSubs)
+  let vars = MV.slice biSubLen n bisubs
+  pure (ret , vars)
 
 judgeBind :: IName -> TCEnv s Bind
 judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
@@ -95,7 +94,8 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
         nArgs = length args
 
     (expr , argSubs) <- withDomain bindINm nArgs (infer tt)
-    traceShowM =<< V.freeze argSubs
+--  traceShowM =<< V.freeze argSubs
+--  traceShowM =<< (V.freeze =<< use bis)
     argTys <- fmap _mSub <$> V.freeze argSubs
     -- Generalization ?!
     (newBind , bindTy) <- case expr of
@@ -253,6 +253,7 @@ infer = let
         ifE = MultiIf (zip (e2t<$>condExprs) (e2t<$>alts)) (e2t elseE') 
 
     (`biSub_` [boolTy]) `mapM` condTys -- check the condTys all subtype bool
+--  dv_ =<< use bis
     pure $ Core ifE retTy
 
   P.TySum alts -> let

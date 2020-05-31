@@ -55,7 +55,7 @@ import Debug.Trace
 -- a  <= c  solved by [m- b = a n [b/a-]c  /a-] -- (or equivalently,  [a u b /b+])
 -- SubConstraints:
 -- (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
-biSub_ a b = trace ("bisub: " ++ show a ++ " <==> " ++ show b) biSub a b
+biSub_ a b = trace ("bisub: " ++ show a ++ " <==> " ++ show b) biSub a b -- *> (dv_ =<< use bis)
 biSub :: TyPlus -> TyMinus -> TCEnv s ()
 biSub a b = let
   solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
@@ -80,7 +80,9 @@ biSub a b = let
 atomicBiSub :: TyHead -> TyHead -> TCEnv s ()
 atomicBiSub p m = case (p , m) of
   -- Lambda-bound in - position can be guessed
-  (THArg i , m) -> use domain >>= \v->MV.modify v (over mSub (doSub m)) i
+  (THArg i , m) -> let
+    replaceLambda t = \case { [THArg i2] | i2==i -> [t] ; x -> doSub t x }
+    in use domain >>= \v->MV.modify v (over mSub (replaceLambda m)) i
   (p , THArg i) -> pure () -- use domain >>= \v->MV.modify v (over pSub (doSub p)) i
 ---- lambda-bound in + position is ignored except for info on rank-n polymorphism info
 
@@ -186,8 +188,8 @@ mergeTyHead t1 t2 = let join = [t1 , t2] in case join of
   [THExt  a , THExt  b]   -> if a == b then [t1] else join
   [THVar a , THVar b]     -> if a == b then [t1] else join
   [THAlias a , THAlias b] -> if a == b then [t1] else join
-  [THSum a , THSum b]     -> _
-  [THProd a , THProd b]   -> _
+  [THSum a , THSum b]     -> _ --[THSum (M.unionWith mergeTypes a b)]
+  [THProd a , THProd b]   -> [THProd (M.unionWith mergeTypes a b)]
 --[THArrow a , THArrow b] -> _
 --_ -> _
   _ -> join

@@ -1,3 +1,4 @@
 :set args demo.arya -p p
 :set -fobject-code
 :def go (\_->pure ":r \n main\n")
+:def stg (\_->pure ":r \n main -j\n")

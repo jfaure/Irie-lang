@@ -61,9 +61,16 @@ insertOrRetrieve h mp = let sz = M.size mp in case il h sz mp of
   (Just x, mp) -> (x  , mp)
   (_,mp)       -> (sz , mp)
 
+insertOrRetrieveArg h sz mp  = case il h sz mp of 
+  (Just x, mp) -> (x  , mp)
+  (_,mp)       -> (-1 , mp)
+
 pd = moduleWIP . parseDetails
 addArgName , addBindName , addImportName:: T.Text -> Parser IName
-addArgName    h = pd . hNameArgs     %%= insertOrRetrieve h
+addArgName    h = do
+  n <- use nArgs
+  s <- pd . hNameArgs     %%= insertOrRetrieveArg h n
+  if s < 0 then (nArgs %= (+1)) *> pure n else pure s
 addBindName   h = pd . hNameBinds    %%= insertOrRetrieve h
 addImportName h = pd . hNamesNoScope %%= insertOrRetrieve h
 
