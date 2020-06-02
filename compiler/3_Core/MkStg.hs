@@ -6,7 +6,6 @@ import Externs
 import CoreSyn
 import PrettyCore
 import StgSyn
-import qualified CoreUtils as CU
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import Control.Monad.ST

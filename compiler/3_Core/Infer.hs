@@ -7,7 +7,6 @@ import qualified ParseSyntax as P
 import CoreSyn as C
 import TCState
 import PrettyCore
-import qualified CoreUtils as CU
 import DesugarParse
 import Externs
 

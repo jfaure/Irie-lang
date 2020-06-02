@@ -1,14 +1,16 @@
 ---- Basic functions
---g y = y + 2
+g y = y + 2
 --f x = x + g x
 --choose x = if x.p then x.q else x.q -- (puBool n {q:A} n {q:B}) -> (AnB) == {p:Bool;q:A} -> A
 --chooseF t a b = if t then a else b
 --r g = r (g 1) -- recursive principal type
 --x = {f=x}
--- combY f = let f2 x = f (x x) in f2 f2
+combY f = let g x = f (x x) in g g
 
---f x = let y = x + 3 in y + x
-l = \ x -> x + 2
+--import imports/lambda
+--import imports/basic
+
+--f x = let y = x + 3 in \ z-> y + x + z
 
 --f r = r.q
 --x = f {q=3 ; z="hello"}

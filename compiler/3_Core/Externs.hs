@@ -2,19 +2,18 @@
 -- resolve things that were out of scope when parsed
 -- * things in scope, but defined later
 -- * primitives: (note. prim bindings are CoreSyn)
--- * externs (in scope via import declarations)
--- * additionally, handle Core primitives (types etc..)
+-- * imported modules
+-- * extern functions (esp. C)
 
 module Externs where
 import Prim
 import qualified ParseSyntax as P
 import CoreSyn
---import TCState
 
 import Control.Applicative
 import qualified Data.Map as M
 import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as V
+import qualified Data.Vector.Mutable as MV
 import Data.Function
 import Data.Functor
 import Data.Foldable
@@ -22,6 +21,19 @@ import Data.List
 import Control.Lens
 import Debug.Trace
 
+-----------------
+-- Import Tree --
+-----------------
+-- Imports are typechecked binds + parsed nameMap
+data Import = Import {
+    importNames :: P.NameMap
+  , importBinds :: CoreBinds
+}
+type ImportTree = M.Map HName Import
+
+-------------
+-- Externs --
+-------------
 -- 1. vector of VNames for parsed NoScope vars
 -- 2. extra binds available in module (via VarExt names)
 data Externs = Externs {
@@ -29,33 +41,45 @@ data Externs = Externs {
  , extBinds :: V.Vector Expr  -- extern table indexed by extNames
 }
 
+-- exported functions to resolve ParseSyn.VExterns
 readParseExtern , readExtern :: Externs -> IName -> Expr
 readParseExtern = \(Externs nms binds) i -> binds V.! (nms V.! i)
 readExtern = \(Externs nms binds) i -> binds V.! i
 
-resolveImports :: P.Module -> Externs
-resolveImports pm = let
-  noScopeNames = pm ^. P.parseDetails . P.hNamesNoScope
-  resolveImport :: HName -> IName
-   = \nm -> asum
-    [ getPrimIdx nm
---  , M.lookup nm noScopeNames -- need to import non-primitive  noScopeNames
-    ] & \case
+-- We need to resolve INames accross module boundaries.
+-- Externs are a vector of CoreExprs, generated as: builtins ++ concat imports;
+-- which is indexed by the permuation described in the extNames vector.
+resolveImports :: [Import] -> P.Module -> Externs
+resolveImports imports pm = let
+  importedExprs = bind2Expr <$> V.concat (importBinds <$> imports)
+  -- offset into the final extern table for each import
+  offsets       = scanl (+) (V.length primBinds) (V.length . importBinds <$> imports)
+
+  getImportIdx nm = let -- exploiting laziness to add the right offset:
+    searchAll = M.lookup nm . importNames <$> imports
+    in asum $ zipWith (\off x -> (off+) <$> x) offsets searchAll
+
+  resolveName :: HName -> IName = \nm ->
+    asum [ getPrimIdx nm , getImportIdx nm ] & \case
       Just i  -> i
       Nothing -> error $ "not in scope: " ++ show nm
 
-  -- the noScopeNames map will have mixed up the iname ordering
-  -- so we fill the vNames vector in that 'random' order
-  vNames = let
-    doIndx v (nm , indx) = V.write v indx $ resolveImport nm
+  -- the noScopeNames map has a messed up order
+  -- so we fill the names vector index by index
+  names noScopeNames = let
+    doIndx v (nm , indx) = MV.write v indx $ resolveName nm
     in V.create $ do
-      v <- V.unsafeNew (M.size noScopeNames)
+      v <- MV.unsafeNew (M.size noScopeNames)
       doIndx v `mapM` M.toList noScopeNames
       pure v
-  in Externs { extNames = vNames , extBinds = primBinds }
+  in Externs
+    { extNames = names (pm ^. P.parseDetails . P.hNamesNoScope)
+    , extBinds = primBinds V.++ importedExprs }
 
--- Primitives
--- We vastly prefer handling INames over inlining primitives
+---------------------------
+-- Primitives / Builtins --
+---------------------------
+-- We prefer INames over inlining primitives
 -- * construct a vector of primitives
 -- * supply a (Map HName IName) to resolve names to indexes
 primBinds = let

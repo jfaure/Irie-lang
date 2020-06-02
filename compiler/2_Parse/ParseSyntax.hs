@@ -21,8 +21,6 @@ type Op = IName
 data ImportDecl
  = Extern   { externName :: HName , externType :: PrimType }
  | ExternVA { externName :: HName , externType :: PrimType }
- | Import  HName -- a record
- | NoScope HName -- temporarily out of scope
 
 data Fixity = Fixity Assoc (Maybe Int) [Op] -- info for infix operators
 data Assoc = AssocNone | AssocLeft | AssocRight
@@ -30,9 +28,9 @@ data Assoc = AssocNone | AssocLeft | AssocRight
 data Module = Module {
    _moduleName :: HName
 
- , _imports    :: [ImportDecl]
+ , _imports    :: [HName]
+ , _externFns  :: [ImportDecl]
  , _bindings   :: [TopBind] -- top binds
--- , _locals     :: [TopBind] -- locals (not incl. args)
 
  , _parseDetails :: ParseDetails
 }
@@ -40,6 +38,7 @@ data Module = Module {
 type NameMap = Data.Map.Map HName IName
 data ParseDetails = ParseDetails {
    _hNameBinds    :: (Int , NameMap) -- count anonymous args (>= nameMap size)
+ , _hNameLocals   :: [NameMap] -- let-bound
  , _hNameArgs     :: [NameMap]
  , _nArgs         :: Int
  , _hNamesNoScope :: NameMap

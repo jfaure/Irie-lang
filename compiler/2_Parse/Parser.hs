@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings , TemplateHaskell #-}
-{-# LANGUAGE LambdaCase, ScopedTypeVariables , MultiWayIf , StandaloneDeriving , RecursiveDo #-}
+{-# LANGUAGE OverloadedStrings , TemplateHaskell, RecursiveDo #-}
 module Parser where
 
 -- Parsing is responsible for:
@@ -10,6 +9,8 @@ module Parser where
 -- * Lifting all let-bindings (incl resolving free-vars)
 -- * figuring out (relative) universes from context
 -- * identifying functions that return terms
+--
+-- Note. HNames are converted to INames on sight.
 
 import Prim
 import ParseSyntax as P
@@ -28,7 +29,7 @@ import Control.Monad.State.Strict as ST
 import Control.Monad.Reader
 import Data.Functor
 import Data.Foldable
-import Data.Char (isAlphaNum , isDigit)
+import Data.Char (isAlphaNum , isDigit , isSpace)
 import qualified Data.Vector as V
 --import qualified Data.HashMap.Strict as HM
 import qualified Data.Map as M
@@ -42,21 +43,22 @@ dbg i = id
 --dbg i = DBG.dbg i
 
 data ParseState = ParseState {
-   _indent   :: Pos  -- start of line indentation (need to save it for subparsers)
- , _nBinds   :: Int
--- , _nImports :: Int
- , _moduleWIP  :: Module
+   _indent    :: Pos  -- start of line indentation (need to save it for subparsers)
+ , _nBinds    :: Int
+ , _moduleWIP :: Module
 }
 makeLenses ''ParseState
 
 type Parser = ParsecT Void T.Text (ST.State ParseState)
 
----------------------------
--- Convenience functions --
----------------------------
-newIndent new = indent .= new
-addBind b     = moduleWIP . bindings %= (b:)
-addImport i   = moduleWIP . imports  %= (i:)
+---------------------------------------
+-- INames and the vectors they index --
+---------------------------------------
+-- Note: adding a bind must be done immediately after adding an IName
+-- Use recursiveDo to make sure nothing happens in between
+addBind b     = moduleWIP . bindings  %= (b:)
+addImport i   = moduleWIP . imports   %= (i:)
+addExtern e   = moduleWIP . externFns %= (e:)
 
 il = M.insertLookupWithKey (\k new old -> old)
 
@@ -65,13 +67,14 @@ insertOrRetrieve h mp = let sz = M.size mp in case il h sz mp of
   (Just x, mp) -> (x  , mp)
   (_,mp)       -> (sz , mp)
 
--- use custom size variable - since some binds are anonymous
+-- use custom size variable, since anonymous binds aren't in the map
 insertOrRetrieveSZ h (sz,mp) = case il h sz mp of 
   (Just x, mp) -> (x  , (sz,mp))
   (_,mp)       -> (sz , (sz+1,mp))
 
 -- the list of args corresponds to a nest of function defs
 -- if we're adding an argument, we do so to the first (innermost level)
+insertOrRetrieveArg :: T.Text -> Int -> [M.Map T.Text Int] -> (Int, [M.Map T.Text Int])
 insertOrRetrieveArg h sz argMaps = case argMaps of
   [] -> error "panic: empty function nesting" --impossible
   mp:xs -> case asum ((M.lookup h) <$> xs) of
@@ -81,30 +84,41 @@ insertOrRetrieveArg h sz argMaps = case argMaps of
       (_, mp')    -> (-1 , mp':xs)
 
 pd = moduleWIP . parseDetails
-addArgName , addBindName , addImportName:: T.Text -> Parser IName
+addArgName , addBindName , addUnknownName:: T.Text -> Parser IName
 addArgName    h = do
   n <- use (moduleWIP . parseDetails . nArgs)
   s <- pd . hNameArgs     %%= insertOrRetrieveArg h n
-  if s < 0 then (moduleWIP . parseDetails . nArgs %= (1+)) *> pure n else pure s
-addBindName   h = pd . hNameBinds    %%= insertOrRetrieveSZ h
+  if s < 0 then (moduleWIP . parseDetails . nArgs <<%= (1+)) else pure s
+
+-- search (local let bindings) first, then the main bindMap
+addBindName   h = do
+  n <- use (moduleWIP . parseDetails . hNameBinds . _1)
+  use (moduleWIP . parseDetails . hNameLocals) >>= \case
+    [] -> pd . hNameBinds  %%= insertOrRetrieveSZ h
+    _  -> pd . hNameLocals %%= insertOrRetrieveArg h n
+
 addAnonBindName = (moduleWIP . parseDetails . hNameBinds . _1 <<%= (+1))
-addImportName h = pd . hNamesNoScope %%= insertOrRetrieve h
+addUnknownName h = pd . hNamesNoScope %%= insertOrRetrieve h
 
 newFLabel h = moduleWIP . parseDetails . fields %%= insertOrRetrieve h
 newSLabel h = moduleWIP . parseDetails . labels %%= insertOrRetrieve h
 
--- try first the argmap, then the bindmap, else assume the name is imported
+-- try first the argmap, then the bindmap, else the name is either defined later or external
 lookupBindName h = do
   pd <- use $ moduleWIP . parseDetails
   Var <$> case asum $ map (M.lookup h) (pd ^. hNameArgs) of
     Just arg  -> pure $ VLocal arg
-    Nothing   -> case M.lookup h (pd ^. hNameBinds . _2) of
-      Just bind -> pure $ VBind bind
-      Nothing   -> VExtern <$> addImportName h
+    Nothing   -> case asum $ map (M.lookup h) (pd ^. hNameLocals) of
+      Just letBind -> pure $ VBind letBind
+      Nothing      -> case M.lookup h (pd ^. hNameBinds . _2) of
+        Just bind -> pure $ VBind bind
+        Nothing   -> VExtern <$> addUnknownName h
 
--- each new function definition adds a layer of lambda-bound arguments
+-- function defs add a layer of lambda-bound arguments , same for let
 incArgNest = moduleWIP . parseDetails . hNameArgs %= (M.empty :) -- increase arg nesting
-clearLocals = moduleWIP . parseDetails . hNameArgs %= drop 1
+decArgNest = moduleWIP . parseDetails . hNameArgs %= drop 1
+incLetNest = moduleWIP . parseDetails . hNameLocals %= (M.empty :) -- increase arg nesting
+decLetNest = moduleWIP . parseDetails . hNameLocals %= drop 1
 
 lookupImplicit :: T.Text -> Parser IName
 lookupImplicit h = do
@@ -126,13 +140,11 @@ lookupImplicit h = do
 --  pure $ f (Span (sourcePosToPos start) (sourcePosToPos end))
 
 -- Space consumers: scn eats newlines, sc does not.
+sc :: Parser () = let isSC x = isSpace x && x /= '\n'
+  in L.space (void $ takeWhile1P Nothing isSC) lineComment blockComment
+scn :: Parser () = L.space space1 lineComment blockComment
 lineComment = L.skipLineComment "--"
 blockComment = L.skipBlockComment "{-" "-}"
-scn :: Parser () -- space and newlines
-  = L.space space1 lineComment blockComment
-sc :: Parser () -- space
-  = L.space (void $ takeWhile1P Nothing f) lineComment blockComment
-   where f x = x == ' ' || x == '\t'
 
 lexeme, lexemen :: Parser a -> Parser a -- parser then whitespace
 lexeme  = L.lexeme sc
@@ -164,6 +176,13 @@ iden :: Parser HName = try $ lexeme (p >>= check) where
   check x = if x `elem` reservedNames
     then fail $ "keyword "++show x++" cannot be an identifier"
     else pure x
+tokenIden :: Parser HName = try $ lexeme (p >>= check) where
+  p :: Parser T.Text
+  p = lookAhead letterChar *> takeWhileP Nothing (not . isSpace)
+  check x = if x `elem` reservedNames
+    then fail $ "keyword "++show x++" cannot be an identifier"
+    else pure x
+
 _lIden, _uIden :: Parser HName
 _lIden = lookAhead lowerChar *> iden
 _uIden = lookAhead upperChar *> iden
@@ -209,7 +228,7 @@ endLine = lexeme (single '\n')
 -- indentation shortcuts
 noIndent = L.nonIndented scn . lexeme
 iB = L.indentBlock scn
-svIndent f = L.indentLevel >>= newIndent
+svIndent = L.indentLevel >>= (indent .=)
 
 -- ref = reference indent level
 -- lvl = lvl of first indented item (often == pos)
@@ -236,10 +255,12 @@ parseModule :: FilePath -> T.Text
   let startModule = Module {
           _moduleName = T.pack nm
         , _imports = []
+        , _externFns = []
         , _bindings= []
         , _parseDetails = ParseDetails {
-             _hNameBinds    = (0 , M.empty) -- init at -1 so (ret (1+) lines up with indexes)
+             _hNameBinds    = (0 , M.empty)
            , _hNameArgs     = [] -- stack of lambda-bounds
+           , _hNameLocals   = []
            , _nArgs         = 0
            , _hNamesNoScope = M.empty
            , _fields        = M.empty
@@ -256,9 +277,9 @@ parseModule :: FilePath -> T.Text
 
 -- group declarations as they are parsed
 doParse = void $ decl `sepEndBy` (endLine *> scn) :: Parser ()
-decl = (newIndent =<< L.indentLevel) *> choice
-   [ extern
-   , void $ reserved "import" *> _uIden
+decl = svIndent *> choice
+   [ reserved "import" *> tokenIden >>= addImport
+   , extern
    , funBind
 -- , infixDecl
    ]
@@ -266,7 +287,7 @@ decl = (newIndent =<< L.indentLevel) *> choice
 extern =
  let _typed = reservedOp ":" *> primType
      doName = iden >>= \i -> addBindName i *> pure i
- in addImport =<< choice
+ in addExtern =<< choice
  [ Extern   <$ reserved "extern"      <*> doName <*> _typed
  , ExternVA <$ reserved "externVarArg"<*> doName <*> _typed
  ]
@@ -311,7 +332,7 @@ _funBind nameParser = mdo
     ]
    Nothing -> scn *> do
      (:) <$> fnMatch <*> many (lexemen (string m) *> fnMatch)
-  clearLocals
+  decArgNest
 
 -- TODO this duplicates some code in _funBind
 lambda = reservedOp "\\"
@@ -320,7 +341,7 @@ lambda = reservedOp "\\"
     incArgNest
     addBind $ FunBind "" [] eqns Nothing
     eqns <- (:[]) <$> ((fnArgs <* lexemen (reservedOp "->")) <*> tt) -- fnMatch
-    clearLocals
+    decArgNest
 
 fnMatch = (fnArgs <* lexemen (reservedOp "=")) <*> tt
 fnArgs = let
@@ -394,20 +415,12 @@ tt :: Parser TT = dbg "tt" $ choice
 --    iB (pure $ L.IndentSome (Just l) (pure . MultiIf) subIf)
 
   letIn = reserved "let" *> do
+    incLetNest
     ref <- use indent <* scn
     lvl <- L.indentLevel
---  local (const lvl) $ dbg "letBinds" $ do -- save this indent
---    binds <- BDecls <$> indentedItems ref lvl scn decl (reserved "in")
     indentedItems ref lvl scn funBind (reserved "in")
     reserved "in"
-    tt
-
---caseExpr = do
---  reserved "case"
---  scrut <- tt <* reserved "of"
---  ref <- use indent <* scn
---  l <- L.indentLevel
---  newIndent l *> (Case scrut <$> indentedItems ref l scn alt eof) <* newIndent ref
+    tt <* decLetNest
 
 pattern = singlePattern
 singlePattern = dbg "pattern" $ choice

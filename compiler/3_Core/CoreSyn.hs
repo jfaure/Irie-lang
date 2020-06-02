@@ -50,6 +50,7 @@ type IName     = Int    -- Int name: index into bind|type vectors
 type BiSubName = Int    -- index into bisubs
 type IField    = Int    -- product-type fields index
 type ILabel    = Int    -- sum-type labels     index
+type CoreBinds = V.Vector Bind
 
 data VName
  = VBind IName -- bind   map
@@ -117,6 +118,10 @@ data Bind -- indexes in the bindmap
 
  | BindTerm  [IName] Term Type
  | BindType  [IName] Type
+
+bind2Expr = \case
+  BindTerm _ t ty -> Core t ty
+  BindType _ ty -> Ty ty
 
 makeLenses ''BiSub
 

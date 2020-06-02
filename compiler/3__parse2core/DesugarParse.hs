@@ -2,7 +2,6 @@ module DesugarParse where
 
 import Prim
 import CoreSyn
-import qualified CoreUtils as CU
 import qualified ParseSyntax as P
 import qualified Data.Vector as V
 import qualified Data.Map as M

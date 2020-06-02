@@ -1,7 +1,0 @@
-module Bits where
-
-(.&.) : Int -> Int -> Int = #!and
-(.|.) : Int -> Int -> Int = #!or
-xor   : Int -> Int -> Int = #!xor
-shiftL : Int -> Int -> Int = #!shl
-shiftR : Int -> Int -> Int = #!lshr -- #!ashr (logical vs arithmetic (adds fill) shift right)
