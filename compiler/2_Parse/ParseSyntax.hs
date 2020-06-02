@@ -32,15 +32,16 @@ data Module = Module {
 
  , _imports    :: [ImportDecl]
  , _bindings   :: [TopBind] -- top binds
- , _locals     :: [TopBind] -- locals (not incl. args)
+-- , _locals     :: [TopBind] -- locals (not incl. args)
 
  , _parseDetails :: ParseDetails
 }
 
 type NameMap = Data.Map.Map HName IName
 data ParseDetails = ParseDetails {
-   _hNameBinds    :: NameMap
- , _hNameArgs     :: NameMap
+   _hNameBinds    :: (Int , NameMap) -- count anonymous args (>= nameMap size)
+ , _hNameArgs     :: [NameMap]
+ , _nArgs         :: Int
  , _hNamesNoScope :: NameMap
  , _fields        :: NameMap
  , _labels        :: NameMap
@@ -97,7 +98,7 @@ instance Show Module where
   show m = show (m^.moduleName) ++ " {\n"
     ++ "imports: " ++ showL "  " (m^.imports)  ++ "\n"
     ++ "binds:   " ++ showL "  " (m^.bindings) ++ "\n"
-    ++ "locals:  " ++ showL "  " (m^.locals)   ++ "\n"
+--  ++ "locals:  " ++ showL "  " (m^.locals)   ++ "\n"
     ++ show (m^.parseDetails) ++ "\n}"
 instance Show ParseDetails where
   show p = Prelude.concatMap ("\n  " ++) 

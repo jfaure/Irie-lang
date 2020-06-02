@@ -1,5 +1,3 @@
--- Type judgements: checking and inferring
--- For an introduction to these concepts,
 -- see "Algebraic subtyping" by Stephen Dolan <https://www.cl.cam.ac.uk/~sd601/thesis.pdf>
 
 module Infer where
@@ -35,11 +33,13 @@ import Debug.Trace
 judgeModule :: P.Module -> Externs -> V.Vector Bind
 judgeModule pm exts@(Externs extNames extBinds) = let
   nBinds = length $ pm ^. P.bindings
+  nArgs  = pm ^. P.parseDetails . P.nArgs
   go  = judgeBind `mapM_` [0 .. nBinds-1]
   in V.create $ do
     v    <- MV.new 0
     wips <- MV.replicate nBinds WIP
-    d    <- MV.new 0
+    d    <- MV.new nArgs
+    (\i->MV.write d i (BiSub [THArg i] [THArg i])) `mapM_` [0 .. nArgs-1]
     execStateT go $ TCEnvState
       { _pmodule  = pm
       , _externs  = exts
@@ -50,22 +50,16 @@ judgeModule pm exts@(Externs extNames extBinds) = let
     pure wips
 
 -- add argument holes to monotype env and guard potential recursion
-withDomain :: IName -> Int -> (TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
-withDomain bindINm n action = do
-  oldD <- use domain
-  d <- MV.grow oldD n
-  let l = MV.length d
-      idxs = [l-n .. l-1]
-      tvars = (\x->[THVar x]) <$> idxs
-  (\i->MV.write d i (BiSub [THArg i] [THArg i])) `mapM` idxs
---(\i->MV.write d i (BiSub [] [])) `mapM` idxs
+withDomain :: IName -> [Int] -> (TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
+withDomain bindINm idxs action = do
+  d <- use domain
   -- anticipate recursive type
-  use wip >>= (\v -> MV.write v bindINm
-    $ Checking [THArrow tvars [THRec bindINm]])
-  domain .= d
+  use wip >>= (\v -> MV.write v bindINm (Checking [THRec bindINm]))
   r <- action
-  argTys <- MV.slice (l-n) n <$> use domain
---  domain %= MV.slice 0 (l-n)
+  argTys <- case idxs of
+    [] -> MV.new 0
+    -- TODO replicate from idxs !
+    x  -> pure $ MV.slice (head idxs) (length idxs) d
   pure (r , argTys)
 
 -- do a bisub with typevars
@@ -93,9 +87,7 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
         args = implicits ++ mainArgs
         nArgs = length args
 
-    (expr , argSubs) <- withDomain bindINm nArgs (infer tt)
---  traceShowM =<< V.freeze argSubs
---  traceShowM =<< (V.freeze =<< use bis)
+    (expr , argSubs) <- withDomain bindINm args (infer tt)
     argTys <- fmap _mSub <$> V.freeze argSubs
     -- Generalization ?!
     (newBind , bindTy) <- case expr of
@@ -141,8 +133,6 @@ infer = let
     P.VLocal l  -> do -- monotype env (fn args)
       pure $ Core (Var $ VArg l) [THArg l]
     P.VExtern i -> do
---    extIdx <- (V.! i) <$> use noScopes
---    (V.! extIdx) <$> use externs
       (`readParseExtern` i) <$> use externs
     x -> error $ show x
 
