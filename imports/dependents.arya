@@ -1,0 +1,14 @@
+---- Classic Dependent vector
+--data Vec v : Nat -> Set where
+--  empty  : Vec v 0
+--  append : v -> Vec v {n} -> Vec v (n + 1)
+
+--type Tree (n : Nat) (a : Type) where
+--  Leaf : a -> Tree Zero a
+--  Fork : forall m . (Tree m a) -> (Tree m a) -> Tree (Succ m) a
+
+Tree (a : Set) : (n : Nat) -> Set  =
+ | Leaf : Tree 0 a
+ | Fork {m} (Tree m a) (Tree m a) : Tree (+ m 1) a
+
+-- | Fork :: { m } : (Tree m a) -> (Tree m a) -> Tree (+ m 1) a

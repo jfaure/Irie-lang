@@ -1,0 +1,6 @@
+i_t_e_ = \x a b => if x then a else b
+isBool a x = i a t a e x
+
+_%_ = +
+
+f = 3 % 2 % 1

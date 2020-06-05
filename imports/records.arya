@@ -1,0 +1,2 @@
+--f r = r.q
+--x = f {q = 3 ; z = "hello"}

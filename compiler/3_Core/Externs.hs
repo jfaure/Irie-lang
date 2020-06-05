@@ -12,6 +12,7 @@ import CoreSyn
 
 import Control.Applicative
 import qualified Data.Map as M
+import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import Data.Function
@@ -62,7 +63,7 @@ resolveImports imports pm = let
   resolveName :: HName -> IName = \nm ->
     asum [ getPrimIdx nm , getImportIdx nm ] & \case
       Just i  -> i
-      Nothing -> error $ "not in scope: " ++ show nm
+      Nothing -> error $ "not in scope: " ++ T.unpack nm
 
   -- the noScopeNames map has a messed up order
   -- so we fill the names vector index by index
@@ -117,7 +118,7 @@ primTys :: [(HName , PrimType)] =
   ]
 getPrimTy nm = case M.lookup nm primTyMap of
   Nothing -> error $ "panic: badly setup primtables; "
-    ++ show nm ++ " not in scope"
+    ++ T.unpack nm ++ " not in scope"
   Just i  -> i
 
 -- instrs are typed with indexes into the primty map
@@ -132,6 +133,7 @@ instrs :: [(HName , (PrimInstr , ([IName] , IName)))] = let
   , ("<" , (IntInstr ICmp , ([i, i] , b) ))
   , ("!" , (MemInstr ExtractVal , ([ia, i] , i) ))
   , ("->", (ArrowTy , ([set] , set)))
+--, ("→", (ArrowTy , ([set] , set)))
   , ("primLen" , (Len , ([ia] , i)))
 --  , ("plus" , (IntInstr Add  , ([i, i] , i) ))
   ]
@@ -144,7 +146,7 @@ typeOfLit = \case
   x -> error $ "littype: " ++ show x
 --  _ -> numCls
 
--- TODO
+-- TODO (more builtin instructions)
 {-
 primInstr :: Parser PrimInstr
 primInstr = (<?> "Builtin Instr") $

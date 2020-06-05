@@ -120,7 +120,7 @@ infer = let
    Core e ty -> _ --[THEta e ty]
    x -> error $ "type expected: " ++ show x
  in \case
-  P.WildCard -> _
+  P.WildCard -> pure $ Ty tyTOP
   -- vars : lookup in appropriate environment
   P.Var v -> case v of
     P.VBind b   ->    -- polytype env
@@ -160,14 +160,18 @@ infer = let
       (Ty s , depArg) -> case s of 
         [THIx t deps] -> Ty [THIx t (deps ++ [depArg])]
         t             -> Ty [THIx t [depArg]]
+      x -> error $ "panic: not ready for: " ++ show x
     in do
     f'    <- infer f
     args' <- infer `mapM` args
     case f' of
       -- special case: Array Literal
-      Core (Lit l) ty -> do
-        let getLit (Core (Lit l) _) = l
-            argLits = getLit <$> args'
+      Core (Lit l) ty | 3 == 3 -> do
+        let getLit (Core (Lit l) _) = Just l
+            getLit x = Nothing
+            argLits = case sequence $ getLit <$> args' of
+              Just ars -> ars
+              Nothing  -> error $ "not a function: " ++ show l
         pure $ Core (Lit . Array $ l : argLits) [THArray ty]
         -- TODO merge (join) all tys ?
 

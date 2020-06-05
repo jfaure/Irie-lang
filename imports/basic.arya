@@ -4,5 +4,5 @@ f x = x + g x
 choose x = if x.p then x.q else x.q -- (puBool n {q:A} n {q:B}) -> (AnB) == {p:Bool;q:A} -> A
 chooseF t a b = if t then a else b
 r g = r (g 1) -- recursive principal type
-x = {f=x}
+x = {f = x}
 --combY f = let g x = f (x x) in g g

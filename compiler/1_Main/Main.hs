@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedLists , OverloadedStrings #-}
+{-# LANGUAGE OverloadedLists , OverloadedStrings , UnicodeSyntax #-}
 import CmdLine
 import ParseSyntax
 import Parser

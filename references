@@ -2,8 +2,22 @@
 algebraic subtyping
 https://www.cl.cam.ac.uk/~sd601/thesis.pdf
 
+polymorphism , subtyping and type inference in mlsub
+https://dl.acm.org/doi/pdf/10.1145/3093333.3009882
+
+How to Keep your neighbors in order
+https://personal.cis.strath.ac.uk/conor.mcbride/Pivotal.pdf
+
+Turing-Completeness totally free
+https://strathprints.strath.ac.uk/60166/1/McBride_LNCS2015_Turing_completeness_totally_free.pdf
+
 ML^F Raising ML to the power of System F
 http://pauillac.inria.fr/~remy/mlf/icfp.pdf
+ML^F thesis
+http://gallium.inria.fr/~remy/mlf/mlf.pdf
+
+Parsing MixFix operators
+http://www.cse.chalmers.se/~nad/publications/danielsson-norell-mixfix.pdf
 
 Dependent types with subtyping and late-bound overloading
 https://www.irif.fr/~gc/papers/infcomp99.pdf
@@ -72,3 +86,6 @@ http://liamoc.net/images/deferring.pdf
 
 Zip Fusion with Hyperfunctions
 http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.36.4961&rep=rep1&type=pdf
+
+elaborating dependent (co)pattern matching
+https://dl.acm.org/doi/10.1145/3236770

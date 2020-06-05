@@ -1,25 +1,10 @@
----- Basic functions
-g y = y + 2
---f x = x + g x
---choose x = if x.p then x.q else x.q -- (puBool n {q:A} n {q:B}) -> (AnB) == {p:Bool;q:A} -> A
---chooseF t a b = if t then a else b
---r g = r (g 1) -- recursive principal type
---x = {f=x}
-combY f = let g x = f (x x) in g g
-
+--externVarArg printf : CharPtr -> Int
 --import imports/lambda
 --import imports/basic
-
---f x = let y = x + 3 in \ z-> y + x + z
-
---f r = r.q
---x = f {q=3 ; z="hello"}
-
---type Tree (n : Nat) (a : Type) where
---  Leaf : a -> Tree Zero a
---  Fork : forall m . (Tree m a) -> (Tree m a) -> Tree (Succ m) a
-
---f x = choose x 3 4
+--import imports/church
+--import imports/mixfix
+--import imports/records
+import imports/dependents
 
 --fib x : Int -> Int = if x < 1 then x else fib (x-1) + fib (x-2)
 --fib x = if x < 1 then x else fib (x-1) + fib (x-2)
@@ -53,7 +38,7 @@ combY f = let g x = f (x x) in g g
 -- Higher rank
 -- auto i = (i i) 3
 -- id x = x
---g = auto id
+-- g = auto id
 
 ---- Records
 -- x = { b=3 ; h=4 }
@@ -64,12 +49,5 @@ combY f = let g x = f (x x) in g g
 -- num = int @ 3 -- : | int Int
 -- f x = case x | int @ n => n
 
----- Classic Dependent vector
---data Vec v : Nat -> Set where
---  empty  : Vec v 0
---  append : v -> Vec v {n} -> Vec v (n + 1)
-
 --Bool = | True | False -- 2 labels (label =? type)
 --not x = case x | True@_=> False | False@_ => True
-
---ChurchInt = ∀α. (α → α) → (α → α)

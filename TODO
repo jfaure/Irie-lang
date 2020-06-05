@@ -1,7 +1,6 @@
 # expr2Core
+  * mixfix lambdas eg. `if_then x else y`
   * GADT's (apparently tricky because of equality constraints eg. Sum a a => a == a)
-  * parsing duplicate fn defs
-  * arity typecheck
 
 # Low priority
   * error reporting

@@ -15,11 +15,26 @@ Dependent types are most often used to guarantee program correctness. However, I
 ## Distributed
 It has often been noted that higher level abstractions are necessary if we are to comfortably program using gpu's, or more generally, a distributed network. The solution is to program just the algorithm at the term-level, and place all implementation detailsin the types, making heavy use of polymorphism and type matching.
 
-## Modern compiler
-Purety by default provides both humans and compilers with extensive information on the program, which in theory could be used by an intelligent compiler to make extremely well optimized code. Unfortunately that description is very far removed from the current implementations available.
-
-## informal language specification
-* Impredicative polymorphism
-* GADTS + subtypes
-* type constructors
-* first-class modules
+### Roadmap
+- Top-Level:
+    - [x] subtyping
+    - [x] records
+    - [x] sum-types
+    - [ ] Dependent types
+    - [ ] GADT's 
+    - [ ] Distributed systems
+- Parser:
+    - [x] Lambda calculus
+    - [x] MixFix operators
+    - [x] Module System
+        - [x] Modules as first class dependent records
+- Type inference:
+    - [x] Lambda calculus
+    - [x] Type Checking
+    - [ ] Dependent types
+    - [ ] Higher-rank inference (Impredicative polymorphism)
+- LLVM Codegen:
+    - [x] Lambda Calculus
+    - [ ] polymorphism
+    - [ ] Subtype coercions
+    - [ ] Stack-based lifetime oriented Memory model

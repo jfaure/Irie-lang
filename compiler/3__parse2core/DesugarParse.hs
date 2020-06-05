@@ -14,7 +14,7 @@ import Debug.Trace
 matches2TT :: [P.FnMatch] -> ([IName] , [[P.TT]] , P.TT) =
   let convPat = \case
         P.PArg i -> (i , [])
-        P.PTyped (P.PArg i) ty -> _ --(i , [ty])
+        P.PTyped (P.PArg i) ty -> (i , [ty])
         x -> error $ "unknown pattern: " ++ show x
   in \case
     [P.FnMatch impls f e] -> let

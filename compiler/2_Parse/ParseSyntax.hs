@@ -5,7 +5,7 @@ module ParseSyntax where -- import qualified as PSyn
 
 import Prim
 import Data.Text as T -- Names are Text (ShortText ?)
-import qualified Data.Map
+import qualified Data.Map as M
 import qualified Data.Vector as V
 import Control.Lens
 
@@ -15,15 +15,14 @@ type FName = IName -- record  fields
 type LName = IName -- sumtype labels
 type ImplicitArg = IName
 
-type Op = IName
-
--- externs can't be checked (eg. syscalls / C apis etc..)
-data ImportDecl
- = Extern   { externName :: HName , externType :: PrimType }
- | ExternVA { externName :: HName , externType :: PrimType }
-
-data Fixity = Fixity Assoc (Maybe Int) [Op] -- info for infix operators
+data MixFixName = MFHole | MFName HName deriving Show
+type MixFixDef = [MixFixName]
+data Fixity = Fixity Assoc (Maybe Int) [IName]
 data Assoc = AssocNone | AssocLeft | AssocRight
+
+data ImportDecl -- extern type ann can't be checked (eg. syscalls / C apis etc..)
+ = Extern   { externName :: HName , externType :: TT }
+ | ExternVA { externName :: HName , externType :: TT }
 
 data Module = Module {
    _moduleName :: HName
@@ -35,9 +34,11 @@ data Module = Module {
  , _parseDetails :: ParseDetails
 }
 
-type NameMap = Data.Map.Map HName IName
+type NameMap = M.Map HName IName
 data ParseDetails = ParseDetails {
-   _hNameBinds    :: (Int , NameMap) -- count anonymous args (>= nameMap size)
+   _mixFixDefs    :: M.Map HName [(MixFixDef , IName)] -- all mixfixDefs starting with a name
+ , _postFixDefs   :: M.Map HName [(MixFixDef , IName)] -- mixfixes starting with _
+ , _hNameBinds    :: (Int , NameMap) -- count anonymous args (>= nameMap size)
  , _hNameLocals   :: [NameMap] -- let-bound
  , _hNameArgs     :: [NameMap]
  , _nArgs         :: Int

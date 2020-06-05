@@ -78,6 +78,8 @@ type TyCo     = [TyHead] -- same    polarity
 type TyContra = [TyHead] -- reverse polarity
 type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
 type TyPlus   = [TyHead] -- output types (lattice join)
+tyTOP    = []
+tyBOTTOM = []
 
 -- bisubs always reference themselves, so the mu. is implicit
 data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
