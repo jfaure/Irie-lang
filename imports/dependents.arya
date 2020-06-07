@@ -1,3 +1,6 @@
+Eq a b =
+ | Refl : Eq a a
+
 ---- Classic Dependent vector
 --data Vec v : Nat -> Set where
 --  empty  : Vec v 0
@@ -7,8 +10,6 @@
 --  Leaf : a -> Tree Zero a
 --  Fork : forall m . (Tree m a) -> (Tree m a) -> Tree (Succ m) a
 
-Tree (a : Set) : (n : Nat) -> Set  =
+Tree (a : Set) : Nat -> Set =
  | Leaf : Tree 0 a
- | Fork {m} (Tree m a) (Tree m a) : Tree (+ m 1) a
-
--- | Fork :: { m } : (Tree m a) -> (Tree m a) -> Tree (+ m 1) a
+-- | Fork :: {m} : (Tree m a) -> (Tree m a) -> Tree (+ m 1) a

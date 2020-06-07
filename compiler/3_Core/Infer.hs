@@ -46,9 +46,10 @@ judgeModule pm exts@(Externs extNames extBinds) = let
       , _bis      = v
       , _domain   = d
       }
+    dv_ d
     pure wips
 
--- add argument holes to monotype env and guard potential recursion
+-- add argument holes to monotype env and guard against recursion
 withDomain :: IName -> [Int] -> (TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
 withDomain bindINm idxs action = do
   d <- use domain
@@ -57,7 +58,6 @@ withDomain bindINm idxs action = do
   r <- action
   argTys <- case idxs of
     [] -> MV.new 0
-    -- TODO replicate from idxs !
     x  -> pure $ MV.slice (head idxs) (length idxs) d
   pure (r , argTys)
 
@@ -98,8 +98,9 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
       Nothing  -> pure ()
       Just ann -> do
         ann' <- infer ann
-        let implicitArgTys = (\x->[THArg x]) `map` implicits
-            annTy = [THArrow implicitArgTys (tyExpr ann')]
+--      let implicitArgTys = (\x->[THArg x]) `map` implicits
+--          annTy = [THArrow implicitArgTys (tyExpr ann')]
+        let annTy = tyExpr ann'
         exts <- use externs
         unless (check exts argTys bindTy annTy)
           $ error (show bindTy ++ "\n!<:\n" ++ show ann')
@@ -123,50 +124,40 @@ infer = let
   P.WildCard -> pure $ Ty tyTOP
   -- vars : lookup in appropriate environment
   P.Var v -> case v of
-    P.VBind b   ->    -- polytype env
-     -- guard recursion
+    P.VBind b   -> -- polytype env
       judgeBind b <&> \case
         BindTerm args e ty -> Core (Var $ VBind b) ty
-        BindType args ty -> Ty ty
-        x -> error $ show x
+        BindType [] ty -> Ty ty
+        BindType args ty -> Ty [THIxPAp args ty M.empty M.empty]
+        x -> error $ show x -- recursion guard ?
     P.VLocal l  -> do -- monotype env (fn args)
       pure $ Core (Var $ VArg l) [THArg l]
-    P.VExtern i -> do
-      (`readParseExtern` i) <$> use externs
+    P.VExtern i -> (`readParseExtern` i) <$> use externs
     x -> error $ show x
 
   -- APP: f : [Df-]ft+ , Pi ^x : [Df-]ft+ ==> e2:[Dx-]tx+
   -- |- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
   -- * introduce a typevar 'a', and biunify (tf+ <= tx+ -> a)
-  -- Dependent App:
-  -- Structurally infer dependents:
-  -- * dependent function space: only for typechecking purposes
-  -- * Building sigma
-  -- * extracting sigma
+  -- Structurally infer Dependent App:
   P.App f args -> let
---  ttApp :: Expr -> Expr -> Expr
---  ttApp a b = case (a , b) of
---    (Core t ty , Core t2 ty2) -> case t of
---      App f x -> Core (App f (x++[t2])) [] -- dont' forget to set retTy
---      _       -> Core (App t [t2])      []
---    (Ty s , Ty s2)         -> Ty$ [THIxType s s2]       -- type index
---    (Ty s , c@(Core t ty)) -> Ty$ [THIxTerm s (t , ty)] -- term index
---    (c@(Core t ty) , Ty s) -> Ty$ [THEta t s] -- only valid if c is an eta expansion
     ttApp :: Expr -> Expr -> Expr
     ttApp a b = case (a , b) of
       (Core t ty , Core t2 ty2) -> case t of
         App f x -> Core (App f (x++[t2])) [] -- dont' forget to set retTy
         _       -> Core (App t [t2])      []
-      (Ty s , depArg) -> case s of 
-        [THIx t deps] -> Ty [THIx t (deps ++ [depArg])]
-        t             -> Ty [THIx t [depArg]]
-      x -> error $ "panic: not ready for: " ++ show x
+      (Ty fn@[THIxPAp ars ty typeArgs termArgs] , ttArg) -> case (ars , ttArg) of
+         (lam:arNms , Core t ty) -> Ty [THIxPAp arNms ty typeArgs (M.insert lam t termArgs)]
+         (lam:arNms , Ty tArg) -> Ty [THIxPAp arNms ty (M.insert lam tArg typeArgs) termArgs]
+         (arNms , Ty [THIxPAp arNms' ty' typeArgs' termArgs']) ->
+           error (" --- " ++ show a ++ "\n- " ++ show b)
+         (arNms , t) -> error $ "not a function: " ++ show (tyAp ty typeArgs)  ++ "\napplied to: " ++ show t
+      (f,a) -> error $ "panic: not a function: " ++ show f ++ "\n applied to arg: " ++ show a
     in do
     f'    <- infer f
     args' <- infer `mapM` args
     case f' of
       -- special case: Array Literal
-      Core (Lit l) ty | 3 == 3 -> do
+      Core (Lit l) ty -> do
         let getLit (Core (Lit l) _) = Just l
             getLit x = Nothing
             argLits = case sequence $ getLit <$> args' of
@@ -215,6 +206,13 @@ infer = let
         (terms , tys) = unzip $ unwrap <$> tts'
     pure $ Core (Label l terms) [THSum $ M.fromList [(l , tys)]]
 
+--  P.TySum alts -> let
+--    mkTyHead mp = Ty $ [THSum mp]
+--    in do
+--      sumArgsMap <- (\(l,impls,ty)->(l,)<$>infer ty) `mapM` alts
+----    pure . mkTyHead $ map yoloGetTy <$> sumArgsMap
+--      pure $ Ty $ M.fromList sumArgsMap
+
 --P.Match alts -> let
 --    (labels , patterns , rawTTs) = unzip3 alts
 --  -- * find the type of the sum type being deconstructed
@@ -246,17 +244,10 @@ infer = let
         ifE = MultiIf (zip (e2t<$>condExprs) (e2t<$>alts)) (e2t elseE') 
 
     (`biSub_` [boolTy]) `mapM` condTys -- check the condTys all subtype bool
---  dv_ =<< use bis
     pure $ Core ifE retTy
-
-  P.TySum alts -> let
-    mkTyHead mp = Ty $ [THSum mp]
-    in do
-      sumArgsMap <- (mapM infer) `mapM` M.fromList alts
-      pure . mkTyHead $ map yoloGetTy <$> sumArgsMap
 
   -- desugar
   P.Lit l  -> pure $ Core (Lit l) [typeOfLit l]
   P.TyListOf t -> (\x-> Ty [THArray x]) . yoloGetTy <$> infer t
   P.InfixTrain lArg train -> infer $ resolveInfixes _ lArg train
-  x -> error $ "not ready for tt: " ++ show x
+  x -> error $ "inference engine not ready for parsed tt: " ++ show x

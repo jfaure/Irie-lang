@@ -36,8 +36,10 @@ data Module = Module {
 
 type NameMap = M.Map HName IName
 data ParseDetails = ParseDetails {
-   _mixFixDefs    :: M.Map HName [(MixFixDef , IName)] -- all mixfixDefs starting with a name
- , _postFixDefs   :: M.Map HName [(MixFixDef , IName)] -- mixfixes starting with _
+ -- Note. mixFixDefs stored in these maps are partial:
+ -- for mf, the first, and for postfixes the first 2 elems of the mixfixdef list are implicit
+   _mixFixDefs    :: M.Map HName [(MixFixDef , TTName)] -- all mixfixDefs starting with a name
+ , _postFixDefs   :: M.Map HName [(MixFixDef , TTName)] -- mixfixes starting with _
  , _hNameBinds    :: (Int , NameMap) -- count anonymous args (>= nameMap size)
  , _hNameLocals   :: [NameMap] -- let-bound
  , _hNameArgs     :: [NameMap]
@@ -72,14 +74,13 @@ data TT
  | Label  LName [TT]
  | Match  [(LName , Pattern , TT)]
  | List   [TT]
- | TySum    [(LName , [TT])]
+-- | TySum  [(LName , [TT])]
+ | TySum [(LName , [ImplicitArg] , TT)] -- function signature
  | TyListOf TT
 
  -- term primitives
  | Lit     Literal
  | MultiIf [(TT, TT)] TT -- if .. elseif .. else
-
- | Typed    { t :: TT , typeOf :: TT }
 
 -- patterns represent arguments of abstractions
 data Pattern

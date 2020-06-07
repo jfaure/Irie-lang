@@ -36,6 +36,7 @@ data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
 -- Instructions -- 
 ------------------
 data PrimInstr
+ -- term instructions
  = IntInstr   IntInstrs
  | NatInstr   NatInstrs
  | FracInstr  FracInstrs
@@ -48,8 +49,11 @@ data PrimInstr
  | Alloc
  | SizeOf
  | Len -- len of PrimArray
- -- TODO conversion instructions, bitcasts,
- -- Maybe va_arg, aggregate instrs, vector, SIMD
+
+ -- type instructions
+ | MkIntN     -- : Nat -> Set --make an int with n bits
+
+ -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
 
 data IntInstrs   = Add | Sub | Mul | SDiv | SRem | ICmp
                  | And | Or | Xor | Shl | Shr

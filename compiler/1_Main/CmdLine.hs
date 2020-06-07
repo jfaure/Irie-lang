@@ -2,13 +2,10 @@ module CmdLine (CmdLine(..), parseCmdLine, defaultCmdLine)
 where
 
 import Options.Applicative
-import Data.Semigroup ((<>))
 import qualified Data.Text as T
 
 data CmdLine = CmdLine
   { printPass      :: T.Text
-
-
   , jit            :: Bool
   , optlevel       :: Word
   , noPrelude      :: Bool

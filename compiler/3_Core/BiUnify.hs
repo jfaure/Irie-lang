@@ -54,7 +54,7 @@ import Debug.Trace
 -- a  <= c  solved by [m- b = a n [b/a-]c  /a-] -- (or equivalently,  [a u b /b+])
 -- SubConstraints:
 -- (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
-biSub_ a b = trace ("bisub: " ++ show a ++ " <==> " ++ show b) biSub a b -- *> (dv_ =<< use bis)
+biSub_ a b = trace ("bisub: " ++ prettyTy a ++ " <==> " ++ prettyTy b) biSub a b -- *> (dv_ =<< use bis)
 biSub :: TyPlus -> TyMinus -> TCEnv s ()
 biSub a b = let
   solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
@@ -139,8 +139,8 @@ reduceType t = t
 --   * check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
 check :: Externs -> V.Vector [TyHead]
      -> [TyHead] -> [TyHead] -> Bool
-check e ars inferred gotRaw
-  = check' e ars inferred (reduceType gotRaw)
+check e ars inferred gotRaw = trace (prettyTy inferred ++ " <? " ++ prettyTy gotRaw)
+  $ check' e ars inferred (reduceType gotRaw)
 
 check' :: Externs -> V.Vector [TyHead]
        -> [TyHead] -> [TyHead] -> Bool
@@ -154,16 +154,26 @@ check' es ars inferred gotTy = let
     (THSet 0 , x) -> True -- TODO
     (THArg x , gTy)       -> True -- check'' (ars V.! x) [gTy]
     (THVar x , gTy)       -> True -- TODO
+    (lTy , THVar x)       -> True -- TODO
     (THPrim x , THPrim y) -> x == y
-    (THArrow a1 r1 , THArrow a2 r2) ->
-      check'' r1 r2
-      && length a1 == length a2
-      && all id (zipWith check'' a2 a1)
+    (THArrow a1 r1 , THArrow a2 r2) -> let
+      -- note. (a->(b->c)) is eq to (a->b->c) via currying
+      mkFn [x] = x
+      mkFn s = let (ars , [ret]) = splitAt (length s - 1) s
+        in [THArrow ars ret]
+      go (x:xs) (y:ys) = check'' y x && go xs ys
+      go [] [] = True
+      go [] y = check'' r1 (mkFn y)
+      go x [] = check'' (mkFn x) r1
+      in go a1 a2
     (THSum x , THSum y)   -> _
     (THProd x , THProd y) -> _
     (THExt x , THExt y) -> x == y
     (THExt x , t) -> check'' (readExt es x) [t]
     (t , THExt x) -> check'' [t] (readExt es x)
+--  (t , THIxPAp [] ty tyArgs termArgs) -> check' es (ars V.// M.toList tyArgs) [t] ty
+    (t , THIxPAp [] ty tyArgs termArgs) -> check'' [t] (tyAp ty tyArgs)
+    (THIxPAp [] ty tyArgs termArgs , t) -> check'' (tyAp ty tyArgs) [t]
 
     (x , THArg y) -> True -- ?!
     (a,b) -> error $ "checking: not ready for:" ++ show a ++ " <? " ++ show b

@@ -28,7 +28,7 @@ deriving instance Show Kind
 
 prettyBind = \case
  WIP -> "WIP"
- BindTerm args term ty -> show args ++ " => " ++ show term ++ clGreen (" : " ++ show ty)
+ BindTerm args term ty -> show args ++ " => " ++ show term ++ clGreen (" : " ++ prettyTy ty)
  BindType tyArgs set -> show tyArgs ++ " =: " ++ show set
 
 prettyVName = \case
@@ -53,6 +53,9 @@ prettyTerm = \case
       ++ intercalate " | " (show <$> M.toList ts) ++ " |_ " ++ show d
     List    ts -> "[" ++ (concatMap show ts) ++ "]"
 
+prettyTy = \case
+  [x] -> show x
+  x ->   show x
 prettyTyHead = \case
  THPrim     p -> show p
  THVar      i -> "Λ" ++ show i
@@ -60,7 +63,8 @@ prettyTyHead = \case
  THAlias    i -> "π" ++ show i
  THExt      i -> "E" ++ show i
 
- THArrow    args ret -> intercalate " → " $ show <$> (args ++ [ret])
+ THArrow    [] ret -> error $ "panic: fntype with no args: [] → (" ++ prettyTy ret ++ ")"
+ THArrow    args ret -> "(" ++ intercalate " → " (prettyTy <$> (args ++ [ret])) ++ ")"
  THRec      t-> "μ" ++ show t
  THProd     prodTy -> let
    showField (f , t) = show f ++ ":" ++ show t
@@ -77,7 +81,8 @@ prettyTyHead = \case
 -- THIxType   t t2 -> "ixTy: " ++ show t ++ show t2
 -- THIxTerm   t (t2,ty) -> "ixTerm: " ++ show t ++ " $ (" ++ show t2 ++ " : " ++ show ty ++ ")"
 -- THEta      term ty -> "eta(" ++ show term ++ ":" ++ show ty ++")"
- THIx t deps -> show t ++ " $$ " ++ (intercalate " $$ " $ show <$> deps)
+-- THIx t deps -> show t ++ " $$ " ++ (intercalate " $$ " $ show <$> deps)
+ THIxPAp ars t mp termMp -> "Λ" ++ show ars ++ prettyTy t ++ " $ (" ++ show mp ++ show termMp ++ ")"
 
  THSet   uni -> "Set" ++ show uni
 

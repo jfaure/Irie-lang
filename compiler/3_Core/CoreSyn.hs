@@ -101,7 +101,11 @@ data TyHead -- head constructors for types.
  | THArray    TyCo
  | THSet      Uni
 
- | THIx       Type [Expr]
+ -- THTerm is only valid as part of THIxPAp (aggregate types: record, fn-arrow etc..)
+ -- The goal is to cleanly separate terms from types - notably to isolate dynamic type residue
+ | THTerm     IName
+-- type-level (partial) application (incl dependent type)
+ | THIxPAp    [IName] Type (M.Map IName Type) (M.Map IName Term)
 
 -- label for the different head constructors
 data Kind = KPrim | KArrow | KVar | KSum | KProd | KAny | KRec
@@ -109,8 +113,6 @@ data Kind = KPrim | KArrow | KVar | KSum | KProd | KAny | KRec
 
 data Expr
  = Core  Term Type
- | Sigma Term [Term] Type -- (potential) dynamic type residue
-
  | Ty    Type  -- Set0
  | Set   Uni Type
 
@@ -135,3 +137,13 @@ getArgTy  = \case
 tyExpr = \case
   Ty t -> t
   _ -> _
+
+-- evaluate type application (from THIxPAp s)
+tyAp :: [TyHead] -> M.Map IName Type -> [TyHead]
+tyAp ty argMap = map go ty where
+  go :: TyHead -> TyHead = \case
+    THArg y -> case M.lookup y argMap of
+      Nothing -> THArg y
+      Just [t] -> t
+    THArrow as ret -> THArrow (map go <$> as) (go <$> ret)
+    x -> x

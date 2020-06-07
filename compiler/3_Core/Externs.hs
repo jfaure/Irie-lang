@@ -19,7 +19,7 @@ import Data.Function
 import Data.Functor
 import Data.Foldable
 import Data.List
-import Control.Lens
+import Control.Lens hiding (set)
 import Debug.Trace
 
 -----------------
@@ -83,7 +83,7 @@ resolveImports imports pm = let
 -- We prefer INames over inlining primitives
 -- * construct a vector of primitives
 -- * supply a (Map HName IName) to resolve names to indexes
-primBinds = let
+primBinds :: V.Vector Expr = let
  primTy2Expr x = Ty [THPrim x]
  instr2Expr  (e , tys)  = Core (Instr e) [tys2TyHead tys]
  tys2TyHead  (args , t) = THArrow ((\x->[THExt x]) <$> args) [THExt t]
@@ -121,18 +121,18 @@ getPrimTy nm = case M.lookup nm primTyMap of
     ++ T.unpack nm ++ " not in scope"
   Just i  -> i
 
+[i, b, ia, set] = getPrimTy <$> ["Int", "Bool", "IntArray", "Set"]
+
 -- instrs are typed with indexes into the primty map
 instrs :: [(HName , (PrimInstr , ([IName] , IName)))] = let
-  i   = getPrimTy "Int"
-  b   = getPrimTy "Bool"
-  ia  = getPrimTy "IntArray"
-  set = getPrimTy "Set"
   in
   [ ("+" , (IntInstr Add  , ([i, i] , i) ))
   , ("-" , (IntInstr Sub  , ([i, i] , i) ))
   , ("<" , (IntInstr ICmp , ([i, i] , b) ))
   , ("!" , (MemInstr ExtractVal , ([ia, i] , i) ))
   , ("->", (ArrowTy , ([set] , set)))
+  , ("_->_", (ArrowTy , ([set] , set)))
+  , ("IntN" , (MkIntN , ([i] , set)))
 --, ("→", (ArrowTy , ([set] , set)))
   , ("primLen" , (Len , ([ia] , i)))
 --  , ("plus" , (IntInstr Add  , ([i, i] , i) ))

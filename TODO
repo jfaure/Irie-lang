@@ -1,4 +1,5 @@
 # expr2Core
+  * make sure pi-bound vars fall out of scope
   * mixfix lambdas eg. `if_then x else y`
   * GADT's (apparently tricky because of equality constraints eg. Sum a a => a == a)
 

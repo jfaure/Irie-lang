@@ -4,7 +4,8 @@
 --import imports/church
 --import imports/mixfix
 --import imports/records
-import imports/dependents
+--import imports/dependents
+--import imports/pi
 
 --fib x : Int -> Int = if x < 1 then x else fib (x-1) + fib (x-2)
 --fib x = if x < 1 then x else fib (x-1) + fib (x-2)
