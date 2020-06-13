@@ -1,2 +1,28 @@
-ChurchInt α = (α -> α) -> (α -> α)
+--Church : {l : Level} -> Set l -> Set l 
+Church A = (A -> A) -> (A -> A)
 
+Nat = Church Int
+--Nat₁ = {A : Set₁} -> Church A
+--Nat₂ = {A : Set₂} -> Church A
+
+--c0 : Nat = \s z => z
+--c1 : Nat = \s z => s z
+--c2 : Nat = \s z => s (s z)
+
+add : Nat -> Nat -> Nat
+add a b s z = b s (a s z)
+
+mul : Nat -> Nat -> Nat
+mul a b s z = b (a s) z
+
+-- First signs of the type growing:
+-- exp : {A : Set} -> Church A -> Church (A -> A) -> Church A
+exp : Nat -> Nat -> Nat
+exp a b = b a 
+
+--tetr : Nat -> Nat₁ -> Nat
+--tetr k n = n (exp k) c1
+
+-- does not type-check in stratified system-F:
+-- pent : Nat -> Nat₁ -> Nat
+-- pent k n = n (tetr k) c1

@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
 module PrettyCore where
 
 import Prim
@@ -21,6 +20,20 @@ instance Show Bind where show = prettyBind
 deriving instance Show Expr
 deriving instance Show BiSub
 deriving instance Show Kind
+deriving instance Show Pi
+
+instance Show LC where
+ show lc = go False lc where
+  go depth = let parens x = if depth then "(" ++ x ++ ")" else x
+   in \case
+    LCArg i -> "ωλ" ++ show i 
+    LCApp f a -> parens (go True f ++ " " ++ go True a)
+    LCTerm t y -> parens ("ωTerm " ++ show t ++ " : " ++ show y)
+    LCRec i  -> parens $ "ωμ" ++ show i -- ++ " : " ++ show ty
+
+tyExpr = \case
+  Ty t -> t
+  expr -> error $ "expected type, got: " ++ show expr
 
 ------------
 -- Pretty --
@@ -28,8 +41,9 @@ deriving instance Show Kind
 
 prettyBind = \case
  WIP -> "WIP"
- BindTerm args term ty -> show args ++ " => " ++ show term ++ clGreen (" : " ++ prettyTy ty)
- BindType tyArgs set -> show tyArgs ++ " =: " ++ show set
+ BindOK args (Core term ty) -> show args ++ " => " ++ show term ++ clGreen (" : " ++ prettyTy ty)
+ BindOK tyArgs (Ty set) -> show tyArgs ++ " =: " ++ show set
+ BindOK args (ULC lc)  -> show args ++ " =  " ++ show lc
 
 prettyVName = \case
     VArg i  -> "λ" ++ show i
@@ -49,8 +63,10 @@ prettyTerm = \case
         ++ " }"
     Proj    t f -> show t ++ "." ++ show f
     Label   l t -> show l ++ "@" ++ show t
-    Match   ts d -> "\\case" ++ "| "
-      ++ intercalate " | " (show <$> M.toList ts) ++ " |_ " ++ show d
+    Match   ts d -> let
+      showLabel (l , t) = show l ++ " => " ++ show t
+      in "\\case" ++ "| "
+        ++ intercalate " | " (showLabel <$> M.toList ts) ++ " |_ " ++ show d
     List    ts -> "[" ++ (concatMap show ts) ++ "]"
 
 prettyTy = \case
@@ -58,33 +74,39 @@ prettyTy = \case
   x ->   show x
 prettyTyHead = \case
  THPrim     p -> show p
- THVar      i -> "Λ" ++ show i
- THImplicit i -> "∀" ++ show i
+ THVar      i -> "τ" ++ show i
+-- THImplicit i -> "∀" ++ show i
  THAlias    i -> "π" ++ show i
  THExt      i -> "E" ++ show i
 
  THArrow    [] ret -> error $ "panic: fntype with no args: [] → (" ++ prettyTy ret ++ ")"
  THArrow    args ret -> "(" ++ intercalate " → " (prettyTy <$> (args ++ [ret])) ++ ")"
  THRec      t-> "μ" ++ show t
+ THRecApp   t a-> "μ$" ++ show t ++ " " ++ (intercalate " $ " $ show <$> a)
  THProd     prodTy -> let
    showField (f , t) = show f ++ ":" ++ show t
    p = intercalate " ; " $ showField <$> M.toList prodTy
    in "{" ++ p ++ "}"
  THSum      sumTy ->  let
    showLabel (l , t) = show l ++ "#" ++ show t
-   s  = intercalate " | " $ showLabel <$> M.toList sumTy
-   in " | " ++ s ++ " | "
+   s  = intercalate "\n  | " $ showLabel <$> M.toList sumTy
+   in " 〈" ++ s ++ " 〉"
 
  THArray    t -> "@" ++ show t
  THArg      i -> "λ" ++ show i
+ THLamBound i -> "Λ" ++ show i
 
 -- THIxType   t t2 -> "ixTy: " ++ show t ++ show t2
 -- THIxTerm   t (t2,ty) -> "ixTerm: " ++ show t ++ " $ (" ++ show t2 ++ " : " ++ show ty ++ ")"
 -- THEta      term ty -> "eta(" ++ show term ++ ":" ++ show ty ++")"
 -- THIx t deps -> show t ++ " $$ " ++ (intercalate " $$ " $ show <$> deps)
- THIxPAp ars t mp termMp -> "Λ" ++ show ars ++ prettyTy t ++ " $ (" ++ show mp ++ show termMp ++ ")"
+ THPi ars t arsMap -> "∏" ++ show ars ++ " (" ++ prettyTy t ++ " where " ++ show arsMap ++ ")"
+ THSi ars t arsMap -> "Σ" ++ show ars ++ " (" ++ prettyTy t ++ " where " ++ show arsMap ++ ")"
+-- THCore t ty -> "↑(" ++ show t ++ " : " ++ show ty ++ ")" -- term in type context
 
  THSet   uni -> "Set" ++ show uni
+ THInstr i ars -> show i ++ show ars
+ THULC l -> show l
 
 clBlack   x = "\x1b[30m" ++ x ++ "\x1b[0m"
 clRed     x = "\x1b[31m" ++ x ++ "\x1b[0m" 

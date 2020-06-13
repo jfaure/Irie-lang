@@ -1,0 +1,8 @@
+--succTy = IntN 20 -> IntN 32
+--succ : succTy
+--succ x = plus x 1
+--
+--subType = succ (0 : IntN 40)
+
+p1 = (n : Int) -> IntN n -- -> IntN n
+--p1 = plus 1

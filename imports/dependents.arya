@@ -1,15 +1,61 @@
-Eq a b =
- | Refl : Eq a a
+--Pi = (n : Int) -> (IntN n)
+--i32 = Pi 32
+
+--Eq a b = | Refl : Eq a a
+
+Nat =
+ | Z : Nat
+ | S : Nat -> Nat
+--One : Nat = S Z
+----three = S (S (S Z))
+--add : Nat -> Nat -> Nat
+--add x = \case
+--  | Z => x
+--  | S y => add x y
+--
+--two = add One One
+--two = S (S Z)
 
 ---- Classic Dependent vector
---data Vec v : Nat -> Set where
---  empty  : Vec v 0
---  append : v -> Vec v {n} -> Vec v (n + 1)
+Vec (v : Set) : Nat -> Set =
+-- | empty : Vec v 0 -- () <: Vec v 0
+ | ++ : (n : Nat) -> v -> Vec v n -> Vec v (S n) -- : { n ; (x:v) ; Vec v n } <: Vec v (n + 1)
+
+--Fin : Nat -> Set =
+-- | zero :: {n} → Fin (suc n)
+-- | suc  :: {n} → Fin n → Fin (suc n)
+--lookup :: {A n } : Fin n → Vec A n → A
+--lookup 0 (++ x xs) = x
+--lookup (plus i 1) (++ x xs) = lookup i xs
+
+-- ΠΣ says:
+--Vec : Type → Nat → Type;
+--Vec = λA n → (l : {nil cons }) ∗ case l of
+--  nil → EqNat zero n
+--  cons → (n 0 : Nat) ∗ A ∗ (Rec [Vec A n0 ]) ∗ EqNat (suc n0) n
+--Fin : Nat → Type;
+--Fin = λn → (l : {zero suc }) ∗ case l of
+--  zero → (n 0 : Nat) ∗ EqNat (suc n0) n
+--  suc → (n 0 : Nat) ∗ (Rec [Fin n0 ]) ∗ EqNat (suc n0) n
+
+--z = empty
+--one = ++ 3 z
+
+--_⊛_ :: {n} : Vec (A → B) n -> Vec A n -> Vec B n
+--[] ⊛ _        = []
+--(f ++ fs) ⊛ (x ++ xs) = f x ++ (fs ⊛ xs)
+
+--Matrix : Set -> ℕ -> ℕ -> Set
+--Matrix a n m = Vec (Vec a m) n
 
 --type Tree (n : Nat) (a : Type) where
 --  Leaf : a -> Tree Zero a
 --  Fork : forall m . (Tree m a) -> (Tree m a) -> Tree (Succ m) a
 
-Tree (a : Set) : Nat -> Set =
- | Leaf : Tree 0 a
--- | Fork :: {m} : (Tree m a) -> (Tree m a) -> Tree (+ m 1) a
+--Tree (a : Set) : Nat -> Set =
+-- | Leaf : Tree a 0 -- () <: Tree a 0
+-- | Sapling :: {m} : a -> Tree a m -> Tree a (+m 1) -- λ{a ; m} -> { {a ; m} }
+-- | Fork :: {m} : (Tree a m) -> (Tree a m) -> Tree a (+ m 1)
+
+--Σ (A : Set) (B : A → Set) : Set =
+-- | _,_ : (a : A) → (b : B a) → Σ A B

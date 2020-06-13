@@ -35,6 +35,7 @@ import Prim
 import qualified Data.Vector         as V
 import qualified Data.Text           as T
 import qualified Data.Map.Strict as M
+import qualified Data.IntMap.Strict as IM
 import Control.Lens hiding (List)
 import Data.List (intercalate)
 
@@ -45,6 +46,7 @@ d_ x   = let
 did_ x = d_ x x
 dv_ f = traceShowM =<< (V.freeze f)
 
+type IMap      = IM.IntMap
 type HName     = T.Text -- human readable name
 type IName     = Int    -- Int name: index into bind|type vectors
 type BiSubName = Int    -- index into bisubs
@@ -57,7 +59,7 @@ data VName
  | VArg  IName -- bisub  map
  | VExt  IName -- extern map (incl. prim instrs)
 
-data Term
+data Term -- Codegennable - all other datas are typing artefacts
  = Var     VName
  | Lit     Literal
  | App     Term    [Term] -- IName [Term]
@@ -67,8 +69,8 @@ data Term
  -- data constructions
  | Cons    (M.Map IField Term)
  | Proj    Term IField
- | Label   ILabel [Term]
- | Match   (M.Map ILabel Term) (Maybe Term)
+ | Label   ILabel [Expr]
+ | Match   (M.Map ILabel Expr) (Maybe Term)
  | List    [Term]
 
 type Type     = TyPlus
@@ -88,62 +90,76 @@ newBiSub = BiSub [] []
 -- components of our profinite distributive lattice of types
 data TyHead -- head constructors for types.
  = THVar      BiSubName  -- ix to bisubs
+ | THArg      IName      -- ix to monotype env (type of the lambda-bound at ix)
  | THAlias    IName      -- ix to bindings
- | THArg      IName      -- lambda bound (ix to monotype env)
- | THImplicit IName      -- implicit lambda bound
  | THExt      IName      -- ix to externs
 
  | THPrim     PrimType
+ | THSet      Uni
  | THArrow    [TyContra] TyCo
  | THRec      IName -- must be guarded (by other TyHead)
- | THProd     (M.Map IField TyCo) -- incl sigma
- | THSum      (M.Map ILabel [TyCo])
+ | THProd     (M.Map IField TyCo) -- dependent record
+ | THSum      (M.Map ILabel TyCo) -- map of function types
  | THArray    TyCo
- | THSet      Uni
 
- -- THTerm is only valid as part of THIxPAp (aggregate types: record, fn-arrow etc..)
- -- The goal is to cleanly separate terms from types - notably to isolate dynamic type residue
- | THTerm     IName
--- type-level (partial) application (incl dependent type)
- | THIxPAp    [IName] Type (M.Map IName Type) (M.Map IName Term)
+-- | THSelfIx   IName -- only valid in dependent record
+-- partial application in dependent function space
+ | THPi [(IName , Type)] Type (M.Map IName Expr)
+ | THSi [(IName , Type)] Type (M.Map IName Expr)
+ | THEQ LC LC -- proof term
+
+-- | THQ PiSigma [(IName , Type)] Type (M.Map IName Expr) data PiSigma = Pi | Sigma
+ | THULC LC
+ | THInstr PrimTyInstr [IName] -- pretty much only in THPi
+ | THRecApp IName [Expr]
+ | THLamBound IName
+
+-- | THJoin [TyHead]
+-- | THMeet [TyHead]
+-- | THTop Kind
+-- | THBot Kind
+
+-- eliminator: split t with (x , y) → u
+-- deconstructs the scrutinee t, binding its components to x and y, and then evaluates u.
 
 -- label for the different head constructors
 data Kind = KPrim | KArrow | KVar | KSum | KProd | KAny | KRec
   deriving Eq
 
+data Pi = Pi [(IName , Type)] Expr
 data Expr
- = Core  Term Type
- | Ty    Type  -- Set0
- | Set   Uni Type
+ = Core    Term Type
+ | Ty      Type  -- Set0
+ | ULC     LC    -- poly-universe lambda calculus
+ | Fn      Pi
+ | ExprPAp Pi (IMap Expr)
+
+data LC -- poly-universe lambda calculus eg. `f a b = a (b b)`
+ = LCArg   IName
+ | LCLabel IName
+ | LCRec   IName -- index into bindmap (whose type is often not immediately known)
+ | LCApp   LC LC
+ | LCPow   Int LC LC  -- power app
+ | LCTerm  Term Type  -- terms can be args to types and exprs
 
 data Bind -- indexes in the bindmap
  = WIP
  | Checking  Type -- guard for recursive references
-
- | BindTerm  [IName] Term Type
- | BindType  [IName] Type
+ | BindOK [IName] Expr
+-- | BindOK Expr
+ | BindKO -- failed to typecheck
 
 bind2Expr = \case
-  BindTerm _ t ty -> Core t ty
-  BindType _ ty -> Ty ty
+  BindOK _ e -> e
 
 makeLenses ''BiSub
 
-getArgTy  = \case
-  Core x ty -> ty
-  Ty t      -> [THSet 0]     -- type of types
-  Set u t   -> [THSet (u+1)]
-
-tyExpr = \case
-  Ty t -> t
-  _ -> _
-
 -- evaluate type application (from THIxPAp s)
-tyAp :: [TyHead] -> M.Map IName Type -> [TyHead]
+tyAp :: [TyHead] -> M.Map IName Expr -> [TyHead]
 tyAp ty argMap = map go ty where
   go :: TyHead -> TyHead = \case
     THArg y -> case M.lookup y argMap of
       Nothing -> THArg y
-      Just [t] -> t
+      Just (Ty [t]) -> t
     THArrow as ret -> THArrow (map go <$> as) (go <$> ret)
     x -> x

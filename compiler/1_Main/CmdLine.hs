@@ -5,7 +5,7 @@ import Options.Applicative
 import qualified Data.Text as T
 
 data CmdLine = CmdLine
-  { printPass      :: T.Text
+  { printPass      :: [T.Text]
   , jit            :: Bool
   , optlevel       :: Word
   , noPrelude      :: Bool
@@ -13,23 +13,25 @@ data CmdLine = CmdLine
   , files          :: [String]
   } deriving (Show)
 
+defaultCmdLine = CmdLine [] False 0 False Nothing []
+
 printPasses = ["source", "parseTree", "core", "stg", "llvm"] :: [T.Text]
 
-parsePrintPass :: ReadM T.Text
-parsePrintPass = eitherReader $ \str ->
-  case filter (T.isInfixOf (T.pack str)) printPasses of
-  []  -> Left $ "Unrecognized print pass: '" ++ str ++ "'"
-  [p] -> Right p
-  tooMany -> Left $ "Ambiguous print pass: '" ++ str ++ "' : " ++ show tooMany
-
-defaultCmdLine = CmdLine "" False 0 False Nothing []
+parsePrintPass :: ReadM [T.Text]
+parsePrintPass = eitherReader $ \str -> let
+  passesStr = T.split (==',') (T.pack str)
+  checkAmbiguous s = case filter (T.isInfixOf s) printPasses of
+    []  -> Left $ "Unrecognized print pass: '" ++ str ++ "'"
+    [p] -> Right p
+    tooMany -> Left $ "Ambiguous print pass: '" ++ str ++ "' : " ++ show tooMany
+  in sequence (checkAmbiguous <$> passesStr)
 
 cmdLineDecls :: Parser CmdLine
 cmdLineDecls = CmdLine
-  <$> option parsePrintPass
+  <$> (option parsePrintPass)
       (short 'p' <> long "print"
       <> help "print a pass: source|parseTree|preCore|core|stg|llvm"
-      <> value "")
+      <> value [])
   <*> switch
       (short 'j' <> long "jit"
       <> help "Execute program in jit")
@@ -53,4 +55,5 @@ cmdLineInfo =
   in info (helper <*> cmdLineDecls) description
 
 parseCmdLine :: IO CmdLine
-parseCmdLine = execParser cmdLineInfo
+-- parseCmdLine = execParser cmdLineInfo
+parseCmdLine = customExecParser (prefs disambiguate) cmdLineInfo

@@ -1,11 +1,11 @@
-{-# LANGUAGE LambdaCase, ScopedTypeVariables , MultiWayIf , StandaloneDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell , DeriveGeneric #-}
 
 module ParseSyntax where -- import qualified as PSyn
 
 import Prim
 import Data.Text as T -- Names are Text (ShortText ?)
 import qualified Data.Map as M
+import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector as V
 import Control.Lens
 
@@ -15,8 +15,23 @@ type FName = IName -- record  fields
 type LName = IName -- sumtype labels
 type ImplicitArg = IName
 
-data MixFixName = MFHole | MFName HName deriving Show
+data MixFixName = MFHole | MFName HName deriving (Show , Eq)
 type MixFixDef = [MixFixName]
+--data MFTree -- a tree of possible mixfixes (shortened while parsing a mixfix)
+-- = MFTPre     [MixFixDef] MFTree -- only one parse branch
+-- | MFTSingle  [MixFixDef] TTName
+-- | MFTChoice  MFTree (M.Map HName MFTree) -- branch for MFHole and MFTree
+-- | MFTLeaf    TTName
+--
+--mergeMFTree (MFTSingle nm' md') (MFTChoice holeTree mp) = case md' of
+--  []              -> MFTSingle nm
+--  x : xs          -> let new = MFTSingle nm' xs in case x of
+--    MFHole      -> MFTChoice (mergeMFTree new holeTree) mp
+--    MFName hNm  -> MFTChoice holeTree (M.insertWith mergeMFTree hNm new mp)
+--mergeMFTree (MFTChoice t1 mp1) (MFTChoice t2 mp2)
+-- = MFTChoice (mergeMFTree t1 t2) (M.unionWith mergeMFTree mp1 mp2)
+--mergeMFTree x y = mergeMFTree y x
+
 data Fixity = Fixity Assoc (Maybe Int) [IName]
 data Assoc = AssocNone | AssocLeft | AssocRight
 
@@ -57,7 +72,6 @@ data TTName
  = VBind   IName
  | VLocal  IName
  | VExtern IName
- | VQual   [IName] IName
 
 -- Parser Expressions (types and terms are syntactically equivalent)
 data TT
@@ -72,7 +86,7 @@ data TT
  | Cons   [(FName , TT)] -- can be used to type itself
  | Proj   TT FName
  | Label  LName [TT]
- | Match  [(LName , Pattern , TT)]
+ | Match  [(LName , [Pattern] , TT)]
  | List   [TT]
 -- | TySum  [(LName , [TT])]
  | TySum [(LName , [ImplicitArg] , TT)] -- function signature
@@ -80,11 +94,13 @@ data TT
 
  -- term primitives
  | Lit     Literal
+ | LitArray [Literal]
  | MultiIf [(TT, TT)] TT -- if .. elseif .. else
 
 -- patterns represent arguments of abstractions
 data Pattern
  = PArg  IName -- introduce VLocal arguments
+ | PApp  Pattern [Pattern]
  | PLit  Literal
  | PWildCard
  | PTyped Pattern TT
@@ -116,7 +132,6 @@ instance Show TTName where
     VBind x   -> "π" ++ show x 
     VLocal  x -> "λ" ++ show x
     VExtern x -> "E" ++ show x
-    VQual a b -> show a ++ "." ++ show b
 deriving instance Show Fixity
 deriving instance Show Assoc
 deriving instance Show FnMatch 

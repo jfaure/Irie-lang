@@ -6,3 +6,8 @@ chooseF t a b = if t then a else b
 r g = r (g 1) -- recursive principal type
 x = {f = x}
 --combY f = let g x = f (x x) in g g
+
+--fib x : Int -> Int = if x < 1 then x else fib (x-1) + fib (x-2)
+--fib x = if x < 1 then x else fib (x-1) + fib (x-2)
+
+

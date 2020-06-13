@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings , TemplateHaskell, RecursiveDo #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Parser where
 
 -- Parsing is responsible for converting all names to indexes into various vectors
@@ -28,6 +28,7 @@ import Control.Monad.State.Strict as ST
 import Control.Monad.Reader
 import Data.Functor
 import Data.Foldable
+import Data.Maybe (catMaybes)
 import Data.Char (isAlphaNum , isDigit , isSpace)
 import qualified Data.Vector as V
 import qualified Data.Map as M
@@ -43,18 +44,26 @@ dbg i = id
 
 data ParseState = ParseState {
    _indent    :: Pos  -- start of line indentation (need to save it for subparsers)
+ , _parsingMixFixes  :: [MixFixDef] -- we're parsing a mixfix: these are the options
+ , _piBound   :: [[(IName , TT)]]
  , _moduleWIP :: Module
 }
 makeLenses ''ParseState
 
 type Parser = ParsecT Void T.Text (ST.State ParseState)
 
----------------------------------------
--- INames and the vectors they index --
----------------------------------------
+--------------------
+-- Lens machinery --
+--------------------
 addBind b     = moduleWIP . bindings   %= (b:)
 addImport i   = moduleWIP . imports    %= (i:)
 addExtern e   = moduleWIP . externFns  %= (e:)
+addPiBound  p = piBound %= \(x:xs)->(p:x):xs
+getPiBounds f = do
+  piBound %= ([]:)
+  r <- f
+  pis <- head <$> (piBound <<%= drop 1)
+  pure (pis , r)
 
 -- mixfixes are saved in lists based on first name
 addMixFix m i = let
@@ -106,6 +115,8 @@ addUnknownName h = pd . hNamesNoScope %%= insertOrRetrieve h
 
 newFLabel h = moduleWIP . parseDetails . fields %%= insertOrRetrieve h
 newSLabel h = moduleWIP . parseDetails . labels %%= insertOrRetrieve h
+lookupSLabel h = M.lookup h <$> use (moduleWIP . parseDetails . labels)
+
 
 lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
   tryArg = VLocal <$> (asum $ (M.lookup h) `map` (p ^. hNameArgs))
@@ -158,7 +169,7 @@ symboln = L.symbol scn
 -- valid symbols in the language
 -- all symbol chars = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 --symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: T.Text
-reservedChars = "@.(){};_\\" -- TODO not ':' ?
+reservedChars = "@.(){};\\"
 --reservedOps   = T.words "= @ | : :: . ; => ( ) [ ] { }"
 reservedNames = S.fromList $ T.words "if then else type data record class extern externVarArg let rec in where case of _ import require \\ : = ? | λ =>"
 -- check the name isn't an iden which starts with a reservedWord
@@ -184,12 +195,17 @@ checkIden = checkReserved <=< checkLiteral
 
 -- We must use 'try', to backtrack if we parse a reserved word
 iden :: Parser HName = lexeme . try $ (idenChars >>= checkIden)
+idenNo_ = lexeme idenNo_'
+idenNo_' = try $ (takeWhile1P Nothing (\x->isIdenChar x && x /= '_') >>= checkIden)
 
 -- separated and split on '_' (ie. argument holes)
-mixFixDef :: Parser MixFixDef =
-  some (choice [MFHole <$ char '_' , MFName <$> (checkIden =<< idenChars)]) >>= \case
+mixFixDef :: Parser MixFixDef = lexeme $ do
+  some (choice [MFHole <$ char '_' , MFName <$> idenNo_']) >>= \case
     [MFHole] -> fail "'_' cannot be an identifier"
     mf -> pure mf
+-- exported convenience function for use by builtins (Externs.hs)
+parseMixFixDef :: T.Text -> Either (ParseErrorBundle T.Text Void) [MixFixName]
+ = \t -> runParserT mixFixDef "<internal>" t `evalState` _
 
 infixName = between (symbol "`") (symbol "`") iden
 
@@ -246,6 +262,8 @@ parseModule :: FilePath -> T.Text
   `evalState` ParseState {
        _indent     = mkPos 1
      , _moduleWIP  = startModule
+     , _parsingMixFixes = []
+     , _piBound = []
      }
 
 -- group declarations as they are parsed
@@ -253,7 +271,7 @@ doParse = void $ decl `sepEndBy` (endLine *> scn) :: Parser ()
 decl = svIndent *> choice
    [ reserved "import" *> (iden >>= addImport)
    , extern
-   , void funBind
+   , void funBind <?> "binding"
    ]
 
 extern =
@@ -289,7 +307,7 @@ funBind = lexeme mixFixDef >>= \case
     pMixFixArgs = \case
       []            -> pure []
       MFName nm : x -> symbol nm *> pMixFixArgs x
-      MFHole   : x  -> (:) <$> lexeme pattern <*> pMixFixArgs x
+      MFHole    : x -> (:) <$> lexeme pattern <*> pMixFixArgs x
     in mdo
     addMixFix mfDef i
     i <- funBind' (mixFix2Nm mfDef) (pMixFixArgs mfDef)
@@ -298,14 +316,15 @@ funBind = lexeme mixFixDef >>= \case
 funBind' :: T.Text -> Parser [Pattern] -> Parser TTName
 funBind' nm pMFArgs = newArgNest $ mdo
   iNm <- addBindName nm -- handle recursive references
-    <* addBind (FunBind nm implicits eqns ty) -- this should be done immediately (hence mdo)
+    <* addBind (FunBind nm (implicits ++ (map fst pi)) eqns ty)
   ars <- many pattern
   ann <- tyAnn
   let (implicits , ty) = case ann of { Just (i,t) -> (i,Just t) ; _ -> ([],Nothing) }
-  eqns <- choice
-    [ (:[]) <$> (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
+  (pi , eqns) <- getPiBounds $ choice
+    [ (:[]) <$> fnMatch (pure ars) (reservedOp "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
     , case (ars , ann) of
-        ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs)
+        ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reservedOp "=") )
+        (x  , Just{})  -> fail "TODO no parser for: arguments followed by type sig"
         (x  , Nothing) -> do fail $ "fn def lacks accompanying binding"
     ]
   pure (VBind iNm)
@@ -319,23 +338,25 @@ tyAnn :: Parser (Maybe ([IName] , TT)) = newArgNest $ do
 lambda = reservedChar '\\'
   *> (Var . VBind <$> addAnonBindName) <* do 
     newArgNest $ mdo
-      addBind $ FunBind "" [] eqns Nothing
-      eqns <- (:[]) <$> ((fnArgs <* lexemen (reservedOp "=>")) <*> tt) -- fnMatch
+      addBind $ FunBind "_" [] eqns Nothing
+      eqns <- (:[]) <$> fnMatch (many pattern) (reservedOp "=>")
       pure ()
 
---fnMatch pMFArgs = (fnArgs <* lexemen (reservedOp "=")) <*> tt
-fnMatch pMFArgs = FnMatch [] <$> (pMFArgs <* lexemen (reservedOp "=")) <*> tt
-fnArgs = let
-  implicits = choice
-   [ reservedOp "@" *> braces ((iden >>= lookupImplicit) `sepBy1` ";")
-   , pure []
-   ] in choice [ FnMatch <$> implicits <*> many (lexeme pattern) ]
+fnMatch pMFArgs sep = -- sep is "=" or "=>"
+  FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
+
+--fnArgs = let
+--  implicits = choice
+--   [ reservedOp "@" *> braces ((iden >>= lookupImplicit) `sepBy1` ";")
+--   , pure []
+--   ] in FnMatch <$> implicits <*> many (lexeme pattern)
 
 -- We often need to parse a 2nd token to find out more about the first
 -- eg. we have 2 'states' when parsing a tt
 -- 1. `maybeApp` we may be parsing a fn app
 -- 2. `arg` we are parsing arguments to an app (eg. Lit | parens app ..)
 -- mixfix trains : parse out mixfixes assuming equal precedence , resolve that later
+data MFLArg = MFLArgTT TT | MFLArgNone | MFLArgHole
 tt :: Parser TT = typedTT =<< choice
   [ letIn      -- "let"
   , multiIf    -- "if"
@@ -346,62 +367,94 @@ tt :: Parser TT = typedTT =<< choice
   , mixFixTrainOrArg
   ] <?> "tt"
   where
-  postFix tt = (\(App f args) -> App f (tt:args)) <$> (iden >>= mixFix lookupPostFix)
+  postFix tt = mixFixDef >>= \md -> case md of
+    MFName h : xs -> mixFix md (MFLArgTT tt) lookupPostFix h
   mixFixTrainOrArg = let
-    tryPostFix fn = choice [postFix fn >>= tryPostFix , pure fn]
+    tryPostFix fn = option fn (postFix fn >>= tryPostFix)
     in appOrArg >>= tryPostFix
-  mixFix look i = look i >>= \case
-    Nothing -> fail $ "not a mixFix namePart: " ++ T.unpack i
-    Just mf -> choice (map doMixFix mf)
-  doMixFix (mDef,i) = (App (Var i) <$>) . try $ pMixFix mDef
-  pMixFix m = case m of -- generate a parser for a mixFixDef
-    []            -> pure []
-    MFName nm : x -> symbol nm *> pMixFix x
-    MFHole    : x -> (:) <$> lexeme appOrArg  <*> pMixFix x
-  mfIden = try $ iden >>= \i -> choice [
-       mixFix lookupMixFix i
+  mixFix parsedDef lArg look i = let
+    doMixFix parsedDef lArg ms = do
+      let mkBody i args = App (Var i) $ case lArg of { MFLArgTT i->(i:args) ; _->args }
+      lambdaBound <- case lArg of { MFLArgHole->addAnonArg <&> (\x->[x]) ; _ -> pure [] }
+      try (pLMF parsedDef (ms , lambdaBound)) >>= \case
+        (i , args , []) -> pure $ mkBody i args
+        (i , args , lambdaBound) -> (Var . VBind <$> addAnonBindName) <* do
+          addBind $ FunBind "λMF" [] [FnMatch [] (PArg <$> lambdaBound) (mkBody i args)] Nothing
+    pLMF :: MixFixDef -> ([(MixFixDef,TTName)] , [IName]) -> Parser (TTName , [TT] , [IName])
+    pLMF parsedMF (possibleMFs , lBound) = do
+      let stripPrefix [] (ys,i) = Just (ys,i)
+          stripPrefix (x:xs) ((y:ys),i) | x == y = stripPrefix xs (ys,i)
+          stripPrefix _ _ = Nothing
+      lBounds  <- (length $ filter (==MFHole) parsedMF) `replicateM` addAnonArg
+      let matches = catMaybes $ stripPrefix parsedMF <$> possibleMFs
+          done = filter (\case { ([],i)->True ; _->False }) matches
+          lamArgs = Var . VLocal <$> lBounds
+--    traceM `mapM_` [show parsedMF, show possibleMFs, show matches, show lBounds, show done]
+      case snd <$> done of
+        [i]   -> pure (i , lamArgs , lBounds ++ lBound)
+        []    -> let
+          in case matches of
+            [([MFHole] , i)] -> (\x->(i , x:lamArgs , lBounds ++ lBound)) <$> lexeme appOrArg
+            x  -> let
+              next = (\(a,b)->(drop 1 a,b)) <$> filter (\case {(MFHole:xs,_)->True ; _->False}) matches
+              merge = \x (i,a,b)->(i,x : a ++ lamArgs ,lBound++b)
+              in merge <$> lexeme appOrArg <*> ((\x -> pLMF x (next , lBounds)) =<< mixFixDef)
+        x    -> fail "amibuous parse"
+    in look i >>= \case
+      Nothing -> fail $ "not a mixFix namePart: " ++ T.unpack i
+      Just mf -> doMixFix parsedDef lArg $ (\(a,b)->(MFName i:a,b)) <$> mf
+  mfApp = try mixFixDef >>= \md -> case md of
+    MFHole : MFName h : x -> mixFix (MFName h : x) MFLArgNone lookupPostFix h
+    MFName i : x -> choice
+     [ mixFix md MFLArgNone lookupMixFix i
      , lookupPostFix i >>= \case
          Nothing -> choice [label i , lookupBindName i]
-         Just x -> fail $ "reserved postfix iden: " ++ show i
+         Just x  -> fail $ "reserved postfix iden: " ++ show i
      ]
-  appOrArg = arg >>= \fn -> choice
-    [ Proj fn <$ reservedChar '.' <*> (iden >>= newFLabel)
-    , App fn <$> some arg
+  varName = try $ idenNo_ >>= \i -> lookupPostFix i >>= \case
+         Nothing -> choice [label i , lookupBindName i]
+         Just x  -> fail $ "reserved postfix iden: " ++ show i
+  appOrArg = mfApp <|> arg >>= \fn -> choice
+    [ Proj fn <$ reservedChar '.' <*> (idenNo_ >>= newFLabel)
+    , case fn of
+        Lit l -> LitArray . (l:) <$> some literalP
+        _     -> App fn <$> some arg
     , pure fn
     ]
   arg = choice
-   [ WildCard <$ reserved "_"
+   [ reserved "_" $> WildCard
    , con
-   , mfIden
+   , varName
    , Lit <$> literalP
+   , some literalP <&> \case { [l] -> Lit l ; ls  -> LitArray ls }
    , TyListOf <$> brackets tt
    , parens $ choice [try piBinder , (tt >>= typedTT)]
    ] <?> "arg tt"
-  piBinder = do
-    i <- lexeme iden
-    lookAhead (void (reservedChar ':') <|> reservedOp "::")
-    (Var . VLocal <$> addArgName i) >>= typedTT
-  label i = P.Label <$ reservedOp "@" <*> newSLabel i <*> some arg
+--label i = fail "no label"
+  label i = lookupSLabel i >>= \case
+    Nothing -> P.Label <$ reservedOp "@" <*> newSLabel i <*> (many arg)
+    Just l  -> P.Label l <$> many arg
 
-  tySum = let
+  tySum = TySum <$> let
     labeledTTs = do
       label <- iden >>= newSLabel
-      tyAnn >>= \case
-        Nothing -> fail "sum type annotation missing"
-        Just (impls , ty) -> pure (label , impls , ty)
-    in do TySum <$> some (try (scn *> (reservedChar '|' *> lexeme labeledTTs)))
+      getPiBounds tyAnn >>= \case
+        (pis , Nothing) -> fail "sum type annotation missing"
+        (pis , Just (impls , ty)) -> pure (label , (map fst pis) ++ impls , ty)
+    in some $ try (scn *> (reservedChar '|' *> lexeme labeledTTs))
 
-  con = let
+  con = Cons <$> let
     fieldDecl = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> arg
-    in Cons <$> (braces $ fieldDecl `sepBy1` reservedOp ";")
+    in braces $ fieldDecl `sepBy1` reservedOp ";"
 
-  caseSplits = let
-    split = (,,) <$> (iden >>= newSLabel) <* reservedOp "@"
-      <*> pattern <* reservedOp "=>" <*> tt
-    in Match <$> many (reservedOp "|" *> split)
+  caseSplits = Match <$> let
+    split = (,,) <$> (iden >>= newSLabel) <* optional (reservedChar '@')
+      <*> many pattern <* reserved "=>" <*> tt
+    in many $ try (scn *> reservedChar '|' *> split)
 
   match = reserved "case" *> do
     scrut  <- tt
+    reserved "of"
     (`App` [scrut]) <$> caseSplits
   lambdaCase = reserved "\\case" *> caseSplits
 
@@ -424,19 +477,36 @@ tt :: Parser TT = typedTT =<< choice
   typedTT exp = tyAnn >>= \case -- optional type annotation is parsed as anonymous let-binding
     Nothing -> pure exp
     Just ([] , WildCard)  ->  pure exp -- don't bother if no info given (eg. pi binder)
-    Just (implicits , ty) -> (Var . VBind <$> addAnonBindName)
-      <* addBind (FunBind "_:" [] [FnMatch [] [] exp] (Just ty))
+    Just (implicits , ty) -> case exp of
+      Var (VLocal l) -> addPiBound (l , ty) *> pure exp
+      x -> (Var . VBind <$> addAnonBindName)
+        <* addBind (FunBind "_:" [] [FnMatch [] [] exp] (Just ty))
+  piBinder = do
+    i <- iden
+    lookAhead (void (reservedChar ':') <|> reservedOp "::")
+    (Var . VLocal <$> addArgName i) >>= typedTT
 
-pattern = singlePattern
-singlePattern = dbg "pattern" $ choice
+pattern = singlePattern >>= \x -> option x (PApp x <$> parens (some singlePattern))
+singlePattern = let
+  piBound h = do
+    tyAnn <- reservedChar ':' *> tt
+    i <- addArgName h
+    addPiBound (i , tyAnn)
+    pure $ PTyped (PArg i) tyAnn
+  in choice
  [ PLit <$> literalP
  , PArg <$> (reserved "_" *> addAnonArg) -- wildcard pattern
- , PArg <$> (iden >>= addArgName)
- , parens typedPattern
+-- , iden >>= \i -> lookupSLabel i >>= \case
+--     Nothing -> addArgName i
+--     Just  x -> PApp <$> many singlePattern
+ , iden >>= \h -> choice
+    [ piBound h
+    , PArg <$> addArgName h
+    ]
+ , parens singlePattern
  ]
-typedPattern = singlePattern >>= \p -> choice
-  [ PTyped p <$ reservedOp ":" <*> tt
-  , pure p]
+--typedPattern = let
+--  in singlePattern >>= \p -> option p piBound
 
 ---------------------
 -- literal parsers --

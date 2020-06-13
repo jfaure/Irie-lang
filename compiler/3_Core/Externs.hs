@@ -87,18 +87,22 @@ primBinds :: V.Vector Expr = let
  primTy2Expr x = Ty [THPrim x]
  instr2Expr  (e , tys)  = Core (Instr e) [tys2TyHead tys]
  tys2TyHead  (args , t) = THArrow ((\x->[THExt x]) <$> args) [THExt t]
+ tyFn2Expr   (e) = Ty [e]
  in V.concat
    [ primTy2Expr <$> primTyBinds
    , instr2Expr  <$> instrBinds
+   , tyFn2Expr   <$> tyInstrBinds
    ]
 
 getPrimIdx nm = asum
  [ M.lookup nm primTyMap
  , (M.size primTyMap +) <$> M.lookup nm instrMap
+ , (M.size primTyMap + M.size instrMap + ) <$> M.lookup nm tyFnMap
  ]
 
-(primTyMap , primTyBinds) = buildMaps primTys
-(instrMap  , instrBinds)  = buildMaps instrs
+(primTyMap , primTyBinds)   = buildMaps primTys
+(instrMap  , instrBinds)    = buildMaps instrs
+(tyFnMap , tyInstrBinds) = buildMaps tyFns
 
 buildMaps :: [(HName , a)] -> (M.Map HName Int , V.Vector a)
 buildMaps list = let
@@ -110,11 +114,11 @@ buildMaps list = let
 primTys :: [(HName , PrimType)] =
   [ ("Bool"    , PrimInt 1)
   , ("Int"     , PrimInt 32)
+  , ("Nat"     , PrimNat 32)
   , ("Float"   , PrimFloat FloatTy )
   , ("Double"  , PrimFloat DoubleTy)
   , ("CharPtr" , PtrTo $ PrimInt 8 )
   , ("IntArray", PrimArr $ PrimInt 32)
-  , ("Set"     , PrimSet)
   ]
 getPrimTy nm = case M.lookup nm primTyMap of
   Nothing -> error $ "panic: badly setup primtables; "
@@ -124,18 +128,23 @@ getPrimTy nm = case M.lookup nm primTyMap of
 [i, b, ia, set] = getPrimTy <$> ["Int", "Bool", "IntArray", "Set"]
 
 -- instrs are typed with indexes into the primty map
-instrs :: [(HName , (PrimInstr , ([IName] , IName)))] = let
-  in
-  [ ("+" , (IntInstr Add  , ([i, i] , i) ))
-  , ("-" , (IntInstr Sub  , ([i, i] , i) ))
-  , ("<" , (IntInstr ICmp , ([i, i] , b) ))
-  , ("!" , (MemInstr ExtractVal , ([ia, i] , i) ))
-  , ("->", (ArrowTy , ([set] , set)))
-  , ("_->_", (ArrowTy , ([set] , set)))
-  , ("IntN" , (MkIntN , ([i] , set)))
---, ("→", (ArrowTy , ([set] , set)))
-  , ("primLen" , (Len , ([ia] , i)))
---  , ("plus" , (IntInstr Add  , ([i, i] , i) ))
+tyFns =
+  [ ("IntN" , (THPi [(0,[THExt i])] [THInstr MkIntN [0]] M.empty))
+  , ("->", (THPi [(0,[THSet 0]),(1,[THSet 0])] [THInstr ArrowTy [0, 1]] M.empty))
+  , ("Set" , THSet 0)
+--  , ("_→_", (ArrowTy , ([set] , set)))
+  ]
+instrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
+  [ ("primLen" , (Len , ([ia] , i)))
+  ] ++ instrsMixFix
+instrsMixFix :: [(HName , (PrimInstr , ([IName] , IName)))] =
+  [ ("_+_" , (IntInstr Add  , ([i, i] , i) ))
+  , ("plus", (IntInstr Add  , ([i, i] , i) ))
+  , ("_-_" , (IntInstr Sub  , ([i, i] , i) ))
+  , ("_<_" , (IntInstr ICmp , ([i, i] , b) ))
+  , ("_!_" , (MemInstr ExtractVal , ([ia, i] , i) ))
+
+--  , ("->", (ArrowTy , ([set] , set)))
   ]
 
 typeOfLit = \case

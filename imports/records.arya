@@ -1,2 +1,6 @@
---f r = r.q
---x = f {q = 3 ; z = "hello"}
+f r = r.q
+x = f {q = 3 ; z = "hello"}
+
+x = { b=3 ; h=4 }
+c = x.b
+p x = if x.p then x.q else x.q -- : {p:Bool , q:a} -> a

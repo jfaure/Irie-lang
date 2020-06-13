@@ -64,7 +64,7 @@ convBind extBinds coreBinds stgBinds i
    MV.write stgBinds i (TRec llvmNm) -- in case recursive
    (\b -> MV.write stgBinds i b $> b) =<<
     case bind of
-      BindTerm ars t ty -> let
+      BindOK ars (Core t ty) -> let
         ty' = convTy' ty
         (argTys , [retTy]) = case ty' of
           StgFnType ars -> splitAt (length ars-1) ars
@@ -74,7 +74,7 @@ convBind extBinds coreBinds stgBinds i
         t' <- convTerm convBind' t
         pure . TBind . StgBinding llvmNm
           $ StgTopRhs argNms argTys retTy t'
-      BindType ars ty -> pure
+      BindOK ars (Ty ty) -> pure
         $ TAlias (llvmNm , convTy' ty)
   x -> pure x
 

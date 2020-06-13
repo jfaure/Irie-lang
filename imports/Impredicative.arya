@@ -1,0 +1,4 @@
+-- Higher rank
+auto i = (i i) 3
+id x = x
+g = auto id

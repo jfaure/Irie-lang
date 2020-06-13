@@ -22,13 +22,13 @@ data Literal
 -----------
 data PrimType
  = PrimInt Int -- typeBits
+ | PrimNat Int
  | PrimFloat FloatTy
  | PrimArr PrimType
  | PrimTuple [PrimType]
  | PtrTo PrimType
  | PrimExtern   [PrimType]
  | PrimExternVA [PrimType]
- | PrimSet -- type of types
 
 data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
 
@@ -41,17 +41,18 @@ data PrimInstr
  | NatInstr   NatInstrs
  | FracInstr  FracInstrs
  | MemInstr   ArrayInstrs
- | ArrowTy    -- types functions : Set->Set->Set
  | ExprHole   -- errors on eval, but will typecheck
  | MkNum      -- instantiation must happen via function call
  | MkReal
  | MkTuple
  | Alloc
- | SizeOf
  | Len -- len of PrimArray
+ | SizeOf
 
  -- type instructions
- | MkIntN     -- : Nat -> Set --make an int with n bits
+data PrimTyInstr
+ = MkIntN  -- : Nat -> Set --make an int with n bits
+ | ArrowTy -- : Set -> Set
 
  -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
 
@@ -68,16 +69,17 @@ deriving instance Show Literal
 instance Show PrimType where
  show = \case
    PrimInt x -> "%i" ++ show x
+   PrimNat x -> "%ui" ++ show x
    PrimFloat f -> "%f" ++ show f
    PrimArr prim -> "%@[" ++ show prim ++ "]"
    PrimTuple prim -> "%tuple(" ++ show prim ++ ")"
    PtrTo t -> "%ptr(" ++ show t ++ ")"
    PrimExtern   tys -> "%extern(" ++ show tys ++ ")"
    PrimExternVA tys-> "%externVA(" ++ show tys ++ ")"
-   PrimSet -> "Set"
 
 deriving instance Show FloatTy
 deriving instance Show PrimInstr
+deriving instance Show PrimTyInstr
 deriving instance Show IntInstrs
 deriving instance Show NatInstrs
 deriving instance Show FracInstrs
@@ -100,3 +102,9 @@ deriving instance Eq IntInstrs
 deriving instance Eq NatInstrs
 deriving instance Eq FracInstrs
 deriving instance Eq ArrayInstrs
+
+primSubtypeOf :: PrimType -> PrimType -> Bool
+PrimInt a `primSubtypeOf` PrimInt b = a <= b
+PrimNat a `primSubtypeOf` PrimNat b = a <= b
+x `primSubtypeOf` y = x == y
+

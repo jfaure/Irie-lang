@@ -17,6 +17,7 @@ description:         Please see the README on GitHub at <https://github.com/jfau
 dependencies:
 - primitive
 - base >= 4.7 && < 5
+- hashable
 - text
 - vector
 - containers

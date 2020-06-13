@@ -54,6 +54,9 @@ import Debug.Trace
 -- a  <= c  solved by [m- b = a n [b/a-]c  /a-] -- (or equivalently,  [a u b /b+])
 -- SubConstraints:
 -- (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
+
+failBiSub a b = error $ "failed bisub: " ++ show a ++ "<-->" ++ show b --pure False
+
 biSub_ a b = trace ("bisub: " ++ prettyTy a ++ " <==> " ++ prettyTy b) biSub a b -- *> (dv_ =<< use bis)
 biSub :: TyPlus -> TyMinus -> TCEnv s ()
 biSub a b = let
@@ -98,6 +101,12 @@ atomicBiSub p m = case (p , m) of
   -- record: labels in the first must all be in the second
   (THProd fields1 , THProd fields2) -> let
     go (l , ttm) = case M.lookup l fields1 of
+      Nothing  -> error $ "field not present"
+      Just ttp -> biSub ttp ttm --covariant
+    in go `mapM_` (M.toList fields2)
+
+  (THSum fields1 , THSum fields2) -> let
+    go (l , ttm) = case M.lookup l fields2 of
       Nothing  -> error $ "label not present"
       Just ttp -> biSub ttp ttm --covariant
     in go `mapM_` (M.toList fields2)
@@ -109,10 +118,11 @@ atomicBiSub p m = case (p , m) of
   (p , THExt i)-> biSub [p]     =<< tyExpr . (`readExtern` i)<$>use externs
   (THExt i , m)-> (`biSub` [m]) =<< tyExpr . (`readExtern` i)<$>use externs
 --  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
+  (THULC a , THULC b) -> biSubULC a b
   (a , b) -> failBiSub a b
 
-failBiSub a b = error $ "failed bisub: " ++ show a ++ "<-->" ++ show b --pure False
-
+biSubULC a b = pure ()
+--if a == b then pure () else failBiSub a b
 --------------
 -- Checking --
 --------------
@@ -139,7 +149,7 @@ reduceType t = t
 --   * check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
 check :: Externs -> V.Vector [TyHead]
      -> [TyHead] -> [TyHead] -> Bool
-check e ars inferred gotRaw = trace (prettyTy inferred ++ " <? " ++ prettyTy gotRaw)
+check e ars inferred gotRaw = trace ("check: " ++ prettyTy inferred ++ "\n<? " ++ prettyTy gotRaw)
   $ check' e ars inferred (reduceType gotRaw)
 
 check' :: Externs -> V.Vector [TyHead]
@@ -151,31 +161,46 @@ check' es ars inferred gotTy = let
     Ty t -> t
   checkAtomic :: TyHead -> TyHead -> Bool
   checkAtomic inferred gotTy = case (inferred , gotTy) of
-    (THSet 0 , x) -> True -- TODO
+    (THSet l1, THSet l2)  -> l1 <= l2
+    (THSet 0 , x)         -> case x of
+        THArrow{} -> False
+        _         -> True
+    (x , THSet 0)         -> case x of
+        THArrow{} -> False
+        _         -> True
     (THArg x , gTy)       -> True -- check'' (ars V.! x) [gTy]
-    (THVar x , gTy)       -> True -- TODO
-    (lTy , THVar x)       -> True -- TODO
-    (THPrim x , THPrim y) -> x == y
+    (THVar x , gTy)       -> True -- check'' (bis V.! x) [gTy]
+    (lTy , THVar x)       -> False
+    (THPrim x , THPrim y) -> x `primSubtypeOf` y
     (THArrow a1 r1 , THArrow a2 r2) -> let
       -- note. (a->(b->c)) is eq to (a->b->c) via currying
       mkFn [x] = x
       mkFn s = let (ars , [ret]) = splitAt (length s - 1) s
         in [THArrow ars ret]
       go (x:xs) (y:ys) = check'' y x && go xs ys
-      go [] [] = True
-      go [] y = check'' r1 (mkFn y)
-      go x [] = check'' (mkFn x) r1
+      go [] [] = check'' r1 r2
+      go [] y  = check'' r1 [THArrow y r2]
+      go x []  = check'' [THArrow x r1] r2
       in go a1 a2
-    (THSum x , THSum y)   -> _
-    (THProd x , THProd y) -> _
+    (THSum x , t@THArrow{}) -> -- all alts must subsume the signature
+      all (`check''` [t]) (M.elems x)
+    (THSum x , THSum y)   -> let
+      int = M.intersection y x -- left-biased
+      szOK = M.size x <= M.size y
+      in szOK && all id (zipWith check'' (M.elems x) (M.elems int))
+    (THProd x , THProd y) -> let
+      int = M.intersection y x -- left-biased
+      szOK = M.size x >= M.size y
+      in szOK && all id (zipWith check'' (M.elems x) (M.elems int))
     (THExt x , THExt y) -> x == y
     (THExt x , t) -> check'' (readExt es x) [t]
     (t , THExt x) -> check'' [t] (readExt es x)
 --  (t , THIxPAp [] ty tyArgs termArgs) -> check' es (ars V.// M.toList tyArgs) [t] ty
-    (t , THIxPAp [] ty tyArgs termArgs) -> check'' [t] (tyAp ty tyArgs)
-    (THIxPAp [] ty tyArgs termArgs , t) -> check'' (tyAp ty tyArgs) [t]
+    (t , THPi [] ty tyArgs) -> check'' [t] (tyAp ty tyArgs)
+    (THPi [] ty tyArgs , t) -> check'' (tyAp ty tyArgs) [t]
 
     (x , THArg y) -> True -- ?!
+    (THULC (LCRec m) , x) -> True -- TODO
     (a,b) -> error $ "checking: not ready for:" ++ show a ++ " <? " ++ show b
   in case inferred of
     []   -> False
