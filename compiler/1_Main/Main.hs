@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedLists , OverloadedStrings , UnicodeSyntax #-}
+-- main =~ Text >> Parse >> Core >> STG >> LLVM
 import CmdLine
 import ParseSyntax
 import Parser
@@ -37,7 +37,8 @@ main = parseCmdLine >>= \cmdLine ->
 
 repl :: CmdLine -> IO ()
 repl cmdLine = let
-  doLine l = doProgText cmdLine M.empty "<stdin>" (T.pack l) >>= print . importBinds . snd
+  doLine l = doProgText cmdLine M.empty "<stdin>" (T.pack l)
+    >>= print . importBinds . snd
   loop     = getInputLine "'''" >>= \case
       Nothing -> pure ()
       Just l  -> lift (doLine l) *> loop

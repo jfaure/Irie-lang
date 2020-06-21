@@ -1,6 +1,6 @@
 -- todo list of possible mixfixes (ie. because reserved && check ambiguous parse)
 i_t_e_ = \ x a b => if x then a else b
-isBool a x = i 3 t 3 e 3
+isBool a x = i a t a e x
 
 _%_ = plus
 
@@ -9,3 +9,4 @@ f = 3 % 2 % 1
 _X_ = \a b => plus a b
 a = _ X_
 b = _X 2
+c = 0 X_

@@ -77,6 +77,7 @@ resolveImports imports pm = let
     { extNames = names (pm ^. P.parseDetails . P.hNamesNoScope)
     , extBinds = primBinds V.++ importedExprs }
 
+mkExtTy x = [THExt x]
 ---------------------------
 -- Primitives / Builtins --
 ---------------------------
@@ -86,7 +87,7 @@ resolveImports imports pm = let
 primBinds :: V.Vector Expr = let
  primTy2Expr x = Ty [THPrim x]
  instr2Expr  (e , tys)  = Core (Instr e) [tys2TyHead tys]
- tys2TyHead  (args , t) = THArrow ((\x->[THExt x]) <$> args) [THExt t]
+ tys2TyHead  (args , t) = THArrow (mkExtTy <$> args) (mkExtTy t)
  tyFn2Expr   (e) = Ty [e]
  in V.concat
    [ primTy2Expr <$> primTyBinds
@@ -120,7 +121,7 @@ primTys :: [(HName , PrimType)] =
   , ("CharPtr" , PtrTo $ PrimInt 8 )
   , ("IntArray", PrimArr $ PrimInt 32)
   ]
-getPrimTy nm = case M.lookup nm primTyMap of
+getPrimTy nm = case getPrimIdx nm of -- case M.lookup nm primTyMap of
   Nothing -> error $ "panic: badly setup primtables; "
     ++ T.unpack nm ++ " not in scope"
   Just i  -> i
@@ -128,10 +129,10 @@ getPrimTy nm = case M.lookup nm primTyMap of
 [i, b, ia, set] = getPrimTy <$> ["Int", "Bool", "IntArray", "Set"]
 
 -- instrs are typed with indexes into the primty map
-tyFns =
-  [ ("IntN" , (THPi [(0,[THExt i])] [THInstr MkIntN [0]] M.empty))
-  , ("->", (THPi [(0,[THSet 0]),(1,[THSet 0])] [THInstr ArrowTy [0, 1]] M.empty))
-  , ("Set" , THSet 0)
+tyFns = [
+--[ ("IntN" , (THPi [(0,(mkExtTy i))] [THInstr MkIntN [0]] M.empty))
+--  ("--->", (THPi [(0,[THSet 0]),(1,[THSet 0])] [THInstr ArrowTy [0, 1]] M.empty))
+    ("Set" , THSet 0)
 --  , ("_→_", (ArrowTy , ([set] , set)))
   ]
 instrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
@@ -143,8 +144,8 @@ instrsMixFix :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("_-_" , (IntInstr Sub  , ([i, i] , i) ))
   , ("_<_" , (IntInstr ICmp , ([i, i] , b) ))
   , ("_!_" , (MemInstr ExtractVal , ([ia, i] , i) ))
-
---  , ("->", (ArrowTy , ([set] , set)))
+  , ("->",   (TyInstr Arrow , ([set] , set)))
+  , ("IntN", (TyInstr MkIntN , ([i] , set)))
   ]
 
 typeOfLit = \case

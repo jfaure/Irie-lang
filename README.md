@@ -9,7 +9,7 @@ Subtyping is a very accurate way of representing many desirable features, since 
  * Subtyping relations on algebraic data (above) are useful for proof irrelevence and other simplifications
  * No need for strict positivity: subtyping allows bivariant type parameters (ie. things put into a data aren't the same as those taken out: eg. input graphical components into a list, take out only 'onClick' functions)
  * Subtyping describes data flow explicitly, and allows more precise types
- * Effectful functions supertype pure ones
+ * Effectful functions supertype pure ones - so no need to explicitly call pure/return/ other glue functions
  * Terms are for algorithms , Types are for optimizations (using automatic conversions via subtyping)
  * The dependent function is a subtype of the non-dependent function
  * Subtyping polymorphism is a sweet spot between parametric polymorphism and ad-hoc polymorphism

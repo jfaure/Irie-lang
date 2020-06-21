@@ -41,6 +41,7 @@ data PrimInstr
  | NatInstr   NatInstrs
  | FracInstr  FracInstrs
  | MemInstr   ArrayInstrs
+ | TyInstr    TyInstrs
  | ExprHole   -- errors on eval, but will typecheck
  | MkNum      -- instantiation must happen via function call
  | MkReal
@@ -50,9 +51,9 @@ data PrimInstr
  | SizeOf
 
  -- type instructions
-data PrimTyInstr
+data TyInstrs
  = MkIntN  -- : Nat -> Set --make an int with n bits
- | ArrowTy -- : Set -> Set
+ | Arrow   -- : Set -> Set
 
  -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
 
@@ -79,7 +80,7 @@ instance Show PrimType where
 
 deriving instance Show FloatTy
 deriving instance Show PrimInstr
-deriving instance Show PrimTyInstr
+deriving instance Show TyInstrs
 deriving instance Show IntInstrs
 deriving instance Show NatInstrs
 deriving instance Show FracInstrs
@@ -89,6 +90,7 @@ deriving instance Ord Literal
 deriving instance Ord PrimType
 deriving instance Ord FloatTy
 deriving instance Ord PrimInstr
+deriving instance Ord TyInstrs
 deriving instance Ord IntInstrs
 deriving instance Ord NatInstrs
 deriving instance Ord FracInstrs
@@ -102,6 +104,7 @@ deriving instance Eq IntInstrs
 deriving instance Eq NatInstrs
 deriving instance Eq FracInstrs
 deriving instance Eq ArrayInstrs
+deriving instance Eq TyInstrs
 
 primSubtypeOf :: PrimType -> PrimType -> Bool
 PrimInt a `primSubtypeOf` PrimInt b = a <= b

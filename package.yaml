@@ -50,6 +50,7 @@ default-extensions:
 - ConstraintKinds
 - RecursiveDo
 - OverloadedStrings
+- DeriveDataTypeable
 # - GADTs
 # - PolyKinds
 # - DataKinds

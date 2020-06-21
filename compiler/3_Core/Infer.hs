@@ -58,6 +58,7 @@ withDomain :: IName -> [Int] -> (TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
 withDomain bindINm idxs action = do
   d <- use domain
   -- anticipate recursive type
+--  use wip >>= (\v -> MV.write v bindINm (Checking [THULC (LCRec bindINm)]))
   use wip >>= (\v -> MV.write v bindINm (Checking [THRec bindINm]))
   r <- action
   argTys <- case idxs of
@@ -78,56 +79,47 @@ withBiSubs n action = do
   let vars = MV.slice biSubLen n bisubs
   pure (ret , vars)
 
-judgeBind :: IName -> TCEnv s Bind
+judgeBind :: IName -> TCEnv s Expr
 judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
-  b@BindOK{}  -> pure b
-  Checking ty -> pure $ BindOK [] $ ULC (LCRec bindINm)
+  BindOK e  -> pure e
+--Checking ty -> pure $ BindOK $ Ty [THRec bindINm]
+  Checking ty -> pure $ Core (Var (VBind bindINm)) [THRec bindINm]
   WIP -> mdo
     P.FunBind hNm implicits matches tyAnn
       <- (!! bindINm) <$> use (id . pmodule . P.bindings)
     let (mainArgs , mainArgTys , tt) = matches2TT matches
---      args = implicits ++ mainArgs
-        args = sort implicits -- TODO don't sort !
+        args = sort $ implicits ++ mainArgs
+--      args = sort implicits -- TODO don't sort !
         nArgs = length args
 
     (expr , argSubs) <- withDomain bindINm args (infer tt)
     argTys <- fmap _mSub <$> V.freeze argSubs
     -- Generalization ?!
     let bindTy = case expr of
-          Core x t -> if nArgs==0 then t else [THArrow (V.toList argTys) t]
-          Ty t     -> if nArgs==0 then t else [THArrow (take nArgs (repeat [THSet 0])) t]
-          ULC l    -> tyOfLC l
+          Core x t -> t -- if nArgs==0 then t else [THArrow (V.toList argTys) t]
+          CoreFn ars x t -> t
+          Ty t     -> t -- if nArgs==0 then t else [THArrow (take nArgs (repeat [THSet 0])) t]
     case tyAnn of
       Nothing  -> pure ()
       Just ann -> do
         ann      <- tyExpr <$> infer ann
-        argAnns  <- map tyExpr <$> (\[x]->infer x) `mapM` mainArgTys
---      let implicitArgTys = (\x->[THArg x]) `map` implicits
---          annTy = [THArrow implicitArgTys (tyExpr ann')]
-        let annTy = case mainArgTys of
-              [] -> ann
-              x  -> [THArrow argAnns ann]
+        let inferArg = \case { [x] -> tyExpr <$> infer x ; [] -> pure [THSet 0] }
+        argAnns  <- inferArg `mapM` mainArgTys
+        let annTy = did_ $ case mainArgTys of { [] -> ann ; x  -> [THArrow argAnns ann] }
         exts <- use externs
-        unless (check exts argTys bindTy annTy)
+        labelsV <- V.freeze =<< use labels
+        unless (check exts argTys labelsV bindTy annTy)
           $ error (show bindTy ++ "\n!<:\n" ++ show ann)
-    let newBind = BindOK args expr
-    (\v -> MV.write v bindINm newBind) =<< use wip
-    pure newBind
+    let newExpr = case args of
+          [] -> expr
+          args -> case expr of
+            Core x ty -> CoreFn args x bindTy
+            Ty t      -> Ty $ [THPi $ Pi (zip args $ V.toList argTys) t]
+    (\v -> MV.write v bindINm (BindOK newExpr)) =<< use wip
+    pure expr
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
- yoloExpr2Ty :: Expr -> Type
- yoloExpr2Ty = \case
-   Ty x -> x
-   Core (Var v) typed -> case v of
-     VBind i -> [THAlias i]
-     VArg  i -> [THArg i]
-     VExt  i -> [THExt i]
-   ULC x -> [THULC x]
--- ULC x -> case x of
---   LCArg -> _
-   x -> error $ "term found in type context: " ++ show x
-
   -- App is the only place things that can go wrong
   -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
   -- * ie. introduce result typevar 'a', and biunify (tf+ <= tx+ -> a)
@@ -137,26 +129,24 @@ infer = let
 
    -- TODO verify argument subtypes for coercion purposes
  in \case
-  P.WildCard -> pure $ Ty tyTOP
+  P.WildCard -> pure $ Core Hole [THSet 0]
   -- vars : lookup in appropriate environment
   P.Var v -> case v of
     P.VBind b   -> -- polytype env
       judgeBind b <&> \case
-        BindOK args (Ty ty) -> case args of
-          []   -> Ty ty
-          args -> Ty [THPi ((,[])<$>args) ty M.empty]
-        BindOK args (Core e ty) -> Core (Var $ VBind b) ty
-        BindOK args e -> e
-        x -> error $ show x -- recursion guard ?
+        CoreFn args e ty -> Core (Var $ VBind b) ty
+        Core e ty -> Core (Var $ VBind b) ty -- don't copy the body
+        t -> t
     P.VLocal l  -> do -- monotype env (fn args)
-      pure $ ULC (LCArg l) -- pure $ Core (Var $ VArg l) [THArg l]
+      pure $ Core (Var $ VArg l) [THArg l]
     P.VExtern i -> (`readParseExtern` i) <$> use externs
 
   P.App f' args' -> do
     f     <- infer f'
     args  <- infer `mapM` args'
     retTy <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
-    pure $ case ttApp f args of
+    readBind <- pure judgeBind
+    ttApp readBind f args <&> \case
       Core f _ -> Core f retTy
       t -> t
 
@@ -164,13 +154,12 @@ infer = let
     let (fields , rawTTs) = unzip construct
     exprs <- infer `mapM` rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) }) <$> exprs
-    pure $ Core (Cons (M.fromList $ zip fields tts)) [THProd (M.fromList $ zip fields tys)]
+    pure $ Core (Cons (M.fromList $ zip fields tts)) [THProd fields]
 
   P.Proj tt field -> do -- biunify (t+ <= {l:a})
     recordTy <- infer tt
     bs <- snd <$> withBiSubs 1 (\ix ->
-      biSub_ (tyOfExpr recordTy)
-             [THProd (M.singleton field [THVar ix])])
+      biSub_ (tyOfExpr recordTy) [THProd [field]]) --  M.singleton field [THVar ix])])
     retTy <- _pSub <$> (`MV.read` 0) bs
     pure $ case recordTy of
       Core f _ -> Core (Proj f field) retTy
@@ -192,17 +181,17 @@ infer = let
     -- 1. Check against ann (retTypes must all subsume the signature)
     -- 2. Create sigma type from the arguments
     -- 3. Create proof terms from the return types
-    let go (l,impls,ty) = (l,) . mkSigma impls <$> infer ty
-        mkSigma impls ty = let
-          ty' = yoloExpr2Ty ty
-          in case impls of
-          [] -> ty'
-          impls -> [THSi (map (,[]) impls) ty' M.empty]
+    let go (l,impls,ty) = (l,) <$> (mkSigma impls =<< infer ty)
+        mkSigma impls ty = do
+          ty' <- expr2Ty judgeBind ty
+          pure $ case impls of
+            [] -> ty'
+            impls -> [THPi $ Pi (map (,[THSet 0]) impls) ty']
     sumArgsMap <- go `mapM` alts
     labelsV <- use labels
     (\(l,t) -> MV.write labelsV l (Just t)) `mapM` sumArgsMap
---  pure $ Ty $ [THSum $ fst <$> sumArgsMap]
-    pure $ Ty $ [THSum $ M.fromList sumArgsMap]
+    pure $ Ty $ [THSum $ fst <$> sumArgsMap]
+--  pure $ Ty $ [THSum $ M.fromList sumArgsMap]
 
   P.Match alts -> let
       (labels , patterns , rawTTs) = unzip3 alts
@@ -216,27 +205,28 @@ infer = let
       tys = pattern2Ty <$> patterns
     in do
     altExprs <- infer `mapM` rawTTs
-    let sumTy     = [THSum $ M.fromList (zip labels tys)] --(mergeTypes altTys)]
-        retTy     = foldl mergeTypes [] $ yoloExpr2Ty <$> altExprs
+    --TODO merge types with labels (mergeTypes altTys)]
+    retTy <- foldl mergeTypes [] <$> (expr2Ty judgeBind `mapM` altExprs)
+    let sumTy     = [THSum $ labels]
         matchTy   = [THArrow [sumTy] retTy]
         labelsMap = M.fromList $ zip labels altExprs
     pure $ Core (Match labelsMap Nothing) matchTy
 
-  P.MultiIf branches elseE -> do -- Bool ?
-    let (rawConds , rawAlts) = unzip branches
-        boolTy = getPrimIdx "Bool" & \case
-          { Just i->THExt i; Nothing->error "panic: \"Bool\" not in scope" }
-        addBool = doSub boolTy
-    condExprs <- infer `mapM` rawConds
-    alts      <- infer `mapM` rawAlts
-    elseE'    <- infer elseE
-    let retTy = foldr1 mergeTypes (tyOfExpr <$> (alts ++ [elseE'])) :: [TyHead]
-        condTys = tyOfExpr <$> condExprs
-        e2t (Core e ty) = e
-        ifE = MultiIf (zip (e2t<$>condExprs) (e2t<$>alts)) (e2t elseE') 
+--P.MultiIf branches elseE -> do -- Bool ?
+--  let (rawConds , rawAlts) = unzip branches
+--      boolTy = getPrimIdx "Bool" & \case
+--        { Just i->THULC (LCRec i); Nothing->error "panic: \"Bool\" not in scope" }
+--      addBool = doSub boolTy
+--  condExprs <- infer `mapM` rawConds
+--  alts      <- infer `mapM` rawAlts
+--  elseE'    <- infer elseE
+--  let retTy = foldr1 mergeTypes (tyOfExpr <$> (alts ++ [elseE'])) :: [TyHead]
+--      condTys = tyOfExpr <$> condExprs
+--      e2t (Core e ty) = e
+--      ifE = MultiIf (zip (e2t<$>condExprs) (e2t<$>alts)) (e2t elseE') 
 
-    (`biSub_` [boolTy]) `mapM` condTys -- check the condTys all subtype bool
-    pure $ Core ifE retTy
+--  (`biSub_` [boolTy]) `mapM` condTys -- check the condTys all subtype bool
+--  pure $ Core ifE retTy
 
   -- desugar --
   P.LitArray literals -> let
@@ -244,94 +234,57 @@ infer = let
     in pure $ Core (Lit . Array $ literals) [THArray [ty]]
 
   P.Lit l  -> pure $ Core (Lit l) [typeOfLit l]
-  P.TyListOf t -> (\x-> Ty [THArray x]) . yoloExpr2Ty <$> infer t
+--  P.TyListOf t -> (\x-> Ty [THArray x]) . yoloExpr2Ty <$> infer t
   P.InfixTrain lArg train -> infer $ resolveInfixes _ lArg train
   x -> error $ "inference engine not ready for parsed tt: " ++ show x
 
-----------------
--- λ calculus --
-----------------
-lc2Ty = go' where
- go' x = [THULC x]
--- go = \case
---  LCArg i -> [THLamBound i]
--- LCApp lcf lca -> let
---   getArgs :: [LC] -> [LC]
---   getArgs (f:a) = case f of
---     LCApp f' a' -> getArgs [f',a'] ++ a
---     lc -> lc:a
---   (f : ars) = getArgs [lcf , lca]
---   in LCApp f argscase f of
---     LCArg i -> _
---     LCRec i -> [THRecApp i (ULC <$> ars)]
---     x -> error $ "LC not a function: " ++ show x
--- LCRec i   -> [THRecApp i []]
--- LCTerm t ty -> error $ "LC: expr is not a type: " ++ show t ++ " : " ++ show ty
-
-lc2Term = \case
-  LCArg i -> Var (VArg i)
-  LCRec i -> Var (VBind i)
-  LCApp a b   -> App (lc2Term a) [lc2Term b]
-  LCTerm t ty -> t
-
-onExprULC f = \case { ULC l -> f l ; x -> x }
-expr2Term = onExprULC (\x->Core (lc2Term x) [])
-expr2Ty =   onExprULC (Ty . lc2Ty)
-
-tyOfLC = \case
-  LCArg i -> [THArg i]
-  LCApp a b -> [THArrow [tyOfLC a] (tyOfLC b)]
-  LCRec a   -> [THRec a]
-  LCTerm t ty -> ty
-
 tyOfExpr  = \case
   Core x ty -> ty
+  CoreFn _ _ ty -> ty
   Ty t      -> [THSet 0]     -- type of types
-  ULC l     -> tyOfLC l
 
-solveULC f = \case
-  ULC l -> f l
-  x -> x
---  Set u t   -> [THSet (u+1)]
-
+--expr2Ty :: _ -> Expr -> TCEnv s Type
+expr2Ty judgeBind e = case e of
+ Ty x -> pure x
+ Core c ty -> case c of
+   Var (VBind x) -> pure [THRec x]
+   Var (VArg x)  -> pure [THArg x] -- TODO ?!
+   App (Var (VBind fName)) args -> pure [THRecSi fName args]
+   x -> error $ "raw term cannot be a type: " ++ show e
+ x -> error $ "raw term cannot be a type: " ++ show x
 -----------------
 -- TT Calculus --
 -----------------
--- Application of typechecked TT expressions
--- This is different depending on the TT, one of:
--- * Untyped lambda-calculus
--- * Term app
--- * Type app: PI type and primitives (-> , %int n etc..)
-ttApp :: Expr -> [Expr] -> Expr
-ttApp fn args = case fn of
-  ULC f      -> doULCApp  f
-  Core f fTy -> doTermApp f fTy
-  Ty t       -> doTypeApp t args
-  where
-  doULCApp f = let
-    go = \case
-      ULC b     -> ULC $ LCApp f b
-      Core t ty -> ULC $ LCApp f (LCTerm t ty)
-    in case args of
-    [x] -> go x
-    x:xs -> ttApp (go x) xs
-  doTermApp f fTy = let
-    (ars , end) = span (\case {Core{}->True ; _->False}) (expr2Term <$> args)
-    app = App f $ (\(Core t _ty)->t) <$> ars 
-    in case end of
-      [] -> Core app [] -- don't forget to set retTy
-      x  -> error $ "term applied to type: " ++ show app ++ show x
-  doTypeApp t args = let ttArgs = expr2Ty <$> args in case t of
-    f@[THPi ars ty typeArgs] -> case ars of
-      (ar,arTy):arNms -> case (ty , ttArgs) of
-          ([THInstr MkIntN ars] , [Core (Lit (Int i)) _]) -> Ty [THPrim (PrimInt $ fromIntegral i)]
-          ([THInstr ArrowTy ars] , ttArgs) -> case solveULC (Ty . lc2Ty) <$> ttArgs of
-              [Ty arg1 , Ty arg2] -> Ty [THArrow [arg1] arg2]
-              x -> error $ "arguments to → must be types: " ++ show args
-          _ -> let
-            piApp expr = Ty [THPi arNms ty (M.insert ar expr typeArgs)]
-            in case ttArgs of
-              [expr]  -> piApp expr
-              expr:xs -> ttApp (piApp expr) xs
-      [] -> error $ "not a function: " ++ show f  ++ "\napplied to: " ++ show ttArgs
-    f -> error $ "panic: not a function: " ++ show f ++ "\n applied to: " ++ show args
+--ttApp :: _ -> Expr -> [Expr] -> TCEnv s Expr
+ttApp readBind fn args = -- trace (show fn ++ " $ " ++ show args) $ case fn of
+ case fn of
+  Core cf ty -> case cf of
+    Instr (TyInstr Arrow)  -> expr2Ty readBind `mapM` args <&> \case
+      { [a , b] -> Ty [THArrow [a] b] }
+    Instr (TyInstr MkIntN) -> case args of
+      [Core (Lit (Int i)) ty] -> pure $ Ty [THPrim (PrimInt $ fromIntegral i)]
+    coreFn -> let
+      (ars , end) = span (\case {Core{}->True ; _->False}) args
+      app = App cf $ (\(Core t _ty)->t) <$> ars -- drop argument types
+      in pure $ case end of
+        [] -> Core app [] -- don't forget to set retTy
+        x  -> error $ "term applied to type: " ++ show app ++ show x
+  Ty f -> pure $ case f of
+    [THPi (Pi ars f)] -> _
+    [THRec m] -> _
+  _ -> error $ "ttapp: not a function: " ++ show fn ++ " $ " ++ show args
+
+--  doTypeApp t args = let ttArgs = expr2Ty <$> args in case t of
+--    f@[THPi ars ty typeArgs] -> case ars of
+--      (ar,arTy):arNms -> case (ty , ttArgs) of
+----        ([THInstr MkIntN ars] , [Core (Lit (Int i)) _]) -> Ty [THPrim (PrimInt $ fromIntegral i)]
+----        ([THInstr ArrowTy ars] , ttArgs) -> case solveULC (Ty . lc2Ty) <$> ttArgs of
+----            [Ty arg1 , Ty arg2] -> Ty [THArrow [arg1] arg2]
+----            x -> error $ "arguments to → must be types: " ++ show args
+--          _ -> let
+--            piApp expr = Ty [THPi arNms ty (M.insert ar expr typeArgs)]
+--            in case ttArgs of
+--              [expr]  -> piApp expr
+--              expr:xs -> ttApp (piApp expr) xs
+--      [] -> error $ "not a function: " ++ show f  ++ "\napplied to: " ++ show ttArgs
+--    f -> error $ "panic: not a function: " ++ show f ++ "\n applied to: " ++ show args

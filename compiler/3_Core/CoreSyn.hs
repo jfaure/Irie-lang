@@ -27,6 +27,7 @@
 -- eg. isorecursive non-regular: add opaque roll/unroll primitives
 
 {-# LANGUAGE TemplateHaskell #-}
+{-# OPTIONS  -funbox-strict-fields #-}
 module CoreSyn
 where
 
@@ -59,98 +60,87 @@ data VName
  | VArg  IName -- bisub  map
  | VExt  IName -- extern map (incl. prim instrs)
 
-data Term -- Codegennable - all other datas are typing artefacts
- = Var     VName
+data Term -- β-reducable (possibly to a type) and type annotated
+ = Var     !VName  -- {-# UNPACK #-} 
  | Lit     Literal
- | App     Term    [Term] -- IName [Term]
- | MultiIf [(Term , Term)] Term
+ | Hole    -- to be inferred
+ | App     Term [Term] -- IName [Term]
+-- | Pow     Int Term Term
  | Instr   PrimInstr
+ | Coerce  Type Type
+ | MultiIf [(Term , Term)] Term
 
  -- data constructions
  | Cons    (M.Map IField Term)
  | Proj    Term IField
  | Label   ILabel [Expr]
- | Match   (M.Map ILabel Expr) (Maybe Term)
- | List    [Term]
+ | Match   (M.Map ILabel Expr) (Maybe Expr)
+ | List    [Expr]
+ | Split   Int Expr -- eliminator: \split nArgs f → f args
+
+-- components of our profinite distributive lattice of types
+-- unless explicit annotation, assume type Set0
+-- no β-reduce (except contained Terms)
+data TyHead -- head constructors for types.
+ = THVar      BiSubName  -- ix to bisubs
+ | THArg      IName      -- ix to monotype env (type of the lambda-bound at ix)
+ | THExt      IName      -- tyOf ix to externs
+ | THRec      IName      -- tyOf ix to bindMap (must be guarded and covariant)
+ | THTyRec    IName      -- ix to bindMap (is a type)
+
+ | THSet      Uni -- | THSetFn    [Uni]
+ | THTop Kind | THBot Kind
+ | THPrim     PrimType
+ | THArrow    [TyContra] TyCo  -- degenerate case of THPi
+ | THProd     [IField]
+ | THSum      [ILabel]
+ | THArray    TyCo
+
+ | THPi Pi -- dependent function space
+ | THSi Pi (M.Map IName Expr) -- (partial) application of pi type
+ | THRecSi IName [Term] -- application (ie. of indexed family)
+ | THSub Type Type -- indexed families are lists of subtype definitions
+
+data Pi = Pi [(IName , Type)] Type -- deBruijn indexes
+
+data Expr
+ = Core   Term Type
+ | CoreFn [IName] Term Type
+ | Ty     Type
+
+data Bind -- indexes in the bindmap
+ = WIP
+ | Checking  Type -- guard for recursive references
+ | BindOK    Expr
+ | BindKO -- failed to typecheck
+
+--data LC -- typeable in Setn (ie. type is Seta -> Set b -> Set c)
+-- = LCArg   IName
+-- | LCApp   LC LC
+-- | LCPow   Int LC LC  -- power app
+-- | LCIx    LC (Term , Type)
+--
+-- | LCRec   IName -- index into bindmap (whose type is often not immediately known)
+-- | LCLabel IName
+-- | LCExt   IName
 
 type Type     = TyPlus
 type Uni      = Int
---type Set      = Type -- Set Uni Type
 type TyCo     = [TyHead] -- same    polarity
 type TyContra = [TyHead] -- reverse polarity
 type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
 type TyPlus   = [TyHead] -- output types (lattice join)
-tyTOP    = []
-tyBOTTOM = []
 
 -- bisubs always reference themselves, so the mu. is implicit
 data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
 newBiSub = BiSub [] []
 
--- components of our profinite distributive lattice of types
-data TyHead -- head constructors for types.
- = THVar      BiSubName  -- ix to bisubs
- | THArg      IName      -- ix to monotype env (type of the lambda-bound at ix)
- | THAlias    IName      -- ix to bindings
- | THExt      IName      -- ix to externs
-
- | THPrim     PrimType
- | THSet      Uni
- | THArrow    [TyContra] TyCo
- | THRec      IName -- must be guarded (by other TyHead)
- | THProd     (M.Map IField TyCo) -- dependent record
- | THSum      (M.Map ILabel TyCo) -- map of function types
- | THArray    TyCo
-
--- | THSelfIx   IName -- only valid in dependent record
--- partial application in dependent function space
- | THPi [(IName , Type)] Type (M.Map IName Expr)
- | THSi [(IName , Type)] Type (M.Map IName Expr)
- | THEQ LC LC -- proof term
-
--- | THQ PiSigma [(IName , Type)] Type (M.Map IName Expr) data PiSigma = Pi | Sigma
- | THULC LC
- | THInstr PrimTyInstr [IName] -- pretty much only in THPi
- | THRecApp IName [Expr]
- | THLamBound IName
-
--- | THJoin [TyHead]
--- | THMeet [TyHead]
--- | THTop Kind
--- | THBot Kind
-
--- eliminator: split t with (x , y) → u
--- deconstructs the scrutinee t, binding its components to x and y, and then evaluates u.
-
--- label for the different head constructors
-data Kind = KPrim | KArrow | KVar | KSum | KProd | KAny | KRec
+-- label for the different head constructors. (KAny is the top of the entire universe)
+data Kind = KPrim | KArrow | KVar | KArg | KSum | KProd | KRec | KAny
   deriving Eq
 
-data Pi = Pi [(IName , Type)] Expr
-data Expr
- = Core    Term Type
- | Ty      Type  -- Set0
- | ULC     LC    -- poly-universe lambda calculus
- | Fn      Pi
- | ExprPAp Pi (IMap Expr)
-
-data LC -- poly-universe lambda calculus eg. `f a b = a (b b)`
- = LCArg   IName
- | LCLabel IName
- | LCRec   IName -- index into bindmap (whose type is often not immediately known)
- | LCApp   LC LC
- | LCPow   Int LC LC  -- power app
- | LCTerm  Term Type  -- terms can be args to types and exprs
-
-data Bind -- indexes in the bindmap
- = WIP
- | Checking  Type -- guard for recursive references
- | BindOK [IName] Expr
--- | BindOK Expr
- | BindKO -- failed to typecheck
-
 bind2Expr = \case
-  BindOK _ e -> e
+  BindOK e -> e
 
 makeLenses ''BiSub
 

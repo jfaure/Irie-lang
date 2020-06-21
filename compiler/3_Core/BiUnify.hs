@@ -13,6 +13,7 @@ import qualified Data.Map as M
 import qualified Data.IntMap as IM
 import qualified Data.Text as T
 import Data.Functor
+import Data.Maybe
 import Control.Monad
 import Control.Applicative
 import Control.Monad.Trans.State.Strict
@@ -92,6 +93,7 @@ atomicBiSub p m = case (p , m) of
 --    fa = [THImplicit i] ; ty = THArrow (replicate (length args) fa) fa
 --  in use domain >>= \v-> MV.modify v (ty:) i
   (THSet u , x) -> pure ()
+  (THRec m , THSet u) -> pure ()
   (THPrim p1 , THPrim p2) -> when (p1 /= p2) (failBiSub p1 p2)
   (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
 
@@ -99,26 +101,16 @@ atomicBiSub p m = case (p , m) of
     zipWithM biSub args2 args1 *> biSub ret1 ret2
 
   -- record: labels in the first must all be in the second
-  (THProd fields1 , THProd fields2) -> let
-    go (l , ttm) = case M.lookup l fields1 of
-      Nothing  -> error $ "field not present"
-      Just ttp -> biSub ttp ttm --covariant
-    in go `mapM_` (M.toList fields2)
-
-  (THSum fields1 , THSum fields2) -> let
-    go (l , ttm) = case M.lookup l fields2 of
-      Nothing  -> error $ "label not present"
-      Just ttp -> biSub ttp ttm --covariant
-    in go `mapM_` (M.toList fields2)
+  (THProd x , THProd y) -> if all (`elem` y) x then pure () else error "Cannot unify recordTypes"
+  (THSum  x , THSum y)  -> if all (`elem` x) y then pure () else error "Cannot unify sumtypes"
 
   -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
-  (THRec i, m)  -> pure () -- error $ "rec: " ++ show i
---(p , THRec i) -> _
-
-  (p , THExt i)-> biSub [p]     =<< tyExpr . (`readExtern` i)<$>use externs
-  (THExt i , m)-> (`biSub` [m]) =<< tyExpr . (`readExtern` i)<$>use externs
+  (p , THExt i) -> biSub [p]     =<< tyExpr . (`readExtern` i)<$>use externs
+  (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readExtern` i)<$>use externs
 --  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
-  (THULC a , THULC b) -> biSubULC a b
+  (THRec m , THRec y) -> unless (m == y) $ error "recursive types are not equal"
+  (THRec m , x) -> pure () -- TODO ?
+--(THULC a , THULC b) -> biSubULC a b
   (a , b) -> failBiSub a b
 
 biSubULC a b = pure ()
@@ -147,15 +139,16 @@ reduceType t = t
 -- additionally, subsumption <===> equivalence of typing schemes
 -- ie. to decide [d1]t1 <= [d2]t2,
 --   * check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
-check :: Externs -> V.Vector [TyHead]
+check :: Externs -> V.Vector [TyHead] -> V.Vector (Maybe Type)
      -> [TyHead] -> [TyHead] -> Bool
-check e ars inferred gotRaw = trace ("check: " ++ prettyTy inferred ++ "\n<? " ++ prettyTy gotRaw)
-  $ check' e ars inferred (reduceType gotRaw)
+check e ars labTys inferred gotRaw =
+  trace ("check: " ++ prettyTy inferred ++ "\n<? " ++ prettyTy gotRaw)
+  $ check' e ars labTys inferred (reduceType gotRaw)
 
-check' :: Externs -> V.Vector [TyHead]
-       -> [TyHead] -> [TyHead] -> Bool
-check' es ars inferred gotTy = let
-  check'' = check' es ars
+--check' :: Externs -> V.Vector [TyHead]
+--       -> [TyHead] -> [TyHead] -> Bool
+check' es ars labTys inferred gotTy = let
+  check'' = check' es ars labTys
   readExt es x = case readExtern es x of
     c@Core{} -> error $ "type expected, got: " ++ show c
     Ty t -> t
@@ -182,26 +175,32 @@ check' es ars inferred gotTy = let
       go [] y  = check'' r1 [THArrow y r2]
       go x []  = check'' [THArrow x r1] r2
       in go a1 a2
-    (THSum x , t@THArrow{}) -> -- all alts must subsume the signature
-      all (`check''` [t]) (M.elems x)
-    (THSum x , THSum y)   -> let
-      int = M.intersection y x -- left-biased
-      szOK = M.size x <= M.size y
-      in szOK && all id (zipWith check'' (M.elems x) (M.elems int))
-    (THProd x , THProd y) -> let
-      int = M.intersection y x -- left-biased
-      szOK = M.size x >= M.size y
-      in szOK && all id (zipWith check'' (M.elems x) (M.elems int))
-    (THExt x , THExt y) -> x == y
-    (THExt x , t) -> check'' (readExt es x) [t]
-    (t , THExt x) -> check'' [t] (readExt es x)
+    (THSum labels , t@THArrow{}) -> let -- all alts must subsume the signature
+--    getConTy = \case
+--      [THULC lc] -> let
+--        ulcFnApp2Ty = \case
+--          LCApp f x
+      labelFns = fromJust . (labTys V.!) <$> labels
+      in True -- all (`check''` [t]) labelFns
+    (THSum x , THSum y)   -> all (`elem` y) x
+--    int = M.intersection y x -- left-biased
+--    szOK = M.size x <= M.size y
+--    in szOK && all id (zipWith check'' (M.elems x) (M.elems int))
+    (THProd x , THProd y) -> all (`elem` x) y
+--    int = M.intersection y x -- left-biased
+--    szOK = M.size x >= M.size y
+--    in szOK && all id (zipWith check'' (M.elems x) (M.elems int))
+--  (THULC (LCExt x) , THULC (LCExt y)) -> x == y
+--  (THULC (LCExt x) , t) -> check'' (readExt es x) [t]
+--  (t , THULC (LCExt x)) -> check'' [t] (readExt es x)
 --  (t , THIxPAp [] ty tyArgs termArgs) -> check' es (ars V.// M.toList tyArgs) [t] ty
-    (t , THPi [] ty tyArgs) -> check'' [t] (tyAp ty tyArgs)
-    (THPi [] ty tyArgs , t) -> check'' (tyAp ty tyArgs) [t]
+--  (t , THPi [] ty tyArgs) -> check'' [t] (tyAp ty tyArgs)
+--  (THPi [] ty tyArgs , t) -> check'' (tyAp ty tyArgs) [t]
 
     (x , THArg y) -> True -- ?!
-    (THULC (LCRec m) , x) -> True -- TODO
-    (a,b) -> error $ "checking: not ready for:" ++ show a ++ " <? " ++ show b
+    (THRec x , THRec y) -> x == y
+    (THRec m , x) -> True -- TODO read ty in the bindMap
+    (a,b) -> error $ "checking: not ready for: " ++ show a ++ " <? " ++ show b
   in case inferred of
     []   -> False
     tys  -> all (\t -> any (checkAtomic t) gotTy) tys
@@ -219,11 +218,12 @@ doSub newTy (ty:tys) = if eqTyHead newTy ty
 mergeTyHead :: TyHead -> TyHead -> [TyHead]
 mergeTyHead t1 t2 = let join = [t1 , t2] in case join of
   [THPrim a , THPrim b]   -> if a == b then [t1] else join
-  [THExt  a , THExt  b]   -> if a == b then [t1] else join
   [THVar a , THVar b]     -> if a == b then [t1] else join
-  [THAlias a , THAlias b] -> if a == b then [t1] else join
-  [THSum a , THSum b]     -> _ --[THSum (M.unionWith mergeTypes a b)]
-  [THProd a , THProd b]   -> [THProd (M.unionWith mergeTypes a b)]
+--  [THULC a , THULC b]     -> join
+--  [THExt  a , THExt  b]   -> if a == b then [t1] else join
+--  [THAlias a , THAlias b] -> if a == b then [t1] else join
+  [THSum a , THSum b]     -> [THSum  $ intersect a b] --[THSum (M.unionWith mergeTypes a b)]
+  [THProd a , THProd b]   -> [THProd $ union a b] -- [THProd (M.unionWith mergeTypes a b)]
 --[THArrow a , THArrow b] -> _
 --_ -> _
   _ -> join
@@ -239,8 +239,6 @@ mkTcFailMsg gotTerm gotTy expTy =
 eqTyHead a b = kindOf a == kindOf b
 kindOf = \case
   THPrim{}  -> KPrim
-  THAlias{} -> _ -- have to deref it
   THVar{}   -> KVar
   THArrow{} -> KArrow
-  THRec{}   -> KRec
   _ -> KAny

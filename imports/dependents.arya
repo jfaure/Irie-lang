@@ -8,18 +8,21 @@ Nat =
  | S : Nat -> Nat
 --One : Nat = S Z
 ----three = S (S (S Z))
---add : Nat -> Nat -> Nat
+--add : Nat -> (Nat -> Nat)
 --add x = \case
 --  | Z => x
 --  | S y => add x y
---
---two = add One One
---two = S (S Z)
 
----- Classic Dependent vector
+--two = add One One
+two = S (S Z)
+
+-- Classic Dependent vector
 Vec (v : Set) : Nat -> Set =
--- | empty : Vec v 0 -- () <: Vec v 0
- | ++ : (n : Nat) -> v -> Vec v n -> Vec v (S n) -- : { n ; (x:v) ; Vec v n } <: Vec v (n + 1)
+ | empty : (n : Nat) -> Vec v n -- () <: Vec v 0
+ | ++ : (n : Nat) -> (v -> (Vec v n -> Vec v Z)) --(S n) -- : { n ; (x:v) ; Vec v n } <: Vec v (n + 1)
+
+z = empty
+one = ++ 1 3 z
 
 --Fin : Nat -> Set =
 -- | zero :: {n} → Fin (suc n)
@@ -32,14 +35,11 @@ Vec (v : Set) : Nat -> Set =
 --Vec : Type → Nat → Type;
 --Vec = λA n → (l : {nil cons }) ∗ case l of
 --  nil → EqNat zero n
---  cons → (n 0 : Nat) ∗ A ∗ (Rec [Vec A n0 ]) ∗ EqNat (suc n0) n
+--  cons → (n0 : Nat) ∗ A ∗ (Rec [Vec A n0 ]) ∗ EqNat (suc n0) n
 --Fin : Nat → Type;
 --Fin = λn → (l : {zero suc }) ∗ case l of
 --  zero → (n 0 : Nat) ∗ EqNat (suc n0) n
 --  suc → (n 0 : Nat) ∗ (Rec [Fin n0 ]) ∗ EqNat (suc n0) n
-
---z = empty
---one = ++ 3 z
 
 --_⊛_ :: {n} : Vec (A → B) n -> Vec A n -> Vec B n
 --[] ⊛ _        = []

@@ -64,18 +64,18 @@ convBind extBinds coreBinds stgBinds i
    MV.write stgBinds i (TRec llvmNm) -- in case recursive
    (\b -> MV.write stgBinds i b $> b) =<<
     case bind of
-      BindOK ars (Core t ty) -> let
-        ty' = convTy' ty
-        (argTys , [retTy]) = case ty' of
-          StgFnType ars -> splitAt (length ars-1) ars
-          s -> case ars of { [] -> ([] , [ty']) ; _ -> error $ show s }
-        argNms = StgVarArg . LLVM.AST.UnName . fromIntegral <$> ars
-        in do
-        t' <- convTerm convBind' t
-        pure . TBind . StgBinding llvmNm
-          $ StgTopRhs argNms argTys retTy t'
-      BindOK ars (Ty ty) -> pure
-        $ TAlias (llvmNm , convTy' ty)
+--    BindOK ars (Core t ty) -> let
+--      ty' = convTy' ty
+--      (argTys , [retTy]) = case ty' of
+--        StgFnType ars -> splitAt (length ars-1) ars
+--        s -> case ars of { [] -> ([] , [ty']) ; _ -> error $ show s }
+--      argNms = StgVarArg . LLVM.AST.UnName . fromIntegral <$> ars
+--      in do
+--      t' <- convTerm convBind' t
+--      pure . TBind . StgBinding llvmNm
+--        $ StgTopRhs argNms argTys retTy t'
+--    BindOK ars (Ty ty) -> pure
+--      $ TAlias (llvmNm , convTy' ty)
   x -> pure x
 
 convTy :: V.Vector Expr -> [TyHead] -> StgType
@@ -86,7 +86,7 @@ convTy extBinds [t] = let
 --THAlias i -> _
 --THArg i -> _
 --THImplicit -> _
-  THExt i -> convTy extBinds (tyExpr $ extBinds V.! i)
+--THULC (LCRec i) -> convTy extBinds (tyExpr $ extBinds V.! i)
   THPrim p -> StgLlvmType $ primTy2llvm p
   THArrow tys t -> StgFnType $ (convTy'<$>tys) ++ [convTy' t]
   THArray t -> StgArrayType $ convTy' t

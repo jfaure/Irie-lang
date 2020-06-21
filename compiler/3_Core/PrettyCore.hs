@@ -22,15 +22,6 @@ deriving instance Show BiSub
 deriving instance Show Kind
 deriving instance Show Pi
 
-instance Show LC where
- show lc = go False lc where
-  go depth = let parens x = if depth then "(" ++ x ++ ")" else x
-   in \case
-    LCArg i -> "ωλ" ++ show i 
-    LCApp f a -> parens (go True f ++ " " ++ go True a)
-    LCTerm t y -> parens ("ωTerm " ++ show t ++ " : " ++ show y)
-    LCRec i  -> parens $ "ωμ" ++ show i -- ++ " : " ++ show ty
-
 tyExpr = \case
   Ty t -> t
   expr -> error $ "expected type, got: " ++ show expr
@@ -41,13 +32,15 @@ tyExpr = \case
 
 prettyBind = \case
  WIP -> "WIP"
- BindOK args (Core term ty) -> show args ++ " => " ++ show term ++ clGreen (" : " ++ prettyTy ty)
- BindOK tyArgs (Ty set) -> show tyArgs ++ " =: " ++ show set
- BindOK args (ULC lc)  -> show args ++ " =  " ++ show lc
+ BindOK expr -> case expr of
+   Core term ty -> " => " ++ show term ++ clGreen (" : " ++ prettyTy ty)
+   Ty t -> " =: " ++ show t
+   _ -> " = " ++ show expr
 
 prettyVName = \case
     VArg i  -> "λ" ++ show i
     VBind i -> "π" ++ show i
+    VExt i -> "E" ++ show i
 
 prettyTerm = \case
     Var     v -> show v
@@ -76,37 +69,38 @@ prettyTyHead = \case
  THPrim     p -> show p
  THVar      i -> "τ" ++ show i
 -- THImplicit i -> "∀" ++ show i
- THAlias    i -> "π" ++ show i
+-- THAlias    i -> "π" ++ show i
  THExt      i -> "E" ++ show i
+ THRec      t-> "μ" ++ show t
 
  THArrow    [] ret -> error $ "panic: fntype with no args: [] → (" ++ prettyTy ret ++ ")"
  THArrow    args ret -> "(" ++ intercalate " → " (prettyTy <$> (args ++ [ret])) ++ ")"
- THRec      t-> "μ" ++ show t
- THRecApp   t a-> "μ$" ++ show t ++ " " ++ (intercalate " $ " $ show <$> a)
- THProd     prodTy -> let
-   showField (f , t) = show f ++ ":" ++ show t
-   p = intercalate " ; " $ showField <$> M.toList prodTy
-   in "{" ++ p ++ "}"
- THSum      sumTy ->  let
-   showLabel (l , t) = show l ++ "#" ++ show t
-   s  = intercalate "\n  | " $ showLabel <$> M.toList sumTy
-   in " 〈" ++ s ++ " 〉"
+-- THProd     prodTy -> let
+--   showField (f , t) = show f ++ ":" ++ show t
+--   p = intercalate " ; " $ showField <$> M.toList prodTy
+--   in "{" ++ p ++ "}"
+-- THSum      sumTy ->  let
+--   showLabel (l , t) = show l ++ "#" ++ show t
+--   s  = intercalate "\n  | " $ showLabel <$> M.toList sumTy
+--   in " 〈" ++ s ++ " 〉"
+ THSum l -> " 〈" ++ show l ++ " 〉"
+ THProd  l -> " { " ++ show l ++ " } "
 
  THArray    t -> "@" ++ show t
  THArg      i -> "λ" ++ show i
- THLamBound i -> "Λ" ++ show i
 
 -- THIxType   t t2 -> "ixTy: " ++ show t ++ show t2
 -- THIxTerm   t (t2,ty) -> "ixTerm: " ++ show t ++ " $ (" ++ show t2 ++ " : " ++ show ty ++ ")"
 -- THEta      term ty -> "eta(" ++ show term ++ ":" ++ show ty ++")"
 -- THIx t deps -> show t ++ " $$ " ++ (intercalate " $$ " $ show <$> deps)
- THPi ars t arsMap -> "∏" ++ show ars ++ " (" ++ prettyTy t ++ " where " ++ show arsMap ++ ")"
- THSi ars t arsMap -> "Σ" ++ show ars ++ " (" ++ prettyTy t ++ " where " ++ show arsMap ++ ")"
+ THPi pi -> "∏(" ++ show pi ++ ")"
+ THSi pi arsMap -> "Σ(" ++ show pi ++ ") where (" ++ show arsMap ++ ")"
 -- THCore t ty -> "↑(" ++ show t ++ " : " ++ show ty ++ ")" -- term in type context
 
  THSet   uni -> "Set" ++ show uni
- THInstr i ars -> show i ++ show ars
- THULC l -> show l
+ THRecSi f ars -> "(μ" ++ show f ++ " $ " ++ intercalate " " (show <$> ars) ++ ")"
+-- THInstr i ars -> show i ++ show ars
+-- THULC l -> show l
 
 clBlack   x = "\x1b[30m" ++ x ++ "\x1b[0m"
 clRed     x = "\x1b[31m" ++ x ++ "\x1b[0m" 
