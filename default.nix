@@ -1,7 +1,7 @@
 with (import <nixos-unstable> {});
 
 haskell.lib.buildStackProject {
-  name = "arya";
+  name = "nimzo";
   src = ./.;
   buildInputs = [ ghc llvm_9 ];
 }

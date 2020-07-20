@@ -89,7 +89,7 @@ data TyHead -- head constructors for types.
  | THTyRec    IName      -- ix to bindMap (is a type)
 
  | THSet      Uni -- | THSetFn    [Uni]
- | THTop Kind | THBot Kind
+-- | THTop Kind | THBot Kind
  | THPrim     PrimType
  | THArrow    [TyContra] TyCo  -- degenerate case of THPi
  | THProd     [IField]
@@ -103,26 +103,22 @@ data TyHead -- head constructors for types.
 
 data Pi = Pi [(IName , Type)] Type -- deBruijn indexes
 
+data TCError
+ = ErrBiSub     T.Text
+ | ErrTypeCheck T.Text
+ | Err T.Text
+  deriving Show
 data Expr
  = Core   Term Type
  | CoreFn [IName] Term Type
  | Ty     Type
+ | Fail   TCError
 
 data Bind -- indexes in the bindmap
  = WIP
  | Checking  Type -- guard for recursive references
  | BindOK    Expr
  | BindKO -- failed to typecheck
-
---data LC -- typeable in Setn (ie. type is Seta -> Set b -> Set c)
--- = LCArg   IName
--- | LCApp   LC LC
--- | LCPow   Int LC LC  -- power app
--- | LCIx    LC (Term , Type)
---
--- | LCRec   IName -- index into bindmap (whose type is often not immediately known)
--- | LCLabel IName
--- | LCExt   IName
 
 type Type     = TyPlus
 type Uni      = Int
@@ -134,15 +130,14 @@ type TyPlus   = [TyHead] -- output types (lattice join)
 -- bisubs always reference themselves, so the mu. is implicit
 data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
 newBiSub = BiSub [] []
+makeLenses ''BiSub
 
--- label for the different head constructors. (KAny is the top of the entire universe)
+-- label for the different head constructors. (KAny is '_' in a way top of the entire universe)
 data Kind = KPrim | KArrow | KVar | KArg | KSum | KProd | KRec | KAny
-  deriving Eq
+ deriving Eq
 
 bind2Expr = \case
   BindOK e -> e
-
-makeLenses ''BiSub
 
 -- evaluate type application (from THIxPAp s)
 tyAp :: [TyHead] -> M.Map IName Expr -> [TyHead]

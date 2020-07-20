@@ -47,10 +47,10 @@ cmdLineDecls = CmdLine
       <> help "Write output to file")
   <*> many (argument str (metavar "FILE"))
 
-progDescription = "The Arya language is an array oriented calculus of inductive constructions for system level programming. This program is it's compiler/interpreter"
+progDescription = "The Nimzo language is an array oriented calculus of inductive constructions for system level programming. This program is it's compiler/interpreter"
 cmdLineInfo =
   let description = fullDesc
-        <> header "Arya compiler/interpreter"
+        <> header "Nimzo compiler/interpreter"
         <> progDesc progDescription
   in info (helper <*> cmdLineDecls) description
 

@@ -14,7 +14,8 @@ import Debug.Trace
 matches2TT :: [P.FnMatch] -> ([IName] , [[P.TT]] , P.TT) =
   let convPat = \case
         P.PArg i -> (i , [])
-        P.PTyped (P.PArg i) ty -> (i , [ty])
+        P.PTT (P.Var (P.VLocal i)) -> (i , [])
+--      P.PTyped (P.PArg i) ty -> (i , [ty])
         x -> error $ "unknown pattern: " ++ show x
   in \case
     [P.FnMatch impls f e] -> let
@@ -26,12 +27,11 @@ matches2TT :: [P.FnMatch] -> ([IName] , [[P.TT]] , P.TT) =
 --    PolyInt{}  -> Instr MkNum  [Lit l]
 --    PolyFrac{} -> Instr MkReal [Lit l]
 
-resolveInfixes :: (P.TT -> P.TT) -> P.TT -> [(P.TT,P.TT)] -> P.TT
+resolveInfixes :: (P.TT -> P.TT -> Bool) -> P.TT -> [(P.TT,P.TT)] -> P.TT
 resolveInfixes hasPrec leftExpr infixTrain = let
   -- 1. if rOp has lower prec then lOp then add it to the opStack
   -- 2. else apply infix from the opStack
   -- 3. when no more rOp's, Apply remaining infixes from the opStack
-  _ `hasPrec` _ = True -- TODO
   handlePrec :: (P.TT, [(P.TT, P.TT)]) -> (P.TT, P.TT)
              -> (P.TT, [(P.TT, P.TT)])
   handlePrec (expr, []) (rOp, rExp) =

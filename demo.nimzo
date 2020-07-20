@@ -1,11 +1,11 @@
 --externVarArg printf : CharPtr -> Int
 --import imports/lambda
 --import imports/basic
-import imports/mixfix
+--import imports/mixfix
 --import imports/records
 --import imports/impredicative
 --import imports/array
 --import imports/church
---import imports/dependents
+import imports/dependents
 --import imports/printf
 --import imports/subtype

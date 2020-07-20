@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell , DeriveGeneric #-}
+{-# OPTIONS  -funbox-strict-fields #-}
 
 module ParseSyntax where -- import qualified as PSyn
 
@@ -75,12 +76,12 @@ data TTName
 
 -- Parser Expressions (types and terms are syntactically equivalent)
 data TT
- = Var TTName
+ = Var !TTName
  | WildCard -- "_"
 
  -- lambda-calculus
  | App TT [TT]
- | InfixTrain TT [(TT, TT)] -- `name` or symbolName
+ | InfixTrain TT [(TT, TT)] -- precedence unknown
 
  -- tt primitives (sum , product , list)
  | Cons   [(FName , TT)] -- can be used to type itself
@@ -100,10 +101,11 @@ data TT
 -- patterns represent arguments of abstractions
 data Pattern
  = PArg  IName -- introduce VLocal arguments
+ | PTT   TT
  | PApp  Pattern [Pattern]
- | PLit  Literal
- | PWildCard
- | PTyped Pattern TT
+-- | PLit  Literal
+-- | PWildCard
+-- | PTyped Pattern TT
 -- | PAs   IName Pattern
 -- | match sum-of-product ?
 

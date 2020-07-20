@@ -1,6 +1,6 @@
 # stack is very slow to realize that sometimes no work is necessary
 
-NAME	=	arya
+NAME	=	nimzo
 SrcDir	= 	compiler/
 
 EXE	=	$$(stack path --local-install-root)/bin/$(NAME)-exe

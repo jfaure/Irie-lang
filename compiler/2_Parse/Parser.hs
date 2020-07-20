@@ -75,7 +75,7 @@ lookupMixFix m  = M.lookup m <$> use (moduleWIP . parseDetails . mixFixDefs)
 lookupPostFix m = M.lookup m <$> use (moduleWIP . parseDetails . postFixDefs)
 
 il = M.insertLookupWithKey (\k new old -> old)
--- Data.Map builtin size (good enough for labels/fields)
+-- Data.Map's builtin size is good enough for labels/fields
 insertOrRetrieve h mp = let sz = M.size mp in case il h sz mp of 
   (Just x, mp) -> (x  , mp)
   (_,mp)       -> (sz , mp)
@@ -306,50 +306,120 @@ funBind' nm pMFArgs = newArgNest $ mdo
   ann <- tyAnn
   let (implicits , ty) = case ann of { Just (i,t) -> (i,Just t) ; _ -> ([],Nothing) }
   (pi , eqns) <- getPiBounds $ choice
-    [ (:[]) <$> fnMatch (pure ars) (reservedOp "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
+    [ (:[]) <$> fnMatch (pure ars) (reserved "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
     , case (ars , ann) of
-        ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reservedOp "=") )
+        ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
         (x  , Just{})  -> fail "TODO no parser for: arguments followed by type sig"
         (x  , Nothing) -> do fail $ "fn def lacks accompanying binding"
     ]
   pure (VBind iNm)
 
 tyAnn :: Parser (Maybe ([IName] , TT)) = newArgNest $ do
-  optional (reservedOp "::" *> bracesn ((iden >>= addArgName) `sepBy` reservedOp ";")) >>= \case
+  optional (reserved "::" *> bracesn ((iden >>= addArgName) `sepBy` reserved ";")) >>= \case
     Just implicits -> fmap (implicits,) <$> optional (reservedChar ':' *> tt)
     Nothing        -> fmap ([],)        <$> optional (reservedChar ':' *> tt)
 
-lambda = reservedChar '\\'
-  *> (Var . VBind <$> addAnonBindName) <* do 
-    newArgNest $ mdo
-      addBind $ FunBind "_" [] eqns Nothing
-      eqns <- (:[]) <$> fnMatch (many pattern) (reservedOp "=>")
-      pure ()
+lambda = reservedChar '\\' *> (Var . VBind <$> addAnonBindName) <* do 
+  newArgNest $ mdo
+    addBind $ FunBind "_" [] eqns Nothing
+    eqns <- (:[]) <$> fnMatch (many pattern) (reserved "=>")
+    pure ()
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
 
 --fnArgs = let
---  implicits = choice
---   [ reservedOp "@" *> braces ((iden >>= lookupImplicit) `sepBy1` ";")
---   , pure []
---   ] in FnMatch <$> implicits <*> many (lexeme pattern)
+--  implicits = option [] $ reservedOp "@" *> braces ((iden >>= lookupImplicit) `sepBy1` ";")
+--  in FnMatch <$> implicits <*> many (lexeme pattern)
 
 -- TT parser
 -- We often need to parse a 2nd token to find out more about the first
 -- eg. after an arg, if there is another arg, the first arg is a fn app
 -- mixfix trains : parse out mixfixes assuming equal precedence , we deal with that later
 data MFLArg = MFLArgTT TT | MFLArgNone | MFLArgHole
-tt :: Parser TT = typedTT =<< choice
-  [ letIn      -- "let"
-  , multiIf    -- "if"
-  , match      -- "case"
-  , tySum      -- "|"
-  , lambdaCase -- "\\case"
-  , lambda     -- "\"
-  , mixFixTrainOrArg
-  ] <?> "tt"
+ttArg , tt :: Parser TT
+(ttArg , tt) = (arg , anyTT)
   where
+  anyTT = typedTT =<< choice
+    [ letIn      -- "let"
+    , multiIf    -- "if"
+    , match      -- "case"
+    , tySum      -- "|"
+    , mixFixTrainOrArg
+    ] <?> "tt"
+  appOrArg = mfApp <|> arg >>= \fn -> option fn $ choice
+    [ Proj fn <$ reservedChar '.' <*> (idenNo_ >>= newFLabel)
+    , case fn of
+        Lit l -> LitArray . (l:) <$> some literalP
+        fn    -> App fn <$> some arg
+    ]
+  arg = choice
+   [ reserved "_" $> WildCard
+   , lambdaCase -- "\\case"
+   , lambda     -- "\"
+   , con
+   , try $ idenNo_ >>= varName
+   , some literalP <&> \case { [l] -> Lit l ; ls  -> LitArray ls }
+   , TyListOf <$> brackets tt
+   , parens $ choice [try piBinder , (tt >>= typedTT)]
+   ] <?> "ttArg"
+  label i = lookupSLabel i >>= \case
+    Nothing -> P.Label <$ reservedOp "@" <*> newSLabel i <*> (many arg)
+    Just l  -> P.Label l <$> many arg
+
+  tySum = TySum <$> let
+    labeledTTs = do
+      label <- iden >>= newSLabel
+      getPiBounds tyAnn >>= \case
+        (pis , Nothing) -> fail "sum type annotation missing"
+        (pis , Just (impls , ty)) -> pure (label , (map fst pis) ++ impls , ty)
+    in some $ try (scn *> (reservedChar '|' *> lexeme labeledTTs))
+
+  con = Cons <$> let
+    fieldDecl = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> arg
+    in braces $ fieldDecl `sepBy1` reservedOp ";"
+
+  caseSplits = Match <$> let
+    split = (,,) <$> (iden >>= newSLabel) <* optional (reservedChar '@')
+      <*> many singlePattern <* reserved "=>" <*> tt
+    in choice [some $ try (scn *> reservedChar '|' *> split) , pure <$> split]
+  match = reserved "case" *> do
+    scrut  <- tt
+    reserved "of"
+    (`App` [scrut]) <$> caseSplits
+  lambdaCase = reserved "\\case" *> caseSplits
+
+  multiIf = reserved "if" *> choice [try normalIf , multiIf] where
+    normalIf = do
+      ifThen <- (,) <$> tt <* reserved "then" <*> tt
+      elseE  <- reserved "else" *> tt
+      pure $ MultiIf [ifThen] elseE
+    subIf = (,) <$ reservedOp "|" <*> tt <* reservedOp "=>" <*> tt
+
+  letIn = reserved "let" *> do
+    incLetNest
+    ref <- use indent <* scn
+    lvl <- L.indentLevel
+    indentedItems ref lvl scn funBind (reserved "in")
+    reserved "in"
+    tt <* decLetNest
+
+  typedTT exp = tyAnn >>= \case -- optional type annotation is parsed as anonymous let-binding
+    Nothing -> pure exp
+    Just ([] , WildCard)  ->  pure exp -- don't bother if no info given (eg. pi binder)
+    Just (implicits , ty) -> case exp of
+      Var (VLocal l) -> addPiBound (l , ty) *> pure exp
+      x -> (Var . VBind <$> addAnonBindName)
+        <* addBind (FunBind "_:" [] [FnMatch [] [] exp] (Just ty))
+
+  piBinder = do
+    i <- iden
+    lookAhead (void (reservedChar ':') <|> reservedOp "::")
+    (Var . VLocal <$> addArgName i) >>= typedTT
+
+  --------------
+  -- MixFixes --
+  --------------
   postFix tt = mixFixDef >>= \md -> case md of
     MFName h : xs -> mixFix md (MFLArgTT tt) lookupPostFix h
     x -> fail "expected postfix (mixfix)"
@@ -398,93 +468,35 @@ tt :: Parser TT = typedTT =<< choice
     False -> lookupPostFix nm >>= \case
       Nothing -> choice [label nm , lookupBindName nm]
       Just x  -> fail $ "reserved postfix iden: " ++ show nm
-  appOrArg = mfApp <|> arg >>= \fn -> option fn $ choice
-    [ Proj fn <$ reservedChar '.' <*> (idenNo_ >>= newFLabel)
-    , case fn of
-        Lit l -> LitArray . (l:) <$> some literalP
-        fn    -> App fn <$> some arg
-    ]
-  arg = choice
-   [ reserved "_" $> WildCard
-   , con
-   , try $ idenNo_ >>= varName
-   , some literalP <&> \case { [l] -> Lit l ; ls  -> LitArray ls }
-   , TyListOf <$> brackets tt
-   , parens $ choice [try piBinder , (tt >>= typedTT)]
-   ] <?> "argument tt"
-  label i = lookupSLabel i >>= \case
-    Nothing -> P.Label <$ reservedOp "@" <*> newSLabel i <*> (many arg)
-    Just l  -> P.Label l <$> many arg
 
-  tySum = TySum <$> let
-    labeledTTs = do
-      label <- iden >>= newSLabel
-      getPiBounds tyAnn >>= \case
-        (pis , Nothing) -> fail "sum type annotation missing"
-        (pis , Just (impls , ty)) -> pure (label , (map fst pis) ++ impls , ty)
-    in some $ try (scn *> (reservedChar '|' *> lexeme labeledTTs))
-
-  con = Cons <$> let
-    fieldDecl = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> arg
-    in braces $ fieldDecl `sepBy1` reservedOp ";"
-
-  caseSplits = Match <$> let
-    split = (,,) <$> (iden >>= newSLabel) <* optional (reservedChar '@')
-      <*> many pattern <* reserved "=>" <*> tt
-    in many $ try (scn *> reservedChar '|' *> split)
-  match = reserved "case" *> do
-    scrut  <- tt
-    reserved "of"
-    (`App` [scrut]) <$> caseSplits
-  lambdaCase = reserved "\\case" *> caseSplits
-
-  multiIf = reserved "if" *> choice [try normalIf , multiIf] where
-    normalIf = do
-      ifThen <- (,) <$> tt <* reserved "then" <*> tt
-      elseE  <- reserved "else" *> tt
-      pure $ MultiIf [ifThen] elseE
-    subIf = (,) <$ reservedOp "|" <*> tt <* reservedOp "=>" <*> tt
-
-  letIn = reserved "let" *> do
-    incLetNest
-    ref <- use indent <* scn
-    lvl <- L.indentLevel
-    indentedItems ref lvl scn funBind (reserved "in")
-    reserved "in"
-    tt <* decLetNest
-
-  typedTT exp = tyAnn >>= \case -- optional type annotation is parsed as anonymous let-binding
-    Nothing -> pure exp
-    Just ([] , WildCard)  ->  pure exp -- don't bother if no info given (eg. pi binder)
-    Just (implicits , ty) -> case exp of
-      Var (VLocal l) -> addPiBound (l , ty) *> pure exp
-      x -> (Var . VBind <$> addAnonBindName)
-        <* addBind (FunBind "_:" [] [FnMatch [] [] exp] (Just ty))
-
-  piBinder = do
-    i <- iden
-    lookAhead (void (reservedChar ':') <|> reservedOp "::")
-    (Var . VLocal <$> addArgName i) >>= typedTT
-
-pattern = singlePattern -- >>= \x -> option x (PApp x <$> parens (some singlePattern))
-singlePattern = let
-  piBound h = do
-    tyAnn <- reservedChar ':' *> tt
-    i <- addArgName h
-    addPiBound (i , tyAnn)
-    pure $ PTyped (PArg i) tyAnn
-  in choice
- [ PLit <$> literalP
- , PArg <$> (reserved "_" *> addAnonArg) -- wildcard pattern
--- , iden >>= \i -> lookupSLabel i >>= \case
---     Nothing -> addArgName i
---     Just  x -> PApp <$> many singlePattern
- , iden >>= \h -> choice
-    [ piBound h
-    , PArg <$> addArgName h
-    ]
- , parens singlePattern
+--pattern = choice [ try single , PTT <$> ttArg ] <?> "pattern"
+pattern = choice
+ [ try (singlePattern >>= \x -> option x (PApp x <$> some singlePattern))
+ , PTT <$> ttArg]
+singlePattern = choice
+ [ iden >>= \i -> lookupSLabel i >>= \case
+     Nothing -> PArg <$> addArgName i
+     Just  x -> PApp (PArg x) <$> many singlePattern
+ , parens pattern
  ]
+--piBound h = do
+--  tyAnn <- reservedChar ':' *> tt
+--  i <- addArgName h
+--  addPiBound (i , tyAnn)
+--  pure $ PTyped (PArg i) tyAnn
+--pattern = singlePattern -- >>= \x -> option x (PApp x <$> parens (some singlePattern))
+--singlePattern = choice
+-- [ PLit <$> literalP
+-- , PArg <$> (reserved "_" *> addAnonArg) -- wildcard pattern
+---- , iden >>= \i -> lookupSLabel i >>= \case
+----     Nothing -> addArgName i
+----     Just  x -> PApp <$> many singlePattern
+-- , iden >>= \h -> choice
+--    [ piBound h
+--    , PArg <$> addArgName h
+--    ]
+-- , parens singlePattern
+-- ]
 --typedPattern = let
 --  in singlePattern >>= \p -> option p piBound
 
@@ -506,15 +518,13 @@ literalP = let
 
 decimal_ , dotDecimal_ , exponent_ :: Parser T.Text
 decimal_    = takeWhile1P (Just "digit") isDigit
-dotDecimal_ = char '.' *> takeWhile1P (Just "digit") isDigit
+dotDecimal_ = char '.' *> decimal_
 exponent_   = char' 'e' *> decimal_
 
-numP :: Parser Literal = --T.Text =
-  let unJ = \case { Just x->x ; _ -> T.empty }
-  in do
+numP :: Parser Literal = do
   c <- decimal_
-  f <- optional dotDecimal_
-  e <- optional exponent_
-  pure $ case (f , e) of
-    (Nothing , Nothing) -> PolyInt c
-    _ -> PolyFrac $ c `T.snoc` '.' `T.append` unJ f `T.append` unJ e
+  f <- option T.empty dotDecimal_
+  e <- option T.empty exponent_
+  pure $ if T.null f && T.null e
+    then PolyInt c
+    else PolyFrac $ c `T.snoc` '.' `T.append` f `T.append` e

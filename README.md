@@ -1,42 +1,42 @@
-# Arya Tset Seset
-Array-oriented Subtyping Calculus of inductive constructions for high-performance distributed systems
+# Nimzo
+Array-oriented subtyping calculus of inductive constructions for high-performance distributed systems.
 
 ## Subtyping
-Subtyping is a very accurate way of representing many desirable features, since given two types and a subtyping relation (A <: B), the compiler can automatically call a function of type (A -> B).
- * polymorphism is subtyping: `Int <: ∀α.α`
- * records with more fields subtype those with less fields
- * Sum types with less fields can be automatically coerced into sum types with more
- * Subtyping relations on algebraic data (above) are useful for proof irrelevence and other simplifications
- * No need for strict positivity: subtyping allows bivariant type parameters (ie. things put into a data aren't the same as those taken out: eg. input graphical components into a list, take out only 'onClick' functions)
- * Subtyping describes data flow explicitly, and allows more precise types
- * Effectful functions supertype pure ones - so no need to explicitly call pure/return/ other glue functions
- * Terms are for algorithms , Types are for optimizations (using automatic conversions via subtyping)
- * The dependent function is a subtype of the non-dependent function
- * Subtyping polymorphism is a sweet spot between parametric polymorphism and ad-hoc polymorphism
- * In conjunction with dependent types, the scope of possible optimisation opportunities becomes infinite , and subtyping can give types the power they need to guide an algorithm to it's perfect implementation (which in the presence of GPUs or distributed systems can be very far removed from it's simplest definition)
+Subtyping describes data flow explicitly and gives us more accurate types. Subtyping allows us to cleanly represent many desirable features. The key principle is that a subtyping relation (A <: B) is a proof of the existence of a function (A -> B), which the compiler can automatically call for us. Benefits of subtypes include the following:
+* Records with more fields are subtypes of those with less fields
+* Sum types with less fields are subtypes of those with more
+* Subtyping relations on algebraic data (records and sum types) are useful for proof irrelevance, quantitative type theory, and so forth
+* Effectful functions are supertypes of pure ones, which obviates the need for explicitly calling glue functions such as pure/return/etc.
+* The dependent function space contains subtypes of the non-dependent function space
+* Polymorphism is subtyping, eg: `Int <: forall a. a`
+* Subtyping polymorphism is a sweet spot between parametric polymorphism and ad-hoc polymorphism, which enables us to say exactly what we mean.
+* Bi-variant type parameters permit us to accurately describe structures where insertable types are different to those that can be examined; e.g. input of any graphical component into a list after which we can use only their 'onClick' functions
+* Subtyping increases the power of our types, and allow us to leverage automatic subtyping coercions to cleanly separate algorithms from optimisations
+* In conjunction with dependent types, the scope of possible optimisation opportunities becomes infinite, and subtyping can give types the power they need to guide an algorithm to its perfect implementation (which can become very complicated in the presence of GPUs or distributed systems)
 
 ## Calculus of inductive constructions
-Dependent types have a long history of serving to write proofs and otherwise guarantee program correctness. In combination with subtyping, they can also enable powerful optimisations, and become easier to use for general purpose programming.
+Dependent types have long served to write proofs which can be used to guarantee a program's correctness. In combination with subtyping, they introduce possibilities for powerful optimisations.
 
 ## Array-oriented
-Part of the power of a computer is it's ability to handle vast quantities of organised data - most of which can be thought of as a tensor; a multidimensionnal array, including nested algebraic data. This representation is motivated by the ability to remove all intermediate structures via shortcut fusion (fold-build). This is known to work very well for one-dimensionnal arrays, however it notably fails to fuze both list arguments of zip - because zip is a rank 2 operation, outputting an array of shape [2 , n]. By generalising lists and nested algebraic data to tensor operations, we vastly improve the scope of shortcut fusion. Working on the shapes of data regardless of the underlying mixture of types requires dependent types.
+Much of the power of a machine is in its ability to handle vast quantities of organised data - most of which can be thought of as a tensor (a multi-dimensional array), including nested algebraic data structures. Thinking in terms of arrays makes it easier to coordinate operations and, for example, remove temporary structures via shortcut fusion. This is known to work very well for one-dimensional arrays, however, it notably fails to fuse both list arguments of zip - because zip is a rank 2 operation, outputting an array of shape [2 , n]. By generalising lists and nested algebraic data to tensor operations, we increase the scope of shortcut fusion.
 
-## Distributed
-It has often been noted that higher level abstractions are necessary if we are to comfortably program using gpu's, or more generally, a distributed network. The solution is abstract implementation and optimisation details away from the terms and into the types. Using subtyping, we can largely ignore the target system without sacrificing performance.
+  
+## Distributed Performance
+It has often been noted that higher level abstractions are necessary if we are to comfortably program using GPUs and distributed networks. It is necessary to abstract implementation and optimisation details away from the terms and into the types. Using subtyping, we can largely ignore the target system without sacrificing performance, as well as manipulate optimisations easily by annotating certain terms with detailed types.
+
 
 ### Roadmap
 - Language:
-    - [x] MixFix operators
     - [x] Lambda calculus
+    - [x] MixFix operators
     - [x] Dependent Algebraic Data
     - [ ] GADT's (bivariant type parameters)
-    - [x] Module System
-        - [ ] As first class dependent records
+    - [x] Modules
+    - [ ] As first class dependent records
 - Type inference/checking:
     - [x] Lambda calculus
     - [x] Type Checking
-    - [ ] Dependent functions
-    - [ ] Dependent Records
+    - [x] Dependent Types
     - [ ] Higher-rank inference (Impredicative polymorphism)
 - LLVM Codegen:
     - [x] Lambda Calculus
@@ -49,3 +49,7 @@ It has often been noted that higher level abstractions are necessary if we are t
 - Environment:
     - [ ] Precompiled modules
     - [ ] Language server
+    - [ ] Error reporting system
+
+## Discord server
+https://discord.gg/SXzVEB

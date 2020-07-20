@@ -21,6 +21,7 @@ import Data.Functor
 import Control.Monad
 import Control.Applicative
 import Control.Monad.Trans.State.Strict
+import Control.Monad.Trans.Except
 import Data.List --(foldl', intersect)
 import Data.STRef
 import Control.Lens
@@ -49,6 +50,7 @@ judgeModule pm exts@(Externs extNames extBinds) = let
       , _domain   = d
       , _fields   = fieldsV 
       , _labels   = labelsV
+      , _errors   = []
       }
     dv_ d
     pure wips
@@ -102,7 +104,7 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
     case tyAnn of
       Nothing  -> pure ()
       Just ann -> do
-        ann      <- tyExpr <$> infer ann
+        ann <- tyExpr <$> infer ann
         let inferArg = \case { [x] -> tyExpr <$> infer x ; [] -> pure [THSet 0] }
         argAnns  <- inferArg `mapM` mainArgTys
         let annTy = did_ $ case mainArgTys of { [] -> ann ; x  -> [THArrow argAnns ann] }
@@ -206,7 +208,7 @@ infer = let
     in do
     altExprs <- infer `mapM` rawTTs
     --TODO merge types with labels (mergeTypes altTys)]
-    retTy <- foldl mergeTypes [] <$> (expr2Ty judgeBind `mapM` altExprs)
+    retTy <- foldl mergeTypes [] <$> pure (tyOfExpr <$> altExprs)
     let sumTy     = [THSum $ labels]
         matchTy   = [THArrow [sumTy] retTy]
         labelsMap = M.fromList $ zip labels altExprs
@@ -235,13 +237,14 @@ infer = let
 
   P.Lit l  -> pure $ Core (Lit l) [typeOfLit l]
 --  P.TyListOf t -> (\x-> Ty [THArray x]) . yoloExpr2Ty <$> infer t
-  P.InfixTrain lArg train -> infer $ resolveInfixes _ lArg train
+  P.InfixTrain lArg train -> infer $ resolveInfixes (\_->const True) lArg train -- TODO
   x -> error $ "inference engine not ready for parsed tt: " ++ show x
 
 tyOfExpr  = \case
   Core x ty -> ty
   CoreFn _ _ ty -> ty
   Ty t      -> [THSet 0]     -- type of types
+  Fail e    -> []
 
 --expr2Ty :: _ -> Expr -> TCEnv s Type
 expr2Ty judgeBind e = case e of
@@ -269,9 +272,12 @@ ttApp readBind fn args = -- trace (show fn ++ " $ " ++ show args) $ case fn of
       in pure $ case end of
         [] -> Core app [] -- don't forget to set retTy
         x  -> error $ "term applied to type: " ++ show app ++ show x
-  Ty f -> pure $ case f of
+  Ty f -> case f of
     [THPi (Pi ars f)] -> _
     [THRec m] -> _
+    [THSum s] -> error $ "thsum" -- tcFail (Err "thsum")
+--  [THSum s] -> error $ "panic: thsum not done"
+    x -> error $ "ttapp panic: " ++ show x ++ " $ " ++ show args
   _ -> error $ "ttapp: not a function: " ++ show fn ++ " $ " ++ show args
 
 --  doTypeApp t args = let ttArgs = expr2Ty <$> args in case t of

@@ -1,6 +1,6 @@
-name:                arya
+name:                nimzo
 version:             0.1.0.0
-github:              "jfaure/arya"
+github:              "jfaure/nimzo"
 license:             BSD3
 author:              "James Faure"
 maintainer:          "james.faure@epitech.eu"
@@ -12,7 +12,7 @@ extra-source-files:
 synopsis:            Array oriented calculus of inductive constructions
 category:            Compilers
 
-description:         Please see the README on GitHub at <https://github.com/jfaure/arya#readme>
+description:         Please see the README on GitHub at <https://github.com/jfaure/nimzo#readme>
 
 dependencies:
 - primitive
@@ -64,16 +64,16 @@ library:
 
 ghc-options:  -dynamic -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
 executables:
-  arya-exe:
-    dependencies: arya
+  nimzo-exe:
+    dependencies: nimzo
     source-dirs:
     - compiler/1_Main/
     main:          Main.hs
     ghc-options:  -dynamic -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
 
 #tests:
-#  arya-test:
+#  nimzo-test:
 #    main:                Spec.hs
 #    source-dirs:         test
 #    ghc-options: -threaded
-#    #   dependencies: arya
+#    #   dependencies: nimzo
