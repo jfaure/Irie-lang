@@ -2,7 +2,7 @@
 Array-oriented subtyping calculus of inductive constructions for high-performance distributed systems.
 
 ## Subtyping
-Subtyping describes data flow explicitly and gives us more accurate types. Subtyping allows us to cleanly represent many desirable features. The key principle is that a subtyping relation (A <: B) is a proof of the existence of a function (A -> B), which the compiler can automatically call for us. Benefits of subtypes include the following:
+Subtyping describes data flow explicitly and allows more accurate types, notably we can cleanly represent many desirable features, listed below. The key principle is that a subtyping relation (A <: B) is a proof of the existence of a function (A -> B), which the compiler can automatically call. Some points about subtyping:
 * Records with more fields are subtypes of those with less fields
 * Sum types with less fields are subtypes of those with more
 * Subtyping relations on algebraic data (records and sum types) are useful for proof irrelevance, quantitative type theory, and so forth
@@ -19,11 +19,9 @@ Dependent types have long served to write proofs which can be used to guarantee 
 
 ## Array-oriented
 Much of the power of a machine is in its ability to handle vast quantities of organised data - most of which can be thought of as a tensor (a multi-dimensional array), including nested algebraic data structures. Thinking in terms of arrays makes it easier to coordinate operations and, for example, remove temporary structures via shortcut fusion. This is known to work very well for one-dimensional arrays, however, it notably fails to fuse both list arguments of zip - because zip is a rank 2 operation, outputting an array of shape [2 , n]. By generalising lists and nested algebraic data to tensor operations, we increase the scope of shortcut fusion.
-
   
 ## Distributed Performance
 It has often been noted that higher level abstractions are necessary if we are to comfortably program using GPUs and distributed networks. It is necessary to abstract implementation and optimisation details away from the terms and into the types. Using subtyping, we can largely ignore the target system without sacrificing performance, as well as manipulate optimisations easily by annotating certain terms with detailed types.
-
 
 ### Roadmap
 - Language:
