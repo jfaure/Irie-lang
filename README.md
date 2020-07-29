@@ -50,4 +50,4 @@ It has often been noted that higher level abstractions are necessary if we are t
     - [ ] Error reporting system
 
 ## Discord server
-https://discord.gg/SXzVEB
+https://discord.gg/3hYKngW
