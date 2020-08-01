@@ -21,6 +21,7 @@ import qualified Data.Map as M
 import Control.Monad.Trans (lift)
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Log
 import Control.Lens
 import System.Console.Haskeline
 import System.Exit

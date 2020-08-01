@@ -14,24 +14,10 @@ type IName = Int
 type HName = Text
 type FName = IName -- record  fields
 type LName = IName -- sumtype labels
-type ImplicitArg = IName
+type ImplicitArg = (IName , Maybe TT) -- implicit arg with optional type annotation
 
 data MixFixName = MFHole | MFName HName deriving (Show , Eq)
 type MixFixDef = [MixFixName]
---data MFTree -- a tree of possible mixfixes (shortened while parsing a mixfix)
--- = MFTPre     [MixFixDef] MFTree -- only one parse branch
--- | MFTSingle  [MixFixDef] TTName
--- | MFTChoice  MFTree (M.Map HName MFTree) -- branch for MFHole and MFTree
--- | MFTLeaf    TTName
---
---mergeMFTree (MFTSingle nm' md') (MFTChoice holeTree mp) = case md' of
---  []              -> MFTSingle nm
---  x : xs          -> let new = MFTSingle nm' xs in case x of
---    MFHole      -> MFTChoice (mergeMFTree new holeTree) mp
---    MFName hNm  -> MFTChoice holeTree (M.insertWith mergeMFTree hNm new mp)
---mergeMFTree (MFTChoice t1 mp1) (MFTChoice t2 mp2)
--- = MFTChoice (mergeMFTree t1 t2) (M.unionWith mergeMFTree mp1 mp2)
---mergeMFTree x y = mergeMFTree y x
 
 data Fixity = Fixity Assoc (Maybe Int) [IName]
 data Assoc = AssocNone | AssocLeft | AssocRight

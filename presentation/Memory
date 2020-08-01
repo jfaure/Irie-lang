@@ -1,68 +1,39 @@
-Functional programming involves collecting arguments with which to tail-call functions. Thus programs form acyclic graphs (except. rec bindings) and data flow can be seen clearly.
+-- Overview of data lifetime
+-----------------
+-- Stack Frame --
+-----------------
+-- Let    A     B   1. let can spawn reused data
+--        | \   |
+-- Args   1  2  3   2. args use data (if mutable, maybe need to copy)
+--         \ | /
+--          Call
+--           |      4. Before ret, Free data used by args
+--          Ret
+--           |
+--          Case    5. Case deconstructions may (conditionally) free data
+--         /   \
+--        1     2
+--        |     |
+--        SF    SF  6. New stack frame =~ lambda applied on the case scrutinee
+--
+-- * If a function returns data, it takes an arg pointing to free memory
+-- for it's return data - so it can (situationally) be stack memory.
 
-```mermaid
-graph TD
+-- * by returning data, functions can create data that outlives them
+-- * for recursive data, the return size is not usually predictable
+-- * for non-recursive data, subdata may outlive the parent
 
-A2((A2)) -.-> L1
-L2 -.-> L1
-L2 --> AA1(("AA1"))
-L1 --> AA1
-R1 -.-> R2
-R2 -.-> R1
-R1 --> AA2
-A2 --> AA1
-A1(("A1")) --> AA1
+------------------
+-- Linear types --
+------------------
+-- * linear types say a value can only be used once : it can be inplaced
+-- * Lin -> Shared ; Shared 1 -> Lin
 
-AA2(("AA2")) --> D1{Decon}
-AA1 --> D1
-D1 ==> S1
-D1 ==> S2
-
-S1 --switch--> If1>"S1|S2"]
-S2 --switch --> If1
-```
-### Memory Flow
-```mermaid
-graph TD
-
-Extractor --> This
-PrevArgs --shared--> Con
-Ret["PrevFrame(s)"] --args-->This{"This frame"}
-This --args--> F
-F["Fn call"] --Scrutinee--> Decon
-This --"Local mem" --> Con((Con))
-Ret --"upstream mem"--> Con
-Decon-->Con
-```
-
-### Algorithm
-Fn stack (program) and Data stack (memory) are closely related. Unfortunately, they easily desync.
-* Data stack changes slower and can grow in a tree shape (product types)
-* Sum types are like saved conditionals
-* Case decons alone know how data will be used (and freed!)
-
-Basic idea is to passdown memory (^Mem) to any function that returns data. Data of unclear sizes (recursive data / dynamic lists) must use the heap. Sum type data can be allocated pessimistically as the upper bound of it's alts. In what follows we discuss only non-copyable (large) data.
-* If a fn uses an argument to construct it's return, then that argument must be allocated early enough - ie. we must count the layers of desync (eg. `case Circle 3 of Circle 3 -> _` has a desync of 0
-* Conditionals: either we copy, use the heap, or delay allocation
-```
-Global --> pass down ^Mem to fns returning data.
-       |-  arguments have a nesting val for args (0 = not returned)
-       |-  memory is allocated/passed down at case deconstructions 
-       `-  sum types + branching create static indecidability
-Constructor --> write to ^mem.
-Arg -- already alloced = pass null pointers down to subdata extractors
-    -- if (partly) returned at depth n? --> copy to ^Mem
-Decon -- copy to ^Mem if not nullptr; else return subdata
-Let -- Find out if building return valuel
-```
-Thoughts
-* Extraction (nullmemptr ^Mem) of subdata
-* copies allow shared inplaceing
-* extraction outlives it's parent ?
-* pass functions down (inexpensive) ?!
-* Sum types: we know which alt is used at construction, do we need to branch on it later ? branching is expensive, particularly since it complicates memory management
-* extracting something from deep data tree ? which may or may not need to outlive the tree
-* tail-call-elim ?
-* Let's may cause sharing of data (and worse, subdata)
-* Rec's ~force use of heap if cannot fold-build
-* Arrays ~ Var args
+----------------------
+-- Alloc Attributes --
+----------------------
+x : Linear -- x is used once: can be inplaced
+x : Static n
+-- x always expires on the same stack frame
+-- (n SF's from it's allocation)
+x : (Lin & Static n)

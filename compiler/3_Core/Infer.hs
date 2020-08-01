@@ -5,6 +5,7 @@ import Prim
 import BiUnify
 import qualified ParseSyntax as P
 import CoreSyn as C
+import CoreUtils
 import TCState
 import PrettyCore
 import DesugarParse
@@ -60,7 +61,6 @@ withDomain :: IName -> [Int] -> (TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
 withDomain bindINm idxs action = do
   d <- use domain
   -- anticipate recursive type
---  use wip >>= (\v -> MV.write v bindINm (Checking [THULC (LCRec bindINm)]))
   use wip >>= (\v -> MV.write v bindINm (Checking [THRec bindINm]))
   r <- action
   argTys <- case idxs of
@@ -90,33 +90,41 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
     P.FunBind hNm implicits matches tyAnn
       <- (!! bindINm) <$> use (id . pmodule . P.bindings)
     let (mainArgs , mainArgTys , tt) = matches2TT matches
-        args = sort $ implicits ++ mainArgs
+        args = sort $ (map fst implicits) ++ mainArgs
 --      args = sort implicits -- TODO don't sort !
         nArgs = length args
 
     (expr , argSubs) <- withDomain bindINm args (infer tt)
     argTys <- fmap _mSub <$> V.freeze argSubs
     -- Generalization ?!
-    let bindTy = case expr of
+    let inferredTy = case expr of
           Core x t -> t -- if nArgs==0 then t else [THArrow (V.toList argTys) t]
           CoreFn ars x t -> t
           Ty t     -> t -- if nArgs==0 then t else [THArrow (take nArgs (repeat [THSet 0])) t]
-    case tyAnn of
-      Nothing  -> pure ()
+    bindTy <- case tyAnn of
+      Nothing  -> pure bindTy
       Just ann -> do
         ann <- tyExpr <$> infer ann
         let inferArg = \case { [x] -> tyExpr <$> infer x ; [] -> pure [THSet 0] }
         argAnns  <- inferArg `mapM` mainArgTys
-        let annTy = did_ $ case mainArgTys of { [] -> ann ; x  -> [THArrow argAnns ann] }
+        let annTy = case mainArgTys of { [] -> ann ; x  -> [THArrow argAnns ann] }
         exts <- use externs
         labelsV <- V.freeze =<< use labels
-        unless (check exts argTys labelsV bindTy annTy)
-          $ error (show bindTy ++ "\n!<:\n" ++ show ann)
+        unless (check exts argTys labelsV inferredTy annTy)
+          $ error (show inferredTy ++ "\n!<:\n" ++ show ann)
+        -- Prefer user's type annotation over the inferred one; except
+        -- type families are special: we need to insert the list of labels as retTy
+        pure $ case getRetTy inferredTy of
+          s@[THFam{}] -> case flattenArrowTy annTy of
+            [THArrow d r] -> [THFam r d []]
+            x -> s
+          _ -> annTy
     let newExpr = case args of
           [] -> expr
           args -> case expr of
             Core x ty -> CoreFn args x bindTy
-            Ty t      -> Ty $ [THPi $ Pi (zip args $ V.toList argTys) t]
+--          Ty t      -> d_ bindTy $ Ty $ [THPi $ Pi (zip args $ V.toList argTys) t]
+            Ty t -> Ty $ bindTy
     (\v -> MV.write v bindINm (BindOK newExpr)) =<< use wip
     pure expr
 
@@ -173,17 +181,17 @@ infer = let
     tts' <- infer `mapM` tts
     ((`MV.read` l) =<< use labels) >>= \case
       Nothing -> error $ "forward reference to label unsupported: " ++ show l
-      Just ty@[THArrow{}] -> do
-        retTy <- biUnifyApp ty (tyOfExpr <$> tts')
-        pure $ Core (Label l tts') retTy
-      Just ty -> do
-        pure $ Core (Label l tts') ty
+      Just ty -> if isArrowTy ty
+        then do
+          retTy <- biUnifyApp ty (tyOfExpr <$> tts')
+          pure $ Core (Label l tts') retTy
+        else pure $ Core (Label l tts') ty
 
   P.TySum alts -> do -- alts are function types
     -- 1. Check against ann (retTypes must all subsume the signature)
     -- 2. Create sigma type from the arguments
     -- 3. Create proof terms from the return types
-    let go (l,impls,ty) = (l,) <$> (mkSigma impls =<< infer ty)
+    let go (l,impls,ty) = (l,) <$> (mkSigma (map fst impls) =<< infer ty)
         mkSigma impls ty = do
           ty' <- expr2Ty judgeBind ty
           pure $ case impls of
@@ -192,11 +200,17 @@ infer = let
     sumArgsMap <- go `mapM` alts
     labelsV <- use labels
     (\(l,t) -> MV.write labelsV l (Just t)) `mapM` sumArgsMap
-    pure $ Ty $ [THSum $ fst <$> sumArgsMap]
---  pure $ Ty $ [THSum $ M.fromList sumArgsMap]
+    let sumTy = [THSum $ fst <$> sumArgsMap]
+        returnTypes = getFamilyTy . snd <$> sumArgsMap
+        getFamilyTy x = case getRetTy x of -- TODO currying ?
+--        [THRecSi m ars] -> [THArrow (take (length ars) $ repeat [THSet 0]) sumTy]
+          [THRecSi m ars] -> [THFam sumTy (take (length ars) $ repeat [THSet 0]) []]
+          x -> sumTy
+        dataTy = foldl1 mergeTypes $ returnTypes
+    pure $ Ty dataTy
 
   P.Match alts -> let
-      (labels , patterns , rawTTs) = unzip3 alts
+      (altLabels , patterns , rawTTs) = unzip3 alts
     -- * find the type of the sum type being deconstructed
     -- * find the type of it's alts (~ lambda abstractions)
     -- * type of Match is (sumTy -> Join altTys)
@@ -209,10 +223,10 @@ infer = let
     altExprs <- infer `mapM` rawTTs
     --TODO merge types with labels (mergeTypes altTys)]
     retTy <- foldl mergeTypes [] <$> pure (tyOfExpr <$> altExprs)
-    let sumTy     = [THSum $ labels]
-        matchTy   = [THArrow [sumTy] retTy]
-        labelsMap = M.fromList $ zip labels altExprs
-    pure $ Core (Match labelsMap Nothing) matchTy
+    let scrutTy = [THSplit altLabels]
+        matchTy = [THArrow [scrutTy] retTy]
+        altLabelsMap = M.fromList $ zip altLabels altExprs
+    pure $ Core (Match altLabelsMap Nothing) matchTy
 
 --P.MultiIf branches elseE -> do -- Bool ?
 --  let (rawConds , rawAlts) = unzip branches
@@ -240,26 +254,12 @@ infer = let
   P.InfixTrain lArg train -> infer $ resolveInfixes (\_->const True) lArg train -- TODO
   x -> error $ "inference engine not ready for parsed tt: " ++ show x
 
-tyOfExpr  = \case
-  Core x ty -> ty
-  CoreFn _ _ ty -> ty
-  Ty t      -> [THSet 0]     -- type of types
-  Fail e    -> []
-
---expr2Ty :: _ -> Expr -> TCEnv s Type
-expr2Ty judgeBind e = case e of
- Ty x -> pure x
- Core c ty -> case c of
-   Var (VBind x) -> pure [THRec x]
-   Var (VArg x)  -> pure [THArg x] -- TODO ?!
-   App (Var (VBind fName)) args -> pure [THRecSi fName args]
-   x -> error $ "raw term cannot be a type: " ++ show e
- x -> error $ "raw term cannot be a type: " ++ show x
 -----------------
 -- TT Calculus --
 -----------------
+-- How to handle Application of mixtures of types and terms
 --ttApp :: _ -> Expr -> [Expr] -> TCEnv s Expr
-ttApp readBind fn args = -- trace (show fn ++ " $ " ++ show args) $ case fn of
+ttApp readBind fn args = -- trace (clYellow (show fn ++ " $ " ++ show args)) $
  case fn of
   Core cf ty -> case cf of
     Instr (TyInstr Arrow)  -> expr2Ty readBind `mapM` args <&> \case
@@ -272,25 +272,9 @@ ttApp readBind fn args = -- trace (show fn ++ " $ " ++ show args) $ case fn of
       in pure $ case end of
         [] -> Core app [] -- don't forget to set retTy
         x  -> error $ "term applied to type: " ++ show app ++ show x
-  Ty f -> case f of
-    [THPi (Pi ars f)] -> _
-    [THRec m] -> _
-    [THSum s] -> error $ "thsum" -- tcFail (Err "thsum")
---  [THSum s] -> error $ "panic: thsum not done"
+  Ty f -> case f of -- always a type family
+    -- TODO match arities ?
+    [THFam f a ixs] -> pure $ Ty [THFam f (drop (length args) a) (ixs ++ args)]
+--  x -> pure $ Ty [THFam f [] args]
     x -> error $ "ttapp panic: " ++ show x ++ " $ " ++ show args
   _ -> error $ "ttapp: not a function: " ++ show fn ++ " $ " ++ show args
-
---  doTypeApp t args = let ttArgs = expr2Ty <$> args in case t of
---    f@[THPi ars ty typeArgs] -> case ars of
---      (ar,arTy):arNms -> case (ty , ttArgs) of
-----        ([THInstr MkIntN ars] , [Core (Lit (Int i)) _]) -> Ty [THPrim (PrimInt $ fromIntegral i)]
-----        ([THInstr ArrowTy ars] , ttArgs) -> case solveULC (Ty . lc2Ty) <$> ttArgs of
-----            [Ty arg1 , Ty arg2] -> Ty [THArrow [arg1] arg2]
-----            x -> error $ "arguments to → must be types: " ++ show args
---          _ -> let
---            piApp expr = Ty [THPi arNms ty (M.insert ar expr typeArgs)]
---            in case ttArgs of
---              [expr]  -> piApp expr
---              expr:xs -> ttApp (piApp expr) xs
---      [] -> error $ "not a function: " ++ show f  ++ "\napplied to: " ++ show ttArgs
---    f -> error $ "panic: not a function: " ++ show f ++ "\n applied to: " ++ show args

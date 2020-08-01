@@ -22,13 +22,15 @@ deriving instance Show BiSub
 deriving instance Show Kind
 deriving instance Show Pi
 
-tyExpr = \case
+tyExpr = \case -- expr found as type, (note. raw exprs cannot be types however)
   Ty t -> t
   expr -> error $ "expected type, got: " ++ show expr
 
 ------------
 -- Pretty --
 ------------
+
+nropOuterParens = \case { '(' : xs -> init xs ; x -> x }
 
 prettyBind = \case
  WIP -> "WIP"
@@ -43,6 +45,7 @@ prettyVName = \case
     VExt i -> "E" ++ show i
 
 prettyTerm = \case
+    Hole -> " _ "
     Var     v -> show v
     Lit     l -> show l
     App     f args -> "(" ++ show f ++ " $ " ++ intercalate " " (show <$> args) ++ ")"
@@ -84,6 +87,7 @@ prettyTyHead = \case
 --   s  = intercalate "\n  | " $ showLabel <$> M.toList sumTy
 --   in " 〈" ++ s ++ " 〉"
  THSum l -> " 〈" ++ show l ++ " 〉"
+ THSplit l -> "Split〈" ++ show l ++ " 〉"
  THProd  l -> " { " ++ show l ++ " } "
 
  THArray    t -> "@" ++ show t
@@ -98,9 +102,12 @@ prettyTyHead = \case
 -- THCore t ty -> "↑(" ++ show t ++ " : " ++ show ty ++ ")" -- term in type context
 
  THSet   uni -> "Set" ++ show uni
- THRecSi f ars -> "(μ" ++ show f ++ " $ " ++ intercalate " " (show <$> ars) ++ ")"
+ THRecSi f ars -> "(μf" ++ show f ++ " $! " ++ intercalate " " (show <$> ars) ++ ")"
+ THFam f ixable ix -> let
+   fnTy = case ixable of { [] -> f ; x -> [THArrow x f] }
+   indexes = case ix of { [] -> "" ; ix -> " $! (" ++ intercalate " " (show <$> ix) ++ "))" }
+   in "(Family " ++ show fnTy ++ ")" ++ indexes
 -- THInstr i ars -> show i ++ show ars
--- THULC l -> show l
 
 clBlack   x = "\x1b[30m" ++ x ++ "\x1b[0m"
 clRed     x = "\x1b[31m" ++ x ++ "\x1b[0m" 

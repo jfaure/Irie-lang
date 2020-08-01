@@ -86,7 +86,7 @@ data TyHead -- head constructors for types.
  | THArg      IName      -- ix to monotype env (type of the lambda-bound at ix)
  | THExt      IName      -- tyOf ix to externs
  | THRec      IName      -- tyOf ix to bindMap (must be guarded and covariant)
- | THTyRec    IName      -- ix to bindMap (is a type)
+-- | THTyRec    IName      -- ix to bindMap (is a type)
 
  | THSet      Uni -- | THSetFn    [Uni]
 -- | THTop Kind | THBot Kind
@@ -94,12 +94,15 @@ data TyHead -- head constructors for types.
  | THArrow    [TyContra] TyCo  -- degenerate case of THPi
  | THProd     [IField]
  | THSum      [ILabel]
+ | THSplit    [ILabel]
  | THArray    TyCo
 
- | THPi Pi -- dependent function space
+ | THPi Pi -- dependent function space. Always implicit, for explicit, write `∏(x:_) x -> Z`
  | THSi Pi (M.Map IName Expr) -- (partial) application of pi type
- | THRecSi IName [Term] -- application (ie. of indexed family)
- | THSub Type Type -- indexed families are lists of subtype definitions
+
+ -- Families; Similar to pi/sigma, but binder is anonymous and to be 'appended' to the type
+ | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
+ | THFam Type [Type] [Expr] -- type of things it can index, and things indexing it (both can be [])
 
 data Pi = Pi [(IName , Type)] Type -- deBruijn indexes
 
@@ -109,10 +112,10 @@ data TCError
  | Err T.Text
   deriving Show
 data Expr
- = Core   Term Type
- | CoreFn [IName] Term Type
- | Ty     Type
- | Fail   TCError
+ = Core     Term Type
+ | CoreFn   [IName] Term Type -- save args for beta-reduction
+ | Ty       Type
+ | Fail     TCError
 
 data Bind -- indexes in the bindmap
  = WIP
@@ -148,3 +151,4 @@ tyAp ty argMap = map go ty where
       Just (Ty [t]) -> t
     THArrow as ret -> THArrow (map go <$> as) (go <$> ret)
     x -> x
+

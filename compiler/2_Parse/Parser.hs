@@ -43,7 +43,7 @@ dbg i = id
 data ParseState = ParseState {
    _indent     :: Pos  -- start of line indentation (need to save it for subparsers)
  , _parsingMixFixes :: [MixFixDef] -- we're parsing a mixfix: these are the options
- , _piBound    :: [[(IName , TT)]]
+ , _piBound    :: [[ImplicitArg]]
  , _moduleWIP  :: Module
  , _tmpReserved :: [S.Set T.Text]
 }
@@ -177,7 +177,7 @@ p `sepBy2` sep = (:) <$> p <*> (some (sep *> p))
 -----------
 --symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: T.Text
 reservedChars = "@.(){};\\"
-reservedNames = S.fromList $ T.words "if then else type data record class extern externVarArg let rec in where case of _ import require \\ : = ? | λ =>"
+reservedNames = S.fromList $ T.words "if then else type data record class extern externVarArg let rec in where case of _ import require \\ : :: = ? | λ =>"
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c
@@ -301,7 +301,7 @@ funBind = lexeme mixFixDef >>= \case
 funBind' :: T.Text -> Parser [Pattern] -> Parser TTName
 funBind' nm pMFArgs = newArgNest $ mdo
   iNm <- addBindName nm -- handle recursive references
-    <* addBind (FunBind nm (implicits ++ (map fst pi)) eqns ty)
+    <* addBind (FunBind nm (implicits ++ pi) eqns ty)
   ars <- many pattern
   ann <- tyAnn
   let (implicits , ty) = case ann of { Just (i,t) -> (i,Just t) ; _ -> ([],Nothing) }
@@ -309,13 +309,15 @@ funBind' nm pMFArgs = newArgNest $ mdo
     [ (:[]) <$> fnMatch (pure ars) (reserved "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
     , case (ars , ann) of
         ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
-        (x  , Just{})  -> fail "TODO no parser for: arguments followed by type sig"
+        (x  , Just{})  -> fail "TODO no parser for: fn args followed by type sig"
         (x  , Nothing) -> do fail $ "fn def lacks accompanying binding"
     ]
   pure (VBind iNm)
 
-tyAnn :: Parser (Maybe ([IName] , TT)) = newArgNest $ do
-  optional (reserved "::" *> bracesn ((iden >>= addArgName) `sepBy` reserved ";")) >>= \case
+tyAnn :: Parser (Maybe ([ImplicitArg] , TT)) = let
+    implicitArg = (,) <$> (iden >>= addArgName) <*> optional (reservedChar ':' *> tt)
+  in newArgNest $ do
+  optional (reserved "::" *> bracesn (implicitArg `sepBy` reserved ";")) >>= \case
     Just implicits -> fmap (implicits,) <$> optional (reservedChar ':' *> tt)
     Nothing        -> fmap ([],)        <$> optional (reservedChar ':' *> tt)
 
@@ -372,7 +374,7 @@ ttArg , tt :: Parser TT
       label <- iden >>= newSLabel
       getPiBounds tyAnn >>= \case
         (pis , Nothing) -> fail "sum type annotation missing"
-        (pis , Just (impls , ty)) -> pure (label , (map fst pis) ++ impls , ty)
+        (pis , Just (impls , ty)) -> pure (label , pis ++ impls , ty)
     in some $ try (scn *> (reservedChar '|' *> lexeme labeledTTs))
 
   con = Cons <$> let
@@ -408,7 +410,7 @@ ttArg , tt :: Parser TT
     Nothing -> pure exp
     Just ([] , WildCard)  ->  pure exp -- don't bother if no info given (eg. pi binder)
     Just (implicits , ty) -> case exp of
-      Var (VLocal l) -> addPiBound (l , ty) *> pure exp
+      Var (VLocal l) -> addPiBound (l , Just ty) *> pure exp
       x -> (Var . VBind <$> addAnonBindName)
         <* addBind (FunBind "_:" [] [FnMatch [] [] exp] (Just ty))
 

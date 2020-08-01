@@ -1,6 +1,11 @@
 {-# LANGUAGE StrictData #-}
 -- StgSyn: Most of the haskell data types used in lfvm
 -- See StgToLLVM for a detailed description of how this maps to llvm
+-- PS.
+-- * QTT annotations ?
+-- * call subtype conversion fns
+-- * Pi calculus style malloc -> Free
+-- * eliminator \split nArgs f => f args
 module StgSyn where
 
 import qualified LLVM.AST -- (Operand, Instruction, Type, Name)

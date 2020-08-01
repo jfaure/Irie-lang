@@ -2,6 +2,7 @@ module BiUnify where
 import Prim
 import qualified ParseSyntax as P
 import CoreSyn as C
+import CoreUtils
 import TCState
 import PrettyCore
 import DesugarParse
@@ -24,11 +25,9 @@ import Debug.Trace
 --------------------------------------------
 -- Monotype environments (typing schemes) --
 --------------------------------------------
--- 2 environments have a greatest lower bound: d1 n d2,
--- where (d1 n d2) (x) = d1(x) n d2(x)
+-- 2 environments have a greatest lower bound: d1 n d2, where (d1 n d2) (x) = d1(x) n d2(x)
 -- interpret d1(x) = T for x not present in d1
--- ! subsumption (on typing schemes)
---   allows instantiation of type variables
+-- ! subsumption (on typing schemes) allows instantiation of type variables
 
 --------------------
 -- Generalization --
@@ -53,10 +52,9 @@ import Debug.Trace
 -- a  <= t- solved by [m- b = a n [b/a-]t- /a-] 
 -- t+ <= a  solved by [m+ b = a u [b/a+]t+ /a+] 
 -- a  <= c  solved by [m- b = a n [b/a-]c  /a-] -- (or equivalently,  [a u b /b+])
--- SubConstraints:
--- (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
+-- SubConstraints, eg: (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
 
-failBiSub a b = error $ "failed bisub: " ++ show a ++ "<-->" ++ show b --pure False
+failBiSub a b = error $ "failed bisub:\n    " ++ show a ++ "\n<--> " ++ show b --pure False
 
 biSub_ a b = trace ("bisub: " ++ prettyTy a ++ " <==> " ++ prettyTy b) biSub a b -- *> (dv_ =<< use bis)
 biSub :: TyPlus -> TyMinus -> TCEnv s ()
@@ -97,12 +95,20 @@ atomicBiSub p m = case (p , m) of
   (THPrim p1 , THPrim p2) -> when (p1 /= p2) (failBiSub p1 p2)
   (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
 
-  (THArrow args1 ret1 , THArrow args2 ret2) ->
+  (THArrow args1 ret1 , THArrow args2 ret2) -> -- TODO arg overflows ?
     zipWithM biSub args2 args1 *> biSub ret1 ret2
+  (THPi (Pi p ty) , y) -> biSub ty [y]
+  (x , THPi (Pi p ty)) -> biSub [x] ty
 
   -- record: labels in the first must all be in the second
   (THProd x , THProd y) -> if all (`elem` y) x then pure () else error "Cannot unify recordTypes"
   (THSum  x , THSum y)  -> if all (`elem` x) y then pure () else error "Cannot unify sumtypes"
+--(THSplit  x , THSum y) ->
+----getLabelRetTypes labelIndexes = do
+--  labelsV <- use labels
+--  let getLabelTy = \case { Just t->t ; Nothing->error "forward reference to label" }
+--  labelTys <- MV.read labelsV `mapM` labelIndexes
+--  pure $ map (getRetType . getLabelTy) labelTys
 
   -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
   (p , THExt i) -> biSub [p]     =<< tyExpr . (`readExtern` i)<$>use externs
@@ -110,28 +116,16 @@ atomicBiSub p m = case (p , m) of
 --  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
   (THRec m , THRec y) -> unless (m == y) $ error "recursive types are not equal"
   (THRec m , x) -> pure () -- TODO ?
---(THULC a , THULC b) -> biSubULC a b
+  (THRecSi f1 a1, THRecSi f2 a2) -> if f1 == f2
+    then if (length a1 == length a2) && all id (zipWith termEq a1 a2)
+      then pure ()
+      else error $ "RecSi arities mismatch"
+    else error $ "RecSi functions do not match ! " ++ show f1 ++ " /= " ++ show f2
   (a , b) -> failBiSub a b
 
-biSubULC a b = pure ()
---if a == b then pure () else failBiSub a b
 --------------
 -- Checking --
 --------------
--- 1. bring user types into reduced form
--- * unroll mus and merge components, eg.
---   {l1:a} u {l1:b,l2:b} u mg.a->g
---   {l1:aub}ua -> (mg.a->g)
-reduceType :: [TyHead] -> [TyHead]
-reduceType []  = []
-reduceType t = t
---reduceType (t1:tys) = let
---  mergeTy :: [TyHead] -> [TyHead] -> [TyHead]
---  mergeTy ty []     = ty
---  mergeTy ty (tc:tcs) = if eqTyHead tc ty then (ty:tc:tcs) else mergeTy tcs ty
---  mergeTy (THRec i t) tList = t -- TODO unroll
---  in foldr mergeTy t1 tys
-
 -- biunification solves constraints `t+ <= t-` ,
 -- checking has the form `t- <= t+`
 -- (the inferred type must subsume the annotation)
@@ -142,30 +136,26 @@ reduceType t = t
 check :: Externs -> V.Vector [TyHead] -> V.Vector (Maybe Type)
      -> [TyHead] -> [TyHead] -> Bool
 check e ars labTys inferred gotRaw =
-  trace ("check: " ++ prettyTy inferred ++ "\n<? " ++ prettyTy gotRaw)
+  trace ("check: " ++ prettyTy inferred ++ "\n   <?: " ++ prettyTy gotRaw)
   $ check' e ars labTys inferred (reduceType gotRaw)
 
 --check' :: Externs -> V.Vector [TyHead]
 --       -> [TyHead] -> [TyHead] -> Bool
 check' es ars labTys inferred gotTy = let
-  check'' = check' es ars labTys
+  check'' = check' es ars labTys :: [TyHead] -> [TyHead] -> Bool
   readExt es x = case readExtern es x of
     c@Core{} -> error $ "type expected, got: " ++ show c
     Ty t -> t
   checkAtomic :: TyHead -> TyHead -> Bool
   checkAtomic inferred gotTy = case (inferred , gotTy) of
     (THSet l1, THSet l2)  -> l1 <= l2
-    (THSet 0 , x)         -> case x of
-        THArrow{} -> False
-        _         -> True
-    (x , THSet 0)         -> case x of
-        THArrow{} -> False
-        _         -> True
+    (THSet 0 , x)         -> case x of { THArrow{} -> False ; _ -> True }
+    (x , THSet 0)         -> case x of { THArrow{} -> False ; _ -> True }
     (THArg x , gTy)       -> True -- check'' (ars V.! x) [gTy]
     (THVar x , gTy)       -> True -- check'' (bis V.! x) [gTy]
     (lTy , THVar x)       -> False
     (THPrim x , THPrim y) -> x `primSubtypeOf` y
-    (THArrow a1 r1 , THArrow a2 r2) -> let
+    (THArrow a1 r1 , THArrow a2 r2) -> let -- handle differing arities (since currying is allowed)
       -- note. (a->(b->c)) is eq to (a->b->c) via currying
       mkFn [x] = x
       mkFn s = let (ars , [ret]) = splitAt (length s - 1) s
@@ -176,31 +166,27 @@ check' es ars labTys inferred gotTy = let
       go x []  = check'' [THArrow x r1] r2
       in go a1 a2
     (THSum labels , t@THArrow{}) -> let -- all alts must subsume the signature
---    getConTy = \case
---      [THULC lc] -> let
---        ulcFnApp2Ty = \case
---          LCApp f x
       labelFns = fromJust . (labTys V.!) <$> labels
       in True -- all (`check''` [t]) labelFns
     (THSum x , THSum y)   -> all (`elem` y) x
---    int = M.intersection y x -- left-biased
---    szOK = M.size x <= M.size y
---    in szOK && all id (zipWith check'' (M.elems x) (M.elems int))
+    (t , THSplit labels) -> let
+      getLabelTy = \case { Just t->t ; Nothing->error "forward reference to label" }
+      splitTys = (getRetTy . getLabelTy . (labTys V.!)) <$> labels
+      in all (check'' [t]) splitTys
     (THProd x , THProd y) -> all (`elem` x) y
---    int = M.intersection y x -- left-biased
---    szOK = M.size x >= M.size y
---    in szOK && all id (zipWith check'' (M.elems x) (M.elems int))
---  (THULC (LCExt x) , THULC (LCExt y)) -> x == y
---  (THULC (LCExt x) , t) -> check'' (readExt es x) [t]
---  (t , THULC (LCExt x)) -> check'' [t] (readExt es x)
---  (t , THIxPAp [] ty tyArgs termArgs) -> check' es (ars V.// M.toList tyArgs) [t] ty
 --  (t , THPi [] ty tyArgs) -> check'' [t] (tyAp ty tyArgs)
 --  (THPi [] ty tyArgs , t) -> check'' (tyAp ty tyArgs) [t]
 
     (x , THArg y) -> True -- ?!
     (THRec x , THRec y) -> x == y
     (THRec m , x) -> True -- TODO read ty in the bindMap
-    (a,b) -> error $ "checking: not ready for: " ++ show a ++ " <? " ++ show b
+    (THRecSi f1 a1 , THRecSi f2 a2) -> _
+    (THRecSi f1 a1 , THFam{}) -> True -- TODO read from bindMap
+    (THFam f ars [] , x) -> checkAtomic (THArrow ars f) x
+    (THFam f [] ixs , THRecSi f1 a1) -> True -- TODO
+    (THFam f1 a1 i1 , THFam f2 a2 i2) -> True -- TODO
+--  (THFam f1 a1 i1 , x) -> True -- TODO
+    (a,b) -> error $ "checking: strange type heads:\n   " ++ show a ++ "\n   <? " ++ show b
   in case inferred of
     []   -> False
     tys  -> all (\t -> any (checkAtomic t) gotTy) tys
@@ -216,17 +202,40 @@ doSub newTy (ty:tys) = if eqTyHead newTy ty
   else (ty : doSub newTy tys)
 
 mergeTyHead :: TyHead -> TyHead -> [TyHead]
-mergeTyHead t1 t2 = let join = [t1 , t2] in case join of
+mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
+  let join = [t1 , t2]
+      zM = zipWith mergeTypes
+  in case join of
+  [THSet a , THSet b] -> [THSet $ max a b]
   [THPrim a , THPrim b]   -> if a == b then [t1] else join
   [THVar a , THVar b]     -> if a == b then [t1] else join
---  [THULC a , THULC b]     -> join
+  [THRec a , THRec b]     -> if a == b then [t1] else join
 --  [THExt  a , THExt  b]   -> if a == b then [t1] else join
 --  [THAlias a , THAlias b] -> if a == b then [t1] else join
-  [THSum a , THSum b]     -> [THSum  $ intersect a b] --[THSum (M.unionWith mergeTypes a b)]
-  [THProd a , THProd b]   -> [THProd $ union a b] -- [THProd (M.unionWith mergeTypes a b)]
---[THArrow a , THArrow b] -> _
---_ -> _
+  [THSum a , THSum b]     -> [THSum   $ union a b] --[THSum (M.unionWith mergeTypes a b)]
+  [THSplit a , THSplit b] -> [THSplit $ union a b] --[THSum (M.unionWith mergeTypes a b)]
+  [THProd a , THProd b]   -> [THProd $ intersect a b] -- [THProd (M.unionWith mergeTypes a b)]
+  [THArrow d1 r1 , THArrow d2 r2]
+    | length d1 == length d2 -> [THArrow (zM d1 d2) (mergeTypes r1 r2)]
+  [THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!
+  [THPi (Pi b1 t1) , THPi (Pi b2 t2)] -> [THPi $ Pi (b1 ++ b2) (mergeTypes t1 t2)]
+  [THPi (Pi b1 t1) , t2] -> [THPi $ Pi b1 (mergeTypes t1 [t2])]
+  [t1 , THPi (Pi b1 t2)] -> [THPi $ Pi b1 (mergeTypes [t1] t2)]
+--[THRecSi r1 a1 , THRecSi r2 a2] -> if r1 == r2
+--  then [THRecSi r1 (zipWith mergeTypes a1 a2)]
+--  else join
   _ -> join
+
+-----------------------------
+-- Simplification of types --
+-----------------------------
+-- 1. bring user types into reduced form
+-- * unroll mus and merge components, eg.
+--   {l1:a} u {l1:b,l2:b} u mg.a->g
+--   {l1:aub}ua -> (mg.a->g)
+reduceType :: [TyHead] -> [TyHead]
+reduceType []  = []
+reduceType t = t
 
 mkTcFailMsg gotTerm gotTy expTy =
   ("subsumption failure:"
@@ -242,3 +251,11 @@ kindOf = \case
   THVar{}   -> KVar
   THArrow{} -> KArrow
   _ -> KAny
+
+-- deciding term equalities ..
+termEq t1 t2 = case (t1,t2) of
+--(Var v1 , Var v2) -> v1 == v2
+  x -> True
+--x -> False
+
+

@@ -1,0 +1,17 @@
+Nat =
+ | Z : Nat
+ | S : Nat -> Nat
+
+--One : Nat = S Z
+----three = S (S (S Z))
+--add : Nat -> (Nat -> Nat)
+--add x = \case | Z => x | S y => add x y
+
+--two = add One One
+two = S (S Z)
+
+Fin : Nat -> Set =
+ | fZ : (n : Nat) -> Fin (S n)
+ | fS : (n : Nat) -> Fin n -> Fin (S n)
+
+X = Fin Z
