@@ -1,13 +1,6 @@
-# expr2Core
-  * make sure pi-bound vars fall out of scope
-  * mixfix lambdas eg. `if_then x else y`
-  * GADT's (apparently tricky because of equality constraints eg. Sum a a => a == a)
-
 # Low priority
   * error reporting
   * parser source locations
   * parser linefolds
-  * precompiled modules (sv them where?)
-
-# Maybe
-  * rec (let-rec)
+  * precompiled modules
+  * rec

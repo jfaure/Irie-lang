@@ -7,10 +7,9 @@ import Externs
 import CoreSyn
 import PrettyCore
 import Infer
-import MkStg
-import StgToLLVM (stgToIRTop)
-import qualified LlvmDriver as LD
+import CodeGen
 import LLVM.Pretty
+import qualified LlvmDriver as LD
 
 import Text.Megaparsec
 import qualified Data.Text as T
@@ -25,6 +24,7 @@ import Control.Monad.Log
 import Control.Lens
 import System.Console.Haskeline
 import System.Exit
+import System.IO (hFlush , stdout)
 import Data.Functor
 import Data.Maybe (isJust, fromJust)
 import Debug.Trace
@@ -48,7 +48,9 @@ repl cmdLine = let
 doFile cmdLine it f = T.IO.readFile f >>= doProgText cmdLine it f
 doProgText flags it f t = text2Core flags it f t >>= codegen flags
 
+------------------------------------------------
 -- Phase 1: parsing, resolve externs, type check
+------------------------------------------------
 text2Core :: CmdLine -> ImportTree -> FilePath -> T.Text
   -> IO (ImportTree , Import)
 text2Core flags seenImports fName progText = do
@@ -63,10 +65,11 @@ text2Core flags seenImports fName progText = do
 
   let exts       = resolveImports localImports parsed
       judged     = judgeModule parsed exts
-      bindNames  = let getNm (FunBind nm _ _ _) = nm
+      bindNames  = let getNm (FunBind nm _ _ _ _) = nm
         in getNm <$> V.fromList (_bindings parsed)
       namedBinds = V.zipWith (\nm j -> T.unpack nm ++ show j) bindNames judged
       putPass :: T.Text -> IO ()   = \case
+        "args"       -> print flags
         "source"     -> putStr =<< readFile fName
         "parseTree"  -> print parsed
         "core"       -> putStrLn $ show judged
@@ -77,15 +80,15 @@ text2Core flags seenImports fName progText = do
   addPass "namedCore"
   pure (_ , Import modNameMap judged)
 
+---------------------------------
 -- Phase 2: codegen, linking, jit
+---------------------------------
 codegen flags input@(imports , Import bindNames judged) = let
   exts       = V.empty -- stg externs
-  stg        = mkStg exts (V.zip (V.fromList $ M.keys bindNames) judged)
-  llvmMod    = stgToIRTop stg
+  llvmMod    = mkStg exts (V.zip (V.fromList $ M.keys bindNames) judged)
   putPass :: T.Text -> IO () = \case
-    "stg"        -> print stg
-    "llvm-hs"    -> TL.IO.putStrLn $ ppllvm llvmMod
-    "llvm"       -> LD.dumpModule llvmMod
+    "llvm-hs"    -> hFlush stdout *> TL.IO.putStrLn (ppllvm llvmMod)
+    "llvm-cpp"   -> LD.dumpModule llvmMod
     "jit"        -> LD.runJIT (optlevel flags) [] llvmMod
     _            -> pure ()
   in (putPass `mapM_` printPass flags)

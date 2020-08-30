@@ -11,21 +11,20 @@ import PrettyCore
 import DesugarParse
 import Externs
 
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV -- mutable vectors
---import qualified Data.Vector.Generic.Mutable as MV (growFront) -- mutable vectors
-import Control.Monad.ST
-import qualified Data.Map as M
-import qualified Data.IntMap as IM
-import qualified Data.Text as T
-import Data.Functor
+import Control.Lens
 import Control.Monad
+import Control.Monad.ST
 import Control.Applicative
 import Control.Monad.Trans.State.Strict
 import Control.Monad.Trans.Except
-import Data.List --(foldl', intersect)
-import Data.STRef
-import Control.Lens
+import Data.Functor
+import Data.List
+import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as MV -- mutable vectors
+import qualified Data.Text as T
+import qualified Data.Map as M
+import qualified Data.IntMap as IM
+import qualified Data.IntSet as IS
 
 import Debug.Trace
 
@@ -86,9 +85,9 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
   BindOK e  -> pure e
 --Checking ty -> pure $ BindOK $ Ty [THRec bindINm]
   Checking ty -> pure $ Core (Var (VBind bindINm)) [THRec bindINm]
-  WIP -> mdo
-    P.FunBind hNm implicits matches tyAnn
-      <- (!! bindINm) <$> use (id . pmodule . P.bindings)
+  WIP -> do
+    P.FunBind hNm implicits freeVars matches tyAnn
+      <- (!! bindINm) <$> use (pmodule . P.bindings)
     let (mainArgs , mainArgTys , tt) = matches2TT matches
         args = sort $ (map fst implicits) ++ mainArgs
 --      args = sort implicits -- TODO don't sort !
@@ -97,12 +96,14 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
     (expr , argSubs) <- withDomain bindINm args (infer tt)
     argTys <- fmap _mSub <$> V.freeze argSubs
     -- Generalization ?!
+    -- TODO argTys vs function Tys
     let inferredTy = case expr of
-          Core x t -> t -- if nArgs==0 then t else [THArrow (V.toList argTys) t]
-          CoreFn ars x t -> t
-          Ty t     -> t -- if nArgs==0 then t else [THArrow (take nArgs (repeat [THSet 0])) t]
+          Core x t -> t
+--        CoreFn ars x t ->
+          Ty t     -> t
+--      mkArrow t = if nArgs==0 then t else [THArrow (V.toList argTys) t]
     bindTy <- case tyAnn of
-      Nothing  -> pure bindTy
+      Nothing  -> pure inferredTy
       Just ann -> do
         ann <- tyExpr <$> infer ann
         let inferArg = \case { [x] -> tyExpr <$> infer x ; [] -> pure [THSet 0] }
@@ -113,6 +114,7 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
         unless (check exts argTys labelsV inferredTy annTy)
           $ error (show inferredTy ++ "\n!<:\n" ++ show ann)
         -- Prefer user's type annotation over the inferred one; except
+        -- TODO we may have inferred some missing information !
         -- type families are special: we need to insert the list of labels as retTy
         pure $ case getRetTy inferredTy of
           s@[THFam{}] -> case flattenArrowTy annTy of
@@ -122,9 +124,9 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
     let newExpr = case args of
           [] -> expr
           args -> case expr of
-            Core x ty -> CoreFn args x bindTy
+            Core x ty -> CoreFn (zip args (V.toList argTys)) IS.empty x bindTy
 --          Ty t      -> d_ bindTy $ Ty $ [THPi $ Pi (zip args $ V.toList argTys) t]
-            Ty t -> Ty $ bindTy
+            Ty t      -> Ty $ bindTy
     (\v -> MV.write v bindINm (BindOK newExpr)) =<< use wip
     pure expr
 
@@ -144,7 +146,9 @@ infer = let
   P.Var v -> case v of
     P.VBind b   -> -- polytype env
       judgeBind b <&> \case
-        CoreFn args e ty -> Core (Var $ VBind b) ty
+        CoreFn args free e ty -> let
+          mkArrow args t = case args of { []->t ; args->[THArrow (snd <$> args) t] }
+          in Core (Var $ VBind b) (mkArrow args ty)
         Core e ty -> Core (Var $ VBind b) ty -- don't copy the body
         t -> t
     P.VLocal l  -> do -- monotype env (fn args)
@@ -155,8 +159,7 @@ infer = let
     f     <- infer f'
     args  <- infer `mapM` args'
     retTy <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
-    readBind <- pure judgeBind
-    ttApp readBind f args <&> \case
+    ttApp judgeBind f args <&> \case
       Core f _ -> Core f retTy
       t -> t
 
@@ -164,7 +167,7 @@ infer = let
     let (fields , rawTTs) = unzip construct
     exprs <- infer `mapM` rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) }) <$> exprs
-    pure $ Core (Cons (M.fromList $ zip fields tts)) [THProd fields]
+    pure $ Core (Cons (IM.fromList $ zip fields tts)) [THProd fields]
 
   P.Proj tt field -> do -- biunify (t+ <= {l:a})
     recordTy <- infer tt
@@ -210,22 +213,26 @@ infer = let
     pure $ Ty dataTy
 
   P.Match alts -> let
-      (altLabels , patterns , rawTTs) = unzip3 alts
+      (altLabels , freeVars , patterns , rawTTs) = unzip4 alts
     -- * find the type of the sum type being deconstructed
     -- * find the type of it's alts (~ lambda abstractions)
     -- * type of Match is (sumTy -> Join altTys)
-      mkFn = \case { [] -> [THSet 0] ; x -> [THArrow (drop 1 x) [THSet 0]] }
-      pattern2Ty = mkFn . \case
+      mkFnTy = \case { [] -> [THSet 0] ; x -> [THArrow (drop 1 x) [THSet 0]] }
+      pattern2Ty = mkFnTy . \case
         [] -> []
         P.PArg _ : xs -> [THSet 0] : [pattern2Ty xs]
       tys = pattern2Ty <$> patterns
     in do
+    d_ freeVars $ pure ()
     altExprs <- infer `mapM` rawTTs
     --TODO merge types with labels (mergeTypes altTys)]
     retTy <- foldl mergeTypes [] <$> pure (tyOfExpr <$> altExprs)
     let scrutTy = [THSplit altLabels]
         matchTy = [THArrow [scrutTy] retTy]
-        altLabelsMap = M.fromList $ zip altLabels altExprs
+        unpat = \case { P.PArg i -> i ; x -> error $ "not ready for patter: " ++ show x }
+        mkFn pat free (Core t ty) = CoreFn ((,[]) . unpat <$> pat) free t ty
+        alts    = zipWith3 mkFn patterns freeVars altExprs
+        altLabelsMap = IM.fromList $ zip altLabels alts
     pure $ Core (Match altLabelsMap Nothing) matchTy
 
 --P.MultiIf branches elseE -> do -- Bool ?

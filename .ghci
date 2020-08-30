@@ -1,4 +1,4 @@
-:set args demo.nimzo -p p
 :set -fobject-code
-:def go (\_->pure ":r \n main\n")
-:def stg (\_->pure ":r \n main -j\n")
+:def go (\_->pure ":set args demo.nimzo -p core \n:r\n main\n")
+:def llvm (\_->pure ":set args demo.nimzo -p llvm-hs\n:r\n main\n")
+:def cpp (\_->pure ":set args demo.nimzo -p llvm-cpp\n:r\n main\n")

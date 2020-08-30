@@ -15,7 +15,7 @@ data CmdLine = CmdLine
 
 defaultCmdLine = CmdLine [] False 0 False Nothing []
 
-printPasses = ["source", "parseTree", "core", "stg", "llvm"] :: [T.Text]
+printPasses = ["args" , "source", "parseTree", "core", "llvm-hs" , "llvm-cpp"] :: [T.Text]
 
 parsePrintPass :: ReadM [T.Text]
 parsePrintPass = eitherReader $ \str -> let
@@ -47,7 +47,7 @@ cmdLineDecls = CmdLine
       <> help "Write output to file")
   <*> many (argument str (metavar "FILE"))
 
-progDescription = "The Nimzo language is an array oriented calculus of inductive constructions for system level programming. This program is it's compiler/interpreter"
+progDescription = "Compiler and Interpreter for the Nimzo language, an array oriented calculus of inductive constructions for system level programming."
 cmdLineInfo =
   let description = fullDesc
         <> header "Nimzo compiler/interpreter"

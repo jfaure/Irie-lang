@@ -35,10 +35,9 @@ import Prim
 
 import qualified Data.Vector         as V
 import qualified Data.Text           as T
-import qualified Data.Map.Strict as M
-import qualified Data.IntMap.Strict as IM
+import qualified Data.IntMap.Strict  as IM
+import qualified Data.IntSet         as IS
 import Control.Lens hiding (List)
-import Data.List (intercalate)
 
 import Debug.Trace
 d_ x   = let
@@ -61,32 +60,31 @@ data VName
  | VExt  IName -- extern map (incl. prim instrs)
 
 data Term -- β-reducable (possibly to a type) and type annotated
- = Var     !VName  -- {-# UNPACK #-} 
+ = Var     !VName
  | Lit     Literal
  | Hole    -- to be inferred
  | App     Term [Term] -- IName [Term]
--- | Pow     Int Term Term
+-- | PowApp  Int Term Term
  | Instr   PrimInstr
  | Coerce  Type Type
  | MultiIf [(Term , Term)] Term
 
  -- data constructions
- | Cons    (M.Map IField Term)
+ | Cons    (IM.IntMap Term)
  | Proj    Term IField
  | Label   ILabel [Expr]
- | Match   (M.Map ILabel Expr) (Maybe Expr)
+ | Match   (IM.IntMap Expr) (Maybe Expr)
  | List    [Expr]
- | Split   Int Expr -- eliminator: \split nArgs f → f args
+-- | Split   Int Expr -- eliminator: \split nArgs f → f args
 
 -- components of our profinite distributive lattice of types
--- unless explicit annotation, assume type Set0
 -- no β-reduce (except contained Terms)
 data TyHead -- head constructors for types.
  = THVar      BiSubName  -- ix to bisubs
  | THArg      IName      -- ix to monotype env (type of the lambda-bound at ix)
+-- | THArg      IName Kind -- Track rank polymorphism ({} and -> are not interchangeable)
  | THExt      IName      -- tyOf ix to externs
  | THRec      IName      -- tyOf ix to bindMap (must be guarded and covariant)
--- | THTyRec    IName      -- ix to bindMap (is a type)
 
  | THSet      Uni -- | THSetFn    [Uni]
 -- | THTop Kind | THBot Kind
@@ -98,7 +96,7 @@ data TyHead -- head constructors for types.
  | THArray    TyCo
 
  | THPi Pi -- dependent function space. Always implicit, for explicit, write `∏(x:_) x -> Z`
- | THSi Pi (M.Map IName Expr) -- (partial) application of pi type
+ | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type
 
  -- Families; Similar to pi/sigma, but binder is anonymous and to be 'appended' to the type
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
@@ -113,7 +111,7 @@ data TCError
   deriving Show
 data Expr
  = Core     Term Type
- | CoreFn   [IName] Term Type -- save args for beta-reduction
+ | CoreFn   [(IName , Type)] IS.IntSet Term Type
  | Ty       Type
  | Fail     TCError
 
@@ -143,12 +141,11 @@ bind2Expr = \case
   BindOK e -> e
 
 -- evaluate type application (from THIxPAp s)
-tyAp :: [TyHead] -> M.Map IName Expr -> [TyHead]
+tyAp :: [TyHead] -> IM.IntMap Expr -> [TyHead]
 tyAp ty argMap = map go ty where
   go :: TyHead -> TyHead = \case
-    THArg y -> case M.lookup y argMap of
+    THArg y -> case IM.lookup y argMap of
       Nothing -> THArg y
       Just (Ty [t]) -> t
     THArrow as ret -> THArrow (map go <$> as) (go <$> ret)
     x -> x
-

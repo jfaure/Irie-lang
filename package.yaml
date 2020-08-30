@@ -52,6 +52,7 @@ default-extensions:
 - RecursiveDo
 - OverloadedStrings
 - DeriveDataTypeable
+# - TypeFamilies
 # - GADTs
 # - PolyKinds
 # - DataKinds
@@ -61,16 +62,16 @@ library:
     - compiler/
     - compiler/3_Core/
     - compiler/2_Parse/
-    - compiler/4_LFVM-STG/
+    - compiler/4_LLVM/
 
-ghc-options:  -dynamic -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
+ghc-options:  -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
 executables:
   nimzo-exe:
     dependencies: nimzo
     source-dirs:
     - compiler/1_Main/
     main:          Main.hs
-    ghc-options:  -dynamic -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
+    ghc-options:  -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
 
 #tests:
 #  nimzo-test:

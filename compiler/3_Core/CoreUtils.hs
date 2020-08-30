@@ -34,7 +34,7 @@ tyOfTy t = case t of
 
 tyOfExpr  = \case
   Core x ty -> ty
-  CoreFn _ _ ty  -> ty
+  CoreFn _ _ _ ty  -> ty
   Ty t      -> tyOfTy t
   Fail e    -> []
 

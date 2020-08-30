@@ -79,7 +79,8 @@ biSub a b = let
   ([p] , [m])      -> atomicBiSub p m
 
 atomicBiSub :: TyHead -> TyHead -> TCEnv s ()
-atomicBiSub p m = case (p , m) of
+atomicBiSub p m = -- trace ("⚛bisub: " ++ prettyTy [p] ++ " <==> " ++ prettyTy [m]) $
+ case (p , m) of
   -- Lambda-bound in - position can be guessed
   (THArg i , m) -> let
     replaceLambda t = \case { [THArg i2] | i2==i -> [t] ; x -> doSub t x }
@@ -101,8 +102,8 @@ atomicBiSub p m = case (p , m) of
   (x , THPi (Pi p ty)) -> biSub [x] ty
 
   -- record: labels in the first must all be in the second
-  (THProd x , THProd y) -> if all (`elem` y) x then pure () else error "Cannot unify recordTypes"
-  (THSum  x , THSum y)  -> if all (`elem` x) y then pure () else error "Cannot unify sumtypes"
+  (THProd x , THProd y) -> if all (`elem` x) y then pure () else error "Cannot unify recordTypes"
+  (THSum  x , THSum y)  -> if all (`elem` y) x then pure () else error "Cannot unify sumtypes"
 --(THSplit  x , THSum y) ->
 ----getLabelRetTypes labelIndexes = do
 --  labelsV <- use labels
@@ -207,10 +208,10 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
       zM = zipWith mergeTypes
   in case join of
   [THSet a , THSet b] -> [THSet $ max a b]
-  [THPrim a , THPrim b]   -> if a == b then [t1] else join
-  [THVar a , THVar b]     -> if a == b then [t1] else join
-  [THRec a , THRec b]     -> if a == b then [t1] else join
---  [THExt  a , THExt  b]   -> if a == b then [t1] else join
+  [THPrim a , THPrim b]  -> if a == b then [t1] else join
+  [THVar a , THVar b]    -> if a == b then [t1] else join
+  [THRec a , THRec b]    -> if a == b then [t1] else join
+  [THExt a , THExt  b]   -> if a == b then [t1] else join
 --  [THAlias a , THAlias b] -> if a == b then [t1] else join
   [THSum a , THSum b]     -> [THSum   $ union a b] --[THSum (M.unionWith mergeTypes a b)]
   [THSplit a , THSplit b] -> [THSplit $ union a b] --[THSum (M.unionWith mergeTypes a b)]

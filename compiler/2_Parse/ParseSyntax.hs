@@ -6,6 +6,7 @@ module ParseSyntax where -- import qualified as PSyn
 import Prim
 import Data.Text as T -- Names are Text (ShortText ?)
 import qualified Data.Map as M
+import qualified Data.IntSet as IS
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector as V
 import Control.Lens
@@ -14,7 +15,10 @@ type IName = Int
 type HName = Text
 type FName = IName -- record  fields
 type LName = IName -- sumtype labels
+type FreeVar = IName -- let or non-local argument needed deeper in a function nest
 type ImplicitArg = (IName , Maybe TT) -- implicit arg with optional type annotation
+type FreeVars = IS.IntSet
+type NameMap = M.Map HName IName
 
 data MixFixName = MFHole | MFName HName deriving (Show , Eq)
 type MixFixDef = [MixFixName]
@@ -22,7 +26,7 @@ type MixFixDef = [MixFixName]
 data Fixity = Fixity Assoc (Maybe Int) [IName]
 data Assoc = AssocNone | AssocLeft | AssocRight
 
-data ImportDecl -- extern type ann can't be checked (eg. syscalls / C apis etc..)
+data ImportDecl -- extern types can't be checked (eg. syscalls / C apis etc..)
  = Extern   { externName :: HName , externType :: TT }
  | ExternVA { externName :: HName , externType :: TT }
 
@@ -36,7 +40,6 @@ data Module = Module {
  , _parseDetails :: ParseDetails
 }
 
-type NameMap = M.Map HName IName
 data ParseDetails = ParseDetails {
  -- Note. mixFixDefs stored in these maps are partial:
  -- for mf, the first, and for postfixes the first 2 elems of the mixfixdef list are implicit
@@ -45,6 +48,7 @@ data ParseDetails = ParseDetails {
  , _hNameBinds    :: (Int , NameMap) -- count anonymous args (>= nameMap size)
  , _hNameLocals   :: [NameMap] -- let-bound
  , _hNameArgs     :: [NameMap]
+ , _freeVars      :: FreeVars
  , _nArgs         :: Int
  , _hNamesNoScope :: NameMap
  , _fields        :: NameMap
@@ -52,7 +56,7 @@ data ParseDetails = ParseDetails {
 -- , fixities     :: V.Vector Fixity
 }
 
-data TopBind = FunBind HName [ImplicitArg] [FnMatch] (Maybe TT)
+data TopBind = FunBind HName [ImplicitArg] FreeVars [FnMatch] (Maybe TT)
 data FnMatch = FnMatch [ImplicitArg] [Pattern] TT
 
 data TTName
@@ -73,7 +77,7 @@ data TT
  | Cons   [(FName , TT)] -- can be used to type itself
  | Proj   TT FName
  | Label  LName [TT]
- | Match  [(LName , [Pattern] , TT)]
+ | Match  [(LName , FreeVars , [Pattern] , TT)]
  | List   [TT]
 -- | TySum  [(LName , [TT])]
  | TySum [(LName , [ImplicitArg] , TT)] -- function signature

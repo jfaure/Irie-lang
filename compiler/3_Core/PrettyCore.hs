@@ -7,7 +7,6 @@ import qualified Data.Vector        as V
 import qualified Data.Text          as T
 import qualified Data.List          as DL
 import qualified Data.IntMap.Strict as IM
-import qualified Data.Map as M
 import Data.List (intercalate)
 import Text.Printf
 import Debug.Trace
@@ -55,14 +54,14 @@ prettyTerm = \case
     Cons    ts -> let
       sr (label , val) = show label ++ "@" ++ prettyTerm val
       in "{ "
-        ++ (intercalate " ; " (sr <$> M.toList ts))
+        ++ (intercalate " ; " (sr <$> IM.toList ts))
         ++ " }"
     Proj    t f -> show t ++ "." ++ show f
     Label   l t -> show l ++ "@" ++ show t
     Match   ts d -> let
       showLabel (l , t) = show l ++ " => " ++ show t
       in "\\case" ++ "| "
-        ++ intercalate " | " (showLabel <$> M.toList ts) ++ " |_ " ++ show d
+        ++ intercalate " | " (showLabel <$> IM.toList ts) ++ " |_ " ++ show d
     List    ts -> "[" ++ (concatMap show ts) ++ "]"
 
 prettyTy = \case

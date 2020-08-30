@@ -1,3 +1,4 @@
+import imports/fin
 --Pi = (n : Int) -> (IntN n)
 --i32 = Pi 32
 

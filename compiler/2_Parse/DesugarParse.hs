@@ -19,7 +19,9 @@ matches2TT :: [P.FnMatch] -> ([IName] , [[P.TT]] , P.TT) =
         x -> error $ "unknown pattern: " ++ show x
   in \case
     [P.FnMatch impls f e] -> let
-      (args , argTys) = unzip $ convPat <$> f
+      hackApp [P.PApp i ars] = i : ars -- TODO rm this (fix parser)
+      hackApp x = x
+      (args , argTys) = unzip $ convPat <$> (hackApp f)
       in (args , argTys , e)
     x -> error $ concatMap show x
 

@@ -1,6 +1,13 @@
-f r = r.q
-x = f {q = 3 ; z = "hello"}
+--f r = r.q
+--mkRecord i s = f {q = i ; z = s }
+--z = mkRecord 3 "hello"
 
-x = { b=3 ; h=4 }
-c = x.b
-p x = if x.p then x.q else x.q -- : {p:Bool , q:a} -> a
+-- p x = if x.p then x.q else x.q -- : {p:Bool , q:a} -> a
+
+Nat =
+ | Z : Nat
+ | S : Nat -> Nat
+--
+----two = S (S Z)
+m1 = \case | S x => x
+--add x = \case | Z => x | S y => add x y
