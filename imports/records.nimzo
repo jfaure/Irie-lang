@@ -9,5 +9,5 @@ Nat =
  | S : Nat -> Nat
 --
 ----two = S (S Z)
-m1 = \case | S x => x
+m1 x = case x of | S y => y
 --add x = \case | Z => x | S y => add x y

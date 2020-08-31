@@ -1,78 +1,6 @@
 {-# Language TypeFamilies #-}
 module CodeGen
 
--- # Lexicon
--- ? NC           = non-copyable (approx. > 3 Bytes)
--- ? PAp          = partial application (free variables and a function pointer)
--- ? Linear       = Data is consumed once (so can be modified in place)
--- ? Extracted    = Data outlives it's parent frame (ie. returned)
--- ? Split        = Function to deconstruct data and call OnSplit function on components
--- ? OnSplit      = Function called on record (@indexes) or sum-data @(@indexes)
--- ? Splitter     = PAp (stack allocated) (is/returns) an OnSplit function
--- ? Split Tree   = List(1 per shared Split) of Lists(sum-alts) of Splitters
--- ? Dropped      = ignored via subtyping (eg. `{} <: {a:A}` ; `[| b:B |] <: [| |]`)
--- ? Polymorphism = Data of variable size
--- ? Constructor  = makes it's arguments available to Splitters (must be arg size-indifferent)
--- ? Join point   = 2 Splits combined eg. `x.q + x.q`
--- ? inplace      = linear passdowns can be modified
---
--- # Lifetime-oriented management: passdown pointers to stack memory
---   + Works perfectly if no subtrees are returned
---   - The Extracted subtree cannot be predetermined, and we can't save them all upstack
---
--- * Splitter  = { [ freeVars ] ; [ fns ] }
--- # SplitTree = { [ freeVars ] ; [ || rec | SplitTree | Interleave | fnPtr || ] }
--- ? Interleave= { [ ConPAp ] ; [ SplitTree] }
---   size statically known (max size of subST)
---   when resolving ST's, trivial components are added to freeVars.
---   multi-arg sumalts are tuples (splitting only takes 1 arg)
---   when constructing complex STs, need to know size of subSTs
---   ? shared data
---   ? multisplit
---
--- # data -> y    : splitter
---     doesn't take data, rather returns a splitter
--- # x -> data    : Gen
---     takes a split-tree to collapse the data before it's formed
--- # data -> data : splitTree -> splitTree
---     split-trees are created backwards
---     splitters know statically how much memory they need
--- # data -> data -> y : multisplit
---
--- 1. dynamically make pap for splitters
--- 2. call generator on it
--- * Con = call split-tree on the arguments
--- * Gen = recursively call split-tree on generator
--- * ILCon = interleaved: (fn taking >1 datas can interleave splits)
---   [ConPaps] ; [split-tree]
---
--- eg. parallel split:
--- zip a b = case a of
---   [] => []
---   x : xs => case b of
---     [] => []
---     y : ys => (x,y) : zip xs ys
--- *? lift parallel splits to top-level
--- *? splittree dependencies ?
--- *? merge constructors - constructor overlord
--- ? chained constructors
---
---
--- reverse l = let
---   rev []     a = a
---   rev (x:xs) a = rev xs (x:a)
--- in rev l []
---
--- eg. recursive split:
--- \case
---   []   -> 0
---   x:xs -> 1 + len xs
---
--- eg. mulitisplit:
--- case A of
---   x => case B of y => ..
---   _ => case C of z => ..
-
 where
 
 import Prim
@@ -98,6 +26,7 @@ import qualified LLVM.AST
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.IntegerPredicate as IP
 import qualified LLVM.AST.FloatingPointPredicate as FP
+import qualified LLVM.AST.FunctionAttribute as FA
 import qualified LLVM.AST.Type  as LT
 import qualified LLVM.AST.Typed as LT
 import qualified LLVM.AST.Float as LF
@@ -127,8 +56,8 @@ data CGState s = CGState {
  , freshSplit :: Int
 
  -- meta - stack frame info
- , envArgs  :: IM.IntMap L.Operand -- args per stack frame
- , dataSz   :: Int       -- track upstack memory needed by the function
+ , envArgs       :: [IM.IntMap L.Operand] -- args on stack frame
+ , tailSplitTree :: Maybe L.Operand
 }
 
 getFreshSplit :: CGEnv s Int
@@ -155,8 +84,8 @@ mkStg extBinds coreBinds = let
       , freshTop = 0
       , freshSplit = 0
 
-      , envArgs  = IM.empty
-      , dataSz   = 0 -- not returning data
+      , envArgs  = []
+      , tailSplitTree = Nothing
      }
   in LLVM.AST.defaultModule {
       LLVM.AST.moduleName = ""
@@ -176,9 +105,12 @@ cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case
          Core t ty -> case t of
              Instr instr -> LLVMOp <$> function (L.mkName $ "instr") [intType , intType] intType
                (\[a , b] -> ret =<< emitInstr (LT.typeOf a) ((primInstr2llvm instr) a b))
-             x -> cgFunction llvmNm [] [] t ty
+             m@Match{} -> let
+               [THArrow [scrutTy] retTy] = ty
+               in cgFunction llvmNm  [(-1 , scrutTy)] [] (m `App` [Var $ VArg (-1)]) retTy []
+             x -> cgFunction llvmNm [] [] t ty []
 --           x -> panic $ "global constant: " ++ show x
-         CoreFn args free t ty -> cgFunction llvmNm args [] t ty
+         CoreFn args free t ty -> cgFunction llvmNm args [] t ty []
          Ty ty -> do
            t <- cgType ty
 --         emitDef $ L.TypeDefinition llvmNm (Just t)
@@ -187,9 +119,9 @@ cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case
      pure b
  x -> pure x
 
-lookupArg i = gets ((IM.!? i) . envArgs) >>= \case
+lookupArg i = gets ((IM.!? i) . head . envArgs) >>= \case
   Just arg -> pure arg -- local argument
-  Nothing  -> panic $ "arg not in scope: " ++ show i
+  Nothing  -> gets envArgs >>= \e -> panic $ "arg not in scope: " ++ show i ++ show e
 
 cgTerm :: Term -> CGBodyEnv s L.Operand
 cgTerm = let
@@ -201,8 +133,11 @@ cgTerm = let
   Var vNm -> lift $ cgName vNm
   Lit l   -> pure . L.ConstantOperand $ literal2Stg l
   Instr i -> _ -- cgPrimInstr i -- Make top-level wrapper for instr
-  App f args -> case f of
+  f `App` args -> case f of
     Instr i -> call (cgPrimInstr i) =<< (map (,[]) <$> cgTerm `mapM` args)
+    Match ls d -> case args of
+      [x] -> mkSplitTree ((\[x]->x) args) ls d
+      _   -> panic $ "Match must have 1 argument"
     f       -> do
       f' <- cgTerm f
       call f' =<< (map (,[]) <$> cgTerm `mapM` args)
@@ -214,8 +149,8 @@ cgTerm = let
 
   Cons fields      -> _
   Proj  t f        -> cgTerm t >>= \t -> loadIdx t f
-  Label i args     -> _
-  Match labels def -> mkSplitTree labels def
+  Label i args     -> mkLabel (fromIntegral i) ((\(Core t ty)->t) <$> args)
+  Match labels d   -> error $ "floating match" -- mkSplitTree Nothing labels d
   List  args       -> _
   x -> error $ "MkStg: not ready for term: " ++ show x
 
@@ -340,9 +275,10 @@ primTy2llvm :: PrimType -> LLVM.AST.Type =
 --    }
 -- pure $ C.GetElementPtr True (C.GlobalReference (ptr ty) nm) zz
 
--- The tricky part is handling non-local arguments that are supposed to be in scope
-cgFunction :: L.Name -> [(IName, [TyHead])] -> [(IName , LT.Type)] -> Term -> [TyHead] -> CGEnv s StgWIP
-cgFunction llvmNm args free t ty = let
+cgFunction :: L.Name -> [(IName, [TyHead])] -> [(IName , LT.Type)]
+  -> Term -> [TyHead] -> [FA.FunctionAttribute]
+  -> CGEnv s StgWIP
+cgFunction llvmNm args free t ty attribs = let
   iArgs = (fst<$>args) ++ (fst<$>free)
   in do
   retTy <- cgType ty
@@ -352,8 +288,9 @@ cgFunction llvmNm args free t ty = let
     localArgOps <- argTys `forM` \ty -> L.LocalReference ty <$> fresh
     freeArgOps  <- (snd<$>free) `forM` \ty -> L.LocalReference ty <$> freshName "free"
     let argOps = localArgOps ++ freeArgOps
-    modify $ \x -> x { envArgs = IM.fromList (zip iArgs argOps) }
+    modify $ \x -> x { envArgs = IM.fromList (zip iArgs argOps) : envArgs x }
     ret =<< cgTerm t
+    modify $ \x -> x { envArgs = drop 1 (envArgs x) }
     pure argOps
 
   let fnParams = (\(L.LocalReference ty nm) -> Parameter ty nm []) <$> params
@@ -362,6 +299,7 @@ cgFunction llvmNm args free t ty = let
         , parameters  = (fnParams , False)
         , returnType  = retTy
         , basicBlocks = blocks
+        , functionAttributes = Right <$> attribs
         }
       funty = LT.ptr $ LT.FunctionType retTy argTys False
       fnOp  = L.ConstantOperand $ C.GlobalReference funty llvmNm
@@ -391,6 +329,7 @@ emitDef d = modify $ \x->x{llvmDefs = d : llvmDefs x}
 -- IRBuilder extensions --
 --------------------------
 voidPtrType = charPtrType -- llvm doesn't allow void pointers
+ptrListType = LT.PointerType (charPtrType) (AddrSpace 0)
 charPtrType :: L.Type = LT.PointerType (LT.IntegerType 8) (AddrSpace 0)
 intType = LT.IntegerType 32
 constI32 = L.ConstantOperand . C.Int 32
@@ -408,7 +347,7 @@ gep addr is = let
     x -> error "gep index: expected constI32"
   gepType (LT.VectorType _ elTy) (_:is') = gepType elTy is'
   gepType (LT.ArrayType _ elTy) (_:is') = gepType elTy is'
-  gepType x _ = error $ show x
+  gepType x _ = error $ "gep into non-indexable type: " ++ show x
   in emitInstr ty (L.GetElementPtr False addr is [])
 
 -- load a value from an array (~pointer to array)
@@ -423,7 +362,10 @@ storeIdx ptr i op = let
 -- make a list of pointers on the stack
 mkPtrList ops = do
   ptr <- alloca' voidPtrType (Just $ constI32 (fromIntegral $ length ops))
-  ptr <$ zipWithM_ (storeIdx ptr) [0..] ops
+  let writeIdx idx op = do
+        p <- ptr `gep` [constI32 $ fromIntegral idx]
+        store' p =<< bitcast op charPtrType
+  ptr <$ zipWithM_ writeIdx [0..] ops
 mkSizedPtrList ops = let -- + size variable
   sz = constI32 (fromIntegral $ 1 + length ops) -- C.Int 32 (fromIntegral $ 1 + length ops)
   in do
@@ -437,31 +379,45 @@ mkTagged tag val = do
     storeIdx ptr 0 tag
     storeIdx ptr 1 val
 
--- mkDataFn = do -- global struct with size and fnPtr
+mkStruct vals = do
+  ptr <- alloca' (LT.StructureType False (LT.typeOf <$> vals)) Nothing
+  ptr <$ zipWithM (storeIdx ptr) [0..] vals
 
 pApAp pap papArity llArgs =
   (loadIdx pap `mapM` [0..1+papArity]) >>= \case
     fn : papArgs -> call fn $ (,[]) <$> papArgs ++ llArgs
 
-----------------
--- SplitTrees --
-----------------
+----------
+-- Data --
+----------
 tagFnPtr : tagPAp : tagRec : tagSplitTree : _ = constI32 <$> [0..]
 
--- # SplitTree = { [ || fnPtr | PAp | rec | SplitTree | Interleave(?) || ] }
--- # ST = MultiSplit = [ (SharedTree = [ SplitTree ]) ]
--- * alts are functions to be applied to components of the sum-type
-mkSplitTree labelMap defaultFn = let
-  getFn = \case
-    LLVMOp x -> x
+mkLabel label tts = mkStruct . (constI32 label :) =<< (cgTerm `mapM` tts)
+
+-- tail call upstack splitTree
+tailSplit tailST label = _
+
+-- # SplitTree = { [freeVars] ; [ || fnPtr | PAp | rec | SplitTree || ] }
+mkSplitTree label labelMap _defaultFn = let
+  getFn = \case { LLVMOp x -> x }
   mkAlt (CoreFn ars free term ty) = do
     nm <- L.mkName . ("splitFn"++) . show <$> lift getFreshSplit
-    let free' = IS.toList free
-    extra <- (\i -> (i,) . LT.typeOf <$> lookupArg i) `mapM` IS.toList free
-    f <- lift $ cgFunction nm ars extra term ty
-    mkTagged tagFnPtr $ getFn f
+    freeVars <- (\i -> (i,) . LT.typeOf <$> lookupArg i) `mapM` IS.toList free
+    getFn <$> lift (cgFunction nm ars freeVars term ty [])
   mkAlt (Core term _ty) = do
     e <- cgTerm term
-    mkTagged tagFnPtr e
+    pure e
+--  mkTagged tagFnPtr e
   in do
-  mkPtrList =<< (mkAlt `mapM` (did_ $ IM.elems labelMap))
+  st <- mkStruct =<< (mkAlt `mapM` (IM.elems labelMap))
+  case label of
+    f `App` x -> _
+    l         -> evalSplitTree st =<< cgTerm label
+
+evalSplitTree st l = do
+  tag <- load' =<< (l `gep` [constI32 0])
+  alt <- load' =<< (st `gep` [tag , constI32 0])
+  pure alt
+  call alt [(l,[])]
+
+splitEager label match = _
