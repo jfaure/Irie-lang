@@ -59,7 +59,7 @@ passes :: Word -> PassSetSpec = \opt -> defaultCuratedPassSetSpec
 ---------
 -- JIT --
 ---------
--- since the only way to get llvm modules is via 'with*module',
+-- since the only way to get llvm modules is via 'withModule*' style functions,
 -- this fns' implementation is necessarily weird
 -- note LLVM.Module.linkModules destroys the second module
 withLinkedModules :: [ModuleAST] -> (Context -> ModuleCPP -> IO a)->IO a
@@ -93,7 +93,7 @@ runJIT opt objs mod =
 --  EE.withMCJIT context opt model ptrelim fastins $ \ executionEngine ->
 --  LLVM.Module.withModuleFromAST context mod $ \m ->
     verify m -- llvm sanity check
-    *> runFn ("main") executionEngine m >>= \case
+    *> runFn "main" executionEngine m >>= \case
         Nothing -> error "main() not found"
         Just r  -> pure ()
   

@@ -119,10 +119,12 @@ lookupSLabel h = M.lookup h <$> use (moduleWIP . parseDetails . labels)
 
 lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
   tryArg = case p ^. hNameArgs of
+    [] -> pure $ Nothing
     thisFrame : prevFrames -> case thisFrame M.!? h of
       Just n  -> pure $ Just $ VLocal n
       Nothing -> case asum $ (M.!? h) <$> prevFrames of
         Just upStackArg -> do
+          traceShowM p
           moduleWIP .parseDetails .freeVars %= (IS.insert upStackArg)
           pure $ Just $ VLocal upStackArg
         Nothing -> pure Nothing
@@ -138,7 +140,7 @@ getFreeVars = do
   ars  <- head <$> use (moduleWIP . parseDetails . hNameArgs)
   let free' = foldr IS.delete free (M.elems ars)
   moduleWIP . parseDetails . freeVars .= free'
-  pure free
+  pure free'
 
 incArgNest = moduleWIP . parseDetails . hNameArgs %= (M.empty :)
 decArgNest = moduleWIP . parseDetails . hNameArgs %= drop 1
@@ -367,25 +369,27 @@ ttArg , tt :: Parser TT
     , tySum      -- "|"
     , mixFixTrainOrArg
     ] <?> "tt"
-  appOrArg = mfApp <|> arg >>= \fn -> option fn $ choice
+--appOrArg = mfApp <|> arg >>= \fn -> option fn $ choice
+  appOrArg = arg >>= \fn -> option fn $ choice
     [ Proj fn <$ reservedChar '.' <*> (idenNo_ >>= newFLabel)
     , case fn of
         Lit l -> LitArray . (l:) <$> some literalP
-        fn    -> App fn <$> some arg
+        P.Label l [] -> P.Label l <$> some arg
+        fn -> App fn <$> some arg
     ]
   arg = choice
    [ reserved "_" $> WildCard
    , lambdaCase -- "\\case"
    , lambda     -- "\"
    , con
-   , try $ idenNo_ >>= varName
-   , some literalP <&> \case { [l] -> Lit l ; ls  -> LitArray ls }
+   , try $ idenNo_ >>= varName -- incl. label
+   , some literalP <&> \case { [l] -> Lit l ; ls -> LitArray ls }
    , TyListOf <$> brackets tt
    , parens $ choice [try piBinder , (tt >>= typedTT)]
    ] <?> "ttArg"
   label i = lookupSLabel i >>= \case
     Nothing -> P.Label <$ reservedOp "@" <*> newSLabel i <*> (many arg)
-    Just l  -> P.Label l <$> many arg
+    Just l  -> pure $ P.Label l [] -- <$> many arg (converted in App)
 
   tySum = TySum <$> let
     labeledTTs = do

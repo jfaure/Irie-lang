@@ -104,7 +104,7 @@ atomicBiSub p m = -- trace ("⚛bisub: " ++ prettyTy [p] ++ " <==> " ++ prettyTy
   -- record: labels in the first must all be in the second
   (THProd x , THProd y) -> if all (`elem` x) y then pure () else error "Cannot unify recordTypes"
   (THSum  x , THSum y)  -> if all (`elem` y) x then pure () else error "Cannot unify sumtypes"
---(THSplit  x , THSum y) ->
+  (THArrow ars ret, THSplit y) -> pure () -- TODO
 ----getLabelRetTypes labelIndexes = do
 --  labelsV <- use labels
 --  let getLabelTy = \case { Just t->t ; Nothing->error "forward reference to label" }
@@ -158,9 +158,6 @@ check' es ars labTys inferred gotTy = let
     (THPrim x , THPrim y) -> x `primSubtypeOf` y
     (THArrow a1 r1 , THArrow a2 r2) -> let -- handle differing arities (since currying is allowed)
       -- note. (a->(b->c)) is eq to (a->b->c) via currying
-      mkFn [x] = x
-      mkFn s = let (ars , [ret]) = splitAt (length s - 1) s
-        in [THArrow ars ret]
       go (x:xs) (y:ys) = check'' y x && go xs ys
       go [] [] = check'' r1 r2
       go [] y  = check'' r1 [THArrow y r2]

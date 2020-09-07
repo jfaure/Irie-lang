@@ -10,6 +10,7 @@ import Infer
 import CodeGen
 import LLVM.Pretty
 import qualified LlvmDriver as LD
+import qualified LLVM.Exception as L
 
 import Text.Megaparsec
 import qualified Data.Text as T
@@ -67,7 +68,8 @@ text2Core flags seenImports fName progText = do
       judged     = judgeModule parsed exts
       bindNames  = let getNm (FunBind nm _ _ _ _) = nm
         in getNm <$> V.fromList (_bindings parsed)
-      namedBinds = V.zipWith (\nm j -> T.unpack nm ++ show j) bindNames judged
+      judged'    = V.zip bindNames judged
+      namedBinds = (\(nm,j)->T.unpack nm ++ show j) <$> judged'
       putPass :: T.Text -> IO ()   = \case
         "args"       -> print flags
         "source"     -> putStr =<< readFile fName
@@ -78,18 +80,18 @@ text2Core flags seenImports fName progText = do
       addPass passNm = putStrLn "\n  ---  \n" *> putPass passNm
   putPass `mapM_` (printPass flags)
   addPass "namedCore"
-  pure (_ , Import modNameMap judged)
+  pure (_ , Import modNameMap judged')
 
 ---------------------------------
 -- Phase 2: codegen, linking, jit
 ---------------------------------
 codegen flags input@(imports , Import bindNames judged) = let
   exts       = V.empty -- stg externs
-  llvmMod    = mkStg exts (V.zip (V.fromList $ M.keys bindNames) judged)
+  llvmMod    = mkStg exts judged
   putPass :: T.Text -> IO () = \case
     "llvm-hs"    -> hFlush stdout *> TL.IO.putStrLn (ppllvm llvmMod)
     "llvm-cpp"   -> LD.dumpModule llvmMod
-    "jit"        -> LD.runJIT (optlevel flags) [] llvmMod
     _            -> pure ()
-  in (putPass `mapM_` printPass flags)
-     *> pure input
+  in input <$ do
+    putPass `mapM_` printPass flags
+    when (jit flags) $ LD.runJIT (optlevel flags) [] llvmMod

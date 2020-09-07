@@ -58,9 +58,9 @@ prettyTerm = \case
         ++ " }"
     Proj    t f -> show t ++ "." ++ show f
     Label   l t -> show l ++ "@" ++ show t
-    Match   ts d -> let
+    Match t ts d -> let
       showLabel (l , t) = show l ++ " => " ++ show t
-      in "\\case" ++ "| "
+      in "\\case (:" ++ show t ++ ") | "
         ++ intercalate " | " (showLabel <$> IM.toList ts) ++ " |_ " ++ show d
     List    ts -> "[" ++ (concatMap show ts) ++ "]"
 

@@ -52,7 +52,7 @@ type IName     = Int    -- Int name: index into bind|type vectors
 type BiSubName = Int    -- index into bisubs
 type IField    = Int    -- product-type fields index
 type ILabel    = Int    -- sum-type labels     index
-type CoreBinds = V.Vector Bind
+type CoreBinds = V.Vector (HName , Bind)
 
 data VName
  = VBind IName -- bind   map
@@ -73,7 +73,7 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | Cons    (IM.IntMap Term)
  | Proj    Term IField
  | Label   ILabel [Expr]
- | Match   (IM.IntMap Expr) (Maybe Expr)
+ | Match   Type (IM.IntMap Expr) (Maybe Expr)
  | List    [Expr]
 -- | Split   Int Expr -- eliminator: \split nArgs f → f args
 
@@ -112,6 +112,7 @@ data TCError
 data Expr
  = Core     Term Type
  | CoreFn   [(IName , Type)] IS.IntSet Term Type
+ | ExtFn    HName Type
  | Ty       Type
  | Fail     TCError
 

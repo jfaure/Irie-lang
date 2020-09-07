@@ -1,3 +1,5 @@
+# High
+  * connect externs to mkstg
 # Low priority
   * error reporting
   * parser source locations

@@ -42,10 +42,17 @@ data PrimInstr
  | FracInstr  FracInstrs
  | MemInstr   ArrayInstrs
  | TyInstr    TyInstrs
+ | CallExt    T.Text
+
+ | Zext
+
+ | PutNbr
+ | IfThenE
  | ExprHole   -- errors on eval, but will typecheck
  | MkNum      -- instantiation must happen via function call
  | MkReal
  | MkTuple
+ | AddOverflow
  | Alloc
  | Len -- len of PrimArray
  | SizeOf

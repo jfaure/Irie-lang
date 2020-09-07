@@ -4,10 +4,24 @@
 
 -- p x = if x.p then x.q else x.q -- : {p:Bool , q:a} -> a
 
-Nat =
- | Z : Nat
- | S : Nat -> Nat
+--Nat =
+-- | Z : Nat
+-- | S : Nat -> Nat
 --
-----two = S (S Z)
-m1 x = case x of | S y => y
---add x = \case | Z => x | S y => add x y
+----noFreeVars x = case x of | S y => y
+--Add x y = case y of | Z => x | S y => Add x y
+--
+--F = Add Z Z
+
+-- Rect = | R : Int -> Rect
+-- ok = putNumber (case (R 3) of | R y => y)
+
+--List =
+-- | End  : List
+-- | Next : Int -> (List -> List)
+
+--printList x = case x of
+-- | End      => 0
+-- | Next i l => plus (putNumber i) (printList l)
+
+

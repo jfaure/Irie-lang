@@ -223,17 +223,22 @@ infer = let
         P.PArg _ : xs -> [THSet 0] : [pattern2Ty xs]
       tys = pattern2Ty <$> patterns
     in do
-    d_ freeVars $ pure ()
     altExprs <- infer `mapM` rawTTs
+    let unJust = \case { Just x -> x ; Nothing -> error "need labelType" }
+    labTys   <- map unJust <$> (use labels >>= \l -> (MV.read l) `mapM` altLabels)
+    let getArgTys = \case
+          [THArrow ars1 r] -> ars1 ++ getArgTys r-- TODO more nesting ?
+          t -> [t]
+        argTys = getArgTys <$> labTys
     --TODO merge types with labels (mergeTypes altTys)]
-    retTy <- foldl mergeTypes [] <$> pure (tyOfExpr <$> altExprs)
+    retTy <- did_ <$> foldl mergeTypes [] <$> pure (tyOfExpr <$> altExprs)
     let scrutTy = [THSplit altLabels]
         matchTy = [THArrow [scrutTy] retTy]
         unpat = \case { P.PArg i -> i ; x -> error $ "not ready for patter: " ++ show x }
-        mkFn pat free (Core t ty) = CoreFn ((,[]) . unpat <$> pat) free t ty
-        alts    = zipWith3 mkFn patterns freeVars altExprs
+        mkFn argTys pat free (Core t ty) = CoreFn (zip (unpat <$> pat) argTys) free t ty
+        alts    = zipWith4 mkFn argTys patterns freeVars altExprs
         altLabelsMap = IM.fromList $ zip altLabels alts
-    pure $ Core (Match altLabelsMap Nothing) matchTy
+    pure $ Core (Match retTy altLabelsMap Nothing) matchTy
 
 --P.MultiIf branches elseE -> do -- Bool ?
 --  let (rawConds , rawAlts) = unzip branches
@@ -284,4 +289,5 @@ ttApp readBind fn args = -- trace (clYellow (show fn ++ " $ " ++ show args)) $
     [THFam f a ixs] -> pure $ Ty [THFam f (drop (length args) a) (ixs ++ args)]
 --  x -> pure $ Ty [THFam f [] args]
     x -> error $ "ttapp panic: " ++ show x ++ " $ " ++ show args
+  ExtFn nm ty -> ttApp readBind (Core (Instr (CallExt nm)) ty) args
   _ -> error $ "ttapp: not a function: " ++ show fn ++ " $ " ++ show args

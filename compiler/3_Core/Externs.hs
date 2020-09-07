@@ -52,7 +52,7 @@ readExtern = \(Externs nms binds) i -> binds V.! i
 -- which is indexed by the permuation described in the extNames vector.
 resolveImports :: [Import] -> P.Module -> Externs
 resolveImports imports pm = let
-  importedExprs = bind2Expr <$> V.concat (importBinds <$> imports)
+  importedExprs = bind2Expr . snd <$> V.concat (importBinds <$> imports)
   -- offset into the final extern table for each import
   offsets       = scanl (+) (V.length primBinds) (V.length . importBinds <$> imports)
 
@@ -89,21 +89,28 @@ primBinds :: V.Vector Expr = let
  instr2Expr  (e , tys)  = Core (Instr e) [tys2TyHead tys]
  tys2TyHead  (args , t) = THArrow (mkExtTy <$> args) (mkExtTy t)
  tyFn2Expr   (e) = Ty [e]
+ extFns2Expr = uncurry ExtFn
  in V.concat
    [ primTy2Expr <$> primTyBinds
    , instr2Expr  <$> instrBinds
    , tyFn2Expr   <$> tyInstrBinds
+   , extFns2Expr <$> extFnBinds
+   , (\(i , t) -> Core (Instr i) t) <$> instrBinds2
    ]
 
 getPrimIdx nm = asum
  [ M.lookup nm primTyMap
  , (M.size primTyMap +) <$> M.lookup nm instrMap
- , (M.size primTyMap + M.size instrMap + ) <$> M.lookup nm tyFnMap
+ , (M.size primTyMap + M.size instrMap +) <$> M.lookup nm tyFnMap
+ , (M.size primTyMap + M.size instrMap + M.size tyFnMap +) <$> M.lookup nm extFnMap
+ , (M.size primTyMap + M.size instrMap + M.size tyFnMap + M.size extFnMap +) <$> M.lookup nm instrMap2
  ]
 
-(primTyMap , primTyBinds)   = buildMaps primTys
-(instrMap  , instrBinds)    = buildMaps instrs
-(tyFnMap , tyInstrBinds) = buildMaps tyFns
+(primTyMap , primTyBinds) = buildMaps primTys
+(instrMap  , instrBinds)  = buildMaps instrs
+(instrMap2 , instrBinds2) = buildMaps instrs2
+(tyFnMap , tyInstrBinds)  = buildMaps tyFns
+(extFnMap , extFnBinds)   = buildMaps extFns
 
 buildMaps :: [(HName , a)] -> (M.Map HName Int , V.Vector a)
 buildMaps list = let
@@ -126,7 +133,7 @@ getPrimTy nm = case getPrimIdx nm of -- case M.lookup nm primTyMap of
     ++ T.unpack nm ++ " not in scope"
   Just i  -> i
 
-[i, b, ia, set] = getPrimTy <$> ["Int", "Bool", "IntArray", "Set"]
+[i, b, ia, str, set] = getPrimTy <$> ["Int", "Bool", "IntArray", "CharPtr", "Set"]
 
 -- instrs are typed with indexes into the primty map
 tyFns = [
@@ -135,10 +142,18 @@ tyFns = [
     ("Set" , THSet 0)
 --  , ("_→_", (ArrowTy , ([set] , set)))
   ]
+
+extFns :: [(HName , (HName , Type))] =
+--[ ("printf" , ("printf" , [THArrow (mkExtTy str : repeat []) (mkExtTy i)]))
+  [ ("printf" , ("printf" , [THArrow [mkExtTy str] (mkExtTy i)]))
+  ]
+
+instrs2 :: [(HName , (PrimInstr , Type))] =
+  [ ("ifThenE"     , (IfThenE , [THArrow [[THExt b] , []] []]))
+  , ("addOverflow" , (AddOverflow , [THArrow [[THExt i] , []] []]))
+  ]
+
 instrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
-  [ ("primLen" , (Len , ([ia] , i)))
-  ] ++ instrsMixFix
-instrsMixFix :: [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("_+_" , (IntInstr Add  , ([i, i] , i) ))
   , ("plus", (IntInstr Add  , ([i, i] , i) ))
   , ("_-_" , (IntInstr Sub  , ([i, i] , i) ))
@@ -146,6 +161,9 @@ instrsMixFix :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("_!_" , (MemInstr ExtractVal , ([ia, i] , i) ))
   , ("->",   (TyInstr Arrow , ([set] , set)))
   , ("IntN", (TyInstr MkIntN , ([i] , set)))
+  , ("zext", (Zext  , ([b] , i) ))
+  , ("primLen" , (Len , ([ia] , i)))
+  , ("putNumber" , (PutNbr , ([i] , i)))
   ]
 
 typeOfLit = \case
