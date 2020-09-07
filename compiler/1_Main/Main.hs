@@ -89,7 +89,9 @@ codegen flags input@(imports , Import bindNames judged) = let
   exts       = V.empty -- stg externs
   llvmMod    = mkStg exts judged
   putPass :: T.Text -> IO () = \case
-    "llvm-hs"    -> hFlush stdout *> TL.IO.putStrLn (ppllvm llvmMod)
+    "llvm-hs"    -> let
+      text = ppllvm llvmMod
+      in TL.IO.putStrLn text *> TL.IO.writeFile "/tmp/aryaOut.ll" text
     "llvm-cpp"   -> LD.dumpModule llvmMod
     _            -> pure ()
   in input <$ do

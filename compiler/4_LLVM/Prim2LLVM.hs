@@ -156,6 +156,8 @@ gep addr is = let
     | nm == typeDefLabel = gepType tyLabel' is
     | nm == typeDefAltMap = gepType tyAltMap' is
     | nm == typeDefSplitTree = gepType tySplitTree' is
+    | nm == typeDefSTCont = gepType tySTCont' is
+    | nm == typeDefSTAlts = gepType tySTAlts' is
 
     | otherwise = panic $ "unknown typedef: " ++ show nm
   gepType x _ = error $ "gep into non-indexable type: " ++ show x
@@ -185,9 +187,11 @@ mkSizedPtrList ops = flip named "ptrListSZ" $  let -- + size variable
   ptrList <- ptr `gep` [constI32 1]
   ptr <$ zipWithM (storeIdx ptrList) [0..] ops
 
-mkStruct :: [L.Operand] -> CGBodyEnv s L.Operand
-mkStruct vals = let
-  ty    = LT.StructureType False (LT.typeOf <$> vals)
+mkStruct :: Maybe L.Type -> [L.Operand] -> CGBodyEnv s L.Operand
+mkStruct maybeTy vals = let
+  ty    = case maybeTy of
+    Nothing -> LT.StructureType False (LT.typeOf <$> vals)
+    Just ty -> ty
   undef = L.ConstantOperand (C.Undef ty)
   in do
     ptr <- alloca' ty Nothing
@@ -198,8 +202,8 @@ pApAp pap papArity llArgs =
   (loadIdx pap `mapM` [0..1+papArity]) >>= \case
     fn : papArgs -> call fn $ (,[]) <$> papArgs ++ llArgs
 
-mkBranchTable :: L.Operand -> [(BS.ShortByteString , CGBodyEnv s L.Operand)] -> CGBodyEnv s L.Operand
-mkBranchTable scrut alts = mdo
+mkBranchTable :: Bool -> L.Operand -> [(BS.ShortByteString , CGBodyEnv s L.Operand)] -> CGBodyEnv s L.Operand
+mkBranchTable doPhi scrut alts = mdo
   switch scrut defaultBlock (zip (C.Int 32 <$> [0..]) entryBlocks)
   (entryBlocks , phiNodes) <- unzip <$> alts `forM` \(blockNm , cg) -> do
     b <- block `named` blockNm
@@ -208,7 +212,8 @@ mkBranchTable scrut alts = mdo
     pure (b , (code , endBlock))
   defaultBlock <- (block `named` "default") <* unreachable
   endBlock <- block `named` "end"
-  phi phiNodes
+  if doPhi then phi phiNodes
+  else pure (L.ConstantOperand C.TokenNone)
 
 ----------
 -- Data --
@@ -226,9 +231,13 @@ mkBranchTable scrut alts = mdo
 
 -- typedefs
 structTypeDef nm tys = (nm , LT.StructureType False tys, LT.ptr (LT.NamedTypeReference nm))
-(typeDefAltMap , tyAltMap' , tyAltMap) = structTypeDef "alts" [intType , polyFnType , voidPtrType]
-(typeDefSplitTree , tySplitTree' , tySplitTree) = structTypeDef "splitTree" [intType , voidPtrType , voidPtrType]
+
+dataFnType = LT.ptr $ LT.FunctionType LT.VoidType [voidPtrType] True -- `char* f(..)`
 (typeDefLabel  , tyLabel' , tyLabel) = structTypeDef "label" [tySplitTree , intType , voidPtrType]
+(typeDefSplitTree , tySplitTree' , tySplitTree) = structTypeDef "splitTree" [tySplitTree , intType]
+(typeDefSTCont , tySTCont' , tySTCont) = structTypeDef "STCont" [tySplitTree , intType , dataFnType]
+(typeDefSTAlts , tySTAlts' , tySTAlts) = structTypeDef "STAlts" [tySplitTree , intType , LT.ptr tyAltMap]
+(typeDefAltMap , tyAltMap' , tyAltMap) = structTypeDef "alt"   [intType , dataFnType , voidPtrType]
 
 tagsSTAlt = C.Int 32 <$> [0..]
 tagAltFn : tagAltPAp : tagAltRec : tagAltRecPAp : _ = L.ConstantOperand <$> tagsSTAlt
