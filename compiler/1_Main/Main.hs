@@ -40,7 +40,7 @@ main = parseCmdLine >>= \cmdLine ->
 repl :: CmdLine -> IO ()
 repl cmdLine = let
   doLine l = doProgText cmdLine M.empty "<stdin>" (T.pack l)
-    >>= print . importBinds . snd
+    >>= print . importBinds . snd . fst
   loop     = getInputLine "'''" >>= \case
       Nothing -> pure ()
       Just l  -> lift (doLine l) *> loop
@@ -53,7 +53,7 @@ doProgText flags it f t = text2Core flags it f t >>= codegen flags
 -- Phase 1: parsing, resolve externs, type check
 ------------------------------------------------
 text2Core :: CmdLine -> ImportTree -> FilePath -> T.Text
-  -> IO (ImportTree , Import)
+  -> IO ((ImportTree , Import) , Externs)
 text2Core flags seenImports fName progText = do
   parsed <- case parseModule fName progText of
      Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
@@ -62,7 +62,7 @@ text2Core flags seenImports fName progText = do
 
   importPaths <- (findModule searchPath . T.unpack) `mapM` (parsed^.imports)
   (upTreeImports , localImports)
-    <- unzip <$> doFile flags seenImports `mapM` importPaths
+    <- unzip . map fst <$> doFile flags seenImports `mapM` importPaths
 
   let exts       = resolveImports localImports parsed
       judged     = judgeModule parsed exts
@@ -80,14 +80,13 @@ text2Core flags seenImports fName progText = do
       addPass passNm = putStrLn "\n  ---  \n" *> putPass passNm
   putPass `mapM_` (printPass flags)
   addPass "namedCore"
-  pure (_ , Import modNameMap judged')
+  pure ((_ , Import modNameMap judged') , exts)
 
 ---------------------------------
 -- Phase 2: codegen, linking, jit
 ---------------------------------
-codegen flags input@(imports , Import bindNames judged) = let
-  exts       = V.empty -- stg externs
-  llvmMod    = mkStg exts judged
+codegen flags input@((imports , Import bindNames judged) , exts) = let
+  llvmMod    = mkStg (extBinds exts) judged
   putPass :: T.Text -> IO () = \case
     "llvm-hs"    -> let
       text = ppllvm llvmMod

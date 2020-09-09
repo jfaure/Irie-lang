@@ -320,7 +320,7 @@ funBind' :: T.Text -> Parser [Pattern] -> Parser TTName
 funBind' nm pMFArgs = newArgNest $ mdo
   iNm <- addBindName nm -- handle recursive references
     <* addBind (FunBind nm (implicits ++ pi) free eqns ty)
-  ars <- many pattern
+  ars <- many singlePattern
   ann <- tyAnn
   let (implicits , ty) = case ann of { Just (i,t) -> (i,Just t) ; _ -> ([],Nothing) }
   (pi , eqns) <- getPiBounds $ choice
@@ -343,12 +343,15 @@ tyAnn :: Parser (Maybe ([ImplicitArg] , TT)) = let
 lambda = reservedChar '\\' *> (Var . VBind <$> addAnonBindName) <* do 
   newArgNest $ mdo
     addBind $ FunBind "_" [] free eqns Nothing
-    eqns <- (:[]) <$> fnMatch (many pattern) (reserved "=>")
+    eqns <- (:[]) <$> fnMatch (many singlePattern) (reserved "=>")
     free <- getFreeVars
     pure ()
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
-  FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
+  -- TODO is hoistLambda ideal here ?
+  let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case") *> fnMatch (many singlePattern) (reserved "=>")
+      normalFnMatch = FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
+  in choice [ hoistLambda , normalFnMatch ]
 
 --fnArgs = let
 --  implicits = option [] $ reservedOp "@" *> braces ((iden >>= lookupImplicit) `sepBy1` ";")

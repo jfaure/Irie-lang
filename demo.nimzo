@@ -21,25 +21,15 @@ BigInt =
 --  | One va => case b of
 --    | One vb => (One (plus va vb)) -- ifThenE 0  (Two (zext o) val)
 
---Id x = case x of
---  | One vx => One vx
+--PrintInt = \case
+--  | One va => putNumber va
+
+Id x = case x of
+  | One vx => One vx
 
 -- (label -> int)
 PrintInt a = case a of
   | One va => putNumber va
 
---main = PrintInt (Id (One 32))
-main = PrintInt (One 32)
-
---main = printInt (BigAdd (One 55) (One 24))
--- printInt (BidAdd (One 55 , One 24))
--- 1. mkLabel (One 55 , One 24)
--- 2. mkST => |cont [BigAdd , printInt]
--- 3. evalST => bigAdd { |cont [printInt] ; label }
--- 4. bigAdd => mkST (|STAlts)
--- 5. evalST => printInt { |none ; label }
-
---main = printInt (One 55) -- => One
-
--- mklabels
--- bigAdd (st.pap printInt)
+--main = PrintInt (One 32)
+main = PrintInt (Id (One 32))

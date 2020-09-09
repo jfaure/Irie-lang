@@ -5,3 +5,4 @@
 :def cpp (\_->pure ":set args demo.nimzo -p llvm-cpp\n:r\n main\n")
 :def jit (\_->pure ":set args demo.nimzo -p llvm-hs --jit\n:r\n main\n")
 :def jit2 (\_->pure ":set args imports/records.nimzo -p llvm-cpp --jit\n:r\n main\n")
+:def mf (\_->pure ":set args imports/mixfix.nimzo -p parse \n:r\n main\n")

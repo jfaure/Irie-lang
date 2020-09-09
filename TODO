@@ -1,5 +1,5 @@
 # High
-  * connect externs to mkstg
+  * top level function aliases need explicit args in llvm; eg. `match = \case ..`
 # Low priority
   * error reporting
   * parser source locations

@@ -123,7 +123,7 @@ instance Show TTName where
   show = \case
     VBind x   -> "π" ++ show x 
     VLocal  x -> "λ" ++ show x
-    VExtern x -> "E" ++ show x
+    VExtern x -> "?" ++ show x
 deriving instance Show Fixity
 deriving instance Show Assoc
 deriving instance Show FnMatch 
