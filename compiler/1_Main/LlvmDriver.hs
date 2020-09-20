@@ -96,4 +96,3 @@ runJIT opt objs mod =
     *> runFn "main" executionEngine m >>= \case
         Nothing -> error "main() not found"
         Just r  -> pure ()
-  

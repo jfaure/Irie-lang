@@ -9,10 +9,13 @@ import Control.Monad.State.Lazy
 import Control.Monad.Primitive (PrimMonad,PrimState,primitive)
 import Data.Functor
 import Data.Function
+import Data.Maybe
+import Data.String
 import qualified Data.ByteString.Short as BS
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
+import qualified Data.Map as M
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Type as LT
 import qualified LLVM.AST.Typed as LT
@@ -40,18 +43,18 @@ data CGState s = CGState {
    wipBinds   :: MV.MVector s StgWIP
  , externs    :: V.Vector Expr
  , llvmDefs   :: [L.Definition] -- output module contents
- , freshTop   :: Int -- fresh name supply for anonymous module-level defs
- , freshSplit :: Int
- , freshStr   :: Int
+
+ , moduleUsedNames :: M.Map BS.ShortByteString Int
 
  -- meta - stack frame info
  , envArgs   :: [IM.IntMap L.Operand] -- args on stack frame
 }
 
-getFreshSplit :: CGEnv s Int
-getFreshSplit = gets freshSplit >>= \n -> modify (\x->x{freshSplit = n+1}) $> n
-getFreshStrName :: CGEnv s L.Name
-getFreshStrName = L.mkName . ("str"++) . show <$> (gets freshStr >>= \n-> modify (\x->x{freshStr = n+1}) $> n)
+freshTopName :: BS.ShortByteString -> CGEnv s L.Name
+freshTopName suggestion = do
+  nameCount <- gets (fromMaybe 0 . (M.!? suggestion) . moduleUsedNames)
+  modify $ \x->x{ moduleUsedNames = M.insert suggestion (nameCount + 1) (moduleUsedNames x) }
+  pure $ L.Name $ "." <> suggestion <> "." <> fromString (show nameCount)
 
 data StgWIP
  = TWIP   (HName , Bind)
@@ -141,6 +144,8 @@ varArgsFnTy retTy = LT.ptr $ LT.FunctionType retTy [] True
 load' ptr = load ptr 0
 store' ptr op = store ptr 0 op
 alloca' ty op = alloca ty op 0
+call' f = call f . map (,[])
+mkNullPtr = L.ConstantOperand . C.Null
 
 gep :: L.Operand -> [L.Operand] -> CGBodyEnv s L.Operand
 gep addr is = let
@@ -170,13 +175,16 @@ storeIdx :: L.Operand -> Int -> L.Operand -> CGBodyEnv s ()
 storeIdx ptr i op = (`store'` op) =<< ptr `gep` [constI32 0, constI32 $ fromIntegral i]
 
 -- make a list of pointers on the stack
-mkPtrList :: [L.Operand] -> CGBodyEnv s L.Operand
-mkPtrList ops = flip named "ptrList" $ do
-  ptr <- alloca' voidPtrType (Just $ constI32 (fromIntegral $ length ops))
-  let writeIdx idx op = do
-        p <- ptr `gep` [constI32 $ fromIntegral idx]
-        store' p =<< bitcast op voidPtrType
-  ptr <$ zipWithM_ writeIdx [0..] ops
+mkPtrList :: LT.Type -> [L.Operand] -> CGBodyEnv s L.Operand
+mkPtrList ty ops = do
+  let len = length ops
+      arrTy = LT.ArrayType (fromIntegral len) ty
+      undef = L.ConstantOperand (C.Undef arrTy)
+  ptr <- alloca' arrTy Nothing `named` "ptrList"
+  arr <- foldM (\arr (i,val) -> insertValue arr val [i]) undef (zip [0..] ops)
+  store' ptr arr
+  pure ptr
+
 mkSizedPtrList ops = flip named "ptrListSZ" $  let -- + size variable
   ptrType = voidPtrType
   sz = fromIntegral $ length ops -- C.Int 32 (fromIntegral $ 1 + length ops)
@@ -232,15 +240,17 @@ mkBranchTable doPhi scrut alts = mdo
 -- typedefs
 structTypeDef nm tys = (nm , LT.StructureType False tys, LT.ptr (LT.NamedTypeReference nm))
 
-dataFnType = LT.ptr $ LT.FunctionType LT.VoidType [voidPtrType] True -- `char* f(..)`
-(typeDefLabel  , tyLabel' , tyLabel) = structTypeDef "label" [tySplitTree , intType , voidPtrType]
+dataFnType = LT.ptr $ LT.FunctionType LT.VoidType [voidPtrType , tySplitTree] True -- `char* f(..)`
+(typeDefLabel  , tyLabel' , tyLabel) = structTypeDef "label" [intType , voidPtrType]
 (typeDefSplitTree , tySplitTree' , tySplitTree) = structTypeDef "splitTree" [tySplitTree , intType]
 (typeDefSTCont , tySTCont' , tySTCont) = structTypeDef "STCont" [tySplitTree , intType , dataFnType]
 (typeDefSTAlts , tySTAlts' , tySTAlts) = structTypeDef "STAlts" [tySplitTree , intType , LT.ptr tyAltMap]
 (typeDefAltMap , tyAltMap' , tyAltMap) = structTypeDef "alt"   [intType , dataFnType , voidPtrType]
+
 
 tagsSTAlt = C.Int 32 <$> [0..]
 tagAltFn : tagAltPAp : tagAltRec : tagAltRecPAp : _ = L.ConstantOperand <$> tagsSTAlt
 
 tagsSplitTree = C.Int 32 <$> [0..]
 tagSTAlts : tagSTCont : tagSTRecord : _ = L.ConstantOperand <$> tagsSplitTree
+

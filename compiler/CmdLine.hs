@@ -7,13 +7,14 @@ import qualified Data.Text as T
 data CmdLine = CmdLine
   { printPass      :: [T.Text]
   , jit            :: Bool
+  , debug          :: Bool
   , optlevel       :: Word
   , noPrelude      :: Bool
-  , outFile        :: Maybe String
-  , files          :: [String]
+  , outFile        :: Maybe FilePath
+  , files          :: [FilePath]
   } deriving (Show)
 
-defaultCmdLine = CmdLine [] False 0 False Nothing []
+defaultCmdLine = CmdLine [] False False 0 False Nothing []
 
 printPasses = ["args" , "source", "parseTree", "core", "llvm-hs" , "llvm-cpp"] :: [T.Text]
 
@@ -35,6 +36,9 @@ cmdLineDecls = CmdLine
   <*> switch
       (short 'j' <> long "jit"
       <> help "Execute program in jit")
+  <*> switch
+      (short 'd' <> long "debug"
+      <> help "Print information with maximum verbosity")
   <*> option auto
       (short 'O'
       <> help "Optimization level [0..3]"

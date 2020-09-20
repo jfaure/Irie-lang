@@ -1,0 +1,7 @@
+List =
+  | Cons : Int -> (List -> List)
+  | Nil
+
+printList l = case l of
+  Nil => 0
+  Cons i l' => putNumber i + printList l

@@ -38,8 +38,8 @@ import qualified Data.Text           as T
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.IntSet         as IS
 import Control.Lens hiding (List)
-
 import Debug.Trace
+
 d_ x   = let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))

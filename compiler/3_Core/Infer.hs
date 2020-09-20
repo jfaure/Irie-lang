@@ -1,6 +1,7 @@
 -- see "Algebraic subtyping" by Stephen Dolan <https://www.cl.cam.ac.uk/~sd601/thesis.pdf>
 
 module Infer where
+import GlobalFlags
 import Prim
 import BiUnify
 import qualified ParseSyntax as P
@@ -52,7 +53,7 @@ judgeModule pm exts@(Externs extNames extBinds) = let
       , _labels   = labelsV
       , _errors   = []
       }
-    dv_ d
+    when (debug getGlobalFlags) (dv_ d)
     pure wips
 
 -- add argument holes to monotype env and guard against recursion
@@ -231,7 +232,7 @@ infer = let
           t -> [t]
         argTys = getArgTys <$> labTys
     --TODO merge types with labels (mergeTypes altTys)]
-    retTy <- did_ <$> foldl mergeTypes [] <$> pure (tyOfExpr <$> altExprs)
+    retTy <- foldl mergeTypes [] <$> pure (tyOfExpr <$> altExprs)
     let scrutTy = [THSplit altLabels]
         matchTy = [THArrow [scrutTy] retTy]
         unpat = \case { P.PArg i -> i ; x -> error $ "not ready for patter: " ++ show x }

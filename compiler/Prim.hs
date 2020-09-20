@@ -1,18 +1,19 @@
-{-# LANGUAGE LambdaCase, ScopedTypeVariables , MultiWayIf , StandaloneDeriving #-}
 -- Primitives: literals and instructions
 -- conversions from Prim to llvm instructions/types
 -- PrimInstr are roughly equivalent to LLVM.AST.Instructions
 module Prim
 where
+import Prelude hiding (show)
+import GHC.Show (Show(..))
 import Data.Text as T
 
 data Literal
  = Char Char
  | Int Integer -- convenience
 -- | Frac Rational
- | PolyInt   T.Text
- | PolyFrac  T.Text
- | String String
+ | PolyInt   T.Text -- gmp
+ | PolyFrac  T.Text -- gmp
+ | String    [Char]
  | Array [Literal] -- incl. tuples ?
 -- | Tuple [Literal]
 -- | WildCard      -- errors on evaluation
@@ -40,12 +41,12 @@ data PrimInstr
  = IntInstr   IntInstrs
  | NatInstr   NatInstrs
  | FracInstr  FracInstrs
+ | GMPInstr   PrimInstr
+
  | MemInstr   ArrayInstrs
  | TyInstr    TyInstrs
  | CallExt    T.Text
-
  | Zext
-
  | PutNbr
  | IfThenE
  | ExprHole   -- errors on eval, but will typecheck

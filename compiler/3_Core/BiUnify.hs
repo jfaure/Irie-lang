@@ -1,4 +1,5 @@
 module BiUnify where
+import GlobalFlags
 import Prim
 import qualified ParseSyntax as P
 import CoreSyn as C
@@ -56,7 +57,9 @@ import Debug.Trace
 
 failBiSub a b = error $ "failed bisub:\n    " ++ show a ++ "\n<--> " ++ show b --pure False
 
-biSub_ a b = trace ("bisub: " ++ prettyTy a ++ " <==> " ++ prettyTy b) biSub a b -- *> (dv_ =<< use bis)
+biSub_ a b = if debug getGlobalFlags
+  then trace ("bisub: " ++ prettyTy a ++ " <==> " ++ prettyTy b) biSub a b -- *> (dv_ =<< use bis)
+  else biSub a b
 biSub :: TyPlus -> TyMinus -> TCEnv s ()
 biSub a b = let
   solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
@@ -136,9 +139,12 @@ atomicBiSub p m = -- trace ("⚛bisub: " ++ prettyTy [p] ++ " <==> " ++ prettyTy
 --   * check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
 check :: Externs -> V.Vector [TyHead] -> V.Vector (Maybe Type)
      -> [TyHead] -> [TyHead] -> Bool
-check e ars labTys inferred gotRaw =
-  trace ("check: " ++ prettyTy inferred ++ "\n   <?: " ++ prettyTy gotRaw)
-  $ check' e ars labTys inferred (reduceType gotRaw)
+check e ars labTys inferred gotRaw = let
+  go = check' e ars labTys inferred (reduceType gotRaw)
+  in if debug getGlobalFlags
+  then trace ("check: " ++ prettyTy inferred ++ "\n   <?: " ++ prettyTy gotRaw)
+    $ go
+  else go
 
 --check' :: Externs -> V.Vector [TyHead]
 --       -> [TyHead] -> [TyHead] -> Bool

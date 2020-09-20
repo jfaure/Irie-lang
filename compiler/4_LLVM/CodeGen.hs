@@ -12,6 +12,7 @@ import Data.Functor
 import Data.Function
 import Data.Foldable
 import Data.Char
+import Data.Maybe
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Text as T
@@ -61,10 +62,7 @@ mkStg externBindings coreBinds = let
           , linkage=L.External , parameters=([] , True)
           , returnType=LT.StructureType False [intType , LT.IntegerType 1] }
         ]
-      , freshTop   = 0
-      , freshSplit = 0
-      , freshStr   = 0
-
+      , moduleUsedNames = M.empty
       , envArgs  = []
      }
   in L.defaultModule {
@@ -101,6 +99,10 @@ lookupArg i = gets ((IM.!? i) . head . envArgs) >>= \case
   Just arg -> pure arg -- local argument
   Nothing  -> gets envArgs >>= \e -> panic $ "arg not in scope: " ++ show i ++ "\nin: " ++ show (IM.keys <$> e)
 
+getRetPtr, getTailST :: CGBodyEnv s (Maybe L.Operand)
+getRetPtr = gets $ (IM.!? (-900000)) . head . envArgs
+getTailST = gets $ (IM.!? (-900001)) . head . envArgs
+
 cgTerm :: Term -> CGBodyEnv s L.Operand
 cgTerm = let
   cgName = \case
@@ -133,45 +135,78 @@ cgApp :: Term -> [Term] -> CGBodyEnv s L.Operand
 cgApp f args = case f of
   Instr i    -> cgInstrApp i args
   Match ty ls d -> case args of
-    [x] -> lift (cgType ty) >>= \ty' -> mkSplitTree ty' x ls d
+    [x] -> case x of
+      App{} -> do
+        error $ "passdown st !"
+        retTy <- lift (cgType ty)
+        st <- mkSplitTree retTy Nothing ls d
+        pure st
+        -- TODO passdown ST !
+      _ -> do -- execute match directly on label
+        retTy <- lift (cgType ty)
+        lab <- cgTerm x
+        mkSplitTree retTy (Just lab) ls d
     _   -> panic $ "Match must have 1 argument"
   f ->  do
     f1 <- cgTerm f
-    case args of
-      -- Split-Tree chain TODO HACK
-      [id@(Var (VBind 1)) `App` [label]] -> do
-        fid  <- cgTerm id
-        l   <- cgTerm label
-        s1  <- mkSTCont (L.ConstantOperand $ C.Null tySplitTree) =<< (bitcast f1 dataFnType)
-        s1' <- bitcast s1 tySplitTree
-        s2  <- mkSTCont s1' =<< bitcast fid dataFnType
-        evalSplitTree intType s2 l
-      args -> let
-        in do
-        llArgs <- cgTerm `mapM` args
-        if any (isLabelTy . LT.typeOf) llArgs
-        then do
-          f1' <- bitcast f1 dataFnType
-          s1  <- mkSTCont (L.ConstantOperand (C.Null tySplitTree)) f1' `named` "stCont"
-          evalSplitTree intType s1 ((\[l] -> l) llArgs)
-        else call f1 (map (,[]) llArgs)
+    let isDataFn = isLabelTy (LT.resultType $ LT.pointerReferent $ LT.typeOf f1)
+    callGraph2StackMachine f args
+--  case args of
+--    [f2 `App` [label@Label{}]] -> do -- HACK
+--      f2' <- cgTerm f2
+--      l   <- cgTerm label
+--      s1  <- mkSTCont (L.ConstantOperand $ C.Null tySplitTree) =<< (bitcast f1 dataFnType)
+--      s1' <- bitcast s1 tySplitTree
+----    s2  <- mkSTCont s1' =<< bitcast f2' dataFnType
+----    evalSplitTree intType s2 l
+--      i  <- alloca' intType Nothing
+--      i' <- bitcast i voidPtrType
+--      call f2' $ map (,[]) [i' , s1' , l]
+--      load' i
+--    _ -> do
+--      mainllArgs <- cgTerm `mapM` args
+--      llArgs <- if isDataFn -- may need to tail call a split-tree
+--        then do
+--          st <- getTailST <&> fromMaybe (panic "tail callable split-tree not in scope")
+--          retPtr <- getRetPtr <&> fromMaybe (panic "retPtr not in scope")
+--          pure $ retPtr : st : mainllArgs
+--        else pure mainllArgs
+--      f1 `call` (map (,[]) llArgs)
+
+-- Convert a call graph of dataFns to a stack-machine.
+-- The resulting split-tree is (loosely speaking) an inside-out version of the call graph
+callGraph2StackMachine topF args = let
+  isDataFn = isLabelTy . L.resultType . L.pointerReferent
+
+  finish f' ars retPtr tailST = case tailST of
+    Nothing -> call' f' =<< (cgTerm `mapM` ars)
+    Just st -> do
+      mainArgs <- cgTerm `mapM` ars
+      let retPtr' = fromMaybe (panic "expected retPtr") retPtr
+      call' f' (retPtr' : st : mainArgs)
+
+  args2SM outerF retPtr tailST = \case
+    -- TODO collect dataFn args, assemble split-tree and call innermost fn
+    [f `App` ars@[ag]] -> do -- HACK (only handles 1 arg)
+      f'  <- cgTerm f
+      if isDataFn (LT.typeOf f')
+      then do
+        let tailST' = fromMaybe (mkNullPtr tyLabel) tailST
+        st <- mkSTCont tailST' =<< bitcast outerF dataFnType
+        args2SM f' retPtr (Just st) [ag]
+      else finish f' ars retPtr tailST
+    primArgs -> finish outerF primArgs retPtr tailST
+  in do
+    topF'  <- cgTerm topF
+    retPtr <- getRetPtr
+    tailST <- getTailST
+    args2SM topF' retPtr tailST args
 
 isLabelTy x = case x of
   LT.PointerType{} -> case LT.pointerReferent x of
     LT.NamedTypeReference nm -> nm==L.mkName "label"
     _ -> False
   _ -> False
-
---  if contSplit
---  then do
---    fST <- mkSTCont f'
---    storeIdx args
---    call ar (fST,[])
---  else call f' (map (,[]) args)
-
---  args <- gets tailSplit >>= \case
---    Nothing : _ -> cgTerm `mapM` args
---    Just st : _ -> (fst st :) <$> cgTerm `mapM` args
 
 cgInstrApp instr args = case instr of
     PutNbr -> call (L.ConstantOperand (C.GlobalReference (LT.ptr $ LT.FunctionType intType [] True) (L.mkName "printf"))) =<< (map (,[]) <$> cgTerm `mapM` (Lit (String "%d\n") : args))
@@ -187,6 +222,7 @@ cgInstrApp instr args = case instr of
 cgType :: [TyHead] -> CGEnv s L.Type
 cgType = \case
   [t] -> cgTypeAtomic t
+  [THExt 1 , _] -> pure $ intType
   x   -> pure polyType
 --x   -> panic $ "lattice Type: " ++ show x
 
@@ -203,7 +239,7 @@ cgTypeAtomic = let
   THSum   ls    -> pure $ tyLabel
   THSplit ls    -> pure $ tyLabel
   THProd p      -> pure $ voidPtrType
-  THRec{}       -> pure $ voidPtrType
+  THRec{}       -> pure $ tyLabel -- voidPtrType -- HACK
   x -> error $ "MkStg: not ready for ty: " ++ show x
 
 cgPrimInstr i = case i of
@@ -240,7 +276,7 @@ literal2Stg l =
   let mkChar c = C.Int 8 $ toInteger $ ord c 
   in case l of
     Char c    -> pure $ mkChar c
-    String s  -> flip emitArray (mkChar<$>(s++['\0'])) =<< getFreshStrName
+    String s  -> flip emitArray (mkChar<$>(s++['\0'])) =<< freshTopName "str"
 --  Array  x  -> emitArray $ (literal2Stg <$> x)
     Int i     -> pure $ C.Int 32 i
 --    Frac f    -> C.Float (LF.Double $ fromRational f)
@@ -255,43 +291,37 @@ cgFunction :: L.Name -> [(IName, [TyHead])] -> [(IName , LT.Type)]
 cgFunction llvmNm args free genBody ty attribs = do
   retTy <- cgType ty
   mainArgTys <- (\(i,t) -> (i,) <$> cgType t) `mapM` args
-  cgFunction' llvmNm mainArgTys free genBody retTy attribs
+  let isDataFn = isLabelTy retTy || any isLabelTy (snd<$>mainArgTys) -- ie. does it return data ?
+  cgFunction' llvmNm isDataFn mainArgTys free genBody retTy attribs
 
-cgFunction' :: L.Name -> [(IName, LT.Type)] -> [(IName , LT.Type)]
+cgFunction' :: L.Name -> Bool -> [(IName, LT.Type)] -> [(IName , LT.Type)]
   -> (CGBodyEnv s L.Operand) -> LT.Type -> [FA.FunctionAttribute]
   -> CGEnv s StgWIP
-cgFunction' llvmNm args free genBody retTy attribs = let
-  iArgs = fst <$> args ; iFree = fst <$> free ; mainArgTys = snd <$> args
-  isDataFn
-    | llvmNm == (L.mkName "PrintInt") = True -- TODO HACK
-    | llvmNm == (L.mkName "Match") = True
-    | llvmNm == (L.mkName "Id") = True
-    | otherwise = False
-  -- isDataFn = any isLabelTy mainArgTys
+cgFunction' llvmNm isDataFn args free genBody retTy attribs = let
+  iArgs = fst <$> args ; iFree = fst <$> free ; argTys = snd <$> args
+  freeVarsStruct = LT.ptr $ LT.StructureType False (snd<$>free)
   in do
-  let freeVarsStruct = LT.ptr $ LT.StructureType False (snd<$>free)
-      argTys = mainArgTys
   (params , blocks) <- runIRBuilderT emptyIRBuilder $ do
-    retPtr     <- L.LocalReference (LT.ptr retTy) <$> freshName "retPtr"
+    retPtr     <- L.LocalReference voidPtrType    <$> freshName "retPtr"
+    tailST     <- L.LocalReference tySplitTree    <$> freshName "tailST"
     freeStruct <- L.LocalReference freeVarsStruct <$> freshName "FVs"
     freeArgs   <- zipWithM (\ix i -> loadIdx freeStruct ix `named` "free") [0..] iFree
     localArgs  <- argTys `forM` \ty -> L.LocalReference ty <$> fresh
     let normalArgMap = zip iArgs localArgs ++ zip iFree freeArgs
-        argMap = if isDataFn then (-900000 , retPtr) : normalArgMap else normalArgMap
-    modify $ \x -> x
-      { envArgs = IM.fromList argMap : envArgs x }
+        argMap = if isDataFn then (-900000,retPtr) : (-900001,tailST) : normalArgMap
+                 else normalArgMap
+    modify $ \x -> x { envArgs = IM.fromList argMap : envArgs x }
     genBody >>= \case
-      L.ConstantOperand C.TokenNone -> pure ()
-      x -> if isDataFn
-           then retVoid -- store' retPtr x
-           else ret x
+      L.ConstantOperand C.TokenNone -> retVoid
+      x -> ret x
     modify $ \x -> x { envArgs = drop 1 (envArgs x) }
-    let addRet = if isDataFn then (retPtr:) else id
+    let addRet = if isDataFn then ((retPtr:) . (tailST:)) else id
         ars = addRet $ case iFree of
           [] -> localArgs
           _  -> freeStruct : localArgs
     pure ars
 
+  -- emit the function
   let fnParams = (\(L.LocalReference ty nm) -> Parameter ty nm []) <$> params
       retType = if isDataFn then LT.VoidType else retTy
       fnDef = L.GlobalDefinition L.functionDefaults
@@ -330,7 +360,7 @@ function label argtys retty body = do
 mkLabel :: Integer -> [Term] -> CGBodyEnv s L.Operand
 mkLabel label tts = do
   l <- flip named "l" $ (`bitcast` tyLabel)
-    =<< mkStruct Nothing . (\s -> L.ConstantOperand (C.Null tySplitTree) : constI32 label : s)
+    =<< mkStruct Nothing . (\s -> constI32 label : s)
     =<< (cgTerm `mapM` tts)
   pure l
 
@@ -341,69 +371,63 @@ mkSTAlts alts  = mkStruct (Just tySTAlts') [(L.ConstantOperand (C.Null tySplitTr
 splitEager label match = _
 
 -- ! it is crucial that tag orders match here and when reducing splittrees
-mkSplitTree :: L.Type -> Term -> IM.IntMap Expr -> Maybe Expr -> CGBodyEnv s L.Operand
+mkSplitTree :: L.Type -> Maybe L.Operand -> IM.IntMap Expr -> Maybe Expr -> CGBodyEnv s L.Operand
 mkSplitTree retTy label labelMap _defaultFn = let
   mkAlt (CoreFn ars free term ty) = do
     let iFree = IS.toList free
+        isDataFn = isLabelTy retTy
     freeVars <- lookupArg `mapM` iFree
-    let splitNm = "splitFn"
-    nm <- L.mkName . (splitNm++) . show <$> lift getFreshSplit
+    nm <- lift $ freshTopName (if isDataFn then "SplitCont" else "splitFn")
     let freeTys  = zipWith (\i op -> (i , LT.typeOf op)) iFree freeVars
         genBody  = do
-          arTys <- lift $ (cgType . snd) `mapM` ars
-          retPtr <- lookupArg (-1)
-          rawL   <- lookupArg (-2)
-          let l = rawL
-          l <- bitcast rawL (LT.ptr $ LT.StructureType False (tySplitTree : intType : arTys))
-          let getLocal i ix = (i,) <$> (load' =<< (l `gep` [constI32 0 , constI32 (1+ix)]))
+          arTys  <- lift $ (cgType . snd) `mapM` ars
+          retPtr  <- lookupArg (-1)
+          tailSplit <- lookupArg (-2) -- TODO use
+          rawL   <- lookupArg (-3)
+          l <- bitcast rawL (LT.ptr $ LT.StructureType False (intType : arTys))
+          let getLocal i ix = (i,) <$> loadIdx l ix -- (l `gep` [constI32 0 , constI32 ix]))
           locals <- zipWithM getLocal (fst<$>ars) [1..fromIntegral (length ars)]
-          modify $ \x->x{ envArgs = (head (envArgs x) `IM.union` IM.fromList locals) : drop 1 (envArgs x) }
-          
+          modify $ \x->x{
+            envArgs = (head (envArgs x) `IM.union` IM.fromList locals) : drop 1 (envArgs x) }
           result <- cgTerm term
-          if (case ty of [THSplit{}]->True ; [THSum{}]->True ; [THRec 0]->True; x -> False) -- TODO HACK
-          then mdo
-            nextST <- loadIdx rawL 0
-            hasNext <- icmp IP.NE nextST (L.ConstantOperand $ C.Null tySplitTree)
-            condBr hasNext doNext end
-            doNext <- block `named` "next"
-            retPtr' <- bitcast retPtr voidPtrType
-            call evalSplitTreeFn $ (,[]) <$> [retPtr' , nextST , result]
-            retVoid
+          if   isDataFn
+          then void $ evalSplitTree' retPtr tailSplit result -- TODO is ok ??
+          else store' retPtr result
 
-            end <- block `named` "end"
-            retVoid
-            pure $ L.ConstantOperand C.TokenNone
-          else do
---          store' retPtr =<< (result `bitcast` retTy)
-            store' retPtr result
-            retVoid
-            pure $ L.ConstantOperand C.TokenNone
-    f <- fnOp <$> lift (cgFunction' nm [(-1,LT.ptr retTy) , (-2,tyLabel)] freeTys genBody LT.VoidType [])
+          pure $ L.ConstantOperand C.TokenNone
+
+    altFnPtr <- let args = [(-1,LT.ptr retTy) , (-2, tySplitTree) , (-3,tyLabel)]
+      in fnOp <$> lift (cgFunction' nm False args freeTys genBody LT.VoidType [])
     case freeVars of
-      []  -> mkStruct Nothing $ [tagAltFn , f]
-      ars -> mkStruct Nothing $ [tagAltPAp , f , constI32 (fromIntegral $ length freeVars)] -- ++ freeVars
+      []  -> mkStruct Nothing $ [tagAltFn , altFnPtr]
+      ars -> mkStruct Nothing $ [tagAltPAp , altFnPtr] -- ++ freeVars
   in do
-  alts <- flip named "alts" $ (`bitcast` LT.ptr tyAltMap) =<< mkPtrList =<< (mkAlt `mapM` (IM.elems labelMap))
-  st   <- mkSTAlts alts
-  evalSplitTree retTy st =<< cgTerm label
---case label of
---  f `App` x -> _
---  l         -> evalSplitTree retTy st =<< cgTerm label
+  alts <- ((`bitcast` tyAltMap) <=< mkAlt) `mapM` IM.elems labelMap
+  stAlts <- (`bitcast` LT.ptr tyAltMap) =<< mkPtrList (tyAltMap) alts
+  tailST <- getTailST <&> fromMaybe (L.ConstantOperand $ C.Null tySplitTree)
+  case label of
+    Nothing -> mkSTAlts stAlts
+    Just l  -> getRetPtr >>= \case
+      Just r -> evalSplitAlts r tailST stAlts l
+      _      -> do
+        retPtr <- (`bitcast` voidPtrType) =<< alloca' retTy Nothing
+        evalSplitAlts retPtr tailST stAlts l
+        load' retPtr
 
 ----------------------
 -- Eval Split trees --
 ----------------------
-evalSplitAlts :: L.Operand -> L.Operand -> L.Operand -> CGBodyEnv s L.Operand
-evalSplitAlts retPtr stAlts l = let -- tyAltMap , tyLabel
+evalSplitAlts :: L.Operand -> L.Operand -> L.Operand -> L.Operand -> CGBodyEnv s L.Operand
+evalSplitAlts retPtr stNext stAlts l = let -- tyAltMap , tyLabel
     splitType = polyFnType
   in mdo
   -- STAlts
-  tag    <- flip named "tag"  $ (l `loadIdx` 1)
-  alt    <- flip named "alts" $ load' =<< (stAlts `gep` [tag])
+  tag    <- flip named "tag"  $ (l `loadIdx` 0)
+  alt    <- flip named "alts" $ load' =<< (stAlts `gep` [tag]) -- HACK
   altTag <- flip named "altTy"$ (alt `loadIdx` 0)
   let fnBranch = do
         altF <- loadIdx alt 1 `named` "SF"
-        altF `call` [(retPtr,[]),(l,[])]
+        altF `call` map (,[]) [retPtr , stNext , l]
 --    papBranch = do
 --      altF <- loadIdx alts 1 `named` "SF"
 --      freeVarPtr <- loadIdx alts 2 `named` "free"
@@ -414,18 +438,15 @@ evalSplitAlts retPtr stAlts l = let -- tyAltMap , tyLabel
 genEvalSplitTree :: L.Operand -> L.Operand -> L.Operand -> CGBodyEnv s L.Operand
 genEvalSplitTree retPtr st label = do
   stTag  <- flip named "stTag" $ loadIdx st 1
+  stNext <- st `loadIdx` 0
   -- branchTable
   let altsBranch = do
         stAlts <- (`loadIdx` 2) =<< bitcast st tySTAlts
-        evalSplitAlts retPtr stAlts label
-        alloca' intType Nothing
-        alloca' intType Nothing
+        evalSplitAlts retPtr stNext stAlts label
       contBranch = do
-        st'       <- bitcast st tySTCont
-        stNext <- loadIdx st' 0
+        st'    <- bitcast st tySTCont
         contFn <- loadIdx st' 2
-        storeIdx label 0 stNext
-        contFn `call` [(retPtr,[]) , (label,[])]
+        contFn `call` map (,[]) [retPtr, stNext, label]
         pure $ L.ConstantOperand C.TokenNone
 
       branches =
@@ -448,15 +469,20 @@ mkEvalSplitTreeFn = let
    genEvalSplitTree retPtr st lab
    retVoid
    pure $ L.ConstantOperand C.TokenNone
- in () <$ cgFunction' evalSplitTreeNm (zip [-1,-2,-3] evalSTArgTys) [] body LT.VoidType []
+ in () <$ cgFunction' evalSplitTreeNm False (zip [-1,-2,-3] evalSTArgTys) [] body LT.VoidType []
 
 evalSplitTree :: LT.Type -> L.Operand -> L.Operand -> CGBodyEnv s L.Operand
 evalSplitTree retTy st l = do
   retPtr <- gets ((IM.!? (-900000)) . head . envArgs) >>= \case
     Nothing -> alloca' retTy Nothing
     Just r  -> pure r
+  evalSplitTree' retPtr st l
+
+evalSplitTree' :: L.Operand -> L.Operand -> L.Operand -> CGBodyEnv s L.Operand
+evalSplitTree' retPtr st l = do
   retPtr'  <- bitcast retPtr voidPtrType
   st'      <- bitcast st tySplitTree
+  l'       <- bitcast l tyLabel
 --storeIdx st' 0 retPtr'
-  call evalSplitTreeFn $ (,[]) <$> [retPtr' , st' , l]
+  call evalSplitTreeFn $ (,[]) <$> [retPtr' , st' , l']
   load' retPtr

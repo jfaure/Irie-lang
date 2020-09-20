@@ -15,12 +15,12 @@ module Parser (parseModule , parseMixFixDef) where
 import Prim
 import ParseSyntax as P
 
-import Text.Megaparsec
+import Text.Megaparsec-- hiding (State)
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Text as T
 import qualified Data.Text.Read as TR
-import Control.Monad (void)
+import Control.Monad (void , fail)
 import Control.Applicative (liftA2)
 import Control.Monad.State.Strict as ST
 import Data.Void
@@ -38,7 +38,8 @@ import Control.Lens
 import Control.Lens.Tuple
 import Debug.Trace
 import qualified Text.Megaparsec.Debug as DBG
-dbg i = id
+import Debug.Trace
+dbg i = id -- identity
 --dbg i = DBG.dbg i
 
 data ParseState = ParseState {
@@ -124,7 +125,7 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
       Just n  -> pure $ Just $ VLocal n
       Nothing -> case asum $ (M.!? h) <$> prevFrames of
         Just upStackArg -> do
-          traceShowM p
+--        traceShowM p
           moduleWIP .parseDetails .freeVars %= (IS.insert upStackArg)
           pure $ Just $ VLocal upStackArg
         Nothing -> pure Nothing
@@ -541,7 +542,7 @@ singlePattern = choice
 literalP = let
   -- L.charLiteral handles escaped chars (eg. \n)
   char :: Parser Char = between (single '\'') (single '\'') L.charLiteral
-  stringLiteral :: Parser String = choice
+  stringLiteral :: Parser [Char] = choice
     [ single '\"'   *> manyTill L.charLiteral (single '\"')
     , (string "''") *> manyTill L.charLiteral (string "''")]
  in lexeme $ choice

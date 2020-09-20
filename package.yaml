@@ -17,7 +17,8 @@ description:         Please see the README on GitHub at <https://github.com/jfau
 dependencies:
 - primitive
 - base >= 4.7 && < 5
-- hashable
+- protolude
+# - hashable
 - text
 - vector
 - containers
@@ -35,7 +36,6 @@ dependencies:
 - llvm-hs-pure >= 9.0.0
 - llvm-hs >= 9.0.0
 - llvm-hs-pretty
-- logging-effect
 
 default-extensions:
 - LambdaCase
@@ -60,8 +60,8 @@ default-extensions:
 library:
   source-dirs:
     - compiler/
-    - compiler/3_Core/
     - compiler/2_Parse/
+    - compiler/3_Core/
     - compiler/4_LLVM/
 
 ghc-options:  -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded

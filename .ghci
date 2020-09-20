@@ -1,7 +1,7 @@
 :set -fobject-code
 :def go (\_->pure ":set args demo.nimzo -p core \n:r\n main\n")
 :def parse (\_->pure ":set args demo.nimzo -p parse \n:r\n main\n")
-:def llvm (\_->pure ":set args demo.nimzo -p llvm-hs\n:r\n main\n")
+:def llvm (\_->pure ":set args demo.nimzo -p core,llvm-hs\n:r\n main\n")
 :def cpp (\_->pure ":set args demo.nimzo -p llvm-cpp\n:r\n main\n")
 :def jit (\_->pure ":set args demo.nimzo -p llvm-hs --jit\n:r\n main\n")
 :def jit2 (\_->pure ":set args imports/records.nimzo -p llvm-cpp --jit\n:r\n main\n")

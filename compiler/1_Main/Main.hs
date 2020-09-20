@@ -1,5 +1,6 @@
 -- main =~ Text >> Parse >> Core >> STG >> LLVM
 import CmdLine
+import GlobalFlags
 import ParseSyntax
 import Parser
 import ModulePaths
@@ -21,7 +22,6 @@ import qualified Data.Map as M
 import Control.Monad.Trans (lift)
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Log
 import Control.Lens
 import System.Console.Haskeline
 import System.Exit
@@ -32,7 +32,7 @@ import Debug.Trace
 
 searchPath = ["./" , "Library/"]
 
-main = parseCmdLine >>= \cmdLine ->
+main = parseCmdLine >>= initGlobalFlags >>= \cmdLine ->
   case files cmdLine of
     []  -> repl cmdLine
     av  -> doFile cmdLine M.empty `mapM_` av
@@ -70,16 +70,16 @@ text2Core flags seenImports fName progText = do
         in getNm <$> V.fromList (_bindings parsed)
       judged'    = V.zip bindNames judged
       namedBinds = (\(nm,j)->T.unpack nm ++ show j) <$> judged'
-      putPass :: T.Text -> IO ()   = \case
+      putPass :: T.Text -> IO () = \case
         "args"       -> print flags
         "source"     -> putStr =<< readFile fName
         "parseTree"  -> print parsed
-        "core"       -> putStrLn $ show judged
+--      "core"       -> putStrLn $ show judged
+        "core"       -> putStrLn $ V.foldl (\a b -> a++"\n"++b) "" namedBinds
         "namedCore"  -> putStrLn $ V.foldl (\a b -> a++"\n"++b) "" namedBinds
-        _ -> putStrLn $ show judged --ppCoreModule judged
+        _ -> pure ()
       addPass passNm = putStrLn "\n  ---  \n" *> putPass passNm
   putPass `mapM_` (printPass flags)
-  addPass "namedCore"
   pure ((_ , Import modNameMap judged') , exts)
 
 ---------------------------------

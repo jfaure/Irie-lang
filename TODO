@@ -1,8 +1,16 @@
-# High
-  * top level function aliases need explicit args in llvm; eg. `match = \case ..`
-# Low priority
-  * error reporting
-  * parser source locations
-  * parser linefolds
+## Top
+  * language server
   * precompiled modules
+  * Error reporting
+ ## Parse
+  * parse C (?)
+  * Source locations
+  * linefolds
   * rec
+## Types
+  * Dependent normalisation
+  * Calculus of effects (cf. fire triangle)
+## CodeGen
+  * GMP
+  * Stack-Machine - Data streams
+  * labels => struct indexes !

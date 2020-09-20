@@ -15,21 +15,28 @@ BigInt =
   | One : Int -> BigInt
   | Two : Int -> (Int -> BigInt)
 
--- label -> label
--- (label -> st -> val)
 --BigAdd a b = case a of
 --  | One va => case b of
 --    | One vb => (One (plus va vb)) -- ifThenE 0  (Two (zext o) val)
 
---PrintInt = \case
---  | One va => putNumber va
-
-Id x = case x of
-  | One vx => One vx
-
--- (label -> int)
-PrintInt a = case a of
-  | One va => putNumber va
+Id x = case x of | One vx => One vx
+PrintInt a = case a of | One va => putNumber va
 
 --main = PrintInt (One 32)
 main = PrintInt (Id (One 32))
+
+--List =
+--  | Nil : List
+--  | Cons : Int -> (List -> List)
+--
+--PrintList l = case l of
+--  | Nil => 0
+--  | Cons i l' => plus (putNumber i) (PrintList l')
+--
+--inc l = case l of
+--  | Nil => Nil
+--  | Cons i l' => Cons (plus 1 i) (inc l')
+--
+--main = PrintList (inc (Cons 0 (Cons 1 Nil)))
+
+-- PrintList : retVal -> label -> retVal

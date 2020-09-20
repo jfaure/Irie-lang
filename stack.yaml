@@ -17,8 +17,9 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-#resolver: lts-13.29
-resolver: lts-14.20
+#resolver: lts-14.20
+resolver: lts-16.0
+compiler: ghc-8.8.4
 
 nix:
  enable: true

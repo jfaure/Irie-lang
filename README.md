@@ -1,5 +1,14 @@
 # Nimzo
-Array-oriented subtyping calculus of inductive constructions for high-performance distributed systems.
+Array-oriented subtyping calculus of inductive constructions for high-performance distributed systems. [Basic language reference](languageDocumentation.md)
+
+## Calculus of inductive constructions
+Dependent types have long served to write proofs which can be used to guarantee a program's correctness. In combination with subtyping, they introduce possibilities for powerful optimisations.
+
+## Array-oriented
+Much of the power of a machine is in its ability to process vast quantities of organised data. Manipulating information with aggregate operations and generally thinking in terms of arrays corresponds more closely to our algorithms. The compiler also finds aggregate operations easier to coordinate operations and optimize (esp. by removal of temporary structures via shortcut fusion). Tensors are multi-dimensional arrays and correspond to many types of organised data.
+
+## Distributed computing
+High level abstractions are necessary if we are to comfortably program using GPUs and distributed networks, since forking GPU kernels and sending programs over a network is far too tedious, error-prone and inflexible to do by hand. I propose to abstract implementation and optimisation details away from the terms and into the types.
 
 ## Subtyping
 Subtyping describes data flow explicitly and allows more accurate types, notably we can cleanly represent many desirable features, listed below. The key principle is that a subtyping relation (A <: B) is a proof of the existence of a function (A -> B), which the compiler can automatically call. Some points about subtyping:
@@ -14,16 +23,7 @@ Subtyping describes data flow explicitly and allows more accurate types, notably
 * Subtyping increases the power of our types, and allow us to leverage automatic subtyping coercions to cleanly separate algorithms from optimisations
 * In conjunction with dependent types, the scope of possible optimisation opportunities becomes infinite, and subtyping can give types the power they need to guide an algorithm to its perfect implementation (which can become very complicated in the presence of GPUs or distributed systems)
 
-## Calculus of inductive constructions
-Dependent types have long served to write proofs which can be used to guarantee a program's correctness. In combination with subtyping, they introduce possibilities for powerful optimisations.
-
-## Array-oriented
-Much of the power of a machine is in its ability to handle vast quantities of organised data - most of which can be thought of as a tensor (a multi-dimensional array), including nested algebraic data structures. Thinking in terms of arrays makes it easier to coordinate operations and, for example, remove temporary structures via shortcut fusion. This is known to work very well for one-dimensional arrays, however, it notably fails to fuse both list arguments of zip - because zip is a rank 2 operation, outputting an array of shape [2 , n]. By generalising lists and nested algebraic data to tensor operations, we increase the scope of shortcut fusion.
-  
-## Distributed Performance
-It has often been noted that higher level abstractions are necessary if we are to comfortably program using GPUs and distributed networks. It is necessary to abstract implementation and optimisation details away from the terms and into the types. Using subtyping, we can largely ignore the target system without sacrificing performance, as well as manipulate optimisations easily by annotating certain terms with detailed types.
-
-### Roadmap
+# Roadmap
 - Language:
     - [x] Lambda calculus
     - [x] MixFix operators
@@ -49,5 +49,5 @@ It has often been noted that higher level abstractions are necessary if we are t
     - [ ] Language server
     - [ ] Error reporting system
 
-## Discord server
+# Discord server
 https://discord.gg/3hYKngW
