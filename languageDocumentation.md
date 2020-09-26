@@ -5,7 +5,8 @@ Modules are first class dependent records, ie. a list of assignments
 ```haskell
 reservedChars = "\"@.(){};\\" -- as defined in the parser itself
 f = 3
-add a b = a + b -- normal function
+call = fn arg1 arg2 -- Call a function
+add a b = a + b -- define a function
 add2 = \a b => add a b -- '\' introduces an anonymous function
 ```
 
@@ -13,9 +14,9 @@ add2 = \a b => add a b -- '\' introduces an anonymous function
 You can define arbitrary pieces of syntax, using '_' to indicate where arguments go.
 This allows you to redefine vast quantities of syntax, simply by eg. `import C`
 ```haskell
-[_] = \i => i --the identity function, resulting in usual parentheses behavior
-_+2 = \a => a + 2
-_addMixFix_ = add2 -- `eg = 2 addMixFix 3`
+[_] = \i => i --the identity function, resulting in usual parentheses behavior: eg = [ 5 ]
+_+2 = \a => a + 2  -- eg = 5 +2
+_addMixFix_ = add2 -- eg = 2 addMixFix 3
 ```
 
 # Terms and Types
@@ -81,7 +82,7 @@ IO = || In | Out || -- IO is the effect type of the main function
 print  : String -> Int % Out
 readLn : String % In -- readLn reads a line from stdin
 
-main : IO ()
+main : () % IO
   = print "hello" -- notice that Out is a subtype of IO
 ```
 

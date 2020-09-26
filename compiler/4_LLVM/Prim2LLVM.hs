@@ -16,6 +16,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
+--import qualified Data.HashMap as H
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Type as LT
 import qualified LLVM.AST.Typed as LT
@@ -161,7 +162,7 @@ gep addr is = let
     | nm == typeDefLabel = gepType tyLabel' is
     | nm == typeDefAltMap = gepType tyAltMap' is
     | nm == typeDefSplitTree = gepType tySplitTree' is
-    | nm == typeDefSTCont = gepType tySTCont' is
+    | nm == structName stCont = gepType (rawStructType stCont) is
     | nm == typeDefSTAlts = gepType tySTAlts' is
 
     | otherwise = panic $ "unknown typedef: " ++ show nm
@@ -185,15 +186,17 @@ mkPtrList ty ops = do
   store' ptr arr
   pure ptr
 
-mkSizedPtrList ops = flip named "ptrListSZ" $  let -- + size variable
-  ptrType = voidPtrType
+mkSizedPtrList ptrType ops = flip named "ptrListSZ" $  let -- + size variable
   sz = fromIntegral $ length ops -- C.Int 32 (fromIntegral $ 1 + length ops)
-  structType = LT.StructureType False [ intType , LT.ArrayType sz ptrType ]
+  arrTy = LT.ArrayType sz ptrType
+  structType = LT.StructureType False [ intType , arrTy ]
+  undef = L.ConstantOperand (C.Undef arrTy)
   in do
   ptr <- alloca' structType Nothing
   storeIdx ptr 0 (constI32 $ fromIntegral sz)
-  ptrList <- ptr `gep` [constI32 1]
-  ptr <$ zipWithM (storeIdx ptrList) [0..] ops
+  ptrList <- foldM (\arr (i,v) -> insertValue arr v [i]) undef (zip [0..] ops)
+  storeIdx ptr 1 ptrList
+  pure ptr
 
 mkStruct :: Maybe L.Type -> [L.Operand] -> CGBodyEnv s L.Operand
 mkStruct maybeTy vals = let
@@ -238,19 +241,45 @@ mkBranchTable doPhi scrut alts = mdo
 -- SplitTree = || none | cont | alts | record ||
 
 -- typedefs
-structTypeDef nm tys = (nm , LT.StructureType False tys, LT.ptr (LT.NamedTypeReference nm))
-
-dataFnType = LT.ptr $ LT.FunctionType LT.VoidType [voidPtrType , tySplitTree] True -- `char* f(..)`
-(typeDefLabel  , tyLabel' , tyLabel) = structTypeDef "label" [intType , voidPtrType]
-(typeDefSplitTree , tySplitTree' , tySplitTree) = structTypeDef "splitTree" [tySplitTree , intType]
-(typeDefSTCont , tySTCont' , tySTCont) = structTypeDef "STCont" [tySplitTree , intType , dataFnType]
-(typeDefSTAlts , tySTAlts' , tySTAlts) = structTypeDef "STAlts" [tySplitTree , intType , LT.ptr tyAltMap]
-(typeDefAltMap , tyAltMap' , tyAltMap) = structTypeDef "alt"   [intType , dataFnType , voidPtrType]
-
+getSTTag = (`gep` [constI32 1])
 
 tagsSTAlt = C.Int 32 <$> [0..]
 tagAltFn : tagAltPAp : tagAltRec : tagAltRecPAp : _ = L.ConstantOperand <$> tagsSTAlt
 
 tagsSplitTree = C.Int 32 <$> [0..]
-tagSTAlts : tagSTCont : tagSTRecord : _ = L.ConstantOperand <$> tagsSplitTree
+tagSTAlts : tagSTCont : tagSTZipper : tagSTRecord : _ = L.ConstantOperand <$> tagsSplitTree
 
+structTypeDef nm tys = (nm , LT.StructureType False tys, LT.ptr (LT.NamedTypeReference nm))
+tyContPtrs = LT.StructureType False [intType , LT.ptr dataFnType]
+dataFnType = LT.ptr $ LT.FunctionType LT.VoidType [voidPtrType , tySplitTree , tyLabel] False -- `char* f(..)`
+(typeDefLabel  , tyLabel' , tyLabel) = structTypeDef "label" [intType , voidPtrType]
+(typeDefSplitTree , tySplitTree' , tySplitTree) = structTypeDef "splitTree" [tySplitTree , intType]
+--(typeDefSTCont , tySTCont' , tySTCont) = structTypeDef "STCont"
+--  [tySplitTree , intType , intType , intType , LT.ptr dataFnType]
+(typeDefSTAlts , tySTAlts' , tySTAlts) = structTypeDef "STAlts" [tySplitTree , intType , LT.ptr tyAltMap]
+(typeDefAltMap , tyAltMap' , tyAltMap) = structTypeDef "alt"   [intType , dataFnType , voidPtrType]
+
+-- Type safety when handling builtins
+data BuiltinStruct = BuiltinStruct {
+   structName      :: L.Name
+ , rawStructType   :: L.Type
+ , structAliasType :: L.Type
+ , structFields    :: M.Map L.Name Int
+}
+
+mkBuiltinStruct :: L.Name -> [(L.Name , LT.Type)] -> BuiltinStruct
+mkBuiltinStruct nm fields = let
+  in BuiltinStruct {
+    structName      = nm
+  , rawStructType   = LT.StructureType False (snd <$> fields)
+  , structAliasType = LT.ptr (LT.NamedTypeReference nm)
+  , structFields    = M.fromList $ zip (fst <$> fields) [0..]
+  }
+
+stCont = mkBuiltinStruct "STCont" [("stNext",tySplitTree) , ("stTy",intType)
+  , ("count",intType) , ("idx",intType) , ("contFns",LT.ptr dataFnType)]
+getFieldIdx :: BuiltinStruct -> L.Name -> Int
+getFieldIdx st lab = fromMaybe (panic $ "field not in scope: " ++ show lab)
+  $ (structFields st) M.!? lab
+
+builtinStructs = [stCont]

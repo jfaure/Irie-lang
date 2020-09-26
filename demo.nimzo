@@ -19,7 +19,7 @@ BigInt =
 --  | One va => case b of
 --    | One vb => (One (plus va vb)) -- ifThenE 0  (Two (zext o) val)
 
-Id x = case x of | One vx => One vx
+Id x = case x of | One vx => One (putNumber (plus 99 vx))
 PrintInt a = case a of | One va => putNumber va
 
 --main = PrintInt (One 32)

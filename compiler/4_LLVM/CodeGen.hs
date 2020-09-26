@@ -47,11 +47,13 @@ mkStg externBindings coreBinds = let
         wipBinds = v
       , externs  = externBindings
       , llvmDefs =
+        (\x -> L.TypeDefinition (structName x) (Just $ rawStructType x)) `map` builtinStructs
+        ++
         [ L.TypeDefinition typeDefLabel (Just tyLabel')
         , L.TypeDefinition typeDefAltMap (Just tyAltMap')
         , L.TypeDefinition typeDefSplitTree (Just tySplitTree')
-        , L.TypeDefinition typeDefSTCont (Just tySTCont')
         , L.TypeDefinition typeDefSTAlts (Just tySTAlts')
+--      , L.TypeDefinition typeDefSTCont (Just tySTCont')
         , L.TypeDefinition "ANY" Nothing
         , L.TypeDefinition "A" Nothing
         , L.GlobalDefinition functionDefaults
@@ -147,61 +149,38 @@ cgApp f args = case f of
         lab <- cgTerm x
         mkSplitTree retTy (Just lab) ls d
     _   -> panic $ "Match must have 1 argument"
-  f ->  do
-    f1 <- cgTerm f
-    let isDataFn = isLabelTy (LT.resultType $ LT.pointerReferent $ LT.typeOf f1)
-    callGraph2StackMachine f args
---  case args of
---    [f2 `App` [label@Label{}]] -> do -- HACK
---      f2' <- cgTerm f2
---      l   <- cgTerm label
---      s1  <- mkSTCont (L.ConstantOperand $ C.Null tySplitTree) =<< (bitcast f1 dataFnType)
---      s1' <- bitcast s1 tySplitTree
-----    s2  <- mkSTCont s1' =<< bitcast f2' dataFnType
-----    evalSplitTree intType s2 l
---      i  <- alloca' intType Nothing
---      i' <- bitcast i voidPtrType
---      call f2' $ map (,[]) [i' , s1' , l]
---      load' i
---    _ -> do
---      mainllArgs <- cgTerm `mapM` args
---      llArgs <- if isDataFn -- may need to tail call a split-tree
---        then do
---          st <- getTailST <&> fromMaybe (panic "tail callable split-tree not in scope")
---          retPtr <- getRetPtr <&> fromMaybe (panic "retPtr not in scope")
---          pure $ retPtr : st : mainllArgs
---        else pure mainllArgs
---      f1 `call` (map (,[]) llArgs)
+  f -> cgTerm f >>= \f' -> if isDataFn f'
+    then case args of
+      []  -> panic "impossible"
+      [oneArg] -> let
+        collectCont funList = \case
+          endArgs@[fPrev `App` argsPrev] -> cgTerm fPrev >>= \fPrev' -> if isDataFn fPrev'
+            then collectCont (fPrev' : funList) argsPrev
+            else pure (funList , endArgs)
+          endArgs -> pure (funList , endArgs)
+        in do
+          (funList , end) <- collectCont [f'] args
+          st <- mkSTCont (mkNullPtr tySplitTree) (reverse funList)
+          [label] <- cgTerm `mapM` end -- TODO HACK
+--        let retTy = L.resultType . L.pointerReferent . LT.typeOf $ f'
+--        if isLabelTy retTy
+--        then pure st
+--        else evalSplitTree retTy st label
+          evalSplitTree intType st label
+      args -> mkSTZipper f' =<< (cgTerm `mapM` args)
+    else call' f' =<< (cgTerm `mapM` args)
 
--- Convert a call graph of dataFns to a stack-machine.
--- The resulting split-tree is (loosely speaking) an inside-out version of the call graph
-callGraph2StackMachine topF args = let
-  isDataFn = isLabelTy . L.resultType . L.pointerReferent
+-- mainllArgs <- cgTerm `mapM` args
+-- llArgs <- if isDataFn -- may need to tail call a split-tree
+--   then do
+--     st <- getTailST <&> fromMaybe (panic "tail callable split-tree not in scope")
+--     retPtr <- getRetPtr <&> fromMaybe (panic "retPtr not in scope")
+--     pure $ retPtr : st : mainllArgs
+--   else pure mainllArgs
+-- f1 `call` (map (,[]) llArgs)
 
-  finish f' ars retPtr tailST = case tailST of
-    Nothing -> call' f' =<< (cgTerm `mapM` ars)
-    Just st -> do
-      mainArgs <- cgTerm `mapM` ars
-      let retPtr' = fromMaybe (panic "expected retPtr") retPtr
-      call' f' (retPtr' : st : mainArgs)
-
-  args2SM outerF retPtr tailST = \case
-    -- TODO collect dataFn args, assemble split-tree and call innermost fn
-    [f `App` ars@[ag]] -> do -- HACK (only handles 1 arg)
-      f'  <- cgTerm f
-      if isDataFn (LT.typeOf f')
-      then do
-        let tailST' = fromMaybe (mkNullPtr tyLabel) tailST
-        st <- mkSTCont tailST' =<< bitcast outerF dataFnType
-        args2SM f' retPtr (Just st) [ag]
-      else finish f' ars retPtr tailST
-    primArgs -> finish outerF primArgs retPtr tailST
-  in do
-    topF'  <- cgTerm topF
-    retPtr <- getRetPtr
-    tailST <- getTailST
-    args2SM topF' retPtr tailST args
-
+--retData  = isLabelTy . L.resultType . L.pointerReferent . LT.typeOf
+isDataFn = any isLabelTy . L.argumentTypes . L.pointerReferent . LT.typeOf
 isLabelTy x = case x of
   LT.PointerType{} -> case LT.pointerReferent x of
     LT.NamedTypeReference nm -> nm==L.mkName "label"
@@ -364,8 +343,15 @@ mkLabel label tts = do
     =<< (cgTerm `mapM` tts)
   pure l
 
-mkSTCont stNext fList = mkStruct (Just tySTCont') [stNext , tagSTCont , fList]
-mkSTAlts alts  = mkStruct (Just tySTAlts') [(L.ConstantOperand (C.Null tySplitTree)) , tagSTAlts , alts]
+mkSTCont stNext fList = do
+  let opSz = constI32 (fromIntegral $ length fList)
+  fnPtrs <- (`bitcast` LT.ptr dataFnType) =<< mkPtrList dataFnType fList
+  mkStruct (Just $ rawStructType stCont) [stNext , tagSTCont , opSz , opSz ,  fnPtrs]
+
+mkSTAlts alts = mkStruct (Just tySTAlts') [mkNullPtr tySplitTree , tagSTAlts , alts]
+
+mkSTZipper fn args = mkStruct (Just tySTAlts')
+ $ [mkNullPtr tySplitTree , tagSTZipper , fn] ++ args
 
 -- Avoid generating a splitTree
 splitEager label match = _
@@ -444,10 +430,28 @@ genEvalSplitTree retPtr st label = do
         stAlts <- (`loadIdx` 2) =<< bitcast st tySTAlts
         evalSplitAlts retPtr stNext stAlts label
       contBranch = do
-        st'    <- bitcast st tySTCont
-        contFn <- loadIdx st' 2
-        contFn `call` map (,[]) [retPtr, stNext, label]
-        pure $ L.ConstantOperand C.TokenNone
+        st'      <- bitcast st (structAliasType stCont)
+        lastIdx  <- loadIdx st' (getFieldIdx stCont "idx")
+        contFns  <- loadIdx st' (getFieldIdx stCont "contFns")
+        idx      <- sub lastIdx (constI32 1)
+        contFn   <- load' =<< (contFns `gep` [idx])
+        isEnd    <- icmp IP.EQ idx (constI32 0)
+        mdo -- eval the continuation and set-up the next one
+          condBr isEnd end cont
+
+          end <- block `named` "contEnd"
+          count <- loadIdx st' (getFieldIdx stCont "count")
+          storeIdx st' (getFieldIdx stCont "idx") count
+          contFn `call` map (,[]) [retPtr, stNext, label]
+          br final
+
+          cont <- block `named` "cont"
+          storeIdx st' (getFieldIdx stCont "idx") idx
+          contFn `call` map (,[]) [retPtr, st, label]
+          br final
+
+          final <- block `named` "final"
+          pure $ L.ConstantOperand C.TokenNone
 
       branches =
         [ ("evalSTAlts" , altsBranch)
