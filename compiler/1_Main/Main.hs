@@ -27,7 +27,7 @@ import System.Console.Haskeline
 import System.Exit
 import System.IO (hFlush , stdout)
 import Data.Functor
-import Data.Maybe (isJust, fromJust)
+import Data.Maybe
 import Debug.Trace
 
 searchPath = ["./" , "Library/"]
@@ -41,10 +41,7 @@ repl :: CmdLine -> IO ()
 repl cmdLine = let
   doLine l = doProgText cmdLine M.empty "<stdin>" (T.pack l)
     >>= print . importBinds . snd . fst
-  loop     = getInputLine "'''" >>= \case
-      Nothing -> pure ()
-      Just l  -> lift (doLine l) *> loop
- in runInputT defaultSettings loop
+  in () <$ runInputT defaultSettings (mapM doLine . catMaybes <$> forever (getInputLine "'''"))
 
 doFile cmdLine it f = T.IO.readFile f >>= doProgText cmdLine it f
 doProgText flags it f t = text2Core flags it f t >>= codegen flags

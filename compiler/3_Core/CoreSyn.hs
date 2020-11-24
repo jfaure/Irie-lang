@@ -109,6 +109,7 @@ data TCError
  | ErrTypeCheck T.Text
  | Err T.Text
   deriving Show
+
 data Expr
  = Core     Term Type
  | CoreFn   [(IName , Type)] IS.IntSet Term Type
@@ -138,8 +139,7 @@ makeLenses ''BiSub
 data Kind = KPrim | KArrow | KVar | KArg | KSum | KProd | KRec | KAny
  deriving Eq
 
-bind2Expr = \case
-  BindOK e -> e
+bind2Expr = \case { BindOK e -> e }
 
 -- evaluate type application (from THIxPAp s)
 tyAp :: [TyHead] -> IM.IntMap Expr -> [TyHead]

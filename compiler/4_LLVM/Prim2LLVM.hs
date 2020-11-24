@@ -15,6 +15,7 @@ import qualified Data.ByteString.Short as BS
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
+import qualified Data.IntSet as IS
 import qualified Data.Map as M
 --import qualified Data.HashMap as H
 import qualified LLVM.AST as L
@@ -32,6 +33,11 @@ import LLVM.IRBuilder.Instruction hiding (gep)
 
 panic why = error $ "Panic: Codegen: " ++ why
 
+-- nat, nat, array, irregular array, tree
+-- TODO wrapper types ? esp. optimize extracting data out of a container
+data DataTypes = Enum | Peano | Flat | SumTypeList | Tree
+data SubData = SubData | Wrap
+
 -- patch up missing PrimMonad instance for lazy ST
 instance PrimMonad (ST s) where
   type PrimState (ST s) = s
@@ -39,30 +45,100 @@ instance PrimMonad (ST s) where
 
 type CGEnv s a = StateT (CGState s) (ST s) a
 type CGBodyEnv s a = IRBuilderT (StateT (CGState s) (ST s)) a
-
 data CGState s = CGState {
+ -- Input
    wipBinds   :: MV.MVector s StgWIP
  , externs    :: V.Vector Expr
- , llvmDefs   :: [L.Definition] -- output module contents
 
+ -- Output
+ , llvmDefs   :: [L.Definition]
+
+ -- Internal State
  , moduleUsedNames :: M.Map BS.ShortByteString Int
-
- -- meta - stack frame info
- , envArgs   :: [IM.IntMap L.Operand] -- args on stack frame
+ , stack           :: [CallGraph s]
+ -- what will happen to what we're codegenning
+-- , plan            :: QTT -- Nothing means it's returned
 }
+
+data CallGraph s = CallGraph {
+   regArgs      :: IM.IntMap L.Operand
+ , dataArgs     :: IM.IntMap DataArg -- incl. temp datas. these must all be consumed !
+ , splits       :: [Split]   -- keyed on lnames; sumtypes split earlier on this SF
+} deriving Show
+
+data DataArg = DataArg { qtt :: Int , aframe :: L.Operand , dOp :: L.Operand } deriving Show
+
+data Split = Split { -- a data opened by Match (may be reused or freed)
+   lname      :: ILabel
+ , sframe     :: L.Operand -- the parent frame
+ , components :: IM.IntMap L.Operand -- datas here were split from this SF
+} deriving Show
+
+data QTT = QTT {
+   uses     :: Int -- how many shares this has
+ , builders :: Int -- we want to know when we can trim args
+} deriving Show
+
+-- currency used in the code generator
+data STGOp = STGOp  {
+   op  :: L.Operand
+ , fr  :: Maybe (L.Operand) -- , QTT , Maybe IName) -- anonymous datas always single use ?
+}
+
+-- TODO
+-- * trim (fn property)
+-- * dups
+-- Want to know: qtt of arg use + arg build
+
+-- ??
+-- unroll
+-- poly & copyable data
+-- wrap frames; eg. containers can avoid frame-merge
+-- when trim | finalize frame ;; last builder
+-- fixed sizes + fastbins (how to survive frame-merge?)
+-- foldr elim ; foldr f z = \case Empty => z ; (Leaf x) => f x z ; (Node l k r) => foldr f (f k (foldr f z r)) l
+
+-- fnDef: split-trees: dataArgs RO
+--   set all qtt to 0; gen body (counts dups), then dup args
+-- fnApp:
+--   codegen each arg (with custom plan)
+--   finalize frame here if fn and current callgraph allows
+--     Note. if a branch (in a Match) uses an arg, have to free it on each branch.
+--     Note. also find lowest point where data frames can be trimmed
+-- Label: like fnApp, also
+--   merge data arg frames (or make a frame)
+-- Match:
+--   sv qtt state ; find max for each branch and insert extra uses once branch known
+--   register split data
+--   if frame not used: then free frame else free frags
+--   free all argframes used in any branch (all branches are expected to use each data the same)
+
+modifySF f = modify $ \x->x { stack = (\(x:xs) -> f x : xs) (stack x) }
+
+data StgWIP
+ = TWIP   (HName , Bind)
+
+ | STGFn     { freeArgs :: [IName] , fnOp :: L.Operand }
+ | STGDataFn { freeArgs :: [IName] , fnOp :: L.Operand , sts :: IM.IntMap QTT }
+ | STGConstant { fnOp :: L.Operand } -- top level functions for now
+
+ | LLVMTy L.Type
+ | LLVMInstr PrimInstr -- we avoid generating functions for these if possible
+ deriving Show
+
+getVAFn retTy nm = L.ConstantOperand (C.GlobalReference (LT.ptr $ LT.FunctionType retTy [] True) (L.mkName nm))
+frAlloc_mergeFrames args      = getVAFn voidPtrType "fralloc_mergeFrames" `call'` args
+frAlloc_shareFrame args       = getVAFn voidPtrType "fralloc_shareFrames" `call'` [args]
+frAlloc_freeFrame frame       = getVAFn voidPtrType "fralloc_freeFrame" `call'` [frame]
+frAlloc_isSingle frame        = getVAFn intType  "fralloc_isSingle" `call'` [frame]
+frAlloc_new frame sz          = getVAFn voidPtrType "fralloc_newFrag" `call'` [frame , sz]
+frAlloc_freeFrag frame ptr sz = getVAFn voidPtrType "fralloc_freeFrag" `call'` [frame,ptr,sz]
 
 freshTopName :: BS.ShortByteString -> CGEnv s L.Name
 freshTopName suggestion = do
   nameCount <- gets (fromMaybe 0 . (M.!? suggestion) . moduleUsedNames)
   modify $ \x->x{ moduleUsedNames = M.insert suggestion (nameCount + 1) (moduleUsedNames x) }
   pure $ L.Name $ "." <> suggestion <> "." <> fromString (show nameCount)
-
-data StgWIP
- = TWIP   (HName , Bind)
- | LLVMFn { freeArgs :: [IName] , fnOp :: L.Operand }
- | LLVMTy L.Type
- | LLVMInstr PrimInstr -- we avoid generating wrappers for these if possible
- deriving Show
 
 -- most llvm instructions take flags, stg wants functions on operands
 primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
@@ -89,6 +165,9 @@ primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
       FRem -> \a b -> L.FRem L.noFastMathFlags a b []
       FCmp -> \a b -> L.FCmp FP.UEQ a b []
   t -> error $ show t
+
+-- basically is it bigger than register size
+isDataTyHead = \case { THSum{}->True ; THSplit{}->True ; THProd{}->True ; _->False }
 
 primTy2llvm :: PrimType -> L.Type =
   let doExtern isVa tys =
@@ -119,7 +198,7 @@ emitArray nm arr = let
  llvmArr = C.Array elemTy arr
  ty = LT.typeOf llvmArr
  in C.GetElementPtr True (C.GlobalReference (LT.ptr ty) nm) [C.Int 32 0, C.Int 32 0]
- <$ (emitDef . L.GlobalDefinition) globalVariableDefaults
+   <$ (emitDef . L.GlobalDefinition) globalVariableDefaults
     { name        = nm
     , type'       = ty
     , linkage     = Private
@@ -132,10 +211,13 @@ emitArray nm arr = let
 -- IRBuilder extensions --
 --------------------------
 --voidPtrType = charPtrType -- llvm doesn't allow void pointers
+tagBits = 32
 voidPtrType = LT.ptr $ LT.NamedTypeReference "ANY"
-polyType = LT.ptr $ LT.NamedTypeReference "A"
+polyType = voidPtrType -- LT.ptr $ LT.NamedTypeReference "A"
 charPtrType :: L.Type = LT.PointerType (LT.IntegerType 8) (AddrSpace 0)
 intType    = LT.IntegerType 32
+sumTagType = LT.IntegerType tagBits
+constTag   = L.ConstantOperand . C.Int tagBits
 boolType   = LT.IntegerType 1
 constI32   = L.ConstantOperand . C.Int 32
 polyFnType'= LT.FunctionType voidPtrType [] True -- `char* f(..)`
@@ -159,12 +241,7 @@ gep addr is = let
   gepType (LT.VectorType _ elTy) (_:is') = gepType elTy is'
   gepType (LT.ArrayType _ elTy) (_:is') = gepType elTy is'
   gepType (LT.NamedTypeReference nm) is
-    | nm == typeDefLabel = gepType tyLabel' is
-    | nm == typeDefAltMap = gepType tyAltMap' is
-    | nm == typeDefSplitTree = gepType tySplitTree' is
-    | nm == structName stCont = gepType (rawStructType stCont) is
-    | nm == typeDefSTAlts = gepType tySTAlts' is
-
+--  | nm == structName label = gepType (rawStructType label) is
     | otherwise = panic $ "unknown typedef: " ++ show nm
   gepType x _ = error $ "gep into non-indexable type: " ++ show x
   in emitInstr ty $ (L.GetElementPtr False addr is [])
@@ -174,6 +251,11 @@ loadIdx :: L.Operand -> Int -> CGBodyEnv s L.Operand
 loadIdx ptr i = load' =<< (ptr `gep` [constI32 0, constI32 $ fromIntegral i])
 storeIdx :: L.Operand -> Int -> L.Operand -> CGBodyEnv s ()
 storeIdx ptr i op = (`store'` op) =<< ptr `gep` [constI32 0, constI32 $ fromIntegral i]
+
+mkArray ar = let
+  ty = LT.typeOf $ head ar
+  undef = L.ConstantOperand $ C.Undef $ LT.ArrayType (fromIntegral$length ar) ty
+  in foldM (\arr (i,val) -> insertValue arr val [i]) undef (zip [0..] ar)
 
 -- make a list of pointers on the stack
 mkPtrList :: LT.Type -> [L.Operand] -> CGBodyEnv s L.Operand
@@ -213,73 +295,28 @@ pApAp pap papArity llArgs =
   (loadIdx pap `mapM` [0..1+papArity]) >>= \case
     fn : papArgs -> call fn $ (,[]) <$> papArgs ++ llArgs
 
-mkBranchTable :: Bool -> L.Operand -> [(BS.ShortByteString , CGBodyEnv s L.Operand)] -> CGBodyEnv s L.Operand
-mkBranchTable doPhi scrut alts = mdo
+-- TODO emit lookup tables for very likely case of juxtapposed tags
+-- mkBranchTable :: Bool -> L.Operand -> [(BS.ShortByteString , CGBodyEnv s L.Operand)] -> CGBodyEnv s L.Operand
+-- mkBranchTable doPhi scrut alts = mdo
+--   switch scrut defaultBlock (zip (C.Int 32 <$> [0..]) entryBlocks)
+--   (entryBlocks , phiNodes) <- unzip <$> alts `forM` \(blockNm , cg) -> do
+--     b <- block `named` blockNm
+--     code <- cg <* br endBlock
+--     endBlock <- currentBlock
+--     pure (b , (code , endBlock))
+--   defaultBlock <- (block `named` "default") <* unreachable
+--   endBlock <- block `named` "end"
+--   if doPhi then phi phiNodes
+--   else pure (L.ConstantOperand C.TokenNone)
+
+mkBranchTable :: L.Operand -> [(BS.ShortByteString , CGBodyEnv s (a , L.Operand))] -> CGBodyEnv s ([a] , L.Operand)
+mkBranchTable scrut alts = mdo
   switch scrut defaultBlock (zip (C.Int 32 <$> [0..]) entryBlocks)
-  (entryBlocks , phiNodes) <- unzip <$> alts `forM` \(blockNm , cg) -> do
-    b <- block `named` blockNm
-    code <- cg <* br endBlock
-    endBlock <- currentBlock
-    pure (b , (code , endBlock))
+  (x , entryBlocks , phiNodes) <- unzip3 <$> alts `forM` \(blockNm , cg) -> do
+    entry <- block `named` blockNm
+    (x , retOp) <- cg <* br endBlock
+    exit <- currentBlock
+    pure (x , entry , (retOp , exit))
   defaultBlock <- (block `named` "default") <* unreachable
   endBlock <- block `named` "end"
-  if doPhi then phi phiNodes
-  else pure (L.ConstantOperand C.TokenNone)
-
-----------
--- Data --
-----------
--- Crucially, functions may never return labels in llvm, so:
--- Splitters (Label -> Value) become (Label -> st -> Value)
--- Conts     (Label -> Label) become (Label -> st -> Value)
--- Gen       (Value -> Label) become (Value -> st -> Value) 'takes tailTree'
---
--- alts = [ || fnPtr | PAp | rec | SplitTree || ]
--- cont = { fn } -- fn will compute a splitTree
--- none = {}
--- record = [ ptr ]
--- SplitTree = || none | cont | alts | record ||
-
--- typedefs
-getSTTag = (`gep` [constI32 1])
-
-tagsSTAlt = C.Int 32 <$> [0..]
-tagAltFn : tagAltPAp : tagAltRec : tagAltRecPAp : _ = L.ConstantOperand <$> tagsSTAlt
-
-tagsSplitTree = C.Int 32 <$> [0..]
-tagSTAlts : tagSTCont : tagSTZipper : tagSTRecord : _ = L.ConstantOperand <$> tagsSplitTree
-
-structTypeDef nm tys = (nm , LT.StructureType False tys, LT.ptr (LT.NamedTypeReference nm))
-tyContPtrs = LT.StructureType False [intType , LT.ptr dataFnType]
-dataFnType = LT.ptr $ LT.FunctionType LT.VoidType [voidPtrType , tySplitTree , tyLabel] False -- `char* f(..)`
-(typeDefLabel  , tyLabel' , tyLabel) = structTypeDef "label" [intType , voidPtrType]
-(typeDefSplitTree , tySplitTree' , tySplitTree) = structTypeDef "splitTree" [tySplitTree , intType]
---(typeDefSTCont , tySTCont' , tySTCont) = structTypeDef "STCont"
---  [tySplitTree , intType , intType , intType , LT.ptr dataFnType]
-(typeDefSTAlts , tySTAlts' , tySTAlts) = structTypeDef "STAlts" [tySplitTree , intType , LT.ptr tyAltMap]
-(typeDefAltMap , tyAltMap' , tyAltMap) = structTypeDef "alt"   [intType , dataFnType , voidPtrType]
-
--- Type safety when handling builtins
-data BuiltinStruct = BuiltinStruct {
-   structName      :: L.Name
- , rawStructType   :: L.Type
- , structAliasType :: L.Type
- , structFields    :: M.Map L.Name Int
-}
-
-mkBuiltinStruct :: L.Name -> [(L.Name , LT.Type)] -> BuiltinStruct
-mkBuiltinStruct nm fields = let
-  in BuiltinStruct {
-    structName      = nm
-  , rawStructType   = LT.StructureType False (snd <$> fields)
-  , structAliasType = LT.ptr (LT.NamedTypeReference nm)
-  , structFields    = M.fromList $ zip (fst <$> fields) [0..]
-  }
-
-stCont = mkBuiltinStruct "STCont" [("stNext",tySplitTree) , ("stTy",intType)
-  , ("count",intType) , ("idx",intType) , ("contFns",LT.ptr dataFnType)]
-getFieldIdx :: BuiltinStruct -> L.Name -> Int
-getFieldIdx st lab = fromMaybe (panic $ "field not in scope: " ++ show lab)
-  $ (structFields st) M.!? lab
-
-builtinStructs = [stCont]
+  (x,) <$> phi phiNodes

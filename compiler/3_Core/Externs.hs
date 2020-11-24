@@ -5,7 +5,8 @@
 -- * imported modules
 -- * extern functions (esp. C)
 
-module Externs where
+module Externs (Import(..) , ImportTree , Externs(..) , readParseExtern , readExtern , resolveImports , typeOfLit)
+where
 import Prim
 import qualified ParseSyntax as P
 import CoreSyn

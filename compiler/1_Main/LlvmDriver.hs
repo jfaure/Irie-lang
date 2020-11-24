@@ -61,14 +61,16 @@ passes :: Word -> PassSetSpec = \opt -> defaultCuratedPassSetSpec
 ---------
 -- since the only way to get llvm modules is via 'withModule*' style functions,
 -- this fns' implementation is necessarily weird
--- note LLVM.Module.linkModules destroys the second module
+-- note LLVM.Module.linkModules moves the second (destroyed) into the first.
 withLinkedModules :: [ModuleAST] -> (Context -> ModuleCPP -> IO a)->IO a
-withLinkedModules ms go = withContext $ \c -> 
+withLinkedModules ms go = withContext $ \c ->
+  LLVM.Module.withModuleFromBitcode c (LLVM.Module.File "Memory/hack.bc") $ \hack ->
   let withMod m action = LLVM.Module.withModuleFromAST c m (action c)
   in case ms of
   []   -> error "no module"
-  [m]  -> withMod m go
-  m:ms -> withMod m $ \c1 m1 -> withLinkedModules ms $ \c2 m2 ->
+--[m]  -> withMod m go
+  [m]  -> withMod m $ \c1 m1 -> LLVM.Module.linkModules m1 hack *> go c1 m1
+  m:ms -> withMod m $ \c1 m1 -> withLinkedModules ms $ \c1 m2 ->
     LLVM.Module.linkModules m1 m2 *> go c m1
 
 -- run an extern function TODO elaborate..

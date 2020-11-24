@@ -377,7 +377,7 @@ ttArg , tt :: Parser TT
   appOrArg = arg >>= \fn -> option fn $ choice
     [ Proj fn <$ reservedChar '.' <*> (idenNo_ >>= newFLabel)
     , case fn of
-        Lit l -> LitArray . (l:) <$> some literalP
+--      Lit l -> LitArray . (l:) <$> some literalP
         P.Label l [] -> P.Label l <$> some arg
         fn -> App fn <$> some arg
     ]
@@ -387,7 +387,8 @@ ttArg , tt :: Parser TT
    , lambda     -- "\"
    , con
    , try $ idenNo_ >>= varName -- incl. label
-   , some literalP <&> \case { [l] -> Lit l ; ls -> LitArray ls }
+   , Lit <$> literalP
+-- , some literalP <&> \case { [l] -> Lit l ; ls -> LitArray ls }
    , TyListOf <$> brackets tt
    , parens $ choice [try piBinder , (tt >>= typedTT)]
    ] <?> "ttArg"

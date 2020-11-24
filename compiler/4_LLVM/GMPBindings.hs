@@ -21,7 +21,7 @@ intInstr2GMP :: IntInstrs -> L.Name = \case
   SDiv -> "__gmpz_div"
 
 -- gmp
-(typeDefmpz , tympz' , tympz) = structTypeDef "mpz_t" [intType , intType , voidPtrType]
+--(typeDefmpz , tympz' , tympz) = structTypeDef "mpz_t" [intType , intType , voidPtrType]
 
 initMPZ maybeInit = _ -- do
 --mpz <- alloca' tympz'

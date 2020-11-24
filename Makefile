@@ -12,6 +12,8 @@ fast: $(SRC)
 prof:
 	stack -j9 build --executable-profiling --library-profiling --ghc-options="-fprof-auto"
 
+#mk prof && .stack-work/dist/x86_64-linux-nix/Cabal-2.4.0.1/build/nimzo-exe/nimzo-exe demo.nimzo -p llvm-hs +RTS -p -xc
+
 $(NAME): $(SRC)
 	stack -j9 build --fast --ghc-options="-dynamic" &&\
 	ln -sf $(EXE) ./$(NAME)
