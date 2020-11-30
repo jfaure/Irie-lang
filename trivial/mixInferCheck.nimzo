@@ -1,4 +1,0 @@
-f = (\x -> \g -> (g True ; g 3)) 4 : (a -> b) -> (b;b)
-
--- f should be inferred to have type: Int -> (forall a. a -> b) -> (b;b)
--- we infer the argument while checking the result type

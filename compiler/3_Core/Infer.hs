@@ -1,7 +1,7 @@
 -- see "Algebraic subtyping" by Stephen Dolan <https://www.cl.cam.ac.uk/~sd601/thesis.pdf>
 
 module Infer where
-import GlobalFlags
+import CmdLine
 import Prim
 import BiUnify
 import qualified ParseSyntax as P
@@ -29,32 +29,35 @@ import qualified Data.IntSet as IS
 
 import Debug.Trace
 
-judgeModule :: P.Module -> Externs -> V.Vector Bind
+judgeModule :: P.Module -> Externs -> (V.Vector Bind , V.Vector QTT)
 judgeModule pm exts@(Externs extNames extBinds) = let
-  nBinds = length $ pm ^. P.bindings
-  nArgs  = pm ^. P.parseDetails . P.nArgs
-  go  = judgeBind `mapM_` [0 .. nBinds-1]
+  nBinds  = length $ pm ^. P.bindings
+  nArgs   = pm ^. P.parseDetails . P.nArgs
+  go      = judgeBind `mapM_` [0 .. nBinds-1]
   nFields = M.size (pm ^. P.parseDetails . P.fields)
   nLabels = M.size (pm ^. P.parseDetails . P.labels)
-  in V.create $ do
+  in runST $ do
     v       <- MV.new 0
-    wips    <- MV.replicate nBinds WIP
+    wip'    <- MV.replicate nBinds WIP
     d       <- MV.new nArgs
+    qtt'    <- MV.replicate nArgs (QTT 0 0)
     fieldsV <- MV.replicate nFields Nothing
     labelsV <- MV.replicate nLabels Nothing
     (\i->MV.write d i (BiSub [THArg i] [THArg i])) `mapM_` [0 .. nArgs-1]
     execStateT go $ TCEnvState
       { _pmodule  = pm
       , _externs  = exts
-      , _wip      = wips
+      , _wip      = wip'
+      , _mode     = Reader
       , _bis      = v
       , _domain   = d
+      , _qtt      = qtt'
       , _fields   = fieldsV 
       , _labels   = labelsV
       , _errors   = []
       }
     when (debug getGlobalFlags) (dv_ d)
-    pure wips
+    (,) <$> V.unsafeFreeze wip' <*> V.unsafeFreeze qtt'
 
 -- add argument holes to monotype env and guard against recursion
 withDomain :: IName -> [Int] -> (TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
@@ -133,14 +136,13 @@ judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
-  -- App is the only place things that can go wrong
+  -- App is the only place typechecking can fail
   -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
   -- * ie. introduce result typevar 'a', and biunify (tf+ <= tx+ -> a)
  biUnifyApp fTy argTys = do
    bs <- snd <$> withBiSubs 1 (\idx -> biSub_ fTy [THArrow argTys [THVar idx]])
    _pSub <$> (`MV.read` 0) bs
 
-   -- TODO verify argument subtypes for coercion purposes
  in \case
   P.WildCard -> pure $ Core Hole [THSet 0]
   -- vars : lookup in appropriate environment
@@ -153,12 +155,20 @@ infer = let
         Core e ty -> Core (Var $ VBind b) ty -- don't copy the body
         t -> t
     P.VLocal l  -> do -- monotype env (fn args)
+      use qtt >>= \qttV -> use mode >>= \case
+        Reader  -> MV.modify qttV (over qttReads (+1)) l
+        Builder -> MV.modify qttV (over qttBuilds (+1)) l
       pure $ Core (Var $ VArg l) [THArg l]
     P.VExtern i -> (`readParseExtern` i) <$> use externs
 
-  P.App f' args' -> do
-    f     <- infer f'
-    args  <- infer `mapM` args'
+  P.App fTT argsTT -> do
+    f      <- infer fTT
+    args <- tcStateLocalMode $ use qtt >>= \qtts -> do
+      -- Note. not all fn sig args are explicit (esp. primInstrs), which is problematic for QTT
+      -- So I pad missing modes with Reader, but this is slightly suspicious
+        argModes <- getArgs f `forM` \(i,_ty) ->
+          MV.read qtts i <&> \(QTT _reads builds) -> if builds > 0 then Builder else Reader
+        zipWithM (\m argExpr -> (mode .= m) *> infer argExpr) (argModes ++ repeat Reader) argsTT
     retTy <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
     ttApp judgeBind f args <&> \case
       Core f _ -> Core f retTy
@@ -181,8 +191,9 @@ infer = let
 
   -- Sum
   -- TODO label should biunify with the label's type if known
+  -- TODO recursion + qtt is problematic
   P.Label l tts -> do
-    tts' <- infer `mapM` tts
+    tts' <- tcStateLocalMode $ do { mode .= Builder ; infer `mapM` tts }
     ((`MV.read` l) =<< use labels) >>= \case
       Nothing -> error $ "forward reference to label unsupported: " ++ show l
       Just ty -> if isArrowTy ty

@@ -1,2 +1,0 @@
-plus a b = a + b
-main = plus 2 3

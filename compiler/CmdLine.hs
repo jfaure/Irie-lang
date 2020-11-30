@@ -1,8 +1,19 @@
-module CmdLine (CmdLine(..), parseCmdLine, defaultCmdLine)
+-- Command line arguments are very nearly global constants
+--  they must be initialized first thing at runtime
+module CmdLine (CmdLine(..), parseCmdLine, defaultCmdLine
+      , initGlobalFlags , getGlobalFlags)
 where
-
 import Options.Applicative
 import qualified Data.Text as T
+import Data.IORef
+import System.IO.Unsafe
+
+globalFlags :: IORef CmdLine
+  = unsafePerformIO $ newIORef defaultCmdLine
+initGlobalFlags :: CmdLine -> IO CmdLine -- call this once, at startup
+  = \flags -> flags <$ writeIORef globalFlags flags
+getGlobalFlags :: CmdLine
+  = unsafePerformIO $ readIORef globalFlags
 
 data CmdLine = CmdLine
   { printPass      :: [T.Text]

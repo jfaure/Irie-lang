@@ -1,4 +1,0 @@
-putFloat : Double -> Int
-putFloat f = printf "%f\n" f
-
-main = putFloat (3.1 + 2.0)

@@ -1,6 +1,5 @@
 -- main =~ Text >> Parse >> Core >> STG >> LLVM
 import CmdLine
-import GlobalFlags
 import ParseSyntax
 import Parser
 import ModulePaths
@@ -44,7 +43,7 @@ repl cmdLine = let
   in () <$ runInputT defaultSettings (mapM doLine . catMaybes <$> forever (getInputLine "'''"))
 
 doFile cmdLine it f = T.IO.readFile f >>= doProgText cmdLine it f
-doProgText flags it f t = text2Core flags it f t >>= codegen flags
+doProgText flags it f t = text2Core flags it f t >>= (codegen flags)
 
 ------------------------------------------------
 -- Phase 1: parsing, resolve externs, type check
@@ -61,9 +60,9 @@ text2Core flags seenImports fName progText = do
   (upTreeImports , localImports)
     <- unzip . map fst <$> doFile flags seenImports `mapM` importPaths
 
-  let exts       = resolveImports localImports parsed
-      judged     = judgeModule parsed exts
-      bindNames  = let getNm (FunBind nm _ _ _ _) = nm
+  let exts           = resolveImports localImports parsed
+      (judged , qtt) = judgeModule parsed exts
+      bindNames      = let getNm (FunBind nm _ _ _ _) = nm
         in getNm <$> V.fromList (_bindings parsed)
       judged'    = V.zip bindNames judged
       namedBinds = (\(nm,j)->T.unpack nm ++ show j) <$> judged'
@@ -77,13 +76,14 @@ text2Core flags seenImports fName progText = do
         _ -> pure ()
       addPass passNm = putStrLn "\n  ---  \n" *> putPass passNm
   putPass `mapM_` (printPass flags)
-  pure ((_ , Import modNameMap judged') , exts)
+  pure ((_ , Import modNameMap judged' qtt) , exts)
 
 ---------------------------------
 -- Phase 2: codegen, linking, jit
 ---------------------------------
-codegen flags input@((imports , Import bindNames judged) , exts) = let
-  llvmMod    = mkStg (extBinds exts) judged
+-- TODO make better importable modules (esp. incl. qtt)
+codegen flags input@((imports , Import bindNames judged qtt) , exts) = let
+  llvmMod    = mkStg (extBinds exts) judged qtt
   putPass :: T.Text -> IO () = \case
     "llvm-hs"    -> let
       text = ppllvm llvmMod

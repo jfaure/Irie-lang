@@ -229,14 +229,13 @@ parseMixFixDef :: T.Text -> Either (ParseErrorBundle T.Text Void) [MixFixName]
 
 -- ref = reference indent level
 -- lvl = lvl of first indented item (often == pos)
-indentedItems ref lvl scn p finished = go where
- go = do
-  scn
+indentedItems prev scn p finished = L.indentLevel >>= go where
+ go lvl = scn *> do
   pos <- L.indentLevel
-  lookAhead (eof <|> finished) *> pure [] <|> if
-     | pos <= ref -> pure []
-     | pos == lvl -> (:) <$> p <*> go
-     | otherwise  -> L.incorrectIndent EQ lvl pos
+  [] <$ lookAhead (eof <|> finished) <|> if
+     | pos <= prev -> pure []
+     | pos == lvl  -> (:) <$> p <*> go lvl
+     | otherwise   -> L.incorrectIndent EQ lvl pos
 svIndent = L.indentLevel >>= (indent .=)
 
 ------------
@@ -406,7 +405,11 @@ ttArg , tt :: Parser TT
 
   con = Cons <$> let
     fieldDecl = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> arg
-    in braces $ fieldDecl `sepBy1` reservedChar ';'
+--  in braces $ fieldDecl `sepBy1` reservedChar ';'
+    in do
+    string "##"
+    ref <- use indent <* scn
+    indentedItems ref scn fieldDecl (fail "")
 
   caseSplits = Match <$> let
     split = newArgNest $ mdo
@@ -434,8 +437,7 @@ ttArg , tt :: Parser TT
   letIn = reserved "let" *> do
     incLetNest
     ref <- use indent <* scn
-    lvl <- L.indentLevel
-    indentedItems ref lvl scn funBind (reserved "in") <* reserved "in"
+    indentedItems ref scn funBind (reserved "in") <* reserved "in"
     tt <* decLetNest
 
   typedTT exp = tyAnn >>= \case -- optional type annotation is parsed as anonymous let-binding

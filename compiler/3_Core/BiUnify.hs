@@ -1,5 +1,5 @@
 module BiUnify where
-import GlobalFlags
+import CmdLine
 import Prim
 import qualified ParseSyntax as P
 import CoreSyn as C

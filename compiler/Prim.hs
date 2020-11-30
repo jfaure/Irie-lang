@@ -39,6 +39,7 @@ data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
 data PrimInstr
  -- term instructions
  = IntInstr   IntInstrs
+ | PredInstr  Predicates
  | NatInstr   NatInstrs
  | FracInstr  FracInstrs
  | GMPInstr   PrimInstr
@@ -64,8 +65,8 @@ data TyInstrs
  | Arrow   -- : Set -> Set
 
  -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
-
-data IntInstrs   = Add | Sub | Mul | SDiv | SRem | ICmp
+data Predicates = EQCmp | GECmp | GCmp | LECmp | LCmp
+data IntInstrs   = Add | Sub | Mul | SDiv | SRem
                  | And | Or | Xor | Shl | Shr
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
 data NatInstrs   = UDiv | URem
@@ -93,6 +94,7 @@ deriving instance Show IntInstrs
 deriving instance Show NatInstrs
 deriving instance Show FracInstrs
 deriving instance Show ArrayInstrs
+deriving instance Show Predicates
 
 deriving instance Ord Literal
 deriving instance Ord PrimType
@@ -100,6 +102,7 @@ deriving instance Ord FloatTy
 deriving instance Ord PrimInstr
 deriving instance Ord TyInstrs
 deriving instance Ord IntInstrs
+deriving instance Ord Predicates
 deriving instance Ord NatInstrs
 deriving instance Ord FracInstrs
 deriving instance Ord ArrayInstrs
@@ -109,6 +112,7 @@ deriving instance Eq PrimType
 deriving instance Eq FloatTy
 deriving instance Eq PrimInstr
 deriving instance Eq IntInstrs
+deriving instance Eq Predicates
 deriving instance Eq NatInstrs
 deriving instance Eq FracInstrs
 deriving instance Eq ArrayInstrs

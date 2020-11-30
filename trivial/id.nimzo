@@ -1,2 +1,0 @@
-id : a -> a = \x -> x
-main = id 3

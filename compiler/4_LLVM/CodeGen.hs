@@ -38,13 +38,13 @@ import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Instruction hiding (gep)
 
 import Debug.Trace
-mkStg :: V.Vector Expr -> V.Vector (HName , Bind) -> L.Module
-mkStg externBindings coreBinds = let
+mkStg :: V.Vector Expr -> V.Vector (HName , Bind) -> V.Vector QTT -> L.Module
+mkStg externBindings coreBinds qtt = let
   mkVAFn ty nm = L.GlobalDefinition functionDefaults
     { name = L.mkName nm , linkage = L.External , parameters=([],True) , returnType = ty }
   nBinds = V.length coreBinds
   moduleDefs = runST $ do
-    v <- V.thaw (TWIP <$> coreBinds)
+    v <- V.unsafeThaw (TWIP <$> coreBinds) -- ok since (TWIP <$> coreBinds) is a new vector already
     llvmDefs <$> execStateT (cgBind `mapM` [0 .. nBinds-1]) CGState {
         wipBinds = v
       , externs  = externBindings
@@ -263,7 +263,10 @@ cgInstrApp instr args = case instr of
     Zext    -> (\[a] -> zext a intType) =<< (cgTerm' `mapM` args)
     IfThenE -> (\[ifE, thenE, elseE] -> genSwitch ifE [(C.Int 1 1 , thenE)] (Just elseE)) args
     AddOverflow -> _
-    i -> emitInstr intType =<< (\instr [a,b] -> instr a b) (cgPrimInstr i) <$> (cgTerm' `mapM` args)
+    i -> let instr = primInstr2llvm i in cgTerm' `mapM` args >>= \ars -> case (i , ars) of
+      (PredInstr _ , [a,b]) -> emitInstr boolType (instr a b)
+      (_ , [a,b]) -> emitInstr (LT.typeOf $ head ars) (instr a b)
+      x -> panic "arity mismatch on prim instruction"
 
 cgType :: [TyHead] -> CGEnv s L.Type
 cgType = \case
@@ -298,7 +301,7 @@ cgPrimInstr i = case i of
   Alloc    -> _
   Len      -> _
   SizeOf   -> _ -- C.sizeof
-  x -> primInstr2llvm i
+  x -> primInstr2llvm x
 
 genSwitch :: Term -> [(C.Constant , Term)] -> Maybe Term -> CGBodyEnv s L.Operand
 genSwitch scrutTerm branches defaultBranch = let
@@ -306,7 +309,7 @@ genSwitch scrutTerm branches defaultBranch = let
   genAlt endBlock (scrutVal , expr) = do -- collect (result,block) pairs for the phi instr
     flip (,) <$> block <*> (cgTerm' expr <* br endBlock)
   in mdo
-  scrut <- cgTerm' scrutTerm
+  scrut <- cgTerm' $ did_ scrutTerm
   switch scrut dBlock (zip (fst <$> branches) (snd <$> retBlockPairs))
   dBlock   <- (block `named`"switchDefault")
   dSsa   <- case defaultBranch of

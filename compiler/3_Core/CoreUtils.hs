@@ -6,6 +6,11 @@ import Prim
 import CoreSyn
 import PrettyCore
 
+-- Freevars ignored ?
+getArgs :: Expr -> [(IName , Type)] = \case
+  CoreFn args _ _ _ -> args
+  x -> []
+
 isArrowTy = \case
   [THArrow{}] -> True
   [THPi (Pi p t)] -> isArrowTy t
@@ -56,11 +61,11 @@ getTypeIndexes = \case
   [THPi (Pi b ty)] -> getTypeIndexes ty
   x -> []
 
-zipWithPad :: a -> b -> (a->b->c) -> [a] -> [b] -> [c]
-zipWithPad a b f = go where
-  go [] y = zipWith f (repeat a) y
-  go x [] = zipWith f x (repeat b)
-  go (x:xs) (y:ys) = f x y : go xs ys
+--zipWithPad :: a -> b -> (a->b->c) -> [a] -> [b] -> [c]
+--zipWithPad a b f = go where
+--  go [] y = zipWith f (repeat a) y
+--  go x [] = zipWith f x (repeat b)
+--  go (x:xs) (y:ys) = f x y : go xs ys
 
 mergeIndex :: Expr -> Expr -> Expr
 mergeIndex = _

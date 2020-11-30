@@ -29,7 +29,8 @@ import Debug.Trace
 -- Imports are typechecked binds + parsed nameMap
 data Import = Import {
     importNames :: P.NameMap
-  , importBinds :: CoreBinds
+  , importBinds :: V.Vector (HName , Bind)
+  , importQTT   :: V.Vector QTT
 }
 type ImportTree = M.Map HName Import
 
@@ -156,11 +157,14 @@ instrs2 :: [(HName , (PrimInstr , Type))] =
 
 instrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("_+_" , (IntInstr Add  , ([i, i] , i) ))
-  , ("plus", (IntInstr Add  , ([i, i] , i) ))
   , ("_-_" , (IntInstr Sub  , ([i, i] , i) ))
-  , ("_<_" , (IntInstr ICmp , ([i, i] , b) ))
+  , ("plus", (IntInstr Add  , ([i, i] , i) ))
+  , ("sub" , (IntInstr Sub  , ([i, i] , i) ))
+  , ("le" , (PredInstr LECmp , ([i, i] , b) ))
+  , ("ge" , (PredInstr GECmp , ([i, i] , b) ))
+  , ("eq" , (PredInstr EQCmp , ([i, i] , b) ))
   , ("_!_" , (MemInstr ExtractVal , ([ia, i] , i) ))
-  , ("->",   (TyInstr Arrow , ([set] , set)))
+  , ("->",   (TyInstr Arrow , ([set,set] , set)))
   , ("IntN", (TyInstr MkIntN , ([i] , set)))
   , ("zext", (Zext  , ([b] , i) ))
   , ("primLen" , (Len , ([ia] , i)))

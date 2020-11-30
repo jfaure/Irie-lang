@@ -1,5 +1,0 @@
---f a = (+) 1 a
-p a b = a + b
-g = p 3
---g = ((+) 3) 4
-main = printf "%d\n" (g 1)

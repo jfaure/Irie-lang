@@ -33,11 +33,17 @@ PrintList l = case l of
   | Nil => 0
   | Cons i l' => plus (putNumber i) (PrintList l')
 
+-- TODO incl subdata of an arg in that arg when computing QTT
 Inc l = case l of
   | Nil => Nil
   | Cons i l' => Cons (plus 1 i) (Inc l')
 
-main = PrintList (Inc (Cons 12 (Cons 98 Nil)))
+--go n l = case l of
+--  | Nil => Cons n Nil
+--  | Cons i l2 => Cons (plus i n) l
+scanSum n l = ifThenE (le n 0) l (scanSum (sub n 1) (Cons n l))
+
+main = PrintList (Inc (scanSum 100000 Nil)) -- (Cons 12 (Cons 98 Nil)))
 
 --main = PrintList (Inc (Cons 12 (Cons 43 Nil)))
 

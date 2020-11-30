@@ -1,16 +1,20 @@
+# All
+  * zipwith / zip risky since lists can be diff lengths
 ## Top
   * language server
   * precompiled modules
   * Error reporting
- ## Parse
-  * parse C (?)
+## Parse
+  * rec + subfns (case split alts) + qtt on top binds
   * Source locations
   * linefolds
   * rec
+  * parse C (?)
+  * indent nests (unravel multiple at once)
 ## Types
   * Dependent normalisation
   * Calculus of effects (cf. fire triangle)
 ## CodeGen
   * GMP
-  * Stack-Machine - Data streams
-  * labels => struct indexes !
+  * convert core indexes -> llvm indexes
+  * subtyping records/sumtypes

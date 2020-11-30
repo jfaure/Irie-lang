@@ -52,7 +52,6 @@ type IName     = Int    -- Int name: index into bind|type vectors
 type BiSubName = Int    -- index into bisubs
 type IField    = Int    -- product-type fields index
 type ILabel    = Int    -- sum-type labels     index
-type CoreBinds = V.Vector (HName , Bind)
 
 data VName
  = VBind IName -- bind   map
@@ -104,6 +103,9 @@ data TyHead -- head constructors for types.
 
 data Pi = Pi [(IName , Type)] Type -- deBruijn indexes
 
+-- TODO handle recursion
+data QTT = QTT { _qttReads :: Int , _qttBuilds :: Int } deriving Show
+
 data TCError
  = ErrBiSub     T.Text
  | ErrTypeCheck T.Text
@@ -112,7 +114,7 @@ data TCError
 
 data Expr
  = Core     Term Type
- | CoreFn   [(IName , Type)] IS.IntSet Term Type
+ | CoreFn   [(IName , Type)] IS.IntSet Term Type -- arg inames, types, freevars, term ty
  | ExtFn    HName Type
  | Ty       Type
  | Fail     TCError
@@ -134,6 +136,7 @@ type TyPlus   = [TyHead] -- output types (lattice join)
 data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
 newBiSub = BiSub [] []
 makeLenses ''BiSub
+makeLenses ''QTT
 
 -- label for the different head constructors. (KAny is '_' in a way top of the entire universe)
 data Kind = KPrim | KArrow | KVar | KArg | KSum | KProd | KRec | KAny

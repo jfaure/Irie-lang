@@ -1,6 +1,0 @@
-data Stack = Nil | Cons Int Stack
-
-map : (Int -> Int) -> _ -> Stack
-map f l = case l of
-  Cons e s -> Cons (f e) (map f s)
-  Nil      -> Nil
