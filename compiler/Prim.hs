@@ -48,6 +48,7 @@ data PrimInstr
  | TyInstr    TyInstrs
  | CallExt    T.Text
  | Zext
+ | StrToL
  | PutNbr
  | IfThenE
  | ExprHole   -- errors on eval, but will typecheck
@@ -58,6 +59,9 @@ data PrimInstr
  | Alloc
  | Len -- len of PrimArray
  | SizeOf
+
+ | Link
+ | Unlink
 
  -- type instructions
 data TyInstrs
@@ -76,17 +80,7 @@ data ArrayInstrs = ExtractVal | InsertVal | Gep
 --deriving instance Eq FloatTy
 
 deriving instance Show Literal
-instance Show PrimType where
- show = \case
-   PrimInt x -> "%i" ++ show x
-   PrimNat x -> "%ui" ++ show x
-   PrimFloat f -> "%f" ++ show f
-   PrimArr prim -> "%@[" ++ show prim ++ "]"
-   PrimTuple prim -> "%tuple(" ++ show prim ++ ")"
-   PtrTo t -> "%ptr(" ++ show t ++ ")"
-   PrimExtern   tys -> "%extern(" ++ show tys ++ ")"
-   PrimExternVA tys-> "%externVA(" ++ show tys ++ ")"
-
+deriving instance Show PrimType
 deriving instance Show FloatTy
 deriving instance Show PrimInstr
 deriving instance Show TyInstrs
@@ -118,8 +112,17 @@ deriving instance Eq FracInstrs
 deriving instance Eq ArrayInstrs
 deriving instance Eq TyInstrs
 
+prettyPrimType = \case
+  PrimInt x -> "%i" ++ show x
+  PrimNat x -> "%ui" ++ show x
+  PrimFloat f -> "%f" ++ show f
+  PrimArr prim -> "%@[" ++ show prim ++ "]"
+  PrimTuple prim -> "%tuple(" ++ show prim ++ ")"
+  PtrTo t -> "%ptr(" ++ show t ++ ")"
+  PrimExtern   tys -> "%extern(" ++ show tys ++ ")"
+  PrimExternVA tys-> "%externVA(" ++ show tys ++ ")"
+
 primSubtypeOf :: PrimType -> PrimType -> Bool
 PrimInt a `primSubtypeOf` PrimInt b = a <= b
 PrimNat a `primSubtypeOf` PrimNat b = a <= b
 x `primSubtypeOf` y = x == y
-

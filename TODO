@@ -1,5 +1,5 @@
-# All
-  * zipwith / zip risky since lists can be diff lengths
+# Compiler coding style
+  * avoid zipwith / zip since lists can be diff lengths
 ## Top
   * language server
   * precompiled modules
@@ -9,12 +9,47 @@
   * Source locations
   * linefolds
   * rec
-  * parse C (?)
-  * indent nests (unravel multiple at once)
 ## Types
+  * !! cleanup return types for sumdatas
   * Dependent normalisation
   * Calculus of effects (cf. fire triangle)
+  * ifThenE bad type
 ## CodeGen
   * GMP
-  * convert core indexes -> llvm indexes
-  * subtyping records/sumtypes
+  * subtyping records/sumtypes (core idxs -> llvm idxs)
+
+!!
+read type vars
+finish fralloc (flat & shared data)
+subtype coercions
+repl & linking
+
+??
+# subtype coercion on composite types
+  * add fnptr to the frame
+# how to print JIT results
+  * need show instances
+# Modules (treat as records / sigma types)
+  * insane dependencies (at least within the module itself)
+# labels/fields namespace
+  * structural subtyping vs predefined types
+  * collect predefined types to generate their offset tables
+  * how to subtype deep into composite datas ?
+  * Lenses
+# Fns (PAps + subtyped arguments)
+  * Fn = | FnPtr | PAp
+  | give all fnptrs 1 more arg then expected in case pap (UB)
+# record subtyping
+  * Record = | structs | packed struct | record subtype
+  offset table (also subtyping coercions ?)
+# Polymorphism
+
+Fn = & SubtypeFns & ( | FnPtr | PAp )
+
+## Nonsense
+?! record subtyping options
+  fn pointer to resolve field  -- push + ret overhead
+  offset table
+  make new record if necessary -- copy n fields
+  IntMap
+

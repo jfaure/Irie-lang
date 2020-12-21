@@ -115,8 +115,8 @@ atomicBiSub p m = -- trace ("⚛bisub: " ++ prettyTy [p] ++ " <==> " ++ prettyTy
 --  pure $ map (getRetType . getLabelTy) labelTys
 
   -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
-  (p , THExt i) -> biSub [p]     =<< tyExpr . (`readExtern` i)<$>use externs
-  (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readExtern` i)<$>use externs
+  (p , THExt i) -> biSub [p]     =<< tyExpr . (`readPrimExtern` i)<$>use externs
+  (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readPrimExtern` i)<$>use externs
 --  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
   (THRec m , THRec y) -> unless (m == y) $ error "recursive types are not equal"
   (THRec m , x) -> pure () -- TODO ?
@@ -150,7 +150,7 @@ check e ars labTys inferred gotRaw = let
 --       -> [TyHead] -> [TyHead] -> Bool
 check' es ars labTys inferred gotTy = let
   check'' = check' es ars labTys :: [TyHead] -> [TyHead] -> Bool
-  readExt es x = case readExtern es x of
+  readExt es x = case readPrimExtern es x of
     c@Core{} -> error $ "type expected, got: " ++ show c
     Ty t -> t
   checkAtomic :: TyHead -> TyHead -> Bool
@@ -195,41 +195,6 @@ check' es ars labTys inferred gotTy = let
     []   -> False
     tys  -> all (\t -> any (checkAtomic t) gotTy) tys
 
-mergeTypes :: [TyHead] -> [TyHead] -> [TyHead]
-mergeTypes l1 l2 = foldr doSub l2 l1
-
--- add head constructors, transitions and flow edges
-doSub :: TyHead -> [TyHead] -> [TyHead]
-doSub newTy [] = [newTy]
-doSub newTy (ty:tys) = if eqTyHead newTy ty
-  then mergeTyHead newTy ty ++ tys
-  else (ty : doSub newTy tys)
-
-mergeTyHead :: TyHead -> TyHead -> [TyHead]
-mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
-  let join = [t1 , t2]
-      zM = zipWith mergeTypes
-  in case join of
-  [THSet a , THSet b] -> [THSet $ max a b]
-  [THPrim a , THPrim b]  -> if a == b then [t1] else join
-  [THVar a , THVar b]    -> if a == b then [t1] else join
-  [THRec a , THRec b]    -> if a == b then [t1] else join
-  [THExt a , THExt  b]   -> if a == b then [t1] else join
---  [THAlias a , THAlias b] -> if a == b then [t1] else join
-  [THSum a , THSum b]     -> [THSum   $ union a b] --[THSum (M.unionWith mergeTypes a b)]
-  [THSplit a , THSplit b] -> [THSplit $ union a b] --[THSum (M.unionWith mergeTypes a b)]
-  [THProd a , THProd b]   -> [THProd $ intersect a b] -- [THProd (M.unionWith mergeTypes a b)]
-  [THArrow d1 r1 , THArrow d2 r2]
-    | length d1 == length d2 -> [THArrow (zM d1 d2) (mergeTypes r1 r2)]
-  [THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!
-  [THPi (Pi b1 t1) , THPi (Pi b2 t2)] -> [THPi $ Pi (b1 ++ b2) (mergeTypes t1 t2)]
-  [THPi (Pi b1 t1) , t2] -> [THPi $ Pi b1 (mergeTypes t1 [t2])]
-  [t1 , THPi (Pi b1 t2)] -> [THPi $ Pi b1 (mergeTypes [t1] t2)]
---[THRecSi r1 a1 , THRecSi r2 a2] -> if r1 == r2
---  then [THRecSi r1 (zipWith mergeTypes a1 a2)]
---  else join
-  _ -> join
-
 -----------------------------
 -- Simplification of types --
 -----------------------------
@@ -249,17 +214,18 @@ mkTcFailMsg gotTerm gotTy expTy =
   ++ "\nIn the expression: " ++ show gotTy
   )
 
-eqTyHead a b = kindOf a == kindOf b
-kindOf = \case
-  THPrim{}  -> KPrim
-  THVar{}   -> KVar
-  THArrow{} -> KArrow
-  _ -> KAny
-
 -- deciding term equalities ..
 termEq t1 t2 = case (t1,t2) of
 --(Var v1 , Var v2) -> v1 == v2
   x -> True
 --x -> False
 
-
+-- evaluate type application (from THIxPAp s)
+tyAp :: [TyHead] -> IM.IntMap Expr -> [TyHead]
+tyAp ty argMap = map go ty where
+  go :: TyHead -> TyHead = \case
+    THArg y -> case IM.lookup y argMap of
+      Nothing -> THArg y
+      Just (Ty [t]) -> t
+    THArrow as ret -> THArrow (map go <$> as) (go <$> ret)
+    x -> x

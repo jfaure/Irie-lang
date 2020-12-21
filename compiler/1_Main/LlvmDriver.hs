@@ -8,6 +8,13 @@ where
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Monad
+import Data.IORef
+import Data.Function
+import Control.DeepSeq as DeepSeq
+import qualified Data.Map as Map
+import qualified Data.Vector as V
+import qualified Data.ByteString.Short as BS
+
 import qualified LLVM.AST
 import qualified LLVM.Module
 import LLVM.Context
@@ -21,8 +28,17 @@ import qualified Data.ByteString.Char8 as B
 --import Data.Word
 import LLVM.Target
 import LLVM.CodeModel
+import LLVM.Relocation as Reloc
 import qualified LLVM.ExecutionEngine as EE
-import Foreign.Ptr ( FunPtr, castFunPtr ) -- pointer to functions in the JIT
+import Foreign.Ptr -- for fn pointers in the JIT
+
+import Control.Exception
+import LLVM.OrcJIT
+import LLVM.CodeGenOpt as CodeGenOpt
+import LLVM.CodeModel as CodeModel
+import LLVM.Internal.OrcJIT.CompileLayer
+import LLVM.Linking
+
 foreign import ccall "dynamic" haskFun :: FunPtr (IO Double) -> IO Double
 
 type ModuleAST = LLVM.AST.Module    -- haskell llvm-hs-pure
@@ -98,3 +114,64 @@ runJIT opt objs mod =
     *> runFn "main" executionEngine m >>= \case
         Nothing -> error "main() not found"
         Just r  -> pure ()
+
+--newtype JITMachine b = JITMachine { jitmachine :: (ModuleAST , BS.ShortByteString , FunPtr b -> IO ()) -> IO (JITMachine b) }
+data JITState = JITState {
+   jitContext :: Context
+ , jitES :: ExecutionSession
+ , jitTM :: TargetMachine
+ , jitcompileLayer :: IRCompileLayer ObjectLinkingLayer
+}
+
+withJITMachine go = let
+  -- the jit needs a (module -> symbol) resolver to find symbols during the linking/compile stage
+  myResolver = SymbolResolver $ \mangled -> getSymbolAddressInProcess mangled >>= \ptr -> pure $
+    Right (JITSymbol ptr (defaultJITSymbolFlags { jitSymbolExported = True }))
+  myResolver2 ircl = SymbolResolver $ \mangled -> findSymbol ircl mangled False >>= \case
+    s@Right{} -> pure s
+    Left{}    -> getSymbolAddressInProcess mangled >>= \ptr -> pure $ Right $ (JITSymbol ptr (defaultJITSymbolFlags { jitSymbolExported = True }))
+  in
+  withContext $ \context ->
+  (loadLibraryPermanently Nothing *>) $ -- load symbols from current process (basically libc)
+  withHostTargetMachine Reloc.PIC CodeModel.Default CodeGenOpt.Default $ \tm ->
+  withExecutionSession $ \es ->
+  withSymbolResolver es myResolver $ \psr ->
+  withObjectLinkingLayer es (\k -> pure psr  {- fmap (\rs -> rs Map.! k  ) (readIORef resolvers)-}) $ \objectLayer ->
+  withIRCompileLayer objectLayer tm $ \compileLayer ->
+
+  LLVM.Module.withModuleFromBitcode context (LLVM.Module.File "Memory/hack.bc") $ \hack ->
+  withModuleKey es $ \k -> addModule compileLayer k hack *>
+  go (JITState context es tm compileLayer)
+
+runINJIT :: JITState -> (ModuleAST , BS.ShortByteString , (FunPtr b -> IO ())) -> IO ()
+runINJIT (JITState context es tm compileLayer) (hsMod , nm , doFn) =
+    LLVM.Module.withModuleFromAST context hsMod $ \cppMod -> do
+    -- Note addModule destroys the module, mergeing it into the jit
+    withModuleKey es $ \k -> addModule compileLayer k cppMod
+    fSymbol <- mangleSymbol compileLayer nm
+    findSymbol compileLayer fSymbol True >>= \case
+      Left{} -> putStrLn ("Couldn't find: " ++ show nm)
+      Right (JITSymbol fnAddr _) -> do
+        let fn = castPtrToFunPtr (wordPtrToPtr fnAddr)
+        doFn fn
+--      mkMainFun fn
+        runExtIOFn compileLayer "flushStdout"
+--      evaluate $ DeepSeq.force (mkMainFun fn)
+--      print $ mkDoubleFun fn $ 3.3
+    pure ()
+
+runExtIOFn compileLayer name = mangleSymbol compileLayer name >>= \nm' -> findSymbol compileLayer nm' True >>= \case
+  Right (JITSymbol fflush _) -> mkMainFun (castPtrToFunPtr (wordPtrToPtr fflush))
+  Left{} -> putStrLn $ "couldn't find symbol" ++ show name
+
+-- mkDoubleFun :: FunPtr (Double -> Double) -> (Double -> Double)
+
+foreign import ccall "dynamic"
+  mkDoubleFun :: FunPtr (Double -> Double) -> (Double -> Double)
+foreign import ccall "dynamic"
+  mkMainFun :: FunPtr (IO ()) -> (IO ())
+
+testJIT = withJITMachine $ \jit -> do
+  runINJIT jit (LLVM.AST.defaultModule , "test" , \f -> (mkMainFun f))
+  runINJIT jit (LLVM.AST.defaultModule , "xd" , \f -> print $ (mkDoubleFun f) 3.3)
+--  >>= \js -> incrementalJIT (Just js) (LLVM.AST.defaultModule , "test" , \f -> pure ())

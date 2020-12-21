@@ -28,14 +28,9 @@ typedef struct FreeDataGroup* FreeDataGroup;
 typedef struct Frame* Frame;
 typedef struct Frag* Frag;
 
-void *
-memMap(void *hint, size_t size) {
-  void *ret = mmap(hint, size
-    , PROT_READ | PROT_WRITE
-    , MAP_PRIVATE | MAP_ANON, -1, 0);
-  if (ret == MAP_FAILED)
-    return NULL;
-  return ret;
+void *memMap(void *hint, size_t size) {
+  void *ret = mmap(hint, size , PROT_READ | PROT_WRITE , MAP_PRIVATE | MAP_ANON, -1, 0);
+  return (ret == MAP_FAILED ? NULL : ret)
 }
 //if (munmap(addr, size) == -1) return;
 

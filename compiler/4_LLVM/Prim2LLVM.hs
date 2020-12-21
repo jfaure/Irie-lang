@@ -3,6 +3,7 @@ module Prim2LLVM where
 
 import Prim
 import CoreSyn
+import Externs
 import PrettyCore
 import Control.Monad.ST.Lazy
 import Control.Monad.State.Lazy
@@ -48,8 +49,8 @@ type CGBodyEnv s a = IRBuilderT (StateT (CGState s) (ST s)) a
 data CGState s = CGState {
  -- Input
    wipBinds   :: MV.MVector s StgWIP
- , externs    :: V.Vector Expr
- , argQTT     :: V.Vector QTT
+ , externs    :: Externs --V.Vector Expr
+ , coreModule :: JudgedModule
 
  -- Output
  , llvmDefs   :: [L.Definition]
@@ -62,7 +63,7 @@ data CGState s = CGState {
 data CallGraph s = CallGraph {
    regArgs      :: IM.IntMap L.Operand
  , dataArgs     :: IM.IntMap DataArg -- incl. temp datas. these must all be consumed !
- , splits       :: [Split]   -- keyed on lnames; sumtypes split earlier on this SF
+ , splits       :: [Split]   -- sumtypes split earlier on this SF
 } deriving Show
 
 data DataArg = DataArg { qtt :: Int , aframe :: L.Operand , dOp :: L.Operand } deriving Show
@@ -76,8 +77,11 @@ data Split = Split { -- a data opened by Match (may be reused or freed)
 -- currency used in the code generator
 data STGOp = STGOp  {
    op  :: L.Operand
- , fr  :: Maybe (L.Operand) -- , QTT , Maybe IName) -- anonymous datas always single use ?
-}
+ , fr  :: Maybe DataFrame
+} deriving Show
+type DataFrame = L.Operand
+--data DataFrame = TreeFrame L.Operand | FlatFrame L.Operand
+--data DataFrame = DFTree { getDFrame :: L.Operand } | DFList { getDFrame :: L.Operand } deriving Show
 
 -- TODO
 -- * trim (fn property)
@@ -85,33 +89,40 @@ data STGOp = STGOp  {
 -- Want to know: qtt of arg use + arg build
 
 -- ??
--- unroll
--- poly | copyable data
--- wrap frames; eg. containers can avoid frame-merge
--- when trim | finalize frame (last builder)
+-- inplaceing sublists
+-- Implicit pointers (esp. flat data)
+-- paps (pap vs fn ptr)
+-- poly & copyable data
+-- wrap frames; eg. containers (to avoid frame-merge)
 -- size classes + extensible fastbins (on frame-merge)
 -- foldr elim ; foldr f z = \case Empty => z ; (Leaf x) => f x z ; (Node l k r) => foldr f (f k (foldr f z r)) l
+-- extraction (esp. list)
+
+-- !!
+-- Builder qtt
+-- PAP: fn ptrs are lists of ptrs, if first is NULL, then it's a PAP
 
 -- fnDef:
---   dup args if > 1 use
+--   dataArgs become 2 args; add the frame
 -- fnApp:
---   codegen each arg
---   finalize the ret frame here if non-rec call and (anonymous / let-bound linear)
+--   dup args if needed by fn
+--   codegen each arg + give fn frame
+--   maybe end the ret frame builder
 -- Label: like fnApp, also
 --   merge data arg frames (or make a frame)
+--   either newFrag, or pushFlat
 -- Match:
---   find min qtt of match fn ; insert extra dups on each branch
+--   insert extra dups on each branch ; report min for the whole branch statement
 --   register split data (basically directly inline the splitter fns)
---   if frame not used: then free frame else free frags
---   free all argframes used in any branch (all branches are expected to use each data the same)
+--   if frame not used: then free frame else free frags (if useful)
 
 modifySF f = modify $ \x->x { stack = (\(x:xs) -> f x : xs) (stack x) }
 
 data StgWIP
  = TWIP   (HName , Bind)
 
- | STGFn     { freeArgs :: [IName] , fnOp :: L.Operand }
- | STGDataFn { freeArgs :: [IName] , fnOp :: L.Operand , sts :: IM.IntMap QTT }
+ | STGFn     { retData :: Bool , freeArgs :: [IName] , fnOp :: L.Operand }
+-- | STGDataFn { freeArgs :: [IName] , fnOp :: L.Operand , sts :: IM.IntMap QTT }
  | STGConstant { fnOp :: L.Operand } -- top level functions for now
 
  | LLVMTy L.Type
@@ -119,12 +130,16 @@ data StgWIP
  deriving Show
 
 getVAFn retTy nm = L.ConstantOperand (C.GlobalReference (LT.ptr $ LT.FunctionType retTy [] True) (L.mkName nm))
-frAlloc_mergeFrames args      = getVAFn voidPtrType "fralloc_mergeFrames" `call'` args
-frAlloc_shareFrame args       = getVAFn voidPtrType "fralloc_shareFrames" `call'` [args]
+frAlloc_mergeFrames args      = getVAFn frameType   "fralloc_mergeFrames" `call'` args
+frAlloc_shareFrame args       = getVAFn frameType   "fralloc_shareFrames" `call'` [args]
 frAlloc_freeFrame frame       = getVAFn voidPtrType "fralloc_freeFrame" `call'` [frame]
-frAlloc_isSingle frame        = getVAFn intType  "fralloc_isSingle" `call'` [frame]
+frAlloc_isSingle frame        = getVAFn intType     "fralloc_isSingle" `call'` [frame]
 frAlloc_new frame sz          = getVAFn voidPtrType "fralloc_newFrag" `call'` [frame , sz]
 frAlloc_freeFrag frame ptr sz = getVAFn voidPtrType "fralloc_freeFrag" `call'` [frame,ptr,sz]
+
+frAlloc_DFList_mergeFrames args = getVAFn frameType "fralloc_DFList_mergeFrames" `call'` args
+frAlloc_push frame sz           = getVAFn voidPtrType "fralloc_push" `call'` [frame , sz]
+frAlloc_pop  frame ptr sz       = getVAFn voidPtrType "fralloc_pop" `call'` [frame,sz] -- ! no ptr needed
 
 freshTopName :: BS.ShortByteString -> CGEnv s L.Name
 freshTopName suggestion = do
@@ -164,7 +179,7 @@ primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
   t -> error $ show t
 
 -- basically is it bigger than register size
-isDataTyHead = \case { THSum{}->True ; THSplit{}->True ; THProd{}->True ; _->False }
+isDataTyHead = \case { THSum{}->True ; THSplit{}->True ; THProd{}->True ; THRec{}->True ; THExt 21->True ; _->False } -- HACK
 
 primTy2llvm :: PrimType -> L.Type =
   let doExtern isVa tys =
@@ -210,6 +225,7 @@ emitArray nm arr = let
 --voidPtrType = charPtrType -- llvm doesn't allow void pointers
 tagBits = 32
 voidPtrType = LT.ptr $ LT.NamedTypeReference "ANY"
+frameType   = LT.ptr $ LT.NamedTypeReference "Fr"
 polyType = voidPtrType -- LT.ptr $ LT.NamedTypeReference "A"
 charPtrType :: L.Type = LT.PointerType (LT.IntegerType 8) (AddrSpace 0)
 intType    = LT.IntegerType 32
@@ -306,14 +322,18 @@ pApAp pap papArity llArgs =
 --   if doPhi then phi phiNodes
 --   else pure (L.ConstantOperand C.TokenNone)
 
-mkBranchTable :: L.Operand -> [(BS.ShortByteString , CGBodyEnv s (a , L.Operand))] -> CGBodyEnv s ([a] , L.Operand)
-mkBranchTable scrut alts = mdo
-  switch scrut defaultBlock (zip (C.Int 32 <$> [0..]) entryBlocks)
-  (x , entryBlocks , phiNodes) <- unzip3 <$> alts `forM` \(blockNm , cg) -> do
+mkBranchTable :: L.Operand -> [C.Constant] -> [(BS.ShortByteString , CGBodyEnv s STGOp)] -> CGBodyEnv s STGOp
+mkBranchTable scrut labels alts = mdo
+  switch scrut defaultBlock (zip labels entryBlocks)
+  (entryBlocks , phiNodes , phiNodesFrames) <- unzip3 <$> alts `forM` \(blockNm , cg) -> do
     entry <- block `named` blockNm
-    (x , retOp) <- cg <* br endBlock
+    STGOp retOp maybeDFrame <- cg <* br endBlock
     exit <- currentBlock
-    pure (x , entry , (retOp , exit))
+    pure (entry , (retOp , exit) , (,exit) <$> maybeDFrame)
   defaultBlock <- (block `named` "default") <* unreachable
   endBlock <- block `named` "end"
-  (x,) <$> phi phiNodes
+  op <- phi phiNodes
+  dframe <- case catMaybes phiNodesFrames of
+    []  -> pure Nothing
+    ars -> Just <$> phi ars
+  pure $ STGOp op dframe

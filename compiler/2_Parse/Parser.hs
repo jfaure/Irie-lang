@@ -53,6 +53,8 @@ makeLenses ''ParseState
 
 type Parser = ParsecT Void T.Text (ST.State ParseState)
 
+--getOffset
+
 --------------------
 -- Lens machinery --
 --------------------
@@ -278,7 +280,11 @@ decl = svIndent *> choice
    [ reserved "import" *> (iden >>= addImport)
    , extern
    , void funBind <?> "binding"
+   , bareTT
    ]
+
+-- for the repl
+bareTT = addAnonBindName *> ((\tt -> addBind (FunBind "replExpr" [] IS.empty [FnMatch [] [] tt] Nothing)) =<< tt)
 
 extern =
  let _typed = reservedOp ":" *> tt
@@ -547,11 +553,18 @@ literalP = let
   char :: Parser Char = between (single '\'') (single '\'') L.charLiteral
   stringLiteral :: Parser [Char] = choice
     [ single '\"'   *> manyTill L.charLiteral (single '\"')
+    , (string "\"\"\"") *> manyTill L.charLiteral (string "\"\"\"")
     , (string "''") *> manyTill L.charLiteral (string "''")]
+  intLiteral = choice
+    [ L.decimal
+    , string "0b" *> L.binary
+    , string "0x" *> L.hexadecimal
+    , string "0o" *> L.octal
+    ]
  in lexeme $ choice
    [ Char   <$> char
    , String <$> stringLiteral
-   , Int    <$> L.decimal
+   , Int    <$> intLiteral
    , numP
    ]
 

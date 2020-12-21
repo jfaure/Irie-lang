@@ -15,6 +15,7 @@ category:            Compilers
 description:         Please see the README on GitHub at <https://github.com/jfaure/nimzo#readme>
 
 dependencies:
+- deepseq
 - primitive
 - base >= 4.7 && < 5
 - protolude

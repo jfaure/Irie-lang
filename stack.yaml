@@ -23,8 +23,8 @@ compiler: ghc-8.8.4
 
 nix:
  enable: true
- shell-file: default.nix
  pure: false
+ shell-file: default.nix
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.

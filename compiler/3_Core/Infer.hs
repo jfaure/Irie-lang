@@ -29,35 +29,51 @@ import qualified Data.IntSet as IS
 
 import Debug.Trace
 
-judgeModule :: P.Module -> Externs -> (V.Vector Bind , V.Vector QTT)
-judgeModule pm exts@(Externs extNames extBinds) = let
+judgeModule :: P.Module -> V.Vector HName -> Externs -> JudgedModule
+judgeModule pm hNames exts = let
   nBinds  = length $ pm ^. P.bindings
   nArgs   = pm ^. P.parseDetails . P.nArgs
-  go      = judgeBind `mapM_` [0 .. nBinds-1]
   nFields = M.size (pm ^. P.parseDetails . P.fields)
   nLabels = M.size (pm ^. P.parseDetails . P.labels)
   in runST $ do
-    v       <- MV.new 0
+    bis'    <- MV.new 0
     wip'    <- MV.replicate nBinds WIP
-    d       <- MV.new nArgs
+    domain' <- MV.new nArgs
     qtt'    <- MV.replicate nArgs (QTT 0 0)
     fieldsV <- MV.replicate nFields Nothing
     labelsV <- MV.replicate nLabels Nothing
-    (\i->MV.write d i (BiSub [THArg i] [THArg i])) `mapM_` [0 .. nArgs-1]
-    execStateT go $ TCEnvState
+    (\i -> MV.write domain' i (BiSub [THArg i] [THArg i])) `mapM_` [0 .. nArgs-1]
+
+    -- go
+    st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
       { _pmodule  = pm
       , _externs  = exts
       , _wip      = wip'
       , _mode     = Reader
-      , _bis      = v
-      , _domain   = d
+      , _bis      = bis'
+      , _domain   = domain'
       , _qtt      = qtt'
       , _fields   = fieldsV 
       , _labels   = labelsV
       , _errors   = []
       }
-    when (debug getGlobalFlags) (dv_ d)
-    (,) <$> V.unsafeFreeze wip' <*> V.unsafeFreeze qtt'
+
+    -- finish
+    when (debug getGlobalFlags) (dv_ bis')
+    bis''    <- V.unsafeFreeze (st ^. bis)
+    domain'' <- V.unsafeFreeze (st ^. domain)
+    wip''    <- V.unsafeFreeze (st ^. wip)
+    qtt''    <- V.unsafeFreeze (st ^. qtt)
+    -- TODO leave typevars in there ; they can avoid duplicating work later
+    let rmTypeVars' = rmTypeVars bis'' domain''
+        mapBindTypes = \case { BindOK e -> BindOK (mapExprTypes e) ; x -> x }
+        mapExprTypes = \case
+          Core t ty -> Core t (rmTypeVars' ty)
+          CoreFn ars free t ty -> CoreFn (map (fmap rmTypeVars') ars) free t (rmTypeVars' ty)
+          Ty ty -> Ty $ rmTypeVars' ty
+          e -> e
+--  pure $ JudgedModule (mapBindTypes <$> wip'') bis'' qtt'' domain''
+    pure $ JudgedModule hNames wip'' bis'' qtt'' domain''
 
 -- add argument holes to monotype env and guard against recursion
 withDomain :: IName -> [Int] -> (TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
@@ -246,7 +262,7 @@ infer = let
     retTy <- foldl mergeTypes [] <$> pure (tyOfExpr <$> altExprs)
     let scrutTy = [THSplit altLabels]
         matchTy = [THArrow [scrutTy] retTy]
-        unpat = \case { P.PArg i -> i ; x -> error $ "not ready for patter: " ++ show x }
+        unpat = \case { P.PArg i -> i ; x -> error $ "not ready for pattern: " ++ show x }
         mkFn argTys pat free (Core t ty) = CoreFn (zip (unpat <$> pat) argTys) free t ty
         alts    = zipWith4 mkFn argTys patterns freeVars altExprs
         altLabelsMap = IM.fromList $ zip altLabels alts

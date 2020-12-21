@@ -56,7 +56,14 @@ data ParseDetails = ParseDetails {
 -- , fixities     :: V.Vector Fixity
 }
 
-data TopBind = FunBind HName [ImplicitArg] FreeVars [FnMatch] (Maybe TT)
+data TopBind = FunBind {
+   fnNm         :: HName
+ , implicitArgs :: [ImplicitArg]
+ , fnFreeVars   :: FreeVars
+ , fnMatches    :: [FnMatch]
+ , fnSig        :: (Maybe TT)
+-- , fnIsRec      :: Bool
+}
 data FnMatch = FnMatch [ImplicitArg] [Pattern] TT
 
 data TTName
@@ -103,27 +110,28 @@ makeLenses ''Module
 makeLenses ''ParseDetails
 
 showL ind = Prelude.concatMap $ (('\n' : ind) ++) . show
-instance Show Module where
-  show m = show (m^.moduleName) ++ " {\n"
+prettyModule m = show (m^.moduleName) ++ " {\n"
     ++ "imports: " ++ showL "  " (m^.imports)  ++ "\n"
     ++ "binds:   " ++ showL "  " (m^.bindings) ++ "\n"
 --  ++ "locals:  " ++ showL "  " (m^.locals)   ++ "\n"
     ++ show (m^.parseDetails) ++ "\n}"
-instance Show ParseDetails where
-  show p = Prelude.concatMap ("\n  " ++) 
+prettyParseDetails p = Prelude.concatMap ("\n  " ++) 
     [ "binds:  " ++ show (p^.hNameBinds)
     , "args:   " ++ show (p^.hNameArgs)
     , "extern: " ++ show (p^.hNamesNoScope)
     , "fields: " ++ show (p^.fields)
     , "labels: " ++ show (p^.labels)
     ]
-deriving instance Show TopBind
-deriving instance Show ImportDecl
-instance Show TTName where
-  show = \case
+prettyTTName = \case
     VBind x   -> "π" ++ show x 
     VLocal  x -> "λ" ++ show x
     VExtern x -> "?" ++ show x
+
+--deriving instance Show Module
+deriving instance Show ParseDetails
+deriving instance Show TopBind
+deriving instance Show ImportDecl
+deriving instance Show TTName
 deriving instance Show Fixity
 deriving instance Show Assoc
 deriving instance Show FnMatch 

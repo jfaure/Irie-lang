@@ -1,0 +1,35 @@
+-- Standard Monad | Classical monad
+-- Graded Monad   | Effect monad
+-- Indexed Monad  | Hoare Monad (parametrised)
+-- Constrained Monad
+
+class forall a=Type :: (%) a Eff : where
+
+
+type IO = In & Out -- file operations
+
+type Abort
+aborting : Zero % Abort
+
+-- interface State S = get : S | Put : S -> ()
+newtype State S where
+  get : S % State S
+  put : S -> () % State S
+
+class Send X    where send : X -> ()
+class Receive X where receive : X
+pipe : () % [Send X] -> Y % [Receive X] -> Y % [Abort]
+pipe (send x -> s) (receive -> r) = pipe (s ()) (r x)
+pipe _ y = y
+pipe () _ = abort
+
+-- tie these together ?
+interface Receive X = receive : X
+interface Send X    = send    : X -> Unit
+
+
+----------------
+-- Experiment --
+----------------
+type Parser streamTy errorTy =
+parse : a % Parser s -> s -> Maybe a

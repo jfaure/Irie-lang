@@ -132,9 +132,11 @@ type TyContra = [TyHead] -- reverse polarity
 type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
 type TyPlus   = [TyHead] -- output types (lattice join)
 
+-- how to subtype deep within alg data ?
+data SubTypeCast = Term -> Term
+
 -- bisubs always reference themselves, so the mu. is implicit
 data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }
-newBiSub = BiSub [] []
 makeLenses ''BiSub
 makeLenses ''QTT
 
@@ -142,14 +144,11 @@ makeLenses ''QTT
 data Kind = KPrim | KArrow | KVar | KArg | KSum | KProd | KRec | KAny
  deriving Eq
 
-bind2Expr = \case { BindOK e -> e }
-
--- evaluate type application (from THIxPAp s)
-tyAp :: [TyHead] -> IM.IntMap Expr -> [TyHead]
-tyAp ty argMap = map go ty where
-  go :: TyHead -> TyHead = \case
-    THArg y -> case IM.lookup y argMap of
-      Nothing -> THArg y
-      Just (Ty [t]) -> t
-    THArrow as ret -> THArrow (map go <$> as) (go <$> ret)
-    x -> x
+-- wip module, not quite as polished as an Import module (still contains typevars and arg infos)
+data JudgedModule = JudgedModule {
+   bindNames   :: V.Vector HName
+ , judgedBinds :: V.Vector Bind
+ , typeVars    :: V.Vector BiSub
+ , qtts        :: V.Vector QTT
+ , argTypes    :: V.Vector BiSub
+}

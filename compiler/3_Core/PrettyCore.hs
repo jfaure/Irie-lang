@@ -11,11 +11,15 @@ import Data.List (intercalate)
 import Text.Printf
 import Debug.Trace
 
-instance Show VName where show = prettyVName
-instance Show Term where show = prettyTerm
-instance Show TyHead where show = prettyTyHead
-instance Show Bind where show = prettyBind
-
+-- instance Show VName where show = prettyVName
+-- instance Show Term where show = prettyTerm
+-- instance Show TyHead where show = prettyTyHead
+-- instance Show Bind where show = prettyBind
+deriving instance Show VName
+deriving instance Show Term
+deriving instance Show TyHead
+deriving instance Show Bind
+deriving instance Show JudgedModule
 deriving instance Show Expr
 deriving instance Show BiSub
 deriving instance Show Kind
@@ -32,11 +36,16 @@ tyExpr = \case -- expr found as type, (note. raw exprs cannot be types however)
 nropOuterParens = \case { '(' : xs -> init xs ; x -> x }
 
 prettyBind = \case
- WIP -> "WIP"
- BindOK expr -> case expr of
-   Core term ty -> " => " ++ show term ++ clGreen (" : " ++ prettyTy ty)
-   Ty t -> " =: " ++ show t
-   _ -> " = " ++ show expr
+  WIP -> "WIP"
+  BindOK expr -> prettyExpr' "\n  " expr ++ "\n"
+
+prettyExpr = prettyExpr' ""
+prettyExpr' pad = \case
+  Core term ty -> " = " ++ pad ++ prettyTerm term ++ clGreen (" : " ++ prettyTy ty)
+  Ty t         -> " =: " ++ pad ++ clGreen (prettyTy t)
+  CoreFn ars free term ty -> let prettyArg (i , ty) = "(λ" ++ clYellow (show i) ++ " : " ++ clGreen (prettyTy ty) ++ ")"
+    in pad ++ intercalate " " (prettyArg <$> ars) ++ " (" ++ show free ++ ") => " ++ pad ++ prettyTerm term ++ "   : " ++ clGreen (prettyTy ty)
+  e -> pad ++ show e
 
 prettyVName = \case
     VArg i  -> "λ" ++ show i
@@ -45,9 +54,9 @@ prettyVName = \case
 
 prettyTerm = \case
     Hole -> " _ "
-    Var     v -> show v
-    Lit     l -> show l
-    App     f args -> "(" ++ show f ++ " $ " ++ intercalate " " (show <$> args) ++ ")"
+    Var     v -> clCyan $ prettyVName v
+    Lit     l -> clMagenta $ show l
+    App     f args -> "(" ++ prettyTerm f ++ clMagenta " < " ++ intercalate " " (prettyTerm <$> args) ++ ")"
     MultiIf ts t -> "if " ++ show ts ++ " else " ++ show t
     Instr   p -> "(" ++ show p ++ ")"
 
@@ -56,19 +65,20 @@ prettyTerm = \case
       in "{ "
         ++ (intercalate " ; " (sr <$> IM.toList ts))
         ++ " }"
-    Proj    t f -> show t ++ "." ++ show f
-    Label   l t -> show l ++ "@" ++ show t
+    Proj    t f -> prettyTerm t ++ "." ++ show f
+    Label   l t -> show l ++ "@" ++ intercalate " " (prettyExpr <$> t)
     Match t ts d -> let
-      showLabel (l , t) = show l ++ " => " ++ show t
-      in "\\case (:" ++ show t ++ ") | "
-        ++ intercalate " | " (showLabel <$> IM.toList ts) ++ " |_ " ++ show d
-    List    ts -> "[" ++ (concatMap show ts) ++ "]"
+      showLabel (l , t) = show l ++ " => " ++ prettyExpr' "" t
+      in clMagenta "\\case (:" ++ clGreen (prettyTy t) ++ ")\n    | "
+        ++ intercalate "\n    | " (showLabel <$> IM.toList ts) ++ "\n    |_ " ++ maybe "Nothing" prettyExpr d
+    List    ts -> "[" ++ (concatMap prettyExpr ts) ++ "]"
 
 prettyTy = \case
-  [x] -> show x
-  x ->   show x
+  [x] -> prettyTyHead x
+  x   -> "||" ++ (intercalate " | " $ prettyTyHead <$> x) ++ "||"
+
 prettyTyHead = \case
- THPrim     p -> show p
+ THPrim     p -> prettyPrimType p
  THVar      i -> "τ" ++ show i
 -- THImplicit i -> "∀" ++ show i
 -- THAlias    i -> "π" ++ show i
@@ -108,14 +118,14 @@ prettyTyHead = \case
    in "(Family " ++ show fnTy ++ ")" ++ indexes
 -- THInstr i ars -> show i ++ show ars
 
-clBlack   x = "\x1b[30m" ++ x ++ "\x1b[0m"
-clRed     x = "\x1b[31m" ++ x ++ "\x1b[0m" 
-clGreen   x = "\x1b[32m" ++ x ++ "\x1b[0m"
-clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
-clBlue    x = "\x1b[34m" ++ x ++ "\x1b[0m"
-clMagenta x = "\x1b[35m" ++ x ++ "\x1b[0m"
-clCyan    x = "\x1b[36m" ++ x ++ "\x1b[0m"
-clWhite   x = "\x1b[37m" ++ x ++ "\x1b[0m"
+clBlack   x = "\x1b[30m" <> x <> "\x1b[0m"
+clRed     x = "\x1b[31m" <> x <> "\x1b[0m" 
+clGreen   x = "\x1b[32m" <> x <> "\x1b[0m"
+clYellow  x = "\x1b[33m" <> x <> "\x1b[0m"
+clBlue    x = "\x1b[34m" <> x <> "\x1b[0m"
+clMagenta x = "\x1b[35m" <> x <> "\x1b[0m"
+clCyan    x = "\x1b[36m" <> x <> "\x1b[0m"
+clWhite   x = "\x1b[37m" <> x <> "\x1b[0m"
 clNormal = "\x1b[0m"
 
 -- Notes --

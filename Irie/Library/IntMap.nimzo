@@ -1,0 +1,68 @@
+import Bits
+
+countLeadingZeros : b -> Int
+countLeadingZeros x = (w-1) - go (w-1) where
+  go i | i < 0       = i -- no bit set
+       | testBit x i = i
+       | otherwise   = go (i-1)
+  w = finiteBitSize x
+
+type Prefix = Int
+type Mask   = Int
+type Key    = Int
+
+data IntMap a
+ = Bin Prefix Mask (IntMap a) (IntMap a)
+ | Tip Key a
+ | Nil
+-- Prefix: the most significant bits shared by all keys in the bin
+-- mask  : the switching bit to determine if key should go left or right
+-- * Nil is never a child of Bin
+-- * Mask is a power of 2: the largest bit at which 2 keys differ
+-- * Prefix is the common higher-order bits all elems share
+-- * left is the elements that don't have the bit, right do
+
+size : IntMap _ -> Int = go 0 where
+ go acc = \case
+   Bin _ _ l r => go (go acc l) r
+   Tip _ _     => 1 + acc
+   Nil         => acc
+
+link : Prefix -> IntMap a -> Prefix -> IntMap a -> IntMap a
+link p1 t1 p2 t2 =
+  let m = branchMask p1 p2
+      p = mask p1 m
+  in if
+  | zero p1 m => Bin p m t1 t2
+  | otherwise => Bin p m t2 t1
+
+-- The first switching bit where the two prefixes disagree.
+branchMask :: Prefix -> Prefix -> Mask =
+  let highestBitMask w = shiftL 1 (wordSize - 1 - countLeadingZeros w)
+  in  \p1 p2 => highestBitMask (p1 `xor` p2)
+
+zero i m = (natFromInt i) .&. (natFromInt m) == 0
+match i p m = (mask i m) == p
+nomatch = not << match
+
+insert : Key -> a -> IntMap a -> IntMap a
+insert k x t = case t of
+  Bin p m l r => if
+   | nomatch k p m => link k (Tip k x) p t
+   | zero k m      => Bin p m (insert k x l) r
+   | otherwise     => Bin p m l (insert k x r)
+  Tip ky _ => if
+   | k==ky         => Tip k x
+   | otherwise     => link k (Tip k x) ky t
+  Nil => Tip k x
+
+lookup : Key -> IntMap a -> Maybe a
+lookup k = go where go = \case
+  Bin p m l r => if
+    | nomatch k p m => Nothing
+    | zero k m  => go l
+    | otherwise => go r
+  Tip kx x => if
+    | k == kx   => Just x
+    | otherwise => Nothing
+  Nil => Nothing
