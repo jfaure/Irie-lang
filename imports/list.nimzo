@@ -1,7 +1,21 @@
 List =
+  | Nil : List
   | Cons : Int -> (List -> List)
-  | Nil
 
 printList l = case l of
-  Nil => 0
-  Cons i l' => putNumber i + printList l
+  | Nil => 0
+--  | Cons i l' => putNumber i + printList l
+  | Cons i l' => plus (putNumber i) (printList l')
+
+Inc l = case l of
+  | Nil => Nil
+  | Cons i l' => Cons (plus 1 i) (Inc l')
+--
+--scanSum n l = ifThenE (le n 0) l (scanSum (sub n 1) (Cons n l))
+--main = printList (Inc (scanSum 3 Nil))
+main = printList ((Cons 12 (Cons 98 Nil)))
+
+--nub a str = unlink str (nub a str) (\c str => ifThenE (eq c a) str (link c str))
+--main = nub 32 "h i wor ld"
+
+

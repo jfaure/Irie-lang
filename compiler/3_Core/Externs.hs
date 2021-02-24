@@ -183,6 +183,7 @@ instrs2 :: [(HName , (PrimInstr , Type))] =
   , ("unlink"      , (Unlink , [THArrow [[THExt str] , [THArrow [[THExt c],[THExt str]] [THExt str]]] [THExt str] ]))
   , ("link"        , (Link , [THArrow [[THExt c]] [THExt str]]))
   , ("strtol"      , (StrToL , [THArrow [[THExt str]] [THExt i]]))
+  , ("mkTuple"     , (MkTuple , [THTuple []]))
 --nub a str = unlink str (nub a str) (\c str => ifThenE (eq c a) str (link c str))
 
   ]

@@ -69,6 +69,9 @@ cmdLineInfo =
         <> progDesc progDescription
   in info (helper <*> cmdLineDecls) description
 
-parseCmdLine :: IO CmdLine
+-- parseCmdLine :: IO CmdLine
 -- parseCmdLine = execParser cmdLineInfo
-parseCmdLine = customExecParser (prefs disambiguate) cmdLineInfo
+-- parseCmdLine = customExecParser (prefs disambiguate) cmdLineInfo
+parseCmdLine :: [String] -> IO CmdLine
+ = \rawArgs -> handleParseResult
+   $ execParserPure (prefs disambiguate) cmdLineInfo rawArgs

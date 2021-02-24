@@ -73,11 +73,11 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | Proj    Term IField
  | Label   ILabel [Expr]
  | Match   Type (IM.IntMap Expr) (Maybe Expr)
+ | Lens -- ?!
  | List    [Expr]
 -- | Split   Int Expr -- eliminator: \split nArgs f → f args
 
--- components of our profinite distributive lattice of types
--- no β-reduce (except contained Terms)
+-- The profinite distributive lattice of types; no β-reduce (except contained Terms)
 data TyHead -- head constructors for types.
  = THVar      BiSubName  -- ix to bisubs
  | THArg      IName      -- ix to monotype env (type of the lambda-bound at ix)
@@ -89,6 +89,7 @@ data TyHead -- head constructors for types.
 -- | THTop Kind | THBot Kind
  | THPrim     PrimType
  | THArrow    [TyContra] TyCo  -- degenerate case of THPi
+ | THTuple    [TyCo]           -- possibly unnecessary
  | THProd     [IField]
  | THSum      [ILabel]
  | THSplit    [ILabel]
@@ -132,8 +133,7 @@ type TyContra = [TyHead] -- reverse polarity
 type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
 type TyPlus   = [TyHead] -- output types (lattice join)
 
--- how to subtype deep within alg data ?
-data SubTypeCast = Term -> Term
+data BiCast = BiEQ | BiCast Term | CastApp [BiCast] | BiFail T.Text
 
 -- bisubs always reference themselves, so the mu. is implicit
 data BiSub = BiSub { _pSub :: [TyHead] , _mSub :: [TyHead] }

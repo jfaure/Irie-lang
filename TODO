@@ -14,42 +14,32 @@
   * Dependent normalisation
   * Calculus of effects (cf. fire triangle)
   * ifThenE bad type
+  * Bicasts on lattice types (eg. extra type annotations)
 ## CodeGen
   * GMP
   * subtyping records/sumtypes (core idxs -> llvm idxs)
 
 !!
+Incremental compiler | unresolved externs | sigs
+Modules == records (+ insane dependencies)
 read type vars
 finish fralloc (flat & shared data)
 subtype coercions
-repl & linking
+repl & linking & print JIT results somehow
+record subtyping (offset table header) # { x : i32 } <: { x : i64 }
+paps | subtyped fns | primtable # Fn = & SubtypeFns & ( | FnPtr | PAp )
 
 ??
-# subtype coercion on composite types
-  * add fnptr to the frame
-# how to print JIT results
-  * need show instances
-# Modules (treat as records / sigma types)
-  * insane dependencies (at least within the module itself)
-# labels/fields namespace
-  * structural subtyping vs predefined types
-  * collect predefined types to generate their offset tables
-  * how to subtype deep into composite datas ?
-  * Lenses
-# Fns (PAps + subtyped arguments)
-  * Fn = | FnPtr | PAp
-  | give all fnptrs 1 more arg then expected in case pap (UB)
-# record subtyping
-  * Record = | structs | packed struct | record subtype
-  offset table (also subtyping coercions ?)
+# Cata , Ana , Para , Hylo morphisms
 # Polymorphism
-
-Fn = & SubtypeFns & ( | FnPtr | PAp )
-
-## Nonsense
-?! record subtyping options
-  fn pointer to resolve field  -- push + ret overhead
-  offset table
-  make new record if necessary -- copy n fields
-  IntMap
-
+# Wrappers
+# Newtype (opt-out of subtyping)
+# partial typecheck (normalization + insane dependents)
+# labels/fields namespace
+  * Tuple = special label-less sum-typ
+  * structural subtyping vs predefined types
+  * Lenses
+# Effects
+  * eg. In ,  Out , IO (In & Out) , State
+  * Union , subtyping , effect variable
+  * record subtypes non-records via special field (return)

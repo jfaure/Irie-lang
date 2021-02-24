@@ -381,6 +381,7 @@ ttArg , tt :: Parser TT
 --appOrArg = mfApp <|> arg >>= \fn -> option fn $ choice
   appOrArg = arg >>= \fn -> option fn $ choice
     [ Proj fn <$ reservedChar '.' <*> (idenNo_ >>= newFLabel)
+--  , lexeme (char ',') *> ((\t -> P.Label 0 [t]) <$> appOrArg)
     , case fn of
 --      Lit l -> LitArray . (l:) <$> some literalP
         P.Label l [] -> P.Label l <$> some arg
@@ -431,6 +432,7 @@ ttArg , tt :: Parser TT
     scrut  <- tt
     reserved "of"
     (`App` [scrut]) <$> caseSplits
+
   lambdaCase = reserved "\\case" *> caseSplits
 
   multiIf = reserved "if" *> choice [try normalIf , multiIf] where
@@ -554,7 +556,8 @@ literalP = let
   stringLiteral :: Parser [Char] = choice
     [ single '\"'   *> manyTill L.charLiteral (single '\"')
     , (string "\"\"\"") *> manyTill L.charLiteral (string "\"\"\"")
-    , (string "''") *> manyTill L.charLiteral (string "''")]
+    , (string "''") *> manyTill L.charLiteral (string "''")
+    , (string "$") *> manyTill L.charLiteral endLine]
   intLiteral = choice
     [ L.decimal
     , string "0b" *> L.binary

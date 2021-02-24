@@ -47,6 +47,9 @@ data PrimInstr
  | MemInstr   ArrayInstrs
  | TyInstr    TyInstrs
  | CallExt    T.Text
+
+ | MkTuple
+ | MkPAp
  | Zext
  | StrToL
  | PutNbr
@@ -54,7 +57,6 @@ data PrimInstr
  | ExprHole   -- errors on eval, but will typecheck
  | MkNum      -- instantiation must happen via function call
  | MkReal
- | MkTuple
  | AddOverflow
  | Alloc
  | Len -- len of PrimArray

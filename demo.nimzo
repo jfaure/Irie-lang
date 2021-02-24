@@ -1,34 +1,17 @@
 --externVarArg printf : CharPtr -> Int
+-- import imports/church
+-- import imports/dependents
+
 --import imports/lambda
 --import imports/basic
 --import imports/mixfix
 --import imports/records
---import imports/impredicative
+--import imports/Impredicative
 --import imports/array
---import imports/church
---import imports/fin
---import imports/dependents
---import imports/printf
+import imports/fin
+-- import imports/printf
 --import imports/subtype
+--import imports/list
 
---List =
---  | Nil : List
---  | Cons : Int -> (List -> List)
---
---PrintList l = case l of
---  | Nil => 0
---  | Cons i l' => plus (putNumber i) (PrintList l')
---
----- TODO incl subdata of an arg in that arg when computing QTT
---Inc l = case l of
---  | Nil => Nil
---  | Cons i l' => Cons (plus 1 i) (Inc l')
---
---scanSum n l = ifThenE (le n 0) l (scanSum (sub n 1) (Cons n l))
---main = PrintList (Inc (scanSum 3 Nil))
---main = PrintList (Inc (Cons 12 (Cons 98 Nil)))
-
---nub a str = unlink str (nub a str) (\c str => ifThenE (eq c a) str (link c str))
---main = nub 32 "h i wor ld"
-
-main = plus64 3 2
+--r1 = mkTuple 3 2
+--main = plus64 3 2

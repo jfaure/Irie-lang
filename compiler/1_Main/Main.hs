@@ -26,6 +26,7 @@ import Control.Lens
 import System.Console.Haskeline
 import System.Exit
 import System.IO (hFlush , stdout)
+import System.Environment
 import Data.Functor
 import Data.Function
 import Data.Foldable
@@ -35,7 +36,10 @@ import Debug.Trace
 
 searchPath = ["./" , "Library/"]
 
-main = parseCmdLine >>= initGlobalFlags >>= \cmdLine ->
+main = getArgs >>= main'
+sh cmdline = main' (words cmdline) -- simplest way to pass cmdline args in ghci
+
+main' args = parseCmdLine args >>= initGlobalFlags >>= \cmdLine ->
   when ("args" `elem` printPass cmdLine) (print cmdLine)
   *> case files cmdLine of
     []  -> replCore cmdLine

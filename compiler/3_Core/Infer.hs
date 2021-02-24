@@ -156,8 +156,9 @@ infer = let
   -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
   -- * ie. introduce result typevar 'a', and biunify (tf+ <= tx+ -> a)
  biUnifyApp fTy argTys = do
-   bs <- snd <$> withBiSubs 1 (\idx -> biSub_ fTy [THArrow argTys [THVar idx]])
-   _pSub <$> (`MV.read` 0) bs
+   (biret , bs) <- withBiSubs 1 (\idx -> biSub_ fTy [THArrow argTys [THVar idx]])
+   ty <- _pSub <$> (`MV.read` 0) bs
+   pure (biret , ty)
 
  in \case
   P.WildCard -> pure $ Core Hole [THSet 0]
@@ -178,15 +179,20 @@ infer = let
     P.VExtern i -> (`readParseExtern` i) <$> use externs
 
   P.App fTT argsTT -> do
-    f      <- infer fTT
+    f    <- infer fTT
     args <- tcStateLocalMode $ use qtt >>= \qtts -> do
       -- Note. not all fn sig args are explicit (esp. primInstrs), which is problematic for QTT
       -- So I pad missing modes with Reader, but this is slightly suspicious
         argModes <- getArgs f `forM` \(i,_ty) ->
           MV.read qtts i <&> \(QTT _reads builds) -> if builds > 0 then Builder else Reader
         zipWithM (\m argExpr -> (mode .= m) *> infer argExpr) (argModes ++ repeat Reader) argsTT
-    retTy <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
+    (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
+    let castArg (a :: Term) = \case { BiCast f -> App f [a] ; _ -> a }
+        castArgs args' = case biret of
+          CastApp ac -> zipWith castArg args' ac
+          x -> args'
     ttApp judgeBind f args <&> \case
+      Core (App f args) _ -> Core (App f (castArgs args)) retTy
       Core f _ -> Core f retTy
       t -> t
 
@@ -214,7 +220,7 @@ infer = let
       Nothing -> error $ "forward reference to label unsupported: " ++ show l
       Just ty -> if isArrowTy ty
         then do
-          retTy <- biUnifyApp ty (tyOfExpr <$> tts')
+          (biret , retTy) <- biUnifyApp ty (tyOfExpr <$> tts')
           pure $ Core (Label l tts') retTy
         else pure $ Core (Label l tts') ty
 

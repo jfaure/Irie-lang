@@ -4,5 +4,7 @@
 --
 --subType = succ (0 : IntN 40)
 
-p1 = (n : Int) -> IntN n -- -> IntN n
+--p1 = (n : Int) -> IntN n -- -> IntN n
 --p1 = plus 1
+
+main = plus64 3 2

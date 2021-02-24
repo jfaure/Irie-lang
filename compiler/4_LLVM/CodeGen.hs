@@ -333,6 +333,7 @@ cgPrimInstr i = case i of
   MkNum    -> _
   MkReal   -> _
   MkTuple  -> _
+  MkPAp    -> _
   Alloc    -> _
   Len      -> _
   SizeOf   -> _ -- C.sizeof

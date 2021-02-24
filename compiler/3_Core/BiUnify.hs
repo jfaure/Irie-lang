@@ -60,7 +60,7 @@ failBiSub a b = error $ "failed bisub:\n    " ++ show a ++ "\n<--> " ++ show b -
 biSub_ a b = if debug getGlobalFlags
   then trace ("bisub: " ++ prettyTy a ++ " <==> " ++ prettyTy b) biSub a b -- *> (dv_ =<< use bis)
   else biSub a b
-biSub :: TyPlus -> TyMinus -> TCEnv s ()
+biSub :: TyPlus -> TyMinus -> TCEnv s BiCast
 biSub a b = let
   solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
   solveTVar _ newTy [] = [newTy]
@@ -69,48 +69,51 @@ biSub a b = let
     else ty : solveTVar varI newTy tys
   in case (a , b) of
   -- lattice top and bottom
-  ([] ,  _) -> pure ()
-  (_  , []) -> pure ()
+  ([] ,  _) -> pure BiEQ
+  (_  , []) -> pure BiEQ
   -- vars
   ([THVar p] , m) -> use bis >>= \v->MV.modify v
-    (over mSub (foldr (solveTVar p) m)) p
+    (over mSub (foldr (solveTVar p) m)) p $> BiEQ
   (p , [THVar m]) -> use bis >>= \v->MV.modify v
-    (over pSub (foldr (solveTVar m) p)) m
+    (over pSub (foldr (solveTVar m) p)) m $> BiEQ
   -- lattice subconstraints
   ((p1:p2:p3) , m) -> biSub [p1] m *> biSub (p2:p3) m
   (p , (m1:m2:m3)) -> biSub p [m1] *> biSub p (m2:m3)
   ([p] , [m])      -> atomicBiSub p m
 
-atomicBiSub :: TyHead -> TyHead -> TCEnv s ()
+atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
 atomicBiSub p m = -- trace ("⚛bisub: " ++ prettyTy [p] ++ " <==> " ++ prettyTy [m]) $
  case (p , m) of
   -- Lambda-bound in - position can be guessed
   (THArg i , m) -> let
     replaceLambda t = \case { [THArg i2] | i2==i -> [t] ; x -> doSub t x }
-    in use domain >>= \v->MV.modify v (over mSub (replaceLambda m)) i
-  (p , THArg i) -> pure () -- use domain >>= \v->MV.modify v (over pSub (doSub p)) i
+    in use domain >>= \v->MV.modify v (over mSub (replaceLambda m)) i $> BiEQ
+  (p , THArg i) -> pure BiEQ -- use domain >>= \v->MV.modify v (over pSub (doSub p)) i
 ---- lambda-bound in + position is ignored except for info on rank-n polymorphism info
 
 --(THArg i , THArrow args ret) -> let
 --    fa = [THImplicit i] ; ty = THArrow (replicate (length args) fa) fa
 --  in use domain >>= \v-> MV.modify v (ty:) i
-  (THSet u , x) -> pure ()
-  (THRec m , THSet u) -> pure ()
-  (THPrim p1 , THPrim p2) -> when (p1 /= p2) (failBiSub p1 p2)
+  (THSet u , x) -> pure BiEQ
+  (THRec m , THSet u) -> pure BiEQ
+
+  (THPrim p1 , THPrim p2) -> primBiSub p1 p2
+
   (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
 
-  (THArrow args1 ret1 , THArrow args2 ret2) -> -- TODO arg overflows ?
-    zipWithM biSub args2 args1 *> biSub ret1 ret2
+  (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
   (THPi (Pi p ty) , y) -> biSub ty [y]
   (x , THPi (Pi p ty)) -> biSub [x] ty
 
   -- record: labels in the first must all be in the second
-  (THProd x , THProd y) -> if all (`elem` x) y then pure () else error "Cannot unify recordTypes"
-  (THSum  x , THSum y)  -> if all (`elem` y) x then pure () else error "Cannot unify sumtypes"
-  (THArrow ars ret, THSplit y) -> pure () -- TODO
+  (THProd x , THProd y) -> if all (`elem` x) y then pure BiEQ else error "Cannot unify recordTypes"
+  (THSum  x , THSum y)  -> if all (`elem` y) x then pure BiEQ else error "Cannot unify sumtypes"
+  (THArrow ars ret, THSplit y) -> pure BiEQ -- labelBiSub-- TODO
+  (THArrow ars ret, THTuple y) -> pure BiEQ -- labelBiSub-- TODO
+  (THTuple y, THArrow ars ret) -> pure BiEQ -- labelBiSub-- TODO
 ----getLabelRetTypes labelIndexes = do
 --  labelsV <- use labels
---  let getLabelTy = \case { Just t->t ; Nothing->error "forward reference to label" }
+--  let getLabelTy = \case { Just t->t ; BiEQ->error "forward reference to label" }
 --  labelTys <- MV.read labelsV `mapM` labelIndexes
 --  pure $ map (getRetType . getLabelTy) labelTys
 
@@ -118,14 +121,25 @@ atomicBiSub p m = -- trace ("⚛bisub: " ++ prettyTy [p] ++ " <==> " ++ prettyTy
   (p , THExt i) -> biSub [p]     =<< tyExpr . (`readPrimExtern` i)<$>use externs
   (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readPrimExtern` i)<$>use externs
 --  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
-  (THRec m , THRec y) -> unless (m == y) $ error "recursive types are not equal"
-  (THRec m , x) -> pure () -- TODO ?
+  (THRec m , THRec y) -> if (m == y) then pure BiEQ else error "recursive types are not equal"
+  (THRec m , x) -> pure BiEQ -- TODO ?
   (THRecSi f1 a1, THRecSi f2 a2) -> if f1 == f2
     then if (length a1 == length a2) && all id (zipWith termEq a1 a2)
-      then pure ()
+      then pure BiEQ
       else error $ "RecSi arities mismatch"
     else error $ "RecSi functions do not match ! " ++ show f1 ++ " /= " ++ show f2
   (a , b) -> failBiSub a b
+
+arrowBiSub (argsp,argsm) (retp,retm) = let -- zipWithM biSub args2 args1 *> biSub ret1 ret2
+  bsArgs [] [] = pure []
+  bsArgs [] x  = pure [BiCast (Instr MkPAp)] -- TODO remaining args
+  bsArgs x  [] = failBiSub argsp argsm
+  bsArgs (p : ps) (m : ms) = (:) <$> biSub m p <*> bsArgs ps ms
+  in CastApp <$> bsArgs argsp argsm <* biSub retp retm -- Note. App return is never cast (?!)
+
+primBiSub p1 m1 = case (p1 , m1) of
+  (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (BiCast (Instr Zext)) else (failBiSub p1 m1)
+  (p , m) -> if (p /= m) then (failBiSub p1 m1) else pure BiEQ
 
 --------------
 -- Checking --

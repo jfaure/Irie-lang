@@ -24,6 +24,7 @@ deriving instance Show Expr
 deriving instance Show BiSub
 deriving instance Show Kind
 deriving instance Show Pi
+deriving instance Show BiCast
 
 tyExpr = \case -- expr found as type, (note. raw exprs cannot be types however)
   Ty t -> t
@@ -74,6 +75,7 @@ prettyTerm = \case
     List    ts -> "[" ++ (concatMap prettyExpr ts) ++ "]"
 
 prettyTy = \case
+  []  -> "??"
   [x] -> prettyTyHead x
   x   -> "||" ++ (intercalate " | " $ prettyTyHead <$> x) ++ "||"
 
