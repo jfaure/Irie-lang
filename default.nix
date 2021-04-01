@@ -1,4 +1,4 @@
-with (import <nixos-unstable> {});
+with (import <nixos> {});
 
 haskell.lib.buildStackProject {
   name = "nimzo";

@@ -1,14 +1,7 @@
 module DesugarParse where
 
-import Prim
 import CoreSyn
 import qualified ParseSyntax as P
-import qualified Data.Vector as V
-import qualified Data.Map as M
-import Control.Monad.State
-import Data.Foldable
-import Data.Functor
-import Debug.Trace
 
 -- output is a list of argument inames and the expression
 matches2TT :: [P.FnMatch] -> ([IName] , [[P.TT]] , P.TT) =

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 -- llvm driver
 -- * AST.Module -> LLVM.Module (haskell to c++)
 -- * optimizing modules
@@ -5,34 +6,25 @@
 -- * linking and producing executables
 module LlvmDriver
 where
-{-# LANGUAGE OverloadedStrings #-}
 
-import Control.Monad
-import Data.IORef
-import Data.Function
-import Control.DeepSeq as DeepSeq
-import qualified Data.Map as Map
-import qualified Data.Vector as V
 import qualified Data.ByteString.Short as BS
 
 import qualified LLVM.AST
 import qualified LLVM.Module
 import LLVM.Context
 import LLVM.PassManager
-import LLVM.Transforms
+--import LLVM.Transforms
 import LLVM.Analysis
 --import LLVM.Pretty (ppllvm)
 import qualified Data.ByteString.Char8 as B
 
 --JIT
---import Data.Word
 import LLVM.Target
-import LLVM.CodeModel
+--import LLVM.CodeModel
 import LLVM.Relocation as Reloc
 import qualified LLVM.ExecutionEngine as EE
 import Foreign.Ptr -- for fn pointers in the JIT
 
-import Control.Exception
 import LLVM.OrcJIT
 import LLVM.CodeGenOpt as CodeGenOpt
 import LLVM.CodeModel as CodeModel

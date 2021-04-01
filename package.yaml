@@ -1,4 +1,4 @@
-name:                nimzo
+name:                irie
 version:             0.1.0.0
 github:              "jfaure/nimzo"
 license:             BSD3
@@ -17,7 +17,7 @@ description:         Please see the README on GitHub at <https://github.com/jfau
 dependencies:
 - deepseq
 - primitive
-- base >= 4.7 && < 5
+- base-noprelude
 - protolude
 # - hashable
 - text
@@ -57,22 +57,30 @@ default-extensions:
 # - GADTs
 # - PolyKinds
 # - DataKinds
+#- NoImplicitPrelude
 
-library:
-  source-dirs:
+# library:
+#  source-dirs:
+#  - compiler/
+# #   - compiler/2_Parse/
+# #   - compiler/3_Core/
+# #   - compiler/4_LLVM/
+# # ghc-options:   -Wunused-imports
+#   ghc-options:   -Wno-deprecations
+
+ghc-options:  -Wno-deprecations -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
+executables:
+  nimzo-exe:
+#   dependencies: nimzo
+    source-dirs:
     - compiler/
+    - compiler/1_Main/
     - compiler/2_Parse/
     - compiler/3_Core/
     - compiler/4_LLVM/
 
-ghc-options:  -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
-executables:
-  nimzo-exe:
-    dependencies: nimzo
-    source-dirs:
-    - compiler/1_Main/
     main:          Main.hs
-    ghc-options:  -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
+    ghc-options:  -fdefer-typed-holes -Wno-typed-holes -Wunused-imports # -Wunused-binds -threaded
 
 #tests:
 #  nimzo-test:

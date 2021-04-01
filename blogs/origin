@@ -1,0 +1,8 @@
+Irie spawns in the void, and needs a way to create objects. At this moment, the only way is by self reference:
+
+`Nat = Zero | Succ Nat`
+
+These are the natural numbers as Peano defined them, eg. `2 = Succ (Succ Zero)` has type Nat
+(In the backend, Irie is well aware that machine integers are the best choice for datas of this form)
+
+Most of these entities can be decomposed in various ways: `x = a (b c)`, the reverse of this computation being precisely computation

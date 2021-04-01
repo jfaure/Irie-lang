@@ -3,10 +3,7 @@
 module ModulePaths where
 
 import qualified System.Directory as Dir
-import System.FilePath.Posix
-import Data.Functor
-import qualified Data.Vector as V
-import qualified Data.Text as T
+import System.FilePath.Posix as FilePath
 
 findModule :: [FilePath] -> FilePath -> IO FilePath
  = \searchPath fName ->
@@ -18,4 +15,4 @@ findModule :: [FilePath] -> FilePath -> IO FilePath
      in Dir.doesFileExist fPath >>= \e -> if e
        then pure fPath
        else checkExists x fName
-  in (checkExists searchPath . (<.> "nimzo")) fName
+  in (checkExists searchPath . (FilePath.<.> "nimzo")) fName

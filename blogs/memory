@@ -1,0 +1,11 @@
+Memory is flat
+Our function call graph and tree shaped datas are not, so these must be flattened
+a data graph and the call graph are extremely similar, but tend to be desynchronized. As a result, we can sometimes deconstruct data as it is constructed, and avoid memory management altogether
+
+I began with the assumption that I would write the allocator in C, and let it know as much as possible about our forecasted memory usage (this is where we can outshine the standard allocators). Initially, I assumed there would have to be compromises, so I listed all my considerations in order of importance:
+
+* Avoid freeing fragments individually; ie. free entire fragment arenas at once
+* Avoid using pointers as much as possible (adjacent memory serves as an implicit 'next' pointer)
+* Minimize fragmentation (probably by allocating related data together and matching the call graph as much as possible); I mandated the guarantee that the allocator would behave no worse than allocating everything on the stack: ie. a function and it's children's memory is fully restored once it returns
+* Give the C allocator all the information we have (data scope, QTT for reads and writes, shape of the data, relative lifetime to other datas on that frame)
+* handle allocator metadata in the program (this is convenient for everyone given that the compiler can do this)

@@ -1,7 +1,0 @@
-module Prelude ( module Protolude , module GHC.Show , module GHC.Err , id)
-where
-import Protolude hiding (option , show , Fixity(..) , moduleName , try , some , many , Type , State , evalState)
-import GHC.Show(Show(..))
-import GHC.Err(error)
-
-id = identity

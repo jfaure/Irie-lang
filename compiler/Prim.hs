@@ -5,14 +5,13 @@ module Prim
 where
 import Prelude hiding (show)
 import GHC.Show (Show(..))
-import Data.Text as T
 
 data Literal
  = Char Char
  | Int Integer -- convenience
 -- | Frac Rational
- | PolyInt   T.Text -- gmp
- | PolyFrac  T.Text -- gmp
+ | PolyInt   Text -- gmp
+ | PolyFrac  Text -- gmp
  | String    [Char]
  | Array [Literal] -- incl. tuples ?
 -- | Tuple [Literal]
@@ -46,10 +45,11 @@ data PrimInstr
 
  | MemInstr   ArrayInstrs
  | TyInstr    TyInstrs
- | CallExt    T.Text
+ | CallExt    Text
 
+ | Pow Int -- pow application
  | MkTuple
- | MkPAp
+ | MkPAp Int
  | Zext
  | StrToL
  | PutNbr

@@ -19,39 +19,27 @@ import Text.Megaparsec-- hiding (State)
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Text as T
-import qualified Data.Text.Read as TR
-import Control.Monad (void , fail)
-import Control.Applicative (liftA2)
-import Control.Monad.State.Strict as ST
-import Data.Void
-import Data.List (isInfixOf)
-import Data.Functor
-import Data.Foldable
-import Data.Maybe (catMaybes)
-import Data.Char (isAlphaNum , isDigit , isSpace)
-import qualified Data.Vector as V
+import Control.Monad (fail)
+--import qualified Data.Vector as V
 import qualified Data.Map as M
 import qualified Data.IntSet as IS
 import qualified Data.Set as S
-
 import Control.Lens
-import Control.Lens.Tuple
-import Debug.Trace
-import qualified Text.Megaparsec.Debug as DBG
-import Debug.Trace
-dbg i = id -- identity
---dbg i = DBG.dbg i
+
+--import qualified Text.Megaparsec.Debug as DBG
+dbg i = identity -- DBG.dbg i
 
 data ParseState = ParseState {
    _indent          :: Pos         -- start of line indentation (need to save it for subparsers)
  , _parsingMixFixes :: [MixFixDef] -- we're parsing a mixfix: these are the options
  , _piBound         :: [[ImplicitArg]]
  , _moduleWIP       :: Module
- , _tmpReserved     :: [S.Set T.Text]
+ , _tmpReserved     :: [S.Set Text]
 }
 makeLenses ''ParseState
 
-type Parser = ParsecT Void T.Text (ST.State ParseState)
+--type Parser = ParsecT Void Text (ST.State ParseState)
+type Parser = ParsecT Void Text (Prelude.State ParseState)
 
 --getOffset
 
@@ -65,7 +53,7 @@ addPiBound  p = piBound %= \(x:xs)->(p:x):xs
 getPiBounds f = do
   piBound %= ([]:)
   r <- f
-  pis <- head <$> (piBound <<%= drop 1)
+  pis <- fromJust . head <$> (piBound <<%= drop 1)
   pure (pis , r)
 
 -- mixfixes are saved in lists based on first name
@@ -89,10 +77,10 @@ insertOrRetrieveSZ h (sz,mp) = case il h sz mp of
   (_,mp)       -> (sz , (sz+1,mp))
 -- the list of args corresponds to a nest of function defs
 -- if we're adding an argument, we do so to the first (innermost level)
-insertOrRetrieveArg :: T.Text -> Int -> [M.Map T.Text Int] -> (Int, [M.Map T.Text Int])
+insertOrRetrieveArg :: Text -> Int -> [M.Map Text Int] -> (Int, [M.Map Text Int])
 insertOrRetrieveArg h sz argMaps = case argMaps of
   [] -> error "panic: empty function nesting" --impossible
-  mp:xs -> case asum ((M.lookup h) <$> xs) of
+  mp:xs -> case asum (M.lookup h <$> xs) of
     Just x        -> (x, argMaps)
     Nothing       -> case il h sz mp of 
       (Just x, _) -> (x  , argMaps)
@@ -100,10 +88,10 @@ insertOrRetrieveArg h sz argMaps = case argMaps of
 
 pd = moduleWIP . parseDetails
 addAnonArg = moduleWIP . parseDetails . nArgs <<%= (1+)
-addArgName , addBindName , addUnknownName:: T.Text -> Parser IName
+addArgName , addBindName , addUnknownName:: Text -> Parser IName
 addArgName    h = do
   n <- use (moduleWIP . parseDetails . nArgs)
-  s <- pd . hNameArgs     %%= insertOrRetrieveArg h n
+  s <- pd . hNameArgs %%= insertOrRetrieveArg h n
   if s < 0 then (moduleWIP . parseDetails . nArgs <<%= (1+)) else pure s
 
 -- search (local let bindings) first, then the main bindMap
@@ -127,7 +115,6 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
       Just n  -> pure $ Just $ VLocal n
       Nothing -> case asum $ (M.!? h) <$> prevFrames of
         Just upStackArg -> do
---        traceShowM p
           moduleWIP .parseDetails .freeVars %= (IS.insert upStackArg)
           pure $ Just $ VLocal upStackArg
         Nothing -> pure Nothing
@@ -140,19 +127,20 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
 -- function defs add a layer of lambda-bound arguments , same for let
 getFreeVars = do
   free <- use (moduleWIP . parseDetails . freeVars)
-  ars  <- head <$> use (moduleWIP . parseDetails . hNameArgs)
+  ars  <- fromJust . head <$> use (moduleWIP . parseDetails . hNameArgs)
   let free' = foldr IS.delete free (M.elems ars)
   moduleWIP . parseDetails . freeVars .= free'
   pure free'
 
-incArgNest = moduleWIP . parseDetails . hNameArgs %= (M.empty :)
-decArgNest = moduleWIP . parseDetails . hNameArgs %= drop 1
 incLetNest = moduleWIP . parseDetails . hNameLocals %= (M.empty :)
 decLetNest = moduleWIP . parseDetails . hNameLocals %= drop 1
-newArgNest p = incArgNest *> p <* decArgNest 
+newArgNest p = let
+  incArgNest = moduleWIP . parseDetails . hNameArgs %= (M.empty :)
+  decArgNest = moduleWIP . parseDetails . hNameArgs %= drop 1
+  in incArgNest *> p <* decArgNest 
 withTmpReserved ms p = (tmpReserved %= (ms :)) *> p <* (tmpReserved %= drop 1)
 
-lookupImplicit :: T.Text -> Parser IName -- implicit args
+lookupImplicit :: Text -> Parser IName -- implicit args
 lookupImplicit h = do
   pd <- use $ moduleWIP . parseDetails
   case asum $ map (M.lookup h) (pd ^. hNameArgs) of
@@ -181,7 +169,7 @@ blockComment = L.skipBlockComment "{-" "-}"
 
 lexeme, lexemen :: Parser a -> Parser a -- parser then whitespace
 [lexeme, lexemen]   = L.lexeme <$> [sc , scn]
-symbol, symboln :: T.Text -> Parser T.Text --verbatim strings
+symbol, symboln :: Text -> Parser Text --verbatim strings
 [symbol , symboln]  = L.symbol <$> [sc , scn]
 
 parens, braces, bracesn , brackets , bracketsn :: Parser a -> Parser a
@@ -195,9 +183,9 @@ p `sepBy2` sep = (:) <$> p <*> (some (sep *> p))
 -----------
 -- Names --
 -----------
---symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: T.Text
-reservedChars = "@.(){};\\\""
-reservedNames = S.fromList $ T.words "if then else type data record class extern externVarArg let rec in where case of _ import require \\ : :: = ? | λ =>"
+--symbolChars = "!#$%&'*+,-/;<=>?@[]^|~" :: Text
+reservedChars = "'@(){};,\\\""
+reservedNames = S.fromList $ words "set over . if then else type data record class extern externVarArg let rec in where case of _ import require \\ : :: = ? | λ =>"
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c
@@ -208,10 +196,10 @@ reserved = reservedName
 isIdenChar x = not (isSpace x) && not (T.any (==x) reservedChars)
 idenChars = takeWhile1P Nothing isIdenChar
 checkReserved x = if x `S.member` reservedNames
-  then fail $ "keyword "++T.unpack x++" cannot be an identifier"
+  then fail $ "keyword " <> toS x <> " cannot be an identifier"
   else pure x
 checkLiteral x = if isDigit `T.all` x -- TODO not good enough (1e3 , 2.0 etc..)
-  then fail $ "literal: "++T.unpack x ++" cannot be an identifier"
+  then fail $ "literal: " <> toS x <> " cannot be an identifier"
   else pure x
 checkIden = checkReserved <=< checkLiteral
 
@@ -226,7 +214,7 @@ mixFixDef :: Parser MixFixDef = lexeme $ do
     [MFHole] -> fail "'_' cannot be an identifier"
     mf -> pure mf
 -- exported convenience function for use by builtins (Externs.hs)
-parseMixFixDef :: T.Text -> Either (ParseErrorBundle T.Text Void) [MixFixName]
+parseMixFixDef :: Text -> Either (ParseErrorBundle Text Void) [MixFixName]
  = \t -> runParserT mixFixDef "<internal>" t `evalState` _
 
 -- ref = reference indent level
@@ -243,8 +231,8 @@ svIndent = L.indentLevel >>= (indent .=)
 ------------
 -- Parser --
 ------------
-parseModule :: FilePath -> T.Text
-            -> Either (ParseErrorBundle T.Text Void) Module
+parseModule :: FilePath -> Text
+            -> Either (ParseErrorBundle Text Void) Module
   = \nm txt ->
   let startModule = Module {
           _moduleName = T.pack nm
@@ -294,18 +282,6 @@ extern =
  , ExternVA <$ reserved "externVarArg"<*> doName <*> _typed
  ]
 
--- assoc = choice
---  [ reserved "infix"  $> AssocNone
---  , reserved "infixr" $> AssocRight
---  , reserved "infixl" $> AssocLeft]
-
---pWhere :: Parser a -> Parser [a]
---pWhere pdecl = reserved "where" *> do
---  bracesn ((pdecl <* scn) `sepBy2` symboln ";") <|> do
---    ref <- use indent <* scn
---    lvl <- L.indentLevel
---    local (const lvl) $ indentedItems ref lvl scn pdecl (fail "_")
-
 -------------------
 -- Function defs --
 -------------------
@@ -322,7 +298,7 @@ funBind = lexeme mixFixDef >>= \case
     i <- funBind' (mixFix2Nm mfDef) (pMixFixArgs mfDef)
     pure i
 
-funBind' :: T.Text -> Parser [Pattern] -> Parser TTName
+funBind' :: Text -> Parser [Pattern] -> Parser TTName
 funBind' nm pMFArgs = newArgNest $ mdo
   iNm <- addBindName nm -- handle recursive references
     <* addBind (FunBind nm (implicits ++ pi) free eqns ty)
@@ -346,16 +322,21 @@ tyAnn :: Parser (Maybe ([ImplicitArg] , TT)) = let
     Just implicits -> fmap (implicits,) <$> optional (reservedChar ':' *> tt)
     Nothing        -> fmap ([],)        <$> optional (reservedChar ':' *> tt)
 
-lambda = reservedChar '\\' *> (Var . VBind <$> addAnonBindName) <* do 
-  newArgNest $ mdo
-    addBind $ FunBind "_" [] free eqns Nothing
+--lambda = reservedChar '\\' *> (Var . VBind <$> addAnonBindName) <* do 
+--  newArgNest $ mdo
+--    addBind $ FunBind "_" [] free eqns Nothing
+--    eqns <- (:[]) <$> fnMatch (many singlePattern) (reserved "=>")
+--    free <- getFreeVars
+--    pure ()
+lambda = reservedChar '\\' *> do
+  newArgNest $ do
     eqns <- (:[]) <$> fnMatch (many singlePattern) (reserved "=>")
     free <- getFreeVars
-    pure ()
+    pure $ Abs $ FunBind "lambda" [] free eqns Nothing
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ?
-  let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case") *> fnMatch (many singlePattern) (reserved "=>")
+  let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case") *> newArgNest (fnMatch (many singlePattern) (reserved "=>"))
       normalFnMatch = FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
   in choice [ hoistLambda , normalFnMatch ]
 
@@ -373,20 +354,31 @@ ttArg , tt :: Parser TT
   where
   anyTT = typedTT =<< choice
     [ letIn      -- "let"
-    , multiIf    -- "if"
     , match      -- "case"
     , tySum      -- "|"
     , mixFixTrainOrArg
+--  , appOrArg
     ] <?> "tt"
 --appOrArg = mfApp <|> arg >>= \fn -> option fn $ choice
-  appOrArg = arg >>= \fn -> option fn $ choice
-    [ Proj fn <$ reservedChar '.' <*> (idenNo_ >>= newFLabel)
+  appOrArg = arg >>= \fn -> option fn (choice
+    [ -- Proj fn <$ reservedChar '.' <*> (idenNo_ >>= newFLabel)
 --  , lexeme (char ',') *> ((\t -> P.Label 0 [t]) <$> appOrArg)
-    , case fn of
+      case fn of
 --      Lit l -> LitArray . (l:) <$> some literalP
         P.Label l [] -> P.Label l <$> some arg
         fn -> App fn <$> some arg
-    ]
+    ]) >>= \tt -> option tt (lens tt)
+--lens target = let checkOK = \case { TTLens _ [] Nothing -> fail "empty lens" ; x -> pure x }
+--  in many (try $ reservedChar '.' *> (idenNo_ >>= newFLabel)) >>=
+--    \path -> (TTLens target path <$> optional (reservedChar '.' *> reserved "set" *> arg)) >>= checkOK
+  lens :: TT -> Parser TT
+  lens record = let
+    lensNext path = reservedChar '.' *> choice [
+        TTLens record (reverse path) <$> (LensSet  <$ reserved "set"  <*> arg)
+      , TTLens record (reverse path) <$> (LensOver <$ reserved "over" <*> arg)
+      , idenNo_ >>= newFLabel >>= \p -> choice [lensNext (p : path) , pure (TTLens record (reverse (p:path)) LensGet)]
+      ]
+    in lensNext []
   arg = choice
    [ reserved "_" $> WildCard
    , lambdaCase -- "\\case"
@@ -396,7 +388,8 @@ ttArg , tt :: Parser TT
    , Lit <$> literalP
 -- , some literalP <&> \case { [l] -> Lit l ; ls -> LitArray ls }
    , TyListOf <$> brackets tt
-   , parens $ choice [try piBinder , (tt >>= typedTT)]
+   , parens $ choice [try piBinder , (tt >>= typedTT) , scn $> Cons []]
+   , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
    ] <?> "ttArg"
   label i = lookupSLabel i >>= \case
     Nothing -> P.Label <$ reservedOp "@" <*> newSLabel i <*> (many arg)
@@ -410,13 +403,16 @@ ttArg , tt :: Parser TT
         (pis , Just (impls , ty)) -> pure (label , pis ++ impls , ty)
     in some $ try (scn *> (reservedChar '|' *> lexeme labeledTTs))
 
-  con = Cons <$> let
-    fieldDecl = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> arg
---  in braces $ fieldDecl `sepBy1` reservedChar ';'
-    in do
-    string "##"
-    ref <- use indent <* scn
-    indentedItems ref scn fieldDecl (fail "")
+  con = let
+    fieldAssign = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> tt
+    conHash = let
+  --  in braces $ fieldDecl `sepBy1` reservedChar ';'
+      in do
+      string "##"
+      ref <- use indent <* scn
+      indentedItems ref scn fieldAssign (fail "")
+    conBraces = braces (fieldAssign `sepBy` reservedChar ',')
+    in Cons <$> (conHash <|> conBraces)
 
   caseSplits = Match <$> let
     split = newArgNest $ mdo
@@ -434,13 +430,6 @@ ttArg , tt :: Parser TT
     (`App` [scrut]) <$> caseSplits
 
   lambdaCase = reserved "\\case" *> caseSplits
-
-  multiIf = reserved "if" *> choice [try normalIf , multiIf] where
-    normalIf = do
-      ifThen <- (,) <$> tt <* reserved "then" <*> tt
-      elseE  <- reserved "else" *> tt
-      pure $ MultiIf [ifThen] elseE
-    subIf = (,) <$ reservedOp "|" <*> tt <* reservedOp "=>" <*> tt
 
   letIn = reserved "let" *> do
     incLetNest
@@ -571,7 +560,7 @@ literalP = let
    , numP
    ]
 
-decimal_ , dotDecimal_ , exponent_ :: Parser T.Text
+decimal_ , dotDecimal_ , exponent_ :: Parser Text
 decimal_    = takeWhile1P (Just "digit") isDigit
 dotDecimal_ = char '.' *> decimal_
 exponent_   = char' 'e' *> decimal_

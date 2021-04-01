@@ -1,7 +1,7 @@
 id :: ∀a. a -> a
 
 choose :: ∀ a. a -> a -> a
-choose x y = if true then x else y
+choose x y = if random then x else y
 
 auto (x : ∀a.a->a) = x x
 
@@ -26,23 +26,30 @@ retype (g:σ2) (x:σid) α = gα(xα) = g α (x α) -- eta-reduces to identity
 -- `∀(α ≥ σid) is a supertype of `∀(α = σid)`
 
 # Abstract
-Combining subtyping, overloading and first-order polymorphism within the calculus of inductive constructions would be a remarkable achievment. This paper explores the theoretical ramifications of such a system, as well as the properties of a type inference algorithm, building upon the ideas of "Albebraic Subtyping"[1]
+Combining subtyping and first-order polymorphism within the calculus of inductive constructions would be a remarkable achievment. This paper explores the theoretical ramifications of such a system, as well as the properties of a type inference algorithm, building upon the ideas of "Albebraic Subtyping"[1]
+
+## Preliminary notes
+top ⊤, (supertype of all types, also ∀α.α) could be anything, and therefore cannot do anything with
+bottom, ⊥ (subtype of all types, the type of nothing)
+recursive types, eg `µx.⊤→x` can be unrolled indefinitely `⊤→(⊤→(..)`. Must be guarded and covariant
+
 
 ## Construction of Types
-[1] Provides a very strong argument that the set of types T should correspond to the initial algebra of a functor in the category of pro-finite distributive lattices (ProfDLat). The crucial point is that we can extend T and maintain these properties as long as each new component is also a ProfDLat. A standard theorem for the coproduct of distributive lattices states:
+[1] Provides a very strong argument that the set of types T should correspond to the initial algebra of a functor in the category of pro-finite distributive lattices (ProfDLat). The crucial point is that we can extend T while maintaining these properties as long as each new component is also a ProfDLat. A standard theorem for the coproduct of distributive lattices states:
 $$\bigcap \limits_i τ_i \leqslant τ_k \leqslant τ'_k \leqslant \bigcup \limits_i  τ'_k \iff  τ_k \leqslant τ_k'\ for\ some\ k $$
 So, with this representation, we can associate arbitrary subtyping relatinoships between different type constructors.
 
 ## Higher-rank polymorphism
 ### Introduction
-Rémy and Le Botlan's MLF describe an algorithm where remarkably few type annotations are needed to infer rank-n polymorphic type signatures. The idea that instantiating higher-rank types with polymorphic types reduces polymorphism is a little strange (intuitively, by forcing arguments to remain polymorphic, we have less freedom to instantiate them). Equivalently, whilst we may distribute (by instantiation) ∀'s over a type constructor (eg. →), ∀'s cannot be factored out, since that corresponds to undoing instantiation! Let us examine 2 functions, `auto (x:∀α.α→α) = x x`, and `choose a b`, where choose  returns an argument randomly:
+Rémy and Le Botlan's MLF describe an algorithm where remarkably few type annotations are needed to infer rank-n polymorphic type signatures. Key is understanding that instantiating higher-rank types with polymorphic types produces less general types (more type variables (nested ∀) make types harder to instantiate with concrete types). Equivalently, whilst we may distribute (by instantiation) ∀'s over a type constructor (like →), ∀'s cannot be factored out, since that corresponds to undoing instantiation! Let us follow le Botlan in examining these 2 functions, `auto (x:∀α.α→α) = x x`, and `choose a b`, where choose returns an argument randomly:
 ```haskell
-auto      : (∀α.α→α) → (∀α.α→α) -- distribute ∀ over ∀β.β→β
-choose id : ∀α. (α→α) → (α→α)   -- ∀ not distributed over ∀β.β→β
+auto      : (∀α.α→α) → (∀α.α→α) -- distribute ∀α.α→α over →
+auto      : ∀αβ.(α→α) → (β→β)   -- equivalently
+choose id : ∀α. (α→α) → (α→α)   -- ∀ not distributed over →
 ```
-Obviously the type of auto may be obtained by instantiating β=∀α.α→α in ∀β.β→β. Notice that this type now requires auto's argument to be polymorphic, whereas we may instantiate the argument of `choose id` to any instance of ∀α.α→α! The first type therefore cannot be safely coerced to the second, and indeed assuming it could, we would have`auto : ∀α. (α→α) → (α→α)` which validates `auto (+1)`, but leads to a run-time error. Conversely, the function `retype (g:(∀α.α->α)->(∀α.α->α)) (x:∀α.α->α) v = g v (x v)` η-reduces to the identity.
+Obviously the type of auto may be obtained by instantiating β=∀α.α→α in ∀β.β→β. Notice that this type now requires auto's argument to be polymorphic, whereas we may instantiate the argument of `choose id` to any instance of ∀α.α→α! auto's type therefore cannot be safely coerced to that of `choose id`, and indeed assuming it could, we would have`auto : ∀α. (α→α) → (α→α)` which validates `auto (+1)` (nonsense and a runtime error). Conversely, the function `retype (g:(∀α.α->α)->(∀α.α->α)) (x:∀α.α->α) v = g v (x v)` η-reduces to the identity.
 
-So the more general type is obtained by not instantiating polytypes. However  since we will want to show we have instantiated a type variable without having to explicitly perform β-reduction, we write
+So the more general type is obtained by not instantiating polytypes. Since we will want to show we have instantiated a type variable without having to explicitly perform β-reduction, we write
 ```haskell
 auto     :∀(α = ∀β.β→β)α→α -- alpha must be polymorphic as σid
 choose id:∀(α ≤ ∀β.β→β)α→α -- alpha may be any instance of σid
@@ -52,7 +59,7 @@ Note. I have written ≤ (unlike the authors of MLF), to better capture the intu
 ### The Profinite distributive lattice coproduct
 MLF introduces a new type constructor (the flexible type variable) into the lattice of types. [1] Says that each type variable is a component of T. The essential property is that type substitutions respect T's algebraic structure, so a flexible type variable and it's introduction of a new subtyping declaration must be treated delicately. We have ⊥ = ∀(α≤⊥)α. = ∀α.α. polytypes generalize type schemes. ∀(α≤σ)σ′intuitively stands for the set of polytypes σ′where α is an instance of σ. Most importantly however,  σ′ is a dependent pi-type (on σ), and so I write `Λ(α:σ). q α σ′` the class of types Q which correspond to the flexible type variables of MLF, and in this way dispel the misguided notion that we are dealing with a weird type variable. This makes obvious the observation in MLF that the instance relation is only decidable in the presence of explicit abstractions.
 
-So we can entirely elide MLF's notins of 'equivalence under prefix' and carve out the subset of unique properties of Q that affect type checking, in particular, we know that we cannot eagerly β-reduce Q, for fear of loss of generality.
+So we can entirely elide MLF's notions of 'equivalence under prefix' and carve out the subset of unique properties of Q that affect type checking, in particular, we know that we cannot eagerly β-reduce Q, for fear of loss of generality.
 
 Polytypes must be revealed explicitly before they can be instantiated. This is the role of oracles (type annotations indicating polytypes) in the term language. As in both [1] and MLF, typing schemes can only assign monotypes to lambda-bound variables (since we must guess their types from their use-sites) - notice that this doesn't prevent them from referring to type variables bound to polytypes however. 
 * β-reduce Q just before App (not before !)

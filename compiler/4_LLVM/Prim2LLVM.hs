@@ -4,21 +4,17 @@ module Prim2LLVM where
 import Prim
 import CoreSyn
 import Externs
-import PrettyCore
-import Control.Monad.ST.Lazy
-import Control.Monad.State.Lazy
-import Control.Monad.Primitive (PrimMonad,PrimState,primitive)
-import Data.Functor
-import Data.Function
-import Data.Maybe
+--import Control.Monad.ST.Lazy -- maybe needed
+--import Control.Monad.State.Lazy
+--import Control.Monad.Primitive (PrimMonad,PrimState,primitive)
+--import Data.Maybe
+import Data.List (unzip3 , (!!))
 import Data.String
+import qualified Data.Text as T (pack)
 import qualified Data.ByteString.Short as BS
-import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
-import qualified Data.IntSet as IS
 import qualified Data.Map as M
---import qualified Data.HashMap as H
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Type as LT
 import qualified LLVM.AST.Typed as LT
@@ -28,11 +24,8 @@ import qualified LLVM.AST.Constant as C
 import LLVM.AST.AddrSpace
 import LLVM.AST.Global
 import LLVM.AST.Linkage
-import LLVM.IRBuilder.Module hiding (function)
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Instruction hiding (gep)
-
-panic why = error $ "Panic: Codegen: " ++ why
 
 -- nat, nat, array, irregular array, tree
 -- TODO wrapper types ? esp. optimize extracting data out of a container
@@ -40,9 +33,9 @@ data DataTypes = Enum | Peano | Flat | SumTypeList | Tree
 data SubData = SubData | Wrap
 
 -- patch up missing PrimMonad instance for lazy ST
-instance PrimMonad (ST s) where
-  type PrimState (ST s) = s
-  primitive = strictToLazyST . primitive
+--instance PrimMonad (ST s) where
+--  type PrimState (ST s) = s
+--  primitive = strictToLazyST . primitive
 
 type CGEnv s a = StateT (CGState s) (ST s) a
 type CGBodyEnv s a = IRBuilderT (StateT (CGState s) (ST s)) a
@@ -179,7 +172,7 @@ primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
   t -> error $ show t
 
 -- basically is it bigger than register size
-isDataTyHead = \case { THSum{}->True ; THSplit{}->True ; THProd{}->True ; THRec{}->True ; THExt 21->True ; _->False } -- HACK
+isDataTyHead = \case { THSum{}->True ; THSplit{}->True ; THRec{}->True ; THExt 21->True ; _->False } -- HACK
 
 primTy2llvm :: PrimType -> L.Type =
   let doExtern isVa tys =
@@ -206,7 +199,7 @@ emitDef d = modify $ \x->x{llvmDefs = d : llvmDefs x}
 
 emitArray :: L.Name -> [C.Constant] -> CGEnv s C.Constant
 emitArray nm arr = let
- elemTy = LT.typeOf (head arr)
+ elemTy = LT.typeOf (fromJust $ head arr)
  llvmArr = C.Array elemTy arr
  ty = LT.typeOf llvmArr
  in C.GetElementPtr True (C.GlobalReference (LT.ptr ty) nm) [C.Int 32 0, C.Int 32 0]
@@ -249,13 +242,13 @@ gep addr is = let
   gepType ty [] = LT.ptr ty
   gepType (LT.PointerType ty _) (_:is') = gepType ty is'
   gepType (LT.StructureType _ elTys) ix = case ix of
-    L.ConstantOperand (C.Int 32 val):is' -> if length elTys <= (fromIntegral val) then panic $ "gep: " ++ show val ++ show elTys else gepType (elTys !! fromIntegral val) is'
+    L.ConstantOperand (C.Int 32 val):is' -> if length elTys <= (fromIntegral val) then panic $ T.pack $ "gep: " ++ show val ++ show elTys else gepType (elTys !! fromIntegral val) is'
     x -> error "gep index: expected constI32"
   gepType (LT.VectorType _ elTy) (_:is') = gepType elTy is'
   gepType (LT.ArrayType _ elTy) (_:is') = gepType elTy is'
   gepType (LT.NamedTypeReference nm) is
 --  | nm == structName label = gepType (rawStructType label) is
-    | otherwise = panic $ "unknown typedef: " ++ show nm
+    | otherwise = panic $ T.pack $ "unknown typedef: " ++ show nm
   gepType x _ = error $ "gep into non-indexable type: " ++ show x
   in emitInstr ty $ (L.GetElementPtr False addr is [])
 
@@ -266,7 +259,7 @@ storeIdx :: L.Operand -> Int -> L.Operand -> CGBodyEnv s ()
 storeIdx ptr i op = (`store'` op) =<< ptr `gep` [constI32 0, constI32 $ fromIntegral i]
 
 mkArray ar = let
-  ty = LT.typeOf $ head ar
+  ty = LT.typeOf $ fromJust $ head ar
   undef = L.ConstantOperand $ C.Undef $ LT.ArrayType (fromIntegral$length ar) ty
   in foldM (\arr (i,val) -> insertValue arr val [i]) undef (zip [0..] ar)
 

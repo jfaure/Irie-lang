@@ -4,40 +4,23 @@ import Prim2LLVM
 import Externs
 import CoreSyn
 import CoreUtils
-import PrettyCore
-import Control.Monad.ST.Lazy
-import Control.Monad.State.Lazy
-import Control.Monad.Primitive (PrimMonad,PrimState,primitive)
-import Data.Functor
-import Data.Function
-import Data.Foldable
-import Data.List (partition , unfoldr , intersperse)
-import Data.Char
-import Data.Maybe
+import Data.List (partition)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Text as T
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
-import qualified Data.IntSet as IS
-import qualified Data.ByteString.Short as BS
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Constant as C
-import qualified LLVM.AST.IntegerPredicate as IP
-import qualified LLVM.AST.FloatingPointPredicate as FP
 import qualified LLVM.AST.FunctionAttribute as FA
 import qualified LLVM.AST.Type  as LT
 import qualified LLVM.AST.Typed as LT
-import qualified LLVM.AST.Float as LF
-import           LLVM.AST.AddrSpace
 import           LLVM.AST.Global
 import           LLVM.AST.Linkage as L
-import           LLVM.AST.CallingConvention as CC
-import LLVM.IRBuilder.Module hiding (function)
+--import           LLVM.AST.CallingConvention as CC
+--import LLVM.IRBuilder.Module hiding (function)
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Instruction hiding (gep)
-
-import Debug.Trace
 
 --mkStg :: V.Vector Expr -> V.Vector (HName , Bind) -> V.Vector QTT -> L.Module
 mkStg externBindings coreMod@(JudgedModule bindNames coreBinds tyVars qtt argTys) = let
@@ -107,7 +90,7 @@ cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case
              STGFn _ [] op -> STGConstant op
              f -> f
            -- TODO ? llvm.global_ctors: appending global [ n x { i32, void ()*, i8* } ]
-         CoreFn args free t ty -> dataFunction llvmNm args [] t ty []
+--       CoreFn args free t ty -> dataFunction llvmNm args [] t ty []
          Ty ty -> LLVMTy <$> cgType ty
        ko -> error "panic Core failed to generate a valid binding"
      pure b
@@ -133,7 +116,7 @@ dataFunction llvmNm args free body returnType attribs = let
 
   (params , blocks) <- runIRBuilderT emptyIRBuilder $ do
     -- give the sret the first fresh name if it's needed
-    let getSRet = fromMaybe (panic $ "fn returns data, which contradicts it's type: " ++ show returnType)
+    let getSRet = fromMaybe (panic $ T.pack $ "fn returns data, which contradicts it's type: " ++ show returnType)
     rParams <- rArgTys `forM` \ty -> L.LocalReference ty <$> fresh
     dParams <- dArgTys `forM` \ty -> do
       frNm <- fresh
@@ -173,7 +156,7 @@ cgTerm = let
       STGConstant x -> mkSTGOp <$> x `call'` [] -- TODO where is the frame
       f -> pure $ mkSTGOp $ fnOp f
     -- Args: 1. regular args 2. dataArgs 3. splits from Match
-    VArg  i -> gets (head . stack) >>= \cg -> case (regArgs cg IM.!? i) of
+    VArg  i -> gets (fromJust . head . stack) >>= \cg -> case (regArgs cg IM.!? i) of
       Just reg -> pure $ mkSTGOp reg
       Nothing  -> case (dataArgs cg IM.!? i) of
         Just (DataArg shares frame op) -> 
@@ -182,7 +165,7 @@ cgTerm = let
           doSplit s = (\op -> (sframe s , op)) <$> (components s IM.!? i)
           in case asum (doSplit <$> splits cg) of
           Just (f , o)  -> pure $ STGOp o (Just f)
-          Nothing -> panic $ "arg not in scope: " ++ show i
+          Nothing -> panic $ T.pack $ "arg not in scope: " ++ show i
     VExt  i -> _
   in \case
   Var vNm -> cgName vNm
@@ -227,7 +210,7 @@ cgTerm = let
               bitcast op retTy <&> (`STGOp` maybeD)
             branches = ("",) . uncurry mkAlt <$> (IM.toList alts)
         mkBranchTable tag (C.Int 32 . fromIntegral <$> IM.keys alts) branches
-      bad -> panic $ "Match should have exactly 1 argument; not " ++ show (length bad)
+      bad -> panic $ T.pack $ "Match should have exactly 1 argument; not " ++ show (length bad)
     Instr i   -> case i of -- ifThenE is special since it can return data
       IfThenE -> case args of
         [ifE, thenE, elseE] -> cgTerm ifE >>= \(STGOp scrut Nothing) ->
@@ -258,7 +241,7 @@ cgTerm = let
 
 -- also return the args consumed (Match needs to uniformize this)
 genAlt :: L.Operand -> L.Operand -> L.Operand -> ILabel -> Expr -> CGBodyEnv s STGOp
-genAlt isOurFrame frame scrut lName (CoreFn args _free t ty) = do
+genAlt isOurFrame frame scrut lName (Core (Abs args _free t ty) _ty) = do
   altType <- lift $ LT.ptr . LT.StructureType False . (sumTagType :) <$> (cgType `mapM` (snd <$> args))
   e   <- bitcast scrut altType
   llArgs <- loadIdx e `mapM` [1 .. length args]
@@ -295,7 +278,7 @@ cgInstrApp instr args = case instr of
       (PredInstr _ , [a,b]) -> emitInstr boolType (instr a b)
       (Unlink , [fnEnd , fnCont , str]) -> _
       (Link   , [elem , str]) -> _
-      (_ , [a,b]) -> emitInstr (LT.typeOf $ head ars) (instr a b)
+      (_ , [a,b]) -> emitInstr (LT.typeOf $ fromJust $ head ars) (instr a b)
       x -> panic "arity mismatch on prim instruction"
 
 cgType :: [TyHead] -> CGEnv s L.Type
@@ -323,7 +306,7 @@ cgTypeAtomic = let
     THArray t  -> _ -- LT.ArrayType $ cgType t
     THSum   ls -> tyLabel
     THSplit ls -> tyLabel
-    THProd p   -> tyLabel
+--  THProd p   -> tyLabel
     THSet  0   -> tyLabel
     x -> error $ "MkStg: not ready for ty: " ++ show x
 tyLabel = voidPtrType -- HACK
@@ -333,7 +316,7 @@ cgPrimInstr i = case i of
   MkNum    -> _
   MkReal   -> _
   MkTuple  -> _
-  MkPAp    -> _
+  MkPAp{}  -> _
   Alloc    -> _
   Len      -> _
   SizeOf   -> _ -- C.sizeof

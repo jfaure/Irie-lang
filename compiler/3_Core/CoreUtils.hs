@@ -2,26 +2,32 @@ module CoreUtils where
 ----------------------------------------------------
 -- Various utility functions operating on CoreSyn --
 ----------------------------------------------------
-import Prim
 import CoreSyn
-import PrettyCore
+import ShowCore()
 import Data.List
-import qualified Data.Vector as V
+import qualified Data.IntMap as IM
+--import qualified Data.Vector as V
+--import qualified Data.IntSet as IS
 
--- Freevars ignored ?
-getArgs :: Expr -> [(IName , Type)] = \case
-  CoreFn args _ _ _ -> args
-  x -> []
+addArrowArgs [] = identity
+addArrowArgs args = \case
+  [THArrow as r] -> [THArrow (as ++ args) r]
+  [THPi (Pi p t)]   -> [THPi (Pi p $ addArrowArgs args t)]
+  [THSi (Pi p t) _] -> [THPi (Pi p $ addArrowArgs args t)]
+  [THBi i t] -> [THBi i $ addArrowArgs args t]
+  x -> [THArrow args x]
 
 isArrowTy = \case
   [THArrow{}] -> True
   [THPi (Pi p t)] -> isArrowTy t
+  [THBi i t] -> isArrowTy t
   [THSi (Pi p t) _] -> isArrowTy t
   x -> False
 
 getRetTy = \case
   [THArrow _ r] -> getRetTy r -- currying
   [THPi (Pi ps t)] -> getRetTy t
+  [THBi i t] -> getRetTy t
   x -> x
 
 flattenArrowTy ty = let
@@ -39,10 +45,12 @@ tyOfTy t = case t of
   [t] -> [THSet 0]
   t  -> error $ "multiple types: " ++ show t
 
+tyExpr = \case -- expr found as type, (note. raw exprs cannot be types however)
+  Ty t -> t
+  expr -> error $ "expected type, got: " ++ show expr
+
 tyOfExpr  = \case
   Core x ty -> ty
-  CoreFn _ _ _ ty  -> ty
-  ExtFn _nm ty -> ty
   Ty t      -> tyOfTy t
   Fail e    -> []
 
@@ -61,6 +69,8 @@ getTypeIndexes = \case
   [THFam t args ixs] -> ixs
   [THRecSi m ixs] -> (`Core` []) <$> ixs
   [THPi (Pi b ty)] -> getTypeIndexes ty
+  [THSi (Pi b ty) x] -> getTypeIndexes ty
+  [THBi i ty] -> getTypeIndexes ty
   x -> []
 
 --zipWithPad :: a -> b -> (a->b->c) -> [a] -> [b] -> [c]
@@ -102,13 +112,16 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   in case join of
   [THSet a , THSet b] -> [THSet $ max a b]
   [THPrim a , THPrim b]  -> if a == b then [t1] else join
+  [THBound a , THBound b]-> if a == b then [t1] else join
   [THVar a , THVar b]    -> if a == b then [t1] else join
+  [THArg a , THArg b]    -> if a == b then [t1] else join
   [THRec a , THRec b]    -> if a == b then [t1] else join
   [THExt a , THExt  b]   -> if a == b then [t1] else join
 --  [THAlias a , THAlias b] -> if a == b then [t1] else join
   [THSum a , THSum b]     -> [THSum   $ union a b] --[THSum (M.unionWith mergeTypes a b)]
   [THSplit a , THSplit b] -> [THSplit $ union a b] --[THSum (M.unionWith mergeTypes a b)]
-  [THProd a , THProd b]   -> [THProd $ intersect a b] -- [THProd (M.unionWith mergeTypes a b)]
+--[THProd a , THProd b]   -> [THProd $ intersect a b] -- [THProd (M.unionWith mergeTypes a b)]
+  [THProduct a , THProduct b]   -> [THProduct $ IM.intersectionWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
   [THArrow d1 r1 , THArrow d2 r2]
     | length d1 == length d2 -> [THArrow (zM d1 d2) (mergeTypes r1 r2)]
   [THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!
@@ -119,23 +132,3 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
 --  then [THRecSi r1 (zipWith mergeTypes a1 a2)]
 --  else join
   _ -> join
-
--- substitute type variables
--- TODO guard against loop
-rmTypeVars :: V.Vector BiSub -> V.Vector BiSub -> Type -> Type
-rmTypeVars tyVars argVars = foldl1 mergeTypes . map (rmTypeVarsSingle tyVars argVars)
---rmTypeVarsSingle :: V.Vector Bisub -> V.Vector BiSub -> Type -> Type
-rmTypeVarsSingle tyVars argVars = let
-  rmTypeVarsSingle' = rmTypeVarsSingle tyVars argVars
-  rmTypeVars'  = rmTypeVars tyVars argVars
-  in \case
-  THVar v -> _pSub $ tyVars  V.! v
-  THRec r -> _pSub $ tyVars  V.! r
-  THArg a -> _mSub $ argVars V.! a
-  
-  THArrow    ars ret -> [THArrow (rmTypeVars' <$> ars) (rmTypeVars' ret)]
-  t -> [t]
---THPi Pi -- dependent function space. Always implicit, for explicit, write `∏(x:_) x -> Z`
---THSi Pi (IM.IntMap Expr) -- (partial) application of pi type
---THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
---THFam Type [Type] [Expr] -- type of things it can index, and things indexing it (both can be [])

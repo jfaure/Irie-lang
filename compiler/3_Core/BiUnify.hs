@@ -1,112 +1,102 @@
 module BiUnify where
-import CmdLine
+-- See presentation/TypeTheory for commentary
 import Prim
-import qualified ParseSyntax as P
 import CoreSyn as C
 import CoreUtils
 import TCState
 import PrettyCore
-import DesugarParse
 import Externs
 
 import qualified Data.Vector.Mutable as MV -- mutable vectors
 import qualified Data.Vector as V
-import qualified Data.Map as M
 import qualified Data.IntMap as IM
-import qualified Data.Text as T
-import Data.Functor
-import Data.Maybe
-import Control.Monad
-import Control.Applicative
-import Control.Monad.Trans.State.Strict
-import Data.List --(foldl', intersect)
 import Control.Lens
-import Debug.Trace
 
---------------------------------------------
--- Monotype environments (typing schemes) --
---------------------------------------------
--- 2 environments have a greatest lower bound: d1 n d2, where (d1 n d2) (x) = d1(x) n d2(x)
--- interpret d1(x) = T for x not present in d1
--- ! subsumption (on typing schemes) allows instantiation of type variables
+failBiSub msg a b = error $ "failed bisub:\n    " ++ show a ++ "\n<--> " ++ show b ++ "\n" ++ msg --pure False
 
---------------------
--- Generalization --
---------------------
--- suppose `e = let x = e1 in e2`. e1 must be typeable and have principal ty [D1-]t1+ under Pi
--- the most general choice is to insert x into Pi with principal type of e1
--- ie. x depends on lambda-bound vars, so those are moved into Pi (as monotype environments)
-
--------------------------------
--- Note. Rank-n polymorphism --
--------------------------------
--- A constraint a <= t- gives a an upper bound ;
--- which only affects a when used as an upper bound (negative position)
--- The only exception is when inferring higher-rank polymorphism,
--- since a- and a+ must have the same polymorphic rank
-
--------------------
--- BiSubstitution --
--------------------
--- find substitution solving constraints of the form t+ <= t-
--- Atomic: (join/meet a type to the var)
--- a  <= t- solved by [m- b = a n [b/a-]t- /a-] 
--- t+ <= a  solved by [m+ b = a u [b/a+]t+ /a+] 
--- a  <= c  solved by [m- b = a n [b/a-]c  /a-] -- (or equivalently,  [a u b /b+])
--- SubConstraints, eg: (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
-
-failBiSub a b = error $ "failed bisub:\n    " ++ show a ++ "\n<--> " ++ show b --pure False
-
-biSub_ a b = if debug getGlobalFlags
-  then trace ("bisub: " ++ prettyTy a ++ " <==> " ++ prettyTy b) biSub a b -- *> (dv_ =<< use bis)
+biSub_ a b = if False -- debug getGlobalFlags
+  then trace ("bisub: " ++ prettyTyRaw a ++ " <==> " ++ prettyTyRaw b) biSub a b -- *> (dv_ =<< use bis)
   else biSub a b
+
 biSub :: TyPlus -> TyMinus -> TCEnv s BiCast
 biSub a b = let
-  solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
-  solveTVar _ newTy [] = [newTy]
-  solveTVar varI newTy (ty:tys) = if eqTyHead newTy ty
-    then mergeTyHead newTy ty ++ tys
-    else ty : solveTVar varI newTy tys
   in case (a , b) of
   -- lattice top and bottom
   ([] ,  _) -> pure BiEQ
   (_  , []) -> pure BiEQ
-  -- vars
-  ([THVar p] , m) -> use bis >>= \v->MV.modify v
-    (over mSub (foldr (solveTVar p) m)) p $> BiEQ
-  (p , [THVar m]) -> use bis >>= \v->MV.modify v
-    (over pSub (foldr (solveTVar m) p)) m $> BiEQ
   -- lattice subconstraints
   ((p1:p2:p3) , m) -> biSub [p1] m *> biSub (p2:p3) m
   (p , (m1:m2:m3)) -> biSub p [m1] *> biSub p (m2:m3)
   ([p] , [m])      -> atomicBiSub p m
 
+-- merge types and attempt to eliminate the THVar
+--solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
+solveTVar _ newTy [] = [newTy] -- TODO dangerous ?
+solveTVar varI newTy (ty:tys) = if eqTyHead newTy ty
+  then mergeTyHead newTy ty `mergeTypes` tys
+  else ty : solveTVar varI newTy tys
+
 atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
-atomicBiSub p m = -- trace ("⚛bisub: " ++ prettyTy [p] ++ " <==> " ++ prettyTy [m]) $
+atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub: " ++ prettyTyRaw [p] ++ " <==> " ++ prettyTyRaw [m]) go else go) $
  case (p , m) of
+  -- Bound vars
+  (THBound i , x) -> use (deBruijn) >>= (`MV.read` i) >>= \v -> atomicBiSub (THVar v) x
+  (x , THBound i) -> use (deBruijn) >>= (`MV.read` i) >>= \v -> atomicBiSub x (THVar v)
+  (THBi nb x , y) -> do
+    -- make new THVars for the debruijn bound vars here
+    level %= (\(Dominion (f,x)) -> Dominion (f,x+nb))
+    bisubs <- (`MV.grow` nb) =<< use bis
+    bruijn <- (`MV.grow` nb) =<< use deBruijn
+    let blen = MV.length bisubs
+        bruijnlen = MV.length bruijn
+        tvars = [blen - nb .. blen - 1] 
+    tvars `forM_` \i -> do
+      MV.write bisubs i (let tv = [THVar i] in BiSub tv tv)
+      MV.write bruijn (bruijnlen + i - blen) i
+    (bis .= bisubs) *> (deBruijn .= bruijn)
+    r <- biSub x [y]
+    insts <- tvars `forM` \i -> MV.read bisubs i
+--  traceM $ show tvars <> "----" <> show instantiated <> "---" <> show r
+    pure . did_ $ BiInst insts r
+
+  -- merge types and attempt to eliminate the THVar
+  (THVar p , m) -> use bis >>= \v->MV.modify v (over mSub (foldr (solveTVar p) [m])) p $> BiEQ
+  (p , THVar m) -> use bis >>= \v->MV.modify v (over pSub (foldr (solveTVar m) [p])) m $> BiEQ
+
   -- Lambda-bound in - position can be guessed
-  (THArg i , m) -> let
-    replaceLambda t = \case { [THArg i2] | i2==i -> [t] ; x -> doSub t x }
-    in use domain >>= \v->MV.modify v (over mSub (replaceLambda m)) i $> BiEQ
-  (p , THArg i) -> pure BiEQ -- use domain >>= \v->MV.modify v (over pSub (doSub p)) i
----- lambda-bound in + position is ignored except for info on rank-n polymorphism info
+  -- Lambda-bound in + position cannot, however we can take note of it's rank-polymorphism
+  (THArg i , m) -> use domain >>= \v->MV.modify v (over mSub (foldr (solveTVar i) [m])) i $> BiEQ
+--  let replaceLambda t = \case { [THArg i2] | i2==i -> [t] ; x -> doSub t x }
+--  in use domain >>= \v->MV.modify v (over mSub (replaceLambda m)) i $> BiEQ -- TODO probably premature
+  -- TODO should we ignore + on lambda ? -- pure BiEq
+  (p , THArg i) -> use domain >>= \v->MV.modify v (over pSub (foldr (solveTVar i) [p])) i $> BiEQ
+--  replaceLambda t = \case { [THArg i2] | i2==i -> [t] ; x -> doSub t x }
+--  in use domain >>= \v->MV.modify v (over pSub (replaceLambda p)) i $> BiEQ
 
 --(THArg i , THArrow args ret) -> let
 --    fa = [THImplicit i] ; ty = THArrow (replicate (length args) fa) fa
 --  in use domain >>= \v-> MV.modify v (ty:) i
   (THSet u , x) -> pure BiEQ
-  (THRec m , THSet u) -> pure BiEQ
+--(THRec m , THSet u) -> pure BiEQ
+  (THRec m , x) -> use wip >>= \w -> MV.modify w (\(Checking m y doGen ty) -> Checking m y doGen (x:ty)) m *> pure BiEQ
 
   (THPrim p1 , THPrim p2) -> primBiSub p1 p2
 
   (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
 
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
+
   (THPi (Pi p ty) , y) -> biSub ty [y]
   (x , THPi (Pi p ty)) -> biSub [x] ty
 
-  -- record: labels in the first must all be in the second
-  (THProd x , THProd y) -> if all (`elem` x) y then pure BiEQ else error "Cannot unify recordTypes"
+  -- record: fields in the second must all be in the first
+  (THProduct x , THProduct y) -> let
+    go k ty = case x IM.!? k of
+      Nothing -> failBiSub ("field: '" <> show k <> "' not found.") p m
+      Just t2 -> biSub t2 ty
+    in BiEQ <$ (go `IM.traverseWithKey` y) -- TODO bicasts
+
+--(THProd x , THProd y) -> if all (`elem` x) y then pure BiEQ else error "Cannot unify recordTypes"
   (THSum  x , THSum y)  -> if all (`elem` y) x then pure BiEQ else error "Cannot unify sumtypes"
   (THArrow ars ret, THSplit y) -> pure BiEQ -- labelBiSub-- TODO
   (THArrow ars ret, THTuple y) -> pure BiEQ -- labelBiSub-- TODO
@@ -118,28 +108,34 @@ atomicBiSub p m = -- trace ("⚛bisub: " ++ prettyTy [p] ++ " <==> " ++ prettyTy
 --  pure $ map (getRetType . getLabelTy) labelTys
 
   -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
+  (THExt a , THExt b) | a == b -> pure BiEQ
   (p , THExt i) -> biSub [p]     =<< tyExpr . (`readPrimExtern` i)<$>use externs
   (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readPrimExtern` i)<$>use externs
 --  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
-  (THRec m , THRec y) -> if (m == y) then pure BiEQ else error "recursive types are not equal"
-  (THRec m , x) -> pure BiEQ -- TODO ?
+
+  -- TODO sort out typevars
+--(THRec m , THRec y) -> if (m == y) then pure BiEQ else error "recursive types are not equal"
+--(THArrow{} , THRec{}) -> pure BiEQ -- TODO
+--(THRec m , THRec y) -> pure BiEQ -- if (m == y) then pure BiEQ else error "recursive types are not equal"
   (THRecSi f1 a1, THRecSi f2 a2) -> if f1 == f2
-    then if (length a1 == length a2) && all id (zipWith termEq a1 a2)
+    then if (length a1 == length a2) && all identity (zipWith termEq a1 a2)
       then pure BiEQ
       else error $ "RecSi arities mismatch"
     else error $ "RecSi functions do not match ! " ++ show f1 ++ " /= " ++ show f2
-  (a , b) -> failBiSub a b
+  (a , b) -> failBiSub "no relation" a b
 
 arrowBiSub (argsp,argsm) (retp,retm) = let -- zipWithM biSub args2 args1 *> biSub ret1 ret2
-  bsArgs [] [] = pure []
-  bsArgs [] x  = pure [BiCast (Instr MkPAp)] -- TODO remaining args
-  bsArgs x  [] = failBiSub argsp argsm
-  bsArgs (p : ps) (m : ms) = (:) <$> biSub m p <*> bsArgs ps ms
-  in CastApp <$> bsArgs argsp argsm <* biSub retp retm -- Note. App return is never cast (?!)
+ -- Note. App return is never cast (?!)
+  bsArgs [] [] = pure ([] , Nothing) <* biSub retp retm
+  bsArgs x  [] = pure ([] , Just x)  <* biSub (addArrowArgs x retp) retm  -- OK Partial application
+  bsArgs []  x = pure ([] , Nothing) <* biSub retp (addArrowArgs x retm)  -- OK if returns a function
+--bsArgs (p : ps) (m : ms) = (:) <$> biSub m p <*> bsArgs ps ms
+  bsArgs (p : ps) (m : ms) = (\arg (xs,pap) -> (arg:xs , pap)) <$> biSub m p <*> bsArgs ps ms
+  in uncurry CastApp <$> bsArgs argsp argsm -- <* biSub retp retm
 
 primBiSub p1 m1 = case (p1 , m1) of
-  (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (BiCast (Instr Zext)) else (failBiSub p1 m1)
-  (p , m) -> if (p /= m) then (failBiSub p1 m1) else pure BiEQ
+  (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (BiCast (Instr Zext)) else (failBiSub "primint no subtype" p1 m1)
+  (p , m) -> if (p /= m) then (failBiSub "primtypes no bisub" p1 m1) else pure BiEQ
 
 --------------
 -- Checking --
@@ -155,8 +151,8 @@ check :: Externs -> V.Vector [TyHead] -> V.Vector (Maybe Type)
      -> [TyHead] -> [TyHead] -> Bool
 check e ars labTys inferred gotRaw = let
   go = check' e ars labTys inferred (reduceType gotRaw)
-  in if debug getGlobalFlags
-  then trace ("check: " ++ prettyTy inferred ++ "\n   <?: " ++ prettyTy gotRaw)
+  in if False {-debug getGlobalFlags-}
+  then trace ("check: " ++ prettyTyRaw inferred ++ "\n   <?: " ++ prettyTyRaw gotRaw)
     $ go
   else go
 
@@ -191,7 +187,7 @@ check' es ars labTys inferred gotTy = let
       getLabelTy = \case { Just t->t ; Nothing->error "forward reference to label" }
       splitTys = (getRetTy . getLabelTy . (labTys V.!)) <$> labels
       in all (check'' [t]) splitTys
-    (THProd x , THProd y) -> all (`elem` x) y
+--  (THProd x , THProd y) -> all (`elem` x) y
 --  (t , THPi [] ty tyArgs) -> check'' [t] (tyAp ty tyArgs)
 --  (THPi [] ty tyArgs , t) -> check'' (tyAp ty tyArgs) [t]
 

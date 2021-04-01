@@ -1,22 +1,11 @@
 -- Command line arguments are very nearly global constants
 --  they must be initialized first thing at runtime
-module CmdLine (CmdLine(..), parseCmdLine, defaultCmdLine
-      , initGlobalFlags , getGlobalFlags)
-where
+module CmdLine (CmdLine(..), parseCmdLine, defaultCmdLine) where
 import Options.Applicative
-import qualified Data.Text as T
-import Data.IORef
-import System.IO.Unsafe
-
-globalFlags :: IORef CmdLine
-  = unsafePerformIO $ newIORef defaultCmdLine
-initGlobalFlags :: CmdLine -> IO CmdLine -- call this once, at startup
-  = \flags -> flags <$ writeIORef globalFlags flags
-getGlobalFlags :: CmdLine
-  = unsafePerformIO $ readIORef globalFlags
+import Data.Text as T
 
 data CmdLine = CmdLine
-  { printPass      :: [T.Text]
+  { printPass      :: [Text]
   , jit            :: Bool
   , debug          :: Bool
   , optlevel       :: Word
@@ -27,12 +16,12 @@ data CmdLine = CmdLine
 
 defaultCmdLine = CmdLine [] False False 0 False Nothing []
 
-printPasses = ["args" , "source", "parseTree", "core", "llvm-hs" , "llvm-cpp"] :: [T.Text]
+printPasses = ["args" , "source", "parseTree", "core", "llvm-hs" , "llvm-cpp"] :: [Text]
 
-parsePrintPass :: ReadM [T.Text]
+parsePrintPass :: ReadM [Text]
 parsePrintPass = eitherReader $ \str -> let
-  passesStr = T.split (==',') (T.pack str)
-  checkAmbiguous s = case filter (T.isInfixOf s) printPasses of
+  passesStr = split (==',') (toS str)
+  checkAmbiguous s = case Prelude.filter (isInfixOf s) printPasses of
     []  -> Left $ "Unrecognized print pass: '" ++ str ++ "'"
     [p] -> Right p
     tooMany -> Left $ "Ambiguous print pass: '" ++ str ++ "' : " ++ show tooMany
@@ -62,10 +51,10 @@ cmdLineDecls = CmdLine
       <> help "Write output to file")
   <*> many (argument str (metavar "FILE"))
 
-progDescription = "Compiler and Interpreter for the Nimzo language, an array oriented calculus of inductive constructions for system level programming."
+progDescription = "Compiler and Interpreter for the Irie language, an array oriented calculus of inductive constructions for system level programming."
 cmdLineInfo =
   let description = fullDesc
-        <> header "Nimzo compiler/interpreter"
+        <> header "Irie compiler/interpreter"
         <> progDesc progDescription
   in info (helper <*> cmdLineDecls) description
 

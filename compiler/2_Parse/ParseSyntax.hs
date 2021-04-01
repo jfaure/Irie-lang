@@ -4,11 +4,9 @@
 module ParseSyntax where -- import qualified as PSyn
 
 import Prim
-import Data.Text as T -- Names are Text (ShortText ?)
 import qualified Data.Map as M
-import qualified Data.IntSet as IS
-import qualified Data.HashMap.Strict as HM
-import qualified Data.Vector as V
+--import qualified Data.HashMap.Strict as HM
+--import qualified Data.Vector as V
 import Control.Lens
 
 type IName = Int
@@ -17,7 +15,7 @@ type FName = IName -- record  fields
 type LName = IName -- sumtype labels
 type FreeVar = IName -- let or non-local argument needed deeper in a function nest
 type ImplicitArg = (IName , Maybe TT) -- implicit arg with optional type annotation
-type FreeVars = IS.IntSet
+type FreeVars = IntSet
 type NameMap = M.Map HName IName
 
 data MixFixName = MFHole | MFName HName deriving (Show , Eq)
@@ -71,18 +69,28 @@ data TTName
  | VLocal  IName
  | VExtern IName
 
+-- info on record fields
+data FieldInfo = FieldInfo {
+   mixfix     :: Int
+ , dependents :: FName
+}
+
+data LensOp a = LensGet | LensSet a | LensOver a deriving Show
+
 -- Parser Expressions (types and terms are syntactically equivalent)
 data TT
  = Var !TTName
  | WildCard -- "_"
 
  -- lambda-calculus
+ | Abs TopBind
  | App TT [TT]
  | InfixTrain TT [(TT, TT)] -- precedence unknown
 
  -- tt primitives (sum , product , list)
  | Cons   [(FName , TT)] -- can be used to type itself
  | Proj   TT FName
+ | TTLens TT [FName] (LensOp TT)
  | Label  LName [TT]
  | Match  [(LName , FreeVars , [Pattern] , TT)]
  | List   [TT]
@@ -93,7 +101,6 @@ data TT
  -- term primitives
  | Lit     Literal
  | LitArray [Literal]
- | MultiIf [(TT, TT)] TT -- if .. elseif .. else
 
 -- patterns represent arguments of abstractions
 data Pattern

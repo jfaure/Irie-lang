@@ -4,42 +4,65 @@
   * language server
   * precompiled modules
   * Error reporting
+  * Linker
 ## Parse
-  * rec + subfns (case split alts) + qtt on top binds
   * Source locations
   * linefolds
   * rec
 ## Types
-  * !! cleanup return types for sumdatas
+  * qtt typevars + record fields
   * Dependent normalisation
-  * Calculus of effects (cf. fire triangle)
-  * ifThenE bad type
-  * Bicasts on lattice types (eg. extra type annotations)
+  * Tuple
 ## CodeGen
   * GMP
-  * subtyping records/sumtypes (core idxs -> llvm idxs)
+  * conv recursive functinos to anamorphisms
 
 !!
-Incremental compiler | unresolved externs | sigs
-Modules == records (+ insane dependencies)
-read type vars
-finish fralloc (flat & shared data)
-subtype coercions
+mutual generalisation. ? make sigma type using inferred forward refs
+fralloc: (flat & shared data)
 repl & linking & print JIT results somehow
-record subtyping (offset table header) # { x : i32 } <: { x : i64 }
-paps | subtyped fns | primtable # Fn = & SubtypeFns & ( | FnPtr | PAp )
+llvm record subtyping (offset table header) # { x : i32 } <: { x : i64 }
+Make args consecutive in parser (not list)
 
-??
-# Cata , Ana , Para , Hylo morphisms
+# Mutual functions (vs rec function)
+  `f = g a
+   g = (f a)`
+  1. frontRef increases tc-stack
+  2. Checking i => top tc-stack (g) is mutual with i(f) => merge g with whatever f instantiates it to
+
+# Type variable lifespan
+  1. top-bind : a,a+n args + stack1 of THVars
+  2. abs      : b,b+n args + stack2 of THVars -- don't bother generalising
+  3. topbind2 : c,c+n args + stack3 of THVars 
+  4. b2 backrefs top-bind => mutual !! (will be generalised without fully accounting for f)
+
+  -- add g IName + dominion to f , set no-gen flag
+  -- on gen, if noGen set, leave "Checking" and write dom there
+  * judgeBind update prevDom bisubs
+
 # Polymorphism
-# Wrappers
+  1. Record subtyping
+     Record = Base Record (local indexer)
+  2. Memory management (esp sharing)
+  3. containers
+
+# ImpSyn
+  QTT = (Int , Int)
+  Arg =
+    | Regsize
+    | Poly
+    | Sum
+    | Record
+  Symbol : [Args , QTT , Frame] Body
+
+?? Open questions
+# codegen array of a sumtype (varying size leaves)
+# Deep BiCasts / lazy leaf cast
+# Cata , Ana , Para , Hylo morphisms
 # Newtype (opt-out of subtyping)
 # partial typecheck (normalization + insane dependents)
-# labels/fields namespace
-  * Tuple = special label-less sum-typ
-  * structural subtyping vs predefined types
-  * Lenses
-# Effects
-  * eg. In ,  Out , IO (In & Out) , State
-  * Union , subtyping , effect variable
-  * record subtypes non-records via special field (return)
+# Lens
+  * '.' (get : s -> a) (set : s -> a -> s)
+  Lens : { get s a , set s a s }
+  rect . x . get
+  rect . x . set

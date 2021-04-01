@@ -1,7 +1,5 @@
--- see "Algebraic subtyping" by Stephen Dolan <https://www.cl.cam.ac.uk/~sd601/thesis.pdf>
-
+-- see "Algebraic subtyping" by Stephen Dolan https://www.cl.cam.ac.uk/~sd601/thesis.pdf
 module Infer where
-import CmdLine
 import Prim
 import BiUnify
 import qualified ParseSyntax as P
@@ -13,21 +11,11 @@ import DesugarParse
 import Externs
 
 import Control.Lens
-import Control.Monad
-import Control.Monad.ST
-import Control.Applicative
-import Control.Monad.Trans.State.Strict
-import Control.Monad.Trans.Except
-import Data.Functor
-import Data.List
+import Data.List (unzip4, zipWith4, foldl1, span)
 import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV -- mutable vectors
-import qualified Data.Text as T
+import qualified Data.Vector.Mutable as MV
 import qualified Data.Map as M
 import qualified Data.IntMap as IM
-import qualified Data.IntSet as IS
-
-import Debug.Trace
 
 judgeModule :: P.Module -> V.Vector HName -> Externs -> JudgedModule
 judgeModule pm hNames exts = let
@@ -35,194 +23,296 @@ judgeModule pm hNames exts = let
   nArgs   = pm ^. P.parseDetails . P.nArgs
   nFields = M.size (pm ^. P.parseDetails . P.fields)
   nLabels = M.size (pm ^. P.parseDetails . P.labels)
+  pBinds' = V.fromListN nBinds (pm ^. P.bindings)
   in runST $ do
-    bis'    <- MV.new 0
-    wip'    <- MV.replicate nBinds WIP
-    domain' <- MV.new nArgs
-    qtt'    <- MV.replicate nArgs (QTT 0 0)
-    fieldsV <- MV.replicate nFields Nothing
-    labelsV <- MV.replicate nLabels Nothing
-    (\i -> MV.write domain' i (BiSub [THArg i] [THArg i])) `mapM_` [0 .. nArgs-1]
+    bis'      <- MV.new 0
+    deBruijn' <- MV.new 0
+    wip'      <- MV.replicate nBinds WIP
+    domain'   <- MV.new nArgs
+    qtt'      <- MV.replicate nArgs (QTT 0 0)
+    fieldsV   <- MV.replicate nFields Nothing
+    labelsV   <- MV.replicate nLabels Nothing
+    [0 .. nArgs-1] `forM_` \i -> MV.write domain' i (BiSub [THArg i] [THArg i])
 
-    -- go
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
-      { _pmodule  = pm
+      { -- _pmodule  = pm
+        _pBinds   = pBinds'
+      , _bindWIP  = 0
       , _externs  = exts
       , _wip      = wip'
       , _mode     = Reader
       , _bis      = bis'
+      , _deBruijn = deBruijn'
+      , _level    = Dominion (-1,-1)
+      , _quants   = 0
       , _domain   = domain'
       , _qtt      = qtt'
-      , _fields   = fieldsV 
+      , _fields   = fieldsV
       , _labels   = labelsV
       , _errors   = []
       }
 
-    -- finish
-    when (debug getGlobalFlags) (dv_ bis')
     bis''    <- V.unsafeFreeze (st ^. bis)
     domain'' <- V.unsafeFreeze (st ^. domain)
     wip''    <- V.unsafeFreeze (st ^. wip)
     qtt''    <- V.unsafeFreeze (st ^. qtt)
-    -- TODO leave typevars in there ; they can avoid duplicating work later
-    let rmTypeVars' = rmTypeVars bis'' domain''
-        mapBindTypes = \case { BindOK e -> BindOK (mapExprTypes e) ; x -> x }
-        mapExprTypes = \case
-          Core t ty -> Core t (rmTypeVars' ty)
-          CoreFn ars free t ty -> CoreFn (map (fmap rmTypeVars') ars) free t (rmTypeVars' ty)
-          Ty ty -> Ty $ rmTypeVars' ty
-          e -> e
---  pure $ JudgedModule (mapBindTypes <$> wip'') bis'' qtt'' domain''
     pure $ JudgedModule hNames wip'' bis'' qtt'' domain''
 
--- add argument holes to monotype env and guard against recursion
-withDomain :: IName -> [Int] -> (TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
-withDomain bindINm idxs action = do
-  d <- use domain
-  -- anticipate recursive type
-  use wip >>= (\v -> MV.write v bindINm (Checking [THRec bindINm]))
-  r <- action
-  argTys <- case idxs of
-    [] -> MV.new 0
-    x  -> pure $ MV.slice (head idxs) (length idxs) d
-  pure (r , argTys)
-
--- do a bisub with typevars
-withBiSubs :: Int -> (Int->TCEnv s a) -> TCEnv s (a , MV.MVector s BiSub)
-withBiSubs n action = do
-  bisubs <- use bis
-  let biSubLen = MV.length bisubs
-      genFn i = let tv = [THVar i] in BiSub tv tv
-  bisubs <- MV.grow bisubs n
-  (\i->MV.write bisubs i (genFn i)) `mapM` [biSubLen .. biSubLen+n-1]
-  bis .= bisubs
-  ret <- action biSubLen
-  let vars = MV.slice biSubLen n bisubs
-  pure (ret , vars)
-
+-- generalisation (and therefore type checking of usertypes) happens here
 judgeBind :: IName -> TCEnv s Expr
-judgeBind bindINm = use wip >>= (`MV.read` bindINm) >>= \case
-  BindOK e  -> pure e
---Checking ty -> pure $ BindOK $ Ty [THRec bindINm]
-  Checking ty -> pure $ Core (Var (VBind bindINm)) [THRec bindINm]
-  WIP -> do
-    P.FunBind hNm implicits freeVars matches tyAnn
-      <- (!! bindINm) <$> use (pmodule . P.bindings)
-    let (mainArgs , mainArgTys , tt) = matches2TT matches
-        args = sort $ (map fst implicits) ++ mainArgs
---      args = sort implicits -- TODO don't sort !
-        nArgs = length args
+judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
+  BindOK e                  -> pure e
+  Checking mutuals dom doGen recTy -> do -- note. dom is always Nothing, since don't know it yet
+    -- bindINm is mutual with bindWIP ! have bindINm generalise bindWIP when it's done
+    this <- use bindWIP
+    when (this /= bindINm) $ do
+      MV.write wip' bindINm (Checking (this : mutuals) dom doGen recTy)
+      MV.modify wip' (\case { Checking ms dom x recTy -> Checking ms dom False recTy ; s -> s {-error $ show s-} }) this
+    pure $ Core (Var (VBind bindINm)) [THRec bindINm]
 
-    (expr , argSubs) <- withDomain bindINm args (infer tt)
-    argTys <- fmap _mSub <$> V.freeze argSubs
-    -- Generalization ?!
-    -- TODO argTys vs function Tys
-    let inferredTy = case expr of
-          Core x t -> t
---        CoreFn ars x t ->
-          Ty t     -> t
---      mkArrow t = if nArgs==0 then t else [THArrow (V.toList argTys) t]
-    bindTy <- case tyAnn of
-      Nothing  -> pure inferredTy
-      Just ann -> do
-        ann <- tyExpr <$> infer ann
-        let inferArg = \case { [x] -> tyExpr <$> infer x ; [] -> pure [THSet 0] }
-        argAnns  <- inferArg `mapM` mainArgTys
-        let annTy = case mainArgTys of { [] -> ann ; x  -> [THArrow argAnns ann] }
-        exts <- use externs
-        labelsV <- V.freeze =<< use labels
-        unless (check exts argTys labelsV inferredTy annTy)
-          $ error (show inferredTy ++ "\n!<:\n" ++ show ann)
-        -- Prefer user's type annotation over the inferred one; except
-        -- TODO we may have inferred some missing information !
-        -- type families are special: we need to insert the list of labels as retTy
-        pure $ case getRetTy inferredTy of
-          s@[THFam{}] -> case flattenArrowTy annTy of
-            [THArrow d r] -> [THFam r d []]
-            x -> s
-          _ -> annTy
-    let newExpr = case args of
-          [] -> expr
-          args -> case expr of
-            Core x ty -> CoreFn (zip args (V.toList argTys)) IS.empty x bindTy
---          Ty t      -> d_ bindTy $ Ty $ [THPi $ Pi (zip args $ V.toList argTys) t]
-            Ty t      -> Ty $ bindTy
-    (\v -> MV.write v bindINm (BindOK newExpr)) =<< use wip
-    pure expr
+  WIP -> use wip >>= \wip' -> do
+    svwip <- bindWIP <<.= bindINm
+    MV.write wip' bindINm (Checking [] Nothing True [THRec bindINm]) -- anticipate recursive type & mutuals
+    jb <- judgeAbs . (V.! bindINm) =<< use pBinds
+    bindWIP .= svwip
+
+    currentDom <- use level 
+    traceShowM currentDom
+
+    let genExpr dom = \case
+          Core (Abs ars free x _ty) ty -> do
+            let args = fst <$> ars
+            q <- gen args currentDom
+            (artys, g) <- substTVars q args dom $ did_ ty
+            pure $ Core (Abs ars free x g) g
+          t -> pure t
+    done <- genExpr currentDom jb
+    MV.write wip' bindINm $ BindOK done
+    pure done
+
+--  MV.modify wip' (\case {Checking m _ g t -> Checking m (Just (currentDom' , jb)) g t ; x -> x}) bindINm
+
+--  let
+--   generaliseBind genAll bI = MV.read wip' bI >>= \case
+--    BindOK x -> pure [] -- multiple mutual functions , one handled us already
+--    Checking mutuals (Just (dom , expr@(Core t coreTy))) doGen mutTy -> case doGen || genAll of
+--      False -> do
+--        -- save our dom and ungeneralised type and move on
+--        MV.write wip' bI (Checking mutuals (Just (dom , expr)) doGen mutTy)
+--        pure []
+--      True -> do
+--        let argTys = (\x->[THArg x]) <$> [fst (argRange dom) .. snd (argRange dom)]
+--        traceShowM $ (addArrowArgs argTys coreTy,) (filter (\case {THRec x|x==bI->False ; _->True}) mutTy)
+--        ms <- mutuals `forM` \m -> generaliseBind True m
+--        s <- (:concat ms) . (bI ,) <$> gen dom
+--        traceM $ "dogen: " <> show bI <> " " <> show s <> " " <> show dom
+--        pure s
+
+--   substTypes (bI , q) = let
+--     genExpr dom = \case
+--       Core (Abs ars free x _ty) ty -> do
+--         (artys, g) <- substTVars q dom $ did_ ty
+--         pure $ Core (Abs ars free x g) g
+--       t -> pure t
+--     in do
+--     traceM $ "subst: " <> show (bI,q)
+--     MV.read wip' bI >>= \case
+--       BindOK x -> pure x
+--       Checking mutuals (Just (dom , Core t coreTy)) doGen ty -> do
+--         let ty' = mergeTypes coreTy (filter (\case {THRec x|x==bI->False ; _->True}) ty) -- coreTy
+--         case coreTy of
+--           [THVar i] -> use bis >>= \b->MV.modify b (over pSub (mergeTypes ty)) i
+--         traceM $ "recTy: " <> show ty
+--         e <- genExpr dom (Core t coreTy)
+--         MV.write wip' bI (BindOK e)
+--         pure e
+
+--  r <- generaliseBind False bindINm >>= \case
+--    [] -> MV.read wip' bindINm >>= \case { Checking m (Just (d,e)) doGen t -> pure e }
+--    ((bI , q) : xs) -> (substTypes `mapM` xs) *> substTypes (bI,q)
+--  pure r
+
+checkAnnotation :: P.TT -> Type -> [[P.TT]] -> V.Vector Type -> TCEnv s Type
+checkAnnotation ann inferredTy mainArgTys argTys = do
+  ann <- tyExpr <$> infer ann
+  let inferArg = \case { [x] -> tyExpr <$> infer x ; [] -> pure [THSet 0] }
+  argAnns  <- inferArg `mapM` mainArgTys
+  let annTy = case mainArgTys of { [] -> ann ; x  -> [THArrow argAnns ann] }
+  exts <- use externs
+  labelsV <- V.freeze =<< use labels
+  unless (check exts argTys labelsV inferredTy annTy)
+    $ error (show inferredTy <> "\n!<:\n" <> show ann)
+  -- ? Prefer user's type annotation over the inferred one; except
+  -- TODO we may have inferred some missing information !
+  -- type families are special: we need to insert the list of labels as retTy
+  pure $ case getRetTy inferredTy of
+    s@[THFam{}] -> case flattenArrowTy annTy of
+      [THArrow d r] -> [THFam r d []]
+      x -> s
+    _ -> annTy
+
+gen ars dom = do
+  -- Generalisation: we want polymorphic typing schemes to be instantiated with fresh variables on every use
+  --   * lift all dominated irreducible THVars and THArgs to debruijn Pi bindings
+  --   * generalize at Abs (mutual functions together)
+  --   * only modify dominated type variables "Dominion" data (messing with the environment is obviously unsound)
+  -- Simplification is incidentally conveniently handled now:
+  --   * remove polar variables (those that appear only positively or only negatively) `a & int -> int`
+  --   * unify inseparable positive variables (co-occurence `a&b -> a|b` and indistinguishable variables `a->b->a|b`)
+  --   * unify variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int`
+  --   * minimize recursive types that may have been unrolled during biunification
+  quants .= 0
+  let rmTVar n   = filter $ \case { THVar x|x==n -> False ; _ -> True }
+      rmArgVar n = filter $ \case { THArg x|x==n -> False ; _ -> True }
+      incQuant = quants <<%= (+1) :: TCEnv s Int
+      generaliseBisubs range b = range `forM` \i -> MV.read b i >>= \s -> case did_ s of
+        BiSub [THVar x] [THVar y] | x==y -> incQuant >>= \q ->
+          MV.write b i (BiSub [THBound q] [THBound q])
+        BiSub [THArg x] [THArg y] | x==y -> incQuant >>= \q ->
+          MV.write b i (BiSub [THBound q] [THBound q])
+        BiSub p m -> MV.write b i (BiSub (rmArgVar i $ rmTVar i p) (rmArgVar i $ rmTVar i m))
+        x -> pure ()
+  let Dominion (bStart , bEnd) = dom
+  use bis    >>= \b -> generaliseBisubs [bStart .. bEnd] b
+  use domain >>= generaliseBisubs ars
+  quants <<.= 0
+
+substTVars q ars dom inferredTy = let
+  argTys = (\x->[THArg x]) <$> ars
+  subst pos ty = foldr mergeTypes [] <$> mapM (substTyHead pos) ty
+  substTyHead pos ty = let
+    subst' = subst pos
+    getTy = if pos then _pSub else _mSub
+    in case ty of
+    -- recursively substitute type vars
+    THVar v -> (subst' . getTy =<< (`MV.read` v) =<< use bis)
+    THArg v -> (subst' . getTy =<< (`MV.read` v) =<< use domain)
+
+    THArrow ars ret -> (\arsTy retTy -> [THArrow arsTy retTy]) <$> subst (not pos) `mapM` ars <*> subst' ret
+    THProduct tys -> (\x->[THProduct x]) <$> (subst' `traverse` tys)
+    THBi b ty -> (\t->[THBi b t]) <$> subst' ty
+--  THRec r -> pure [THRec r]
+    t -> pure [t]
+  in do
+  traceM $ toS $ "Subst: " <> prettyTyRaw (addArrowArgs argTys inferredTy)
+  rawGenTy <- subst True (addArrowArgs argTys inferredTy)
+  let genTy = if q > 0 then [THBi q rawGenTy] else rawGenTy
+  traceM (toS $ prettyTyRaw genTy)
+  pure (argTys , genTy)
+
+judgeAbs (P.FunBind hNm implicits freeVars matches tyAnn) = let
+    (mainArgs , mainArgTys , tt) = matches2TT matches
+    args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
+  in do
+  -- infer
+  -- save the args and THVars dominated here
+  traceShowM args -- TODO args should always be consecutive !!
+  svLvl <- use level
+  level .= Dominion (snd (tVarRange svLvl) + 1, snd (tVarRange svLvl))
+  expr <- infer tt
+  pure $ case expr of
+    Core x ty -> case args of
+      [] -> Core x ty
+      ars-> Core (Abs (zip ars ((\x->[THArg x]) <$> args)) mempty x ty) ty
+    t -> t
+-- Check annotation if given (against non-generalised type ??)
+--bindTy <- maybe (pure genTy) (\ann -> checkAnnotation ann genTy mainArgTys (V.fromList argTys)) tyAnn
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
   -- App is the only place typechecking can fail
   -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
-  -- * ie. introduce result typevar 'a', and biunify (tf+ <= tx+ -> a)
  biUnifyApp fTy argTys = do
-   (biret , bs) <- withBiSubs 1 (\idx -> biSub_ fTy [THArrow argTys [THVar idx]])
-   ty <- _pSub <$> (`MV.read` 0) bs
-   pure (biret , ty)
+   (biret , [oneTy]) <- withBiSubs 1 (\idx -> biSub_ fTy (addArrowArgs argTys [THVar idx]))
+   pure (biret , [THVar oneTy])
 
  in \case
   P.WildCard -> pure $ Core Hole [THSet 0]
-  -- vars : lookup in appropriate environment
-  P.Var v -> case v of
-    P.VBind b   -> -- polytype env
-      judgeBind b <&> \case
-        CoreFn args free e ty -> let
-          mkArrow args t = case args of { []->t ; args->[THArrow (snd <$> args) t] }
-          in Core (Var $ VBind b) (mkArrow args ty)
+
+  P.Var v -> let
+      judgeLocalBind b = judgeBind b <&> \case
         Core e ty -> Core (Var $ VBind b) ty -- don't copy the body
         t -> t
+    in case v of -- vars : lookup in appropriate environment
+    P.VBind b   -> judgeLocalBind b -- polytype env
     P.VLocal l  -> do -- monotype env (fn args)
       use qtt >>= \qttV -> use mode >>= \case
         Reader  -> MV.modify qttV (over qttReads (+1)) l
         Builder -> MV.modify qttV (over qttBuilds (+1)) l
       pure $ Core (Var $ VArg l) [THArg l]
-    P.VExtern i -> (`readParseExtern` i) <$> use externs
+    P.VExtern i -> (`readParseExtern` i) <$> use externs >>= \case
+      Left b  -> judgeLocalBind b -- was a forward reference not an extern
+      Right e -> pure e
+
+  P.Abs top -> judgeAbs top
 
   P.App fTT argsTT -> do
     f    <- infer fTT
     args <- tcStateLocalMode $ use qtt >>= \qtts -> do
       -- Note. not all fn sig args are explicit (esp. primInstrs), which is problematic for QTT
       -- So I pad missing modes with Reader, but this is slightly suspicious
-        argModes <- getArgs f `forM` \(i,_ty) ->
+        argModes <- (\case { Core (Abs ars _ _ _) _ -> ars ; _ -> [] }) f `forM` \(i,_ty) ->
           MV.read qtts i <&> \(QTT _reads builds) -> if builds > 0 then Builder else Reader
         zipWithM (\m argExpr -> (mode .= m) *> infer argExpr) (argModes ++ repeat Reader) argsTT
     (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
     let castArg (a :: Term) = \case { BiCast f -> App f [a] ; _ -> a }
-        castArgs args' = case biret of
-          CastApp ac -> zipWith castArg args' ac
+        castArgs args' cast = case cast of
+          CastApp ac maybePap -> zipWith castArg args' (ac ++ repeat BiEQ) -- TODO why not enough bisubs ?!
           x -> args'
-    ttApp judgeBind f args <&> \case
-      Core (App f args) _ -> Core (App f (castArgs args)) retTy
+    x <- ttApp judgeBind f args <&> \case -- ! we must set the retTy since ttApp doesn't
+      Core (App f args) _ -> case biret of
+        CastApp _ (Just pap) -> let -- handle PAp
+          mkpap = Instr (MkPAp (length pap))
+          in Core (App mkpap (f : castArgs args biret)) retTy
+        CastApp _ Nothing    -> Core (App f (castArgs args biret)) retTy
+        _ -> Core (App f args) retTy --error $ show x
       Core f _ -> Core f retTy
       t -> t
+    pure x
 
-  P.Cons construct -> do -- assign arg types to each label (cannot fail)
+  P.Cons construct -> do
     let (fields , rawTTs) = unzip construct
     exprs <- infer `mapM` rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) }) <$> exprs
-    pure $ Core (Cons (IM.fromList $ zip fields tts)) [THProd fields]
+    pure $ Core (Cons (IM.fromList $ zip fields tts)) [THProduct (IM.fromList $ zip fields tys)]
 
-  P.Proj tt field -> do -- biunify (t+ <= {l:a})
-    recordTy <- infer tt
-    bs <- snd <$> withBiSubs 1 (\ix ->
-      biSub_ (tyOfExpr recordTy) [THProd [field]]) --  M.singleton field [THVar ix])])
-    retTy <- _pSub <$> (`MV.read` 0) bs
-    pure $ case recordTy of
-      Core f _ -> Core (Proj f field) retTy
-      t -> t
+  P.TTLens tt fields maybeSet -> let
+    in do
+    record <- infer tt
+    let recordTy = tyOfExpr record
+        mkExpected :: Type -> Type
+        mkExpected dest = foldr (\fName ty -> [THProduct (IM.singleton fName ty)]) dest fields
+    case record of
+      Core f _ -> case maybeSet of
+        -- for get, we need a typevar for the destination
+        P.LensGet    -> do
+          (_bs , [retTy]) <- withBiSubs 1 $ \ix -> biSub recordTy (mkExpected [THVar ix])
+--        retTy <- _pSub <$> (`MV.read` 0) (snd bs)
+          pure $ Core (TTLens f fields LensGet) [THVar retTy]
+        -- for others, use the type of the ammo
+        P.LensSet x  -> infer x >>= \ammo -> let expect = mkExpected (tyOfExpr ammo)
+          in biSub recordTy expect $> Core (TTLens f fields (LensSet ammo)) expect
+        P.LensOver x -> infer x >>= \fn -> do
+          (bs , [retTy]) <- withBiSubs 1 $ \ ix -> biSub recordTy (mkExpected [THVar ix])
+--        retTy <- _pSub <$> (`MV.read` 0) (snd bs)
+--        biSub (tyOfExpr fn) [THBi 1 [THArrow [retTy] [THBound 0]]]
+          pure $ Core (TTLens f fields (LensOver fn)) [THVar retTy]
+      t -> panic "record type must be a term" -- pure t
 
   -- Sum
-  -- TODO label should biunify with the label's type if known
   -- TODO recursion + qtt is problematic
   P.Label l tts -> do
     tts' <- tcStateLocalMode $ do { mode .= Builder ; infer `mapM` tts }
     ((`MV.read` l) =<< use labels) >>= \case
-      Nothing -> error $ "forward reference to label unsupported: " ++ show l
+      Nothing -> error $ "forward reference to label unsupported: " <> show l
       Just ty -> if isArrowTy ty
         then do
           (biret , retTy) <- biUnifyApp ty (tyOfExpr <$> tts')
           pure $ Core (Label l tts') retTy
         else pure $ Core (Label l tts') ty
+
+--P.Label l tts -> infer `mapM` tts <&> \exprs ->
+--  Core (Label l exprs) [THSumty $ IM.singleton l (tyOfExpr <$> exprs)]
 
   P.TySum alts -> do -- alts are function types
     -- 1. Check against ann (retTypes must all subsume the signature)
@@ -268,44 +358,28 @@ infer = let
     retTy <- foldl mergeTypes [] <$> pure (tyOfExpr <$> altExprs)
     let scrutTy = [THSplit altLabels]
         matchTy = [THArrow [scrutTy] retTy]
-        unpat = \case { P.PArg i -> i ; x -> error $ "not ready for pattern: " ++ show x }
-        mkFn argTys pat free (Core t ty) = CoreFn (zip (unpat <$> pat) argTys) free t ty
+        unpat = \case { P.PArg i -> i ; x -> error $ "not ready for pattern: " <> show x }
+        mkFn argTys pat free (Core t ty) = Core (Abs (zip (unpat <$> pat) argTys) free t ty) ty
         alts    = zipWith4 mkFn argTys patterns freeVars altExprs
         altLabelsMap = IM.fromList $ zip altLabels alts
     pure $ Core (Match retTy altLabelsMap Nothing) matchTy
 
---P.MultiIf branches elseE -> do -- Bool ?
---  let (rawConds , rawAlts) = unzip branches
---      boolTy = getPrimIdx "Bool" & \case
---        { Just i->THULC (LCRec i); Nothing->error "panic: \"Bool\" not in scope" }
---      addBool = doSub boolTy
---  condExprs <- infer `mapM` rawConds
---  alts      <- infer `mapM` rawAlts
---  elseE'    <- infer elseE
---  let retTy = foldr1 mergeTypes (tyOfExpr <$> (alts ++ [elseE'])) :: [TyHead]
---      condTys = tyOfExpr <$> condExprs
---      e2t (Core e ty) = e
---      ifE = MultiIf (zip (e2t<$>condExprs) (e2t<$>alts)) (e2t elseE') 
-
---  (`biSub_` [boolTy]) `mapM` condTys -- check the condTys all subtype bool
---  pure $ Core ifE retTy
-
   -- desugar --
   P.LitArray literals -> let
-    ty = typeOfLit (head literals) -- TODO merge (join) all tys ?
+    ty = typeOfLit (fromJust $ head literals) -- TODO merge (join) all tys ?
     in pure $ Core (Lit . Array $ literals) [THArray [ty]]
 
   P.Lit l  -> pure $ Core (Lit l) [typeOfLit l]
 --  P.TyListOf t -> (\x-> Ty [THArray x]) . yoloExpr2Ty <$> infer t
   P.InfixTrain lArg train -> infer $ resolveInfixes (\_->const True) lArg train -- TODO
-  x -> error $ "inference engine not ready for parsed tt: " ++ show x
+  x -> error $ "inference engine not ready for parsed tt: " <> show x
 
 -----------------
 -- TT Calculus --
 -----------------
 -- How to handle Application of mixtures of types and terms
 --ttApp :: _ -> Expr -> [Expr] -> TCEnv s Expr
-ttApp readBind fn args = -- trace (clYellow (show fn ++ " $ " ++ show args)) $
+ttApp readBind fn args = -- trace (clYellow (show fn <> " $ " <> show args)) $
  case fn of
   Core cf ty -> case cf of
     Instr (TyInstr Arrow)  -> expr2Ty readBind `mapM` args <&> \case
@@ -317,11 +391,10 @@ ttApp readBind fn args = -- trace (clYellow (show fn ++ " $ " ++ show args)) $
       app = App cf $ (\(Core t _ty)->t) <$> ars -- drop argument types
       in pure $ case end of
         [] -> Core app [] -- don't forget to set retTy
-        x  -> error $ "term applied to type: " ++ show app ++ show x
+        x  -> error $ "term applied to type: " <> show app <> show x
   Ty f -> case f of -- always a type family
     -- TODO match arities ?
     [THFam f a ixs] -> pure $ Ty [THFam f (drop (length args) a) (ixs ++ args)]
 --  x -> pure $ Ty [THFam f [] args]
-    x -> error $ "ttapp panic: " ++ show x ++ " $ " ++ show args
-  ExtFn nm ty -> ttApp readBind (Core (Instr (CallExt nm)) ty) args
-  _ -> error $ "ttapp: not a function: " ++ show fn ++ " $ " ++ show args
+    x -> error $ "ttapp panic: " <> show x <> " $ " <> show args
+  _ -> error $ "ttapp: not a function: " <> show fn <> " $ " <> show args

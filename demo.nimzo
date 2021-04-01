@@ -8,10 +8,45 @@
 --import imports/records
 --import imports/Impredicative
 --import imports/array
-import imports/fin
+--import imports/fin
 -- import imports/printf
 --import imports/subtype
 --import imports/list
 
+--r = ##
+--loop = (backref 3)
+--backref = (plus64 2)
+
 --r1 = mkTuple 3 2
 --main = plus64 3 2
+
+--comb t a b = ifE t a b
+--f x = { p = plus x 1 }
+--_<|>_ = \pa pb pstate =>
+--  ifE (pa pstate . cok) (pa pstate) (pb pstate)
+
+--_>>_ = \f x a => x (f a)
+--plusfive = plus 3 >> plus 2
+
+f x = plus (g x) x
+g z = f z --ifE (eq z 10) z (f z)
+
+--r x = {f = x}
+
+-- y f = let g x = f (x x) in g g
+-- --ycbv f = let g x = let e v = (x x) v in (f e) in g g
+-- --varArg f = (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v))
+-- varArg f = let g x = f (\v => (x x) v) in g g
+-- r f x = f
+-- -- : Top -> rec v (Top -> v) -- : rec v (Top -> v)
+-- 
+-- 
+-- --List a = | Z : List a
+
+--auto x = x x -- : ((a0 -> a1) & a0) -> a1
+--auto x = x x -- rigid typevar
+--choose = ifE -- flexible typevar
+--retype g x v = g v (x v) -- eta-reduces to identity
+
+--fail = auto (plus 1)
+--lol = (plus 1) (plus 1)

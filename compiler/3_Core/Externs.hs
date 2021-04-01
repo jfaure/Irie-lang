@@ -5,26 +5,18 @@
 -- * imported modules
 -- * extern functions (esp. C)
 
-module Externs (GlobalResolver(..) , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readPrimExtern , resolveImports , typeOfLit)
+module Externs (GlobalResolver(..) , addModule2Resolver , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readPrimExtern , resolveImports , typeOfLit)
 where
 import Prim
 import qualified ParseSyntax as P
 import CoreSyn
-import CoreUtils
+import ShowCore()
 
-import Control.Applicative
 import qualified Data.Map as M
 import qualified Data.IntMap as IM
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import Data.Function
-import Data.Functor
-import Data.Maybe
-import Data.Foldable
-import Data.List
-import Control.Lens hiding (set)
-import Debug.Trace
 
 -----------------
 -- Import Tree --
@@ -35,25 +27,11 @@ data Import = Import {
   , importBinds :: V.Vector (HName , Bind)
 }
 
---------------
--- Resolver --
---------------
--- Resolver : HName -> (ModName , IName)
--- Mods     : [LoadedModules]
--- Parse; parsed ^. imports
--- Core; Ext->Expr
--- LLVM; Ext->LLVM.Def
--- ??
---   increment JIT
---   type JIT computations
---   mutual imports
--- Failed experiment:
-
 data GlobalResolver = GlobalResolver {
    modCount :: Int
  , globalNameMap :: M.Map HName (IM.IntMap IName)
  , allBinds :: V.Vector (V.Vector Expr)
-}
+} deriving Show
 primResolver :: GlobalResolver = GlobalResolver 1 (IM.singleton 0 <$> primMap) (V.singleton primBinds)
 
 -------------
@@ -62,27 +40,32 @@ primResolver :: GlobalResolver = GlobalResolver 1 (IM.singleton 0 <$> primMap) (
 -- 1. vector of VNames for primitives and parsed NoScope vars
 -- 2. extra binds available in module (via VarExt names)
 data Externs = Externs {
-   extNames :: V.Vector (IName , IName) -- index permuation for noscopeNames
- , extBinds :: V.Vector (V.Vector Expr)  -- extern table indexed by extNames
-}
+   extNames   :: V.Vector (IName , IName) -- index permuation for noscopeNames
+ , extBinds   :: V.Vector (V.Vector Expr) -- extern table indexed by extNames
+} deriving Show
 
 -- exported functions to resolve ParseSyn.VExterns
-readParseExtern = \(Externs nms binds) i -> let (modNm , iNm) = nms V.! i in (binds V.! modNm) V.! iNm
-readPrimExtern = \(Externs nms binds) i -> (binds V.! 0) V.! i
+-- ! 'ext names' may in fact be local forward references
+readParseExtern = \(Externs nms binds) i -> let (modNm , iNm) = nms V.! i
+  in if modNm >= V.length binds
+  then Left    iNm
+  else Right $ (binds V.! modNm) V.! iNm
+readPrimExtern e i = (extBinds e V.! 0) V.! i
 
 -- We need to resolve INames accross module boundaries.
 -- Externs are a vector of CoreExprs, generated as: builtins ++ concat imports;
 -- which is indexed by the permuation described in the extNames vector.
 -- * primitives must always be present in GlobalResolver
-resolveImports :: GlobalResolver -> V.Vector Expr -> P.Module -> (GlobalResolver , Externs)
-resolveImports (GlobalResolver n curResolver prevAllBinds) imported pm = let
+resolveImports :: GlobalResolver -> M.Map HName IName -> M.Map HName IName -> (GlobalResolver , Externs)
+resolveImports (GlobalResolver n curResolver prevBinds) localNames unknownNames = let
 --allBinds = prevAllBinds V.++ V.fromList (fmap (bind2Expr . snd) . importBinds <$> imports)
-  allBinds = prevAllBinds `V.snoc` imported ---- V.++ V.fromList (fmap (bind2Expr . snd) . importBinds <$> imports)
+--allBinds = prevAllBinds `V.snoc` imported ---- V.++ V.fromList (fmap (bind2Expr . snd) . importBinds <$> imports)
 
   resolver :: M.Map HName (IM.IntMap IName)
   resolver = M.unionWith IM.union curResolver $ M.unionsWith IM.union $
     zipWith (\modNm map -> (\iNm -> IM.singleton modNm iNm) <$> map)
-    [n..] [snd $ pm ^. P.parseDetails . P.hNameBinds]
+    [n..] [localNames]
+ 
   resolveName :: HName -> (IName , IName)
   resolveName hNm = case IM.toList <$> resolver M.!? hNm of
     Just [i] -> i
@@ -90,23 +73,22 @@ resolveImports (GlobalResolver n curResolver prevAllBinds) imported pm = let
     Nothing  -> error $ "not in scope: " ++ T.unpack hNm
     _        -> error $ "ambiguous name: " ++ T.unpack hNm
 
-  -- the noScopeNames map has a messed up order
-  -- so we fill the names vector index by index
-  -- TODO use a names vector ?
-  names noScopeNames = let
-    doIndx v (nm , indx) = MV.write v indx $ resolveName nm
-    in V.create $ do
-      v <- MV.unsafeNew (M.size noScopeNames)
-      doIndx v `mapM` M.toList noScopeNames
-      pure v
+  -- convert noScopeNames map to a vector (Map HName IName -> Vector HName)
+  -- order is messed up, so we fill the names vector index by index
+  names noScopeNames = V.create $ do
+    v <- MV.unsafeNew (M.size noScopeNames)
+    (\nm idx -> MV.write v idx $ resolveName nm) `M.traverseWithKey` noScopeNames
+    pure v
 
   -- during typechecking / type judging, how to find externs
-  privateResolver = Externs 
-       { extNames = names (pm ^. P.parseDetails . P.hNamesNoScope)
-       , extBinds = allBinds }
+  exts = Externs { extNames = names unknownNames , extBinds = prevBinds }
+
   -- system-wide modules currently loaded
-  globalResolver = GlobalResolver (n + length imported) resolver allBinds
-  in (globalResolver , privateResolver)
+  in (GlobalResolver n resolver prevBinds
+     , exts)
+
+addModule2Resolver (GlobalResolver modCount nameMaps binds) newBinds = let
+  in GlobalResolver modCount nameMaps (binds `V.snoc` newBinds)
 
 mkExtTy x = [THExt x]
 ---------------------------
@@ -115,19 +97,18 @@ mkExtTy x = [THExt x]
 -- We prefer INames over inlining primitives
 -- * construct a vector of primitives
 -- * supply a (Map HName IName) to resolve names to indexes
-primMap = M.unions [ primTyMap , instrMap , tyFnMap , extFnMap , instrMap2 ]
+primMap = M.unions [ primTyMap , instrMap , tyFnMap , instrMap2] --extFnMap
 primBinds :: V.Vector Expr = let
  primTy2Expr x = Ty [THPrim x]
  instr2Expr  (e , tys)  = Core (Instr e) [tys2TyHead tys]
  tys2TyHead  (args , t) = THArrow (mkExtTy <$> args) (mkExtTy t)
  tyFn2Expr   (e) = Ty [e]
- extFns2Expr = uncurry ExtFn
  in V.concat
    [ primTy2Expr <$> primTyBinds
    , instr2Expr  <$> instrBinds
    , (\(i , t) -> Core (Instr i) t) <$> instrBinds2
    , tyFn2Expr   <$> tyInstrBinds
-   , extFns2Expr <$> extFnBinds
+-- , uncurry ExtFn  <$> extFnBinds
    ]
 
 getPrimIdx nm = M.lookup nm primMap
@@ -136,7 +117,7 @@ getPrimIdx nm = M.lookup nm primMap
 (instrMap  , instrBinds , sz1) = buildMaps sz0 instrs
 (instrMap2 , instrBinds2, sz2) = buildMaps (sz0 + sz1) instrs2
 (tyFnMap , tyInstrBinds , sz3) = buildMaps (sz0 + sz1 + sz2) tyFns
-(extFnMap , extFnBinds  , sz4) = buildMaps (sz0 + sz1 + sz2 + sz3) extFns
+--(extFnMap , extFnBinds  , sz4) = buildMaps (sz0 + sz1 + sz2 + sz3) extFns
 
 buildMaps :: Int -> [(HName , a)] -> (M.Map HName Int , V.Vector a , Int)
 buildMaps offset list = let
@@ -171,19 +152,24 @@ tyFns = [
 --  , ("_→_", (ArrowTy , ([set] , set)))
   ]
 
-extFns :: [(HName , (HName , Type))] =
+--extFns :: [(HName , (HName , Type))] =
 --[ ("printf" , ("printf" , [THArrow (mkExtTy str : repeat []) (mkExtTy i)]))
-  [ ("printf" , ("printf" , [THArrow [mkExtTy str] (mkExtTy i)]))
+--[ ("printf" , ("printf" , [THArrow [mkExtTy str] (mkExtTy i)]))
 --, ("strtol" , ("strtol" , [THArrow [mkExtTy str , mkExtTy str , mkExtTy i] (mkExtTy i)]))
-  ]
+--]
 
 instrs2 :: [(HName , (PrimInstr , Type))] =
-  [ ("ifThenE"     , (IfThenE , [THArrow [[THExt b] , [THExt set] , [THExt set]] [THExt set]]))
-  , ("addOverflow" , (AddOverflow , [THArrow [[THExt i] , []] []]))
+  [ --("ifThenE"     , (IfThenE , [THArrow [[THExt b] , [THExt set] , [THExt set]] [THExt set]]))
+    ("addOverflow" , (AddOverflow , [THArrow [[THExt i] , []] []]))
   , ("unlink"      , (Unlink , [THArrow [[THExt str] , [THArrow [[THExt c],[THExt str]] [THExt str]]] [THExt str] ]))
   , ("link"        , (Link , [THArrow [[THExt c]] [THExt str]]))
   , ("strtol"      , (StrToL , [THArrow [[THExt str]] [THExt i]]))
   , ("mkTuple"     , (MkTuple , [THTuple []]))
+--, ("ifE"         , (IfThenE , [THPi $ Pi [(0,[THSet 0])] [THArrow [[THExt b], [THVar 0]] [THVar 0]] ] ))
+  , ("ifE"         , (IfThenE , [THBi 1 $ [THArrow [[THExt b], [THBound 0] , [THBound 0]] [THBound 0]] ] ))
+
+--  ("--->", (THPi [(0,[THSet 0]),(1,[THSet 0])] [THInstr ArrowTy [0, 1]] M.empty))
+--
 --nub a str = unlink str (nub a str) (\c str => ifThenE (eq c a) str (link c str))
 
   ]
@@ -210,6 +196,7 @@ typeOfLit = \case
   Array{}    -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   PolyInt{}  -> THPrim (PrimInt 32)
   Int{}      -> THPrim (PrimInt 32)
+  Char{}     -> THPrim (PrimInt 8)
   x -> error $ "littype: " ++ show x
 --  _ -> numCls
 
