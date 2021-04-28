@@ -32,7 +32,7 @@ judgeModule pm hNames exts = let
     qtt'      <- MV.replicate nArgs (QTT 0 0)
     fieldsV   <- MV.replicate nFields Nothing
     labelsV   <- MV.replicate nLabels Nothing
-    [0 .. nArgs-1] `forM_` \i -> MV.write domain' i (BiSub [THArg i] [THArg i])
+    [0 .. nArgs-1] `forM_` \i -> MV.write domain' i (BiSub [] []) --(BiSub [THArg i] [THArg i])
 
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
       { -- _pmodule  = pm
@@ -62,76 +62,64 @@ judgeModule pm hNames exts = let
 judgeBind :: IName -> TCEnv s Expr
 judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
   BindOK e                  -> pure e
-  Checking mutuals dom doGen recTy -> do -- note. dom is always Nothing, since don't know it yet
-    -- bindINm is mutual with bindWIP ! have bindINm generalise bindWIP when it's done
+
+  Guard mutuals ars -> do
     this <- use bindWIP
     when (this /= bindINm) $ do
-      MV.write wip' bindINm (Checking (this : mutuals) dom doGen recTy)
-      MV.modify wip' (\case { Checking ms dom x recTy -> Checking ms dom False recTy ; s -> s {-error $ show s-} }) this
+      MV.write wip' bindINm (Guard (this:mutuals) ars)
+      MV.modify wip' (\(Guard ms ars) -> Guard (bindINm:ms) ars) this
     pure $ Core (Var (VBind bindINm)) [THRec bindINm]
+
+  Mutual d e -> pure e
 
   WIP -> use wip >>= \wip' -> do
     svwip <- bindWIP <<.= bindINm
-    MV.write wip' bindINm (Checking [] Nothing True [THRec bindINm]) -- anticipate recursive type & mutuals
-    jb <- judgeAbs . (V.! bindINm) =<< use pBinds
+
+    let getTT (P.FunBind hNm implicits freeVars matches tyAnn) = let
+          (mainArgs , mainArgTys , tt) = matches2TT matches
+          args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
+          in (tt , args)
+
+    (tt , args) <- getTT . (V.! bindINm) <$> use pBinds
+    traceShowM args -- TODO args should always be consecutive !!
+    MV.write wip' bindINm (Guard [] args)
+
+    svLvl <- use level
+    level .= Dominion (snd (tVarRange svLvl) + 1, snd (tVarRange svLvl))
+    expr <- infer tt
+    let jb = case expr of
+          Core x ty -> case args of
+            [] -> Core x ty
+            ars-> Core (Abs (zip ars ((\x->[THArg x]) <$> args)) mempty x ty) ty
+          t -> t
+
     bindWIP .= svwip
 
-    currentDom <- use level 
-    traceShowM currentDom
+    Guard ms _ars <- MV.read wip' bindINm
+    cd <- use level
+    MV.write wip' bindINm (Mutual cd jb)
+    if (minimum (bindINm:ms) == bindINm) then fromJust . head <$> generaliseBinds bindINm ms else pure jb
+-- Check annotation if given (against non-generalised type ??)
+--bindTy <- maybe (pure genTy) (\ann -> checkAnnotation ann genTy mainArgTys (V.fromList argTys)) tyAnn
 
-    let genExpr dom = \case
+generaliseBinds i ms = use wip >>= \wip' -> do
+  let getArs = \case { Core (Abs ars free x ty) t -> (fst <$> ars) ; _->[] }
+  let genMutual m = do
+        Mutual cd naiveExpr <- MV.read wip' m
+        let args = getArs naiveExpr
+        q <- gen args cd
+        pure (m,q,args,cd,naiveExpr)
+  let substVars = \(m,q,args,cd,naiveExpr) -> do
+        done <- case naiveExpr of
           Core (Abs ars free x _ty) ty -> do
-            let args = fst <$> ars
-            q <- gen args currentDom
-            (artys, g) <- substTVars q args dom $ did_ ty
+            (arTys , g) <- substTVars q args cd ty
             pure $ Core (Abs ars free x g) g
           t -> pure t
-    done <- genExpr currentDom jb
-    MV.write wip' bindINm $ BindOK done
-    pure done
-
---  MV.modify wip' (\case {Checking m _ g t -> Checking m (Just (currentDom' , jb)) g t ; x -> x}) bindINm
-
---  let
---   generaliseBind genAll bI = MV.read wip' bI >>= \case
---    BindOK x -> pure [] -- multiple mutual functions , one handled us already
---    Checking mutuals (Just (dom , expr@(Core t coreTy))) doGen mutTy -> case doGen || genAll of
---      False -> do
---        -- save our dom and ungeneralised type and move on
---        MV.write wip' bI (Checking mutuals (Just (dom , expr)) doGen mutTy)
---        pure []
---      True -> do
---        let argTys = (\x->[THArg x]) <$> [fst (argRange dom) .. snd (argRange dom)]
---        traceShowM $ (addArrowArgs argTys coreTy,) (filter (\case {THRec x|x==bI->False ; _->True}) mutTy)
---        ms <- mutuals `forM` \m -> generaliseBind True m
---        s <- (:concat ms) . (bI ,) <$> gen dom
---        traceM $ "dogen: " <> show bI <> " " <> show s <> " " <> show dom
---        pure s
-
---   substTypes (bI , q) = let
---     genExpr dom = \case
---       Core (Abs ars free x _ty) ty -> do
---         (artys, g) <- substTVars q dom $ did_ ty
---         pure $ Core (Abs ars free x g) g
---       t -> pure t
---     in do
---     traceM $ "subst: " <> show (bI,q)
---     MV.read wip' bI >>= \case
---       BindOK x -> pure x
---       Checking mutuals (Just (dom , Core t coreTy)) doGen ty -> do
---         let ty' = mergeTypes coreTy (filter (\case {THRec x|x==bI->False ; _->True}) ty) -- coreTy
---         case coreTy of
---           [THVar i] -> use bis >>= \b->MV.modify b (over pSub (mergeTypes ty)) i
---         traceM $ "recTy: " <> show ty
---         e <- genExpr dom (Core t coreTy)
---         MV.write wip' bI (BindOK e)
---         pure e
-
---  r <- generaliseBind False bindINm >>= \case
---    [] -> MV.read wip' bindINm >>= \case { Checking m (Just (d,e)) doGen t -> pure e }
---    ((bI , q) : xs) -> (substTypes `mapM` xs) *> substTypes (bI,q)
---  pure r
-
+        MV.write wip' m $ BindOK done
+        pure done
+  things <- (i : ms) `forM` genMutual
+  things `forM` substVars
+ 
 checkAnnotation :: P.TT -> Type -> [[P.TT]] -> V.Vector Type -> TCEnv s Type
 checkAnnotation ann inferredTy mainArgTys argTys = do
   ann <- tyExpr <$> infer ann
@@ -151,72 +139,55 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
       x -> s
     _ -> annTy
 
+-- TODO have to rename debruijn bound variables
 gen ars dom = do
-  -- Generalisation: we want polymorphic typing schemes to be instantiated with fresh variables on every use
-  --   * lift all dominated irreducible THVars and THArgs to debruijn Pi bindings
-  --   * generalize at Abs (mutual functions together)
-  --   * only modify dominated type variables "Dominion" data (messing with the environment is obviously unsound)
-  -- Simplification is incidentally conveniently handled now:
-  --   * remove polar variables (those that appear only positively or only negatively) `a & int -> int`
-  --   * unify inseparable positive variables (co-occurence `a&b -> a|b` and indistinguishable variables `a->b->a|b`)
-  --   * unify variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int`
-  --   * minimize recursive types that may have been unrolled during biunification
   quants .= 0
-  let rmTVar n   = filter $ \case { THVar x|x==n -> False ; _ -> True }
-      rmArgVar n = filter $ \case { THArg x|x==n -> False ; _ -> True }
+  let rmTVar n   = filter $ \case { THVar x -> x /= n ; _ -> True }
+      rmArgVar n = filter $ \case { THArg x -> x /= n ; _ -> True }
       incQuant = quants <<%= (+1) :: TCEnv s Int
-      generaliseBisubs range b = range `forM` \i -> MV.read b i >>= \s -> case did_ s of
-        BiSub [THVar x] [THVar y] | x==y -> incQuant >>= \q ->
-          MV.write b i (BiSub [THBound q] [THBound q])
-        BiSub [THArg x] [THArg y] | x==y -> incQuant >>= \q ->
-          MV.write b i (BiSub [THBound q] [THBound q])
+      -- have to recurse through the tvar types: remove stale debruijn refs and simplify the types
+      generaliseBisubs range b = range `forM` \i -> MV.read b i >>= \s -> case trace (show i <> ": " <> show s :: Text) s of
         BiSub p m -> MV.write b i (BiSub (rmArgVar i $ rmTVar i p) (rmArgVar i $ rmTVar i m))
-        x -> pure ()
   let Dominion (bStart , bEnd) = dom
+  traceM $ "gen: " <> show ars <> " , " <> show dom
   use bis    >>= \b -> generaliseBisubs [bStart .. bEnd] b
   use domain >>= generaliseBisubs ars
   quants <<.= 0
 
-substTVars q ars dom inferredTy = let
+substTVars q'''''' ars dom inferredTy = let
+  -- recursively substitute type vars
   argTys = (\x->[THArg x]) <$> ars
   subst pos ty = foldr mergeTypes [] <$> mapM (substTyHead pos) ty
   substTyHead pos ty = let
+    incQuants = quants <<%= (+1)
     subst' = subst pos
     getTy = if pos then _pSub else _mSub
     in case ty of
-    -- recursively substitute type vars
-    THVar v -> (subst' . getTy =<< (`MV.read` v) =<< use bis)
-    THArg v -> (subst' . getTy =<< (`MV.read` v) =<< use domain)
+-- TODO only over appropriate sub ?
+-- TODO what exactly to generalise ?
+-- [] -> (quants <<%= +1)) >>= \q -> MV.modify b (\(BiSub a b) -> BiSub (THBound q : a) (THBound q:b)) v $> [THBound q]
+    THVar v -> use bis >>= \b -> (MV.read b v >>= subst' . getTy) >>= \case
+      [] -> do incQuants >>= \q -> MV.write b v (BiSub [THBound q] [THBound q]) $> [THBound q]
+      x  -> pure x
+
+    THArg v -> use domain >>= \d -> (MV.read d v >>= subst' . getTy) >>= \case
+      [] -> incQuants >>= \q -> MV.write d v (BiSub [THBound q] [THBound q]) $> [THBound q] --pure [THBound 0]
+      x  -> pure x
 
     THArrow ars ret -> (\arsTy retTy -> [THArrow arsTy retTy]) <$> subst (not pos) `mapM` ars <*> subst' ret
     THProduct tys -> (\x->[THProduct x]) <$> (subst' `traverse` tys)
     THBi b ty -> (\t->[THBi b t]) <$> subst' ty
---  THRec r -> pure [THRec r]
+
+    -- TODO is a bit weird , need to review handling of recursive types when inferring mutual functions
+    THRec r   -> use wip >>= \wip' -> getRetTy . tyOfExpr . (\(BindOK b) -> b) <$> MV.read wip' r
     t -> pure [t]
   in do
-  traceM $ toS $ "Subst: " <> prettyTyRaw (addArrowArgs argTys inferredTy)
   rawGenTy <- subst True (addArrowArgs argTys inferredTy)
+  q <- use quants
+  traceM $ toS $ "Subst: " <> show q <> ". " <> prettyTyRaw (addArrowArgs argTys inferredTy)
   let genTy = if q > 0 then [THBi q rawGenTy] else rawGenTy
   traceM (toS $ prettyTyRaw genTy)
   pure (argTys , genTy)
-
-judgeAbs (P.FunBind hNm implicits freeVars matches tyAnn) = let
-    (mainArgs , mainArgTys , tt) = matches2TT matches
-    args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
-  in do
-  -- infer
-  -- save the args and THVars dominated here
-  traceShowM args -- TODO args should always be consecutive !!
-  svLvl <- use level
-  level .= Dominion (snd (tVarRange svLvl) + 1, snd (tVarRange svLvl))
-  expr <- infer tt
-  pure $ case expr of
-    Core x ty -> case args of
-      [] -> Core x ty
-      ars-> Core (Abs (zip ars ((\x->[THArg x]) <$> args)) mempty x ty) ty
-    t -> t
--- Check annotation if given (against non-generalised type ??)
---bindTy <- maybe (pure genTy) (\ann -> checkAnnotation ann genTy mainArgTys (V.fromList argTys)) tyAnn
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
@@ -244,7 +215,23 @@ infer = let
       Left b  -> judgeLocalBind b -- was a forward reference not an extern
       Right e -> pure e
 
-  P.Abs top -> judgeAbs top
+  P.Abs top -> let
+    -- unlike topBind, don't bother generalising the type
+      getTT (P.FunBind hNm implicits freeVars matches tyAnn) = let
+        (mainArgs , mainArgTys , tt) = matches2TT matches
+        args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
+        in (tt , args)
+      (tt , args) = getTT top
+    in do
+    traceShowM args -- TODO args should always be consecutive !!
+    infer tt <&> \case
+      Core x ty -> case args of
+        [] -> Core x ty
+        ars-> let
+          argTys = (\x->[THArg x]) <$> ars
+          ty'    = addArrowArgs argTys ty
+          in Core (Abs (zip ars ((\x->[THArg x]) <$> args)) mempty x ty') ty'
+      t -> t
 
   P.App fTT argsTT -> do
     f    <- infer fTT

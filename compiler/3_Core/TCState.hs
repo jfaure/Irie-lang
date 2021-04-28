@@ -33,6 +33,7 @@ data TCEnvState s = TCEnvState {
 
  , _level   :: Dominion
  , _deBruijn:: MV.MVector s Int
+
  , _quants  :: Int
  , _mode    :: Mode
  , _bis     :: MV.MVector s BiSub -- typeVars
@@ -51,7 +52,7 @@ withBiSubs :: Int -> (Int->TCEnv s a) -> TCEnv s (a , [Int]) --(a , MV.MVector s
 withBiSubs n action = do
   bisubs <- use bis
   let biSubLen = MV.length bisubs
-      genFn i = let tv = [THVar i] in BiSub tv tv
+      genFn i = let tv = [THVar i] in BiSub [] [] --BiSub tv tv
       tyVars = [biSubLen .. biSubLen+n-1]
   bisubs <- MV.grow bisubs n
   tyVars `forM` \i -> MV.write bisubs i (genFn i)

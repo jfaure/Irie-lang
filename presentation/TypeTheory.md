@@ -8,6 +8,16 @@ suppose `e = let x = e1 in e2`. e1 must be typeable and have principal ty [D1-]t
 the most general choice is to insert x into Pi with principal type of e1
 ie. x depends on lambda-bound vars, so those are moved into Pi (as monotype environments)
 
+Generalisation: we want polymorphic typing schemes to be instantiated with fresh variables on every use
+  * lift all dominated irreducible THVars and THArgs to debruijn Pi bindings
+  * generalize at Abs (mutual functions together)
+  * only modify dominated type variables "Dominion" data (messing with the environment is obviously unsound)
+Simplification is incidentally conveniently handled now:
+  * remove polar variables (those that appear only positively or only negatively) `a & int -> int`
+  * unify inseparable positive variables (co-occurence `a&b -> a|b` and indistinguishable variables `a->b->a|b`)
+  * unify variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int`
+  * minimize recursive types that may have been unrolled during biunification
+
 # Note. Rank-n polymorphism
 A constraint a <= t- gives a an upper bound ;
 which only affects a when used as an upper bound (negative position)

@@ -102,13 +102,16 @@ data Expr
 
 data Bind -- indexes in the bindmap
  = WIP
+ | Guard     { mutuals :: [IName] , args :: [IName] }
+ | Mutual    { tvars :: Dominion , naiveExpr :: Expr }
+
  | Checking  { mutuals :: [IName] 
              , monoMorphic :: Maybe (Dominion , Expr) -- if set, shouldn't generalise itself (request a mutual bind do so)
              , doGen :: Bool
              , recTy :: Type
              }
  | BindOK    Expr
- | BindKO -- failed to typecheck
+ | BindKO -- failed typecheck -- use Poison ?
 
 type Type     = TyPlus
 type Uni      = Int

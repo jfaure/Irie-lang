@@ -15,6 +15,8 @@ nropOuterParens = \case { '(' : xs -> init xs ; x -> x }
 
 prettyBind bindSrc bis domain = \case
   Checking m e g ty -> "CHECKING: " <> show m <> show e <> show g <> " : " <> show ty
+  Guard m ars -> "GUARD : " <> show m <> show ars
+  Mutual d m -> "MUTUAL: " <> show d <> show m
   WIP -> "WIP"
   BindOK expr -> prettyExpr' bindSrc bis domain "\n  " expr <> "\n"
 
@@ -120,7 +122,7 @@ prettyTyHead bis domain = let
  THFam f ixable ix -> let
    fnTy = case ixable of { [] -> f ; x -> [THArrow x f] }
    indexes = case ix of { [] -> "" ; ix -> " $! (" <> intercalate " " (show <$> ix) <> "))" }
-   in "(Family " <> show fnTy <> ")" <> indexes
+   in "(Family " <> pTy fnTy <> ")" <> indexes
 -- THInstr i ars -> show i <> show ars
 
 clBlack   x = "\x1b[30m" <> x <> "\x1b[0m"

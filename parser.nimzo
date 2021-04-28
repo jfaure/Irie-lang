@@ -27,11 +27,11 @@ parseOK pstate = pstate . cok . set 1
 --_<|>_ = \pa pb pstate => let trypa = pa pstate
 --  in ifE (eq 1 (trypa . cok)) trypa (pb (parseOK pstate))
 _<|>_ = \pa pb pstate =>
-  ifE (pa pstate . cok) (pa pstate) (pb pstate) --(pb (parseOK pstate))
+  ifE (pa pstate . cok) (pa pstate) (pb (parseOK pstate))
 
 -- : f a -> f [a]
---some v = v >> (\ps => many v ps . ret . over (\xs => Next (ps . ret) xs))
---many v = some v <|> (\x => { ret = Z })
+some v = v >> (\ps => many v ps . ret . over (\xs => Next (ps . ret) xs))
+many v = some v <|> (\x => { ret = Z })
 -- some v = v >> (\ps => many v ps . ret . over (\xs => xs)) --Next (ps . ret) xs))
 --
 --satisfy pred pstate = case pstate . stream of

@@ -1,15 +1,27 @@
+# Goals
+Maximise tail call potential
+
+??
+Identify hylomorphisms
+Data extraction
+fields qtt
+
 ## Record
 * link-time translation to merge module field tables
 * Lens allowing treatment as if has less fields
-? qtt fields
 
-## Sum = Peano | Flat | Tree | Wrapper Sum
+Record =
+ | Struct
+ | PtrTable
 
-## Fn ; FnPtr = PAp | Raw | Poly
-* data/poly args extra frame ptr
+## SumKind = let S = Peano | Flat | Tree in S | Wrapper S
+ * Modify Shared subtrees
+   1. have to leave marker label at node that is usually ignored
+   2. fns to handle shares used by non-master data that don't ignore marker
 
-??
-conv recursion to list function
+## FnPtr = PAp | Raw
+* use spare bits in pointer alignment to tell pap from rawPtr
+* data/poly args extra frame ptr (have to trust local bitcasts)
 
 ## Algorithm
 Abs:
@@ -24,3 +36,14 @@ Match:
   insert extra dups on each branch; report min for whole branch
   register split data (basically inline the splitter fns)
   if frame not used: free frame else free frags (if marked as useful to do so)
+
+## Allocator api
+mergeFrames : [Frames] -> Frame
+shareFrame : Int -> Frame -> Frame
+freeFrame : Frame -> ()
+
+newFrag : Frame -> Size -> Frag
+freeFrag : Frame -> Frag -> Size -> ()
+dflist_mergeframes : [Frames] -> Frame
+push : Frame -> Size -> Frag
+pop  : Frame -> Size -> ()

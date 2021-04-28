@@ -9,6 +9,15 @@ import qualified Data.IntMap as IM
 --import qualified Data.Vector as V
 --import qualified Data.IntSet as IS
 
+-- substitute all pi bound variables for new typevars
+-- TODO record and sum type also
+substFreshTVars tvarStart ty = let
+  r = substFreshTVars tvarStart
+  in case ty of
+  [THBound i] -> [THVar (tvarStart + i)]
+  [THArrow as ret] -> [THArrow (r <$> as) (r ret)]
+  [t] -> [t]
+
 addArrowArgs [] = identity
 addArrowArgs args = \case
   [THArrow as r] -> [THArrow (as ++ args) r]
