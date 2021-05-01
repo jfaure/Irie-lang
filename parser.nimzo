@@ -18,43 +18,37 @@ String =
  | Next : Char -> (String -> String)
 
 -- _>>_ = \f x => \a => x (f a)
+identity x = x
 _>>_ = \f x a => x (f a)
+pure x ps = ps . ret . set x
 
--- parser primitives
---parseKO pstate = pstate . cok . set 0
+--parser primitives
 parseOK pstate = pstate . cok . set 1
+parseKO pstate = pstate . cok . set 0
+_<|>_ = \pa pb pstate => ifE (pa pstate . cok) (pa pstate) (pb pstate)
+--optional v = v <|> \ps => ps . ret . set Null
+-- 
+-- -- : f a -> f [a]
+-- some v = v >> \ps => many v ps . ret . over (Next (ps . ret))
+-- many v = some v <|> pure Null
 
---_<|>_ = \pa pb pstate => let trypa = pa pstate
---  in ifE (eq 1 (trypa . cok)) trypa (pb (parseOK pstate))
-_<|>_ = \pa pb pstate =>
-  ifE (pa pstate . cok) (pa pstate) (pb (parseOK pstate))
-
--- : f a -> f [a]
-some v = v >> (\ps => many v ps . ret . over (\xs => Next (ps . ret) xs))
-many v = some v <|> (\x => { ret = Z })
--- some v = v >> (\ps => many v ps . ret . over (\xs => xs)) --Next (ps . ret) xs))
---
---satisfy pred pstate = case pstate . stream of
---  | Next x xs => pstate . set (ifE (pred x) { cok = 0 , stream = xs , ret = x } { cok = 0 })
---  | Null      => parseKO pstate
---
---eof pstate = case pstate . stream of
---  | Null      => parseOK pstate
---  | Next x xs => parseKO pstate
-
---what = eq 'B' 'C' -- NoRelation %i1 and lam3 -> arg7
-
---x y = eq y 3
---xd c = satisfy (\x => eq x c)
---char c = satisfy (eq 'B')
-
------------------
--- Glob parser --
------------------
--- --makeGlobP : String -> Parser [String]
+-- satisfy pred pstate = case pstate . stream of
+--   | Next x xs => pstate . set (ifE (pred x) { cok = 0 , stream = xs , ret = x } { cok = 0 })
+--   | Null      => parseKO pstate
+-- 
+-- eof pstate = case pstate . stream of
+--   | Null      => parseOK pstate
+--   | Next x xs => parseKO pstate
+-- 
+-- --x y = eq y 3
+-- xd c = satisfy (\x => eq x c)
+-- char c = satisfy (eq 'B')
+-- 
+-- -- --makeGlobP : String -> Parser [String]
 -- makeGlobP gs = let
--- -- globAny xs = let next = makeGlobP xs in next <|> many (notFollowedBy next > takeP 1)
--- -- globAny xs = many (satisfy (eq 'B')) <|> makeGlobP xs
+-- --globAny xs = let next = makeGlobP xs in next <|> many (notFollowedBy next > takeP 1)
+-- --globAny xs = many (satisfy (eq 'B')) <|> makeGlobP xs
+--   globAny = many (satisfy (eq 'B'))
 --   in case gs of
 --    | Null      => eof
 --    | Next x xs => ifE (eq x '*') (globAny xs) (satisfy (eq x) >> makeGlobP xs)

@@ -9,14 +9,17 @@ import qualified Data.IntMap as IM
 --import qualified Data.Vector as V
 --import qualified Data.IntSet as IS
 
--- substitute all pi bound variables for new typevars
+-- substitute all pi bound variables for new typevars;
+-- otherwise guarded debruijn vars won't be biunified on contact with TVar
+-- ; ie. TVar slots may contain stale debruijns, after which the pi-binder context is lost
 -- TODO record and sum type also
-substFreshTVars tvarStart ty = let
+substFreshTVars tvarStart = Prelude.map $ let
   r = substFreshTVars tvarStart
-  in case ty of
-  [THBound i] -> [THVar (tvarStart + i)]
-  [THArrow as ret] -> [THArrow (r <$> as) (r ret)]
-  [t] -> [t]
+  in \case
+  THBound i -> THVar (tvarStart + i)
+  THArrow as ret -> THArrow (r <$> as) (r ret)
+  THProduct as -> THProduct $ r <$> as
+  t -> t
 
 addArrowArgs [] = identity
 addArrowArgs args = \case

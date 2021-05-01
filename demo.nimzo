@@ -24,14 +24,14 @@
 --f x = { p = plus x 1 }
 --_<|>_ = \pa pb pstate =>
 --  ifE (pa pstate . cok) (pa pstate) (pb pstate)
+--f = { x = 3 } . x . over (plus 2)
 
---_>>_ = \f x a => x (f a)
---plusfive = plus 3 >> plus 2
+_>>_ = \f x a => x (f a)
 
+g z = ifE (eq z 10) z z
 --five x = ifE x 5 3
 --f x = plus (g x) x
---g z = ifE (eq z 10) z (z)
-iff x y z = ifE (ifE x y z)
+--iff x y z = ifE (ifE x y z)
 
 
 --r x = {f = x}

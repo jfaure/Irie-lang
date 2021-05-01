@@ -112,8 +112,11 @@ generaliseBinds i ms = use wip >>= \wip' -> do
   let substVars = \(m,q,args,cd,naiveExpr) -> do
         done <- case naiveExpr of
           Core (Abs ars free x _ty) ty -> do
-            (arTys , g) <- substTVars q args cd ty
+            (arTys , g) <- substTVars args ty
             pure $ Core (Abs ars free x g) g
+          Core expr ty -> do
+            (arTys , g) <- substTVars [] ty
+            pure $ Core expr g
           t -> pure t
         MV.write wip' m $ BindOK done
         pure done
@@ -145,33 +148,37 @@ gen ars dom = do
   let rmTVar n   = filter $ \case { THVar x -> x /= n ; _ -> True }
       rmArgVar n = filter $ \case { THArg x -> x /= n ; _ -> True }
       incQuant = quants <<%= (+1) :: TCEnv s Int
-      -- have to recurse through the tvar types: remove stale debruijn refs and simplify the types
-      generaliseBisubs range b = range `forM` \i -> MV.read b i >>= \s -> case trace (show i <> ": " <> show s :: Text) s of
-        BiSub p m -> MV.write b i (BiSub (rmArgVar i $ rmTVar i p) (rmArgVar i $ rmTVar i m))
+      generaliseBisubs filterVars range b = range `forM` \i -> MV.read b i >>= \s ->
+        case trace (show i <> ": " <> show s :: Text) s of
+          BiSub p m -> MV.write b i $ (BiSub (filterVars i p) (filterVars i m))
   let Dominion (bStart , bEnd) = dom
   traceM $ "gen: " <> show ars <> " , " <> show dom
-  use bis    >>= \b -> generaliseBisubs [bStart .. bEnd] b
-  use domain >>= generaliseBisubs ars
+  use bis    >>= \b -> generaliseBisubs rmTVar [bStart .. bEnd] b
+  traceM "-- ^ TVars v TArgs"
+  use domain >>= generaliseBisubs rmArgVar ars
   quants <<.= 0
 
-substTVars q'''''' ars dom inferredTy = let
-  -- recursively substitute type vars
+substTVars ars inferredTy = let
+  -- recursively substitute type vars, simplify types and insert foralls
   argTys = (\x->[THArg x]) <$> ars
   subst pos ty = foldr mergeTypes [] <$> mapM (substTyHead pos) ty
+--  >>= \x -> x <$ traceM (show ty <> " (" <> show pos <> ") => " <> show x)
   substTyHead pos ty = let
     incQuants = quants <<%= (+1)
     subst' = subst pos
     getTy = if pos then _pSub else _mSub
     in case ty of
--- TODO only over appropriate sub ?
--- TODO what exactly to generalise ?
--- [] -> (quants <<%= +1)) >>= \q -> MV.modify b (\(BiSub a b) -> BiSub (THBound q : a) (THBound q:b)) v $> [THBound q]
+
     THVar v -> use bis >>= \b -> (MV.read b v >>= subst' . getTy) >>= \case
-      [] -> do incQuants >>= \q -> MV.write b v (BiSub [THBound q] [THBound q]) $> [THBound q]
+      [] -> incQuants >>= \q -> do
+        MV.read b v >>= \s -> traceM $ show v <> " =" <> show q <> " @ " <> show s
+        MV.write b v (BiSub [THBound q] [THBound q]) $> [THBound q]
       x  -> pure x
 
     THArg v -> use domain >>= \d -> (MV.read d v >>= subst' . getTy) >>= \case
-      [] -> incQuants >>= \q -> MV.write d v (BiSub [THBound q] [THBound q]) $> [THBound q] --pure [THBound 0]
+      [] -> incQuants >>= \q -> do
+        MV.read d v >>= \s -> traceM $ show v <> " =" <> show q <> " lam@ " <> show s
+        MV.write d v (BiSub [THBound q] [THBound q]) $> [THBound q]
       x  -> pure x
 
     THArrow ars ret -> (\arsTy retTy -> [THArrow arsTy retTy]) <$> subst (not pos) `mapM` ars <*> subst' ret
@@ -195,7 +202,8 @@ infer = let
   -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
  biUnifyApp fTy argTys = do
    (biret , [oneTy]) <- withBiSubs 1 (\idx -> biSub_ fTy (addArrowArgs argTys [THVar idx]))
-   pure (biret , [THVar oneTy])
+   retTy <- use bis >>= \b -> MV.read b oneTy
+   pure (biret , retTy ^. pSub <|> [THVar oneTy]) -- TODO strange ?!
 
  in \case
   P.WildCard -> pure $ Core Hole [THSet 0]
@@ -263,28 +271,23 @@ infer = let
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) }) <$> exprs
     pure $ Core (Cons (IM.fromList $ zip fields tts)) [THProduct (IM.fromList $ zip fields tys)]
 
-  P.TTLens tt fields maybeSet -> let
-    in do
-    record <- infer tt
-    let recordTy = tyOfExpr record
-        mkExpected :: Type -> Type
-        mkExpected dest = foldr (\fName ty -> [THProduct (IM.singleton fName ty)]) dest fields
-    case record of
-      Core f _ -> case maybeSet of
-        -- for get, we need a typevar for the destination
-        P.LensGet    -> do
-          (_bs , [retTy]) <- withBiSubs 1 $ \ix -> biSub recordTy (mkExpected [THVar ix])
---        retTy <- _pSub <$> (`MV.read` 0) (snd bs)
-          pure $ Core (TTLens f fields LensGet) [THVar retTy]
-        -- for others, use the type of the ammo
-        P.LensSet x  -> infer x >>= \ammo -> let expect = mkExpected (tyOfExpr ammo)
-          in biSub recordTy expect $> Core (TTLens f fields (LensSet ammo)) expect
-        P.LensOver x -> infer x >>= \fn -> do
-          (bs , [retTy]) <- withBiSubs 1 $ \ ix -> biSub recordTy (mkExpected [THVar ix])
---        retTy <- _pSub <$> (`MV.read` 0) (snd bs)
---        biSub (tyOfExpr fn) [THBi 1 [THArrow [retTy] [THBound 0]]]
-          pure $ Core (TTLens f fields (LensOver fn)) [THVar retTy]
-      t -> panic "record type must be a term" -- pure t
+  P.TTLens tt fields maybeSet -> infer tt >>= \record -> let
+      recordTy = tyOfExpr record
+      mkExpected :: Type -> Type
+      mkExpected dest = foldr (\fName ty -> [THProduct (IM.singleton fName ty)]) dest fields
+    in case record of
+    Core f _ -> case maybeSet of
+      P.LensGet    -> do -- for get, we need a typevar for the destination
+        (_bs , [retTy]) <- withBiSubs 1 $ \ix -> biSub recordTy (mkExpected [THVar ix])
+        pure $ Core (TTLens f fields LensGet) [THVar retTy]
+      P.LensSet x  -> infer x >>= \ammo -> let expect = mkExpected (tyOfExpr ammo)
+        in biSub recordTy [THProduct IM.empty] $> Core (TTLens f fields (LensSet ammo)) expect
+      P.LensOver x -> infer x >>= \fn -> do
+        (bs , [tyOld, tyNew]) <- withBiSubs 2 $ \ ix -> do
+          biSub [THArrow [[THVar ix]] [THVar (ix+1)]] (tyOfExpr fn)
+          biSub recordTy (mkExpected [THVar (ix+1)])
+        pure $ Core (TTLens f fields (LensOver fn)) (mkExpected [THVar tyNew])
+    t -> panic "record type must be a term" -- pure t
 
   -- Sum
   -- TODO recursion + qtt is problematic

@@ -13,17 +13,17 @@ import Text.Printf
 parens x = "(" <> x <> ")"
 nropOuterParens = \case { '(' : xs -> init xs ; x -> x }
 
-prettyBind bindSrc bis domain = \case
+prettyBind bindSrc bis names = \case
   Checking m e g ty -> "CHECKING: " <> show m <> show e <> show g <> " : " <> show ty
   Guard m ars -> "GUARD : " <> show m <> show ars
   Mutual d m -> "MUTUAL: " <> show d <> show m
   WIP -> "WIP"
-  BindOK expr -> prettyExpr' bindSrc bis domain "\n  " expr <> "\n"
+  BindOK expr -> prettyExpr' bindSrc bis names "\n  " expr <> "\n"
 
-prettyExpr bindSrc bis domain = prettyExpr' bindSrc bis domain ""
-prettyExpr' bindSrc bis domain pad = let
-  pTy = prettyTy bis domain
-  pT = prettyTerm bindSrc bis domain
+prettyExpr bindSrc bis names = prettyExpr' bindSrc bis names ""
+prettyExpr' bindSrc bis names pad = let
+  pTy = prettyTy bis names
+  pT = prettyTerm bindSrc bis names
   in \case
   Core term ty -> " = " <> pad <> pT term <> clGreen (" : " <> pTy ty)
   Ty t         -> " =: " <> pad <> clGreen (pTy t)
@@ -35,11 +35,11 @@ prettyVName bindSrc = \case
   VBind i -> let nm = toS $ (srcBindNames bindSrc) V.! i in if nm == "_" then "π" <> show i else "\"" <> nm <> "\""
   VExt i ->  "E" <> show i <> "\"" <> (toS $ (srcExtNames  bindSrc) V.! i) <> "\""
 
-prettyTerm bindSrc bis domain = let
-  pTy = prettyTy bis domain
-  pT  = prettyTerm  bindSrc bis domain
-  pE  = prettyExpr  bindSrc bis domain
-  pE' = prettyExpr' bindSrc bis domain
+prettyTerm bindSrc bis names = let
+  pTy = prettyTy bis names
+  pT  = prettyTerm  bindSrc bis names
+  pE  = prettyExpr  bindSrc bis names
+  pE' = prettyExpr' bindSrc bis names
   prettyFree x = if IS.null x then "" else "Γ(" <> show x <> ")"
   in \case
   Hole -> " _ "
@@ -60,31 +60,31 @@ prettyTerm bindSrc bis domain = let
   Label   l t -> prettyLabel l <> "@" <> intercalate " " (pE <$> t)
   Match caseTy ts d -> let
     showLabel l t = prettyLabel l <> " => " <> pE' "" t
-    in clMagenta "\\case " <> clGreen (" : " <> prettyTy bis domain caseTy) <> ")\n    | "
+    in clMagenta "\\case " <> clGreen (" : " <> prettyTy bis names caseTy) <> ")\n    | "
       <> intercalate "\n    | " (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts) <> "\n    |_ " <> maybe "Nothing" pE d <> "\n"
   List    ts -> "[" <> (concatMap pE ts) <> "]"
 
-  TTLens r target ammo -> pT r <> " . " <> intercalate "." (show <$> target) <> prettyLens bindSrc bis domain ammo
+  TTLens r target ammo -> pT r <> " . " <> intercalate "." (show <$> target) <> prettyLens bindSrc bis names ammo
 
 prettyLabel = clMagenta . show
 
-prettyLens bindSrc bis domain = \case
+prettyLens bindSrc bis names = \case
   LensGet -> " . get "
-  LensSet  tt -> " . set ("  <> prettyExpr bindSrc bis domain tt <> ")"
-  LensOver tt -> " . over (" <> prettyExpr bindSrc bis domain tt <> ")"
+  LensSet  tt -> " . set ("  <> prettyExpr bindSrc bis names tt <> ")"
+  LensOver tt -> " . over (" <> prettyExpr bindSrc bis names tt <> ")"
 
 prettyTyRaw = prettyTy V.empty V.empty
 
-prettyTy bis domain = let
-  pTH = prettyTyHead bis domain
+prettyTy bis names = let
+  pTH = prettyTyHead bis names
   in \case
   []  -> "??"
   [x] -> pTH x
   x   -> "(" <> (intercalate " & " $ pTH <$> x) <> ")"
 
-prettyTyHead bis domain = let
- pTy = prettyTy bis domain
- pTH = prettyTyHead bis domain
+prettyTyHead bis names = let
+ pTy = prettyTy bis names
+ pTH = prettyTyHead bis names
  in \case
  THPrim     p -> prettyPrimType p
  THArg      i -> "λ" <> show i

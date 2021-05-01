@@ -39,9 +39,9 @@ solveTVar varI newTy (ty:tys) = if eqTyHead newTy ty
 atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
 atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub: " ++ prettyTyRaw [p] ++ " <==> " ++ prettyTyRaw [m]) go else go) $
  case (p , m) of
-  -- Bound vars
-  (THBound i , x) -> error $ "unexpected THBound: " <> show i --use deBruijn >>= (`MV.read` i) >>= \v -> atomicBiSub (THVar v) x
-  (x , THBound i) -> error $ "unexpected THBound: " <> show i --use deBruijn >>= (`MV.read` i) >>= \v -> atomicBiSub x (THVar v)
+  -- Bound vars (removed at THBi, so should never be encountered during biunification)
+  (THBound i , x) -> error $ "unexpected THBound: " <> show i
+  (x , THBound i) -> error $ "unexpected THBound: " <> show i
   (THBi nb x , y) -> do
     -- make new THVars for the debruijn bound vars here
     level %= (\(Dominion (f,x)) -> Dominion (f,x+nb))
@@ -51,47 +51,34 @@ atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub
     tvars `forM_` \i -> MV.write bisubs i (let tv = [THVar i] in BiSub tv tv)
     bis .= bisubs
     r <- biSub (substFreshTVars (blen - nb) x) [y]
-    insts <- tvars `forM` \i -> MV.read bisubs i
     -- todo substitution of debruijns doesn't distinguish between + and - types
-    --
-    -- guarded debruijn vars won't be biunified on contact with TVar ; ie. TVar slots may contain stale debruijns
-    -- original pi-binder lost (context is crucial)
-    -- typevars in y may contain guarded debruijns from this context
-    -- ? mark them all with this context | subst aggressively | presubst x
-    --
+
     -- stacks of pi binder ? (the algorithm lifts all pi binds)
     -- simplify ∀0 -> ∀2 ?
-    traceM $ "Instantiate: " <> show tvars <> "----" <> show insts <> "---" <> show r
-    pure . did_ $ BiInst insts r
+--  insts <- tvars `forM` \i -> MV.read bisubs i
+--  traceM $ "Instantiate: " <> show tvars <> "----" <> show insts <> "---" <> show r
+--  pure . did_ $ BiInst insts r
+    pure r
 
+  -- TVars and ArgVars --
   -- merge types and attempt to eliminate the THVar
-  -- TODO weird things happening
---(THVar p , m) -> use bis >>= \v->MV.modify v (over mSub (foldr (solveTVar p) [m])) p $> BiEQ
---(p , THVar m) -> use bis >>= \v->MV.modify v (over pSub (foldr (solveTVar m) [p])) m $> BiEQ
+  -- Lambda-bound in - position can be guessed
+  -- Lambda-bound in + position cannot, however we can take note of it's rank-polymorphism
   (THVar p , THVar m) -> use bis >>= \v-> do
     MV.modify v (over pSub (THVar p : )) m $> BiEQ
     MV.modify v (over mSub (THVar m : )) p $> BiEQ
+  (THArg p , THVar m) -> do
+    use bis >>= \v-> MV.modify v (over pSub (THVar p : )) m $> BiEQ
+    use domain >>= \v->MV.modify v (over mSub (foldr (solveTVar p) [THVar m])) p $> BiEQ
   (THVar p , m) -> use bis >>= \v-> MV.modify v (over mSub (m :)) p $> BiEQ
-  (p , THVar m) -> use bis >>= \v-> MV.modify v (over pSub (p :)) m $> BiEQ
---  fmap _mSub (MV.read v m) >>= \m -> biSub [p] m
---  fmap _pSub (MV.read v p) >>= \p -> biSub p [m]
 
-  -- Lambda-bound in - position can be guessed
-  -- Lambda-bound in + position cannot, however we can take note of it's rank-polymorphism
+  (p , THVar m) -> use bis >>= \v-> MV.modify v (over pSub (p :)) m $> BiEQ
   (THArg i , m) -> use domain >>= \v->MV.modify v (over mSub (foldr (solveTVar i) [m])) i $> BiEQ
---  let replaceLambda t = \case { [THArg i2] | i2==i -> [t] ; x -> doSub t x }
---  in use domain >>= \v->MV.modify v (over mSub (replaceLambda m)) i $> BiEQ -- TODO probably premature
   -- TODO should we ignore + on lambda ? -- pure BiEq
   (p , THArg i) -> use domain >>= \v->MV.modify v (over pSub (foldr (solveTVar i) [p])) i $> BiEQ
---  replaceLambda t = \case { [THArg i2] | i2==i -> [t] ; x -> doSub t x }
---  in use domain >>= \v->MV.modify v (over pSub (replaceLambda p)) i $> BiEQ
 
---(THArg i , THArrow args ret) -> let
---    fa = [THImplicit i] ; ty = THArrow (replicate (length args) fa) fa
---  in use domain >>= \v-> MV.modify v (ty:) i
   (THSet u , x) -> pure BiEQ
---(THRec m , THSet u) -> pure BiEQ
---(THRec m , x) -> use wip >>= \w -> MV.modify w (\(Checking m y doGen ty) -> Checking m y doGen (x:ty)) m *> pure BiEQ
+  (x , THSet u) -> pure BiEQ
   (THRec m , x) -> use wip >>= \w -> do
     Guard ms ars <- MV.read w m
     case ars of
