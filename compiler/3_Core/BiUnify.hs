@@ -39,7 +39,14 @@ solveTVar varI newTy (ty:tys) = if eqTyHead newTy ty
 atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
 atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub: " ++ prettyTyRaw [p] ++ " <==> " ++ prettyTyRaw [m]) go else go) $
  case (p , m) of
+  (THPrim p1 , THPrim p2) -> primBiSub p1 p2
+--(h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
+  (THExt a , THExt b) | a == b -> pure BiEQ
+  (p , THExt i) -> biSub [p]     =<< tyExpr . (`readPrimExtern` i)<$>use externs
+  (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readPrimExtern` i)<$>use externs
+
   -- Bound vars (removed at THBi, so should never be encountered during biunification)
+--(THBound x , THBound y) -> pure biEQ
   (THBound i , x) -> error $ "unexpected THBound: " <> show i
   (x , THBound i) -> error $ "unexpected THBound: " <> show i
   (THBi nb x , y) -> do
@@ -48,75 +55,82 @@ atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub
     bisubs <- (`MV.grow` nb) =<< use bis
     let blen = MV.length bisubs
         tvars = [blen - nb .. blen - 1] 
-    tvars `forM_` \i -> MV.write bisubs i (let tv = [THVar i] in BiSub tv tv)
+    tvars `forM_` \i -> MV.write bisubs i (BiSub [] [] 0 1) -- TODO is it right to preemptively dupe argTypes here ?
+    -- I won't allow aggressive recursion to dupe guarded variables that aren't unrolled
     bis .= bisubs
     r <- biSub (substFreshTVars (blen - nb) x) [y]
-    -- todo substitution of debruijns doesn't distinguish between + and - types
-
-    -- stacks of pi binder ? (the algorithm lifts all pi binds)
-    -- simplify ∀0 -> ∀2 ?
+    -- todo is it ok that substitution of debruijns doesn't distinguish between + and - types
 --  insts <- tvars `forM` \i -> MV.read bisubs i
 --  traceM $ "Instantiate: " <> show tvars <> "----" <> show insts <> "---" <> show r
 --  pure . did_ $ BiInst insts r
     pure r
 
-  -- TVars and ArgVars --
-  -- merge types and attempt to eliminate the THVar
+  -- TVars and ArgVars: merge types and attempt to eliminate the THVar
   -- Lambda-bound in - position can be guessed
   -- Lambda-bound in + position cannot, however we can take note of it's rank-polymorphism
-  (THVar p , THVar m) -> use bis >>= \v-> do
-    MV.modify v (over pSub (THVar p : )) m $> BiEQ
-    MV.modify v (over mSub (THVar m : )) p $> BiEQ
-  (THArg p , THVar m) -> do
-    use bis >>= \v-> MV.modify v (over pSub (THVar p : )) m $> BiEQ
-    use domain >>= \v->MV.modify v (over mSub (foldr (solveTVar p) [THVar m])) p $> BiEQ
-  (THVar p , m) -> use bis >>= \v-> MV.modify v (over mSub (m :)) p $> BiEQ
-
-  (p , THVar m) -> use bis >>= \v-> MV.modify v (over pSub (p :)) m $> BiEQ
-  (THArg i , m) -> use domain >>= \v->MV.modify v (over mSub (foldr (solveTVar i) [m])) i $> BiEQ
+  (THVar p , THVar m) -> use bis >>= \v -> BiEQ <$ do
+    MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar p : a) b qa (qb)) m
+    MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) (qa) qb) p
+  (THVar p , THArg m) -> BiEQ <$ do
+    use bis >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub a (THArg m : b) qa (qb)) p --MV.modify v (over pSub (THArg p : )) m
+    use domain >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub (foldr (solveTVar p) [THVar m] a) b qa (qb)) m --MV.modify v (over mSub (foldr (solveTVar p) [THVar m])) p
+  (THArg p , THVar m) -> BiEQ <$ do
+    use bis >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub (THArg p : a) b qa (qb)) m --MV.modify v (over pSub (THArg p : )) m
+    use domain >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub a (foldr (solveTVar p) [THVar m] b) (qb) qb) p --MV.modify v (over mSub (foldr (solveTVar p) [THVar m])) p
+  (p , THVar m) -> use bis    >>= \v->BiEQ <$
+    MV.modify v (\(BiSub a b qa qb) -> BiSub (p : a) b qa (qb)) m
+    <* dup False [p]
+  (THVar p , other) -> use bis >>= \v -> BiEQ <$
+    MV.modify v (\(BiSub a b qa qb) -> BiSub a (m:b) (qa) qb) p
+--  <* dup True [other]
+  (THArg i , m) -> use domain >>= \v->BiEQ <$ --MV.modify v (over mSub (foldr (solveTVar i) [m])) i $> BiEQ
+      MV.modify v (\(BiSub a b qa qb) -> BiSub a (foldr (solveTVar i) [m] b) (qa) qb) i
+      <* dup True [m]
   -- TODO should we ignore + on lambda ? -- pure BiEq
-  (p , THArg i) -> use domain >>= \v->MV.modify v (over pSub (foldr (solveTVar i) [p])) i $> BiEQ
+  (p , THArg i) -> use domain >>= \v -> BiEQ <$
+      MV.modify v (\(BiSub a b qa qb) -> BiSub (foldr (solveTVar i) [p] a) b qa (qb)) i
+      <* dup False [p]
 
-  (THSet u , x) -> pure BiEQ
-  (x , THSet u) -> pure BiEQ
   (THRec m , x) -> use wip >>= \w -> do
-    Guard ms ars <- MV.read w m
-    case ars of
-      [] -> pure BiEQ
-      ars -> biSub (addArrowArgs ((\x->[THArg x]) <$> ars) [THRec m]) [x] -- -> Checking m y doGen (x:ty)) m *> pure BiEQ
-
-  (THPrim p1 , THPrim p2) -> primBiSub p1 p2
-
-  (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
+    Guard ms ars tvar <- MV.read w m
+    biSub [THVar tvar] [x]
+    pure BiEQ
+--  case ars of
+--    [] -> biSub [THRec m] [x] --pure BiEQ
+--    ars -> biSub (addArrowArgs ((\x->[THArg x]) <$> ars) [THRec m]) [x] -- -> Checking m y doGen (x:ty)) m *> pure BiEQ
 
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
-
+  (THArrow ars ret ,  THSumTy x) -> pure BiEQ --_
   (THPi (Pi p ty) , y) -> biSub ty [y]
   (x , THPi (Pi p ty)) -> biSub [x] ty
-
-  -- record: fields in the second must all be in the first
-  (THProduct x , THProduct y) -> let
+  (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSub x y
+  (THProduct x , THProduct y) -> let -- record: fields in the second must all be in the first
     go k ty = case x IM.!? k of
       Nothing -> failBiSub ("field: '" <> show k <> "' not found.") p m
       Just t2 -> biSub t2 ty
     in BiEQ <$ (go `IM.traverseWithKey` y) -- TODO bicasts
-
---(THProd x , THProd y) -> if all (`elem` x) y then pure BiEQ else error "Cannot unify recordTypes"
-  (THSum  x , THSum y)  -> if all (`elem` y) x then pure BiEQ else error "Cannot unify sumtypes"
-  (THArrow ars ret, THSplit y) -> pure BiEQ -- labelBiSub-- TODO
+  (THSumTy x , THSumTy y) -> let
+    go label subType = case y IM.!? label of -- y must contain supertypes of all x labels
+      Nothing -> error $ "Sumtype: label not present: " ++ show label
+      Just superType -> biSub superType subType
+    in BiEQ <$ (go `IM.traverseWithKey` x) -- TODO bicasts
+  (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
   (THArrow ars ret, THTuple y) -> pure BiEQ -- labelBiSub-- TODO
   (THTuple y, THArrow ars ret) -> pure BiEQ -- labelBiSub-- TODO
-----getLabelRetTypes labelIndexes = do
---  labelsV <- use labels
---  let getLabelTy = \case { Just t->t ; BiEQ->error "forward reference to label" }
---  labelTys <- MV.read labelsV `mapM` labelIndexes
---  pure $ map (getRetType . getLabelTy) labelTys
 
   -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
-  (THExt a , THExt b) | a == b -> pure BiEQ
-  (p , THExt i) -> biSub [p]     =<< tyExpr . (`readPrimExtern` i)<$>use externs
-  (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readPrimExtern` i)<$>use externs
---  (h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
+  -- Recursive types are not deBruijn indexed ! this means we must note the equivalent mu types
+  (THMu a x , THMu b y) -> (muEqui %= IM.insert a b) *>  do
+    ret <- biSub x y
+    ret <$ (muEqui %= IM.delete a)
+  (x , THMu i y) -> biSub [x] y -- TODO is it alright to drop mus ?
+  (THMu i x , y) -> biSub x [y] -- TODO is it alright to drop mus ?
+  (THMuBound x, THMuBound y) -> use muEqui >>= \equi -> case (equi IM.!? x) of
+    Just found -> if found == y then pure BiEQ else error $ "mu types not equal: " <> show x <> " /= " <> show y
+    Nothing -> error $ "panic Mu bound variable without outer binder!" -- TODO can maybe be legit
+  -- TODO can unrolling recursive types loop ?
+  (x , THMuBound y) -> use domain >>= \d -> MV.read d y >>= biSub [x] . _pSub -- unroll recursive types
+  (THMuBound x , y) -> use domain >>= \d -> MV.read d x >>= biSub [y] . _mSub -- unroll recursive types
 
   -- TODO sort out typevars
 --(THRec m , THRec y) -> if (m == y) then pure BiEQ else error "recursive types are not equal"
@@ -127,13 +141,15 @@ atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub
       then pure BiEQ
       else error $ "RecSi arities mismatch"
     else error $ "RecSi functions do not match ! " ++ show f1 ++ " /= " ++ show f2
+  (THSet u , x) -> pure BiEQ
+  (x , THSet u) -> pure BiEQ
   (a , b) -> failBiSub "no relation" a b
 
 arrowBiSub (argsp,argsm) (retp,retm) = let -- zipWithM biSub args2 args1 *> biSub ret1 ret2
  -- Note. App return is never cast (?!)
   bsArgs [] [] = pure ([] , Nothing) <* biSub retp retm
-  bsArgs x  [] = pure ([] , Just x)  <* biSub (addArrowArgs x retp) retm  -- OK Partial application
-  bsArgs []  x = pure ([] , Nothing) <* biSub retp (addArrowArgs x retm)  -- OK if returns a function
+  bsArgs x  [] = pure ([] , Just x)  <* biSub (addArrowArgs x retp) retm  -- Partial application
+  bsArgs []  x = pure ([] , Nothing) <* biSub retp (addArrowArgs x retm)  -- Returns a function
 --bsArgs (p : ps) (m : ms) = (:) <$> biSub m p <*> bsArgs ps ms
   bsArgs (p : ps) (m : ms) = (\arg (xs,pap) -> (arg:xs , pap)) <$> biSub m p <*> bsArgs ps ms
   in uncurry CastApp <$> bsArgs argsp argsm -- <* biSub retp retm
@@ -184,18 +200,11 @@ check' es ars labTys inferred gotTy = let
       go [] y  = check'' r1 [THArrow y r2]
       go x []  = check'' [THArrow x r1] r2
       in go a1 a2
-    (THSum labels , t@THArrow{}) -> let -- all alts must subsume the signature
-      labelFns = fromJust . (labTys V.!) <$> labels
-      in True -- all (`check''` [t]) labelFns
-    (THSum x , THSum y)   -> all (`elem` y) x
-    (t , THSplit labels) -> let
-      getLabelTy = \case { Just t->t ; Nothing->error "forward reference to label" }
-      splitTys = (getRetTy . getLabelTy . (labTys V.!)) <$> labels
-      in all (check'' [t]) splitTys
---  (THProd x , THProd y) -> all (`elem` x) y
+    (THSumTy labels , t@THArrow{}) -> _
+    (THSumTy x , THSumTy y) -> _
+
 --  (t , THPi [] ty tyArgs) -> check'' [t] (tyAp ty tyArgs)
 --  (THPi [] ty tyArgs , t) -> check'' (tyAp ty tyArgs) [t]
-
     (x , THArg y) -> True -- ?!
     (THRec x , THRec y) -> x == y
     (THRec m , x) -> True -- TODO read ty in the bindMap

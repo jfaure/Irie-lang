@@ -172,7 +172,7 @@ primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
   t -> error $ show t
 
 -- basically is it bigger than register size
-isDataTyHead = \case { THSum{}->True ; THSplit{}->True ; THRec{}->True ; THExt 21->True ; _->False } -- HACK
+isDataTyHead = \case { {-THSum{}->True ; THSplit{}->True-} ; THRec{}->True ; THExt 21->True ; _->False } -- HACK
 
 primTy2llvm :: PrimType -> L.Type =
   let doExtern isVa tys =

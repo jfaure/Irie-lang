@@ -9,9 +9,9 @@
 --import imports/Impredicative
 --import imports/array
 --import imports/fin
--- import imports/printf
+--import imports/printf
 --import imports/subtype
---import imports/list
+import imports/list
 
 --r = ##
 --loop = (backref 3)
@@ -26,17 +26,18 @@
 --  ifE (pa pstate . cok) (pa pstate) (pb pstate)
 --f = { x = 3 } . x . over (plus 2)
 
-_>>_ = \f x a => x (f a)
-
-g z = ifE (eq z 10) z z
+-- _>>_ = \f x a => x (f a)
 --five x = ifE x 5 3
+--g z = ifE (eq z 10) z z
 --f x = plus (g x) x
 --iff x y z = ifE (ifE x y z)
 
 
 --r x = {f = x}
 
--- y f = let g x = f (x x) in g g
+--y f = let g x = f (x x) in g g
+--y f = (\v => f (v v)) (\v => f (v v))
+--fix f = f (fix f)
 -- --ycbv f = let g x = let e v = (x x) v in (f e) in g g
 -- --varArg f = (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v))
 -- varArg f = let g x = f (\v => (x x) v) in g g
@@ -46,6 +47,9 @@ g z = ifE (eq z 10) z z
 -- 
 -- --List a = | Z : List a
 
+--f x = g x
+--g y = plus (f y) 1 --f y
+
 --auto x = x x -- : ((a0 -> a1) & a0) -> a1
 --auto x = x x -- rigid typevar
 --choose = ifE -- flexible typevar
@@ -53,3 +57,11 @@ g z = ifE (eq z 10) z z
 
 --fail = auto (plus 1)
 --lol = (plus 1) (plus 1)
+
+--String =
+-- | Null : String
+-- | Next : Char -> (String -> String)
+
+--satisfy str = case str of
+--  | Next x xs => x
+--  | Null      => 'a'

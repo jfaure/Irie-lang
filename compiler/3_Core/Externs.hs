@@ -102,6 +102,7 @@ primBinds :: V.Vector Expr = let
  primTy2Expr x = Ty [THPrim x]
  instr2Expr  (e , tys)  = Core (Instr e) [tys2TyHead tys]
  tys2TyHead  (args , t) = THArrow (mkExtTy <$> args) (mkExtTy t)
+-- tys2TyHead  (args , t) = THArrow ((\x->[x]) . substPrimTy <$> args) (mkExtTy t)
  tyFn2Expr   (e) = Ty [e]
  in V.concat
    [ primTy2Expr <$> primTyBinds
@@ -144,6 +145,8 @@ getPrimTy nm = case getPrimIdx nm of -- case M.lookup nm primTyMap of
 
 [i, b, c, ia, str, set , i64] = getPrimTy <$> ["Int", "Bool", "Char", "IntArray", "CharPtr", "Set" , "Int64"]
 
+substPrimTy i = THPrim $ primTyBinds V.! i
+
 -- instrs are typed with indexes into the primty map
 tyFns = [
 --[ ("IntN" , (THPi [(0,(mkExtTy i))] [THInstr MkIntN [0]] M.empty))
@@ -164,7 +167,7 @@ instrs2 :: [(HName , (PrimInstr , Type))] =
   , ("unlink"      , (Unlink , [THArrow [[THExt str] , [THArrow [[THExt c],[THExt str]] [THExt str]]] [THExt str] ]))
   , ("link"        , (Link , [THArrow [[THExt c]] [THExt str]]))
   , ("strtol"      , (StrToL , [THArrow [[THExt str]] [THExt i]]))
-  , ("mkTuple"     , (MkTuple , [THTuple []]))
+  , ("mkTuple"     , (MkTuple , [THTuple mempty]))
 --, ("ifE"         , (IfThenE , [THPi $ Pi [(0,[THSet 0])] [THArrow [[THExt b], [THVar 0]] [THVar 0]] ] ))
   , ("ifE"         , (IfThenE , [THBi 1 $ [THArrow [[THExt b], [THBound 0] , [THBound 0]] [THBound 0]] ] ))
 
@@ -195,8 +198,10 @@ typeOfLit = \case
   String{}   -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   Array{}    -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   PolyInt{}  -> THPrim (PrimInt 32)
+  Int 0      -> THPrim (PrimInt 1)
+  Int 1      -> THPrim (PrimInt 1)
   Int{}      -> THPrim (PrimInt 32)
-  Char{}     -> THPrim (PrimInt 8)
+  Char{}     -> THPrim (PrimInt 8) --THExt 3
   x -> error $ "littype: " ++ show x
 --  _ -> numCls
 

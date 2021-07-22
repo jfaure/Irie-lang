@@ -10,12 +10,17 @@
   * linefolds
   * rec
 ## Types
+  * type annotations: bounded quantification for constants , comments
   * qtt typevars + record fields
   * Dependent normalisation
   * Tuple
+  * f x = _no_x is subtype of f = _
+  * ensure pi binders are always lifted to the top level
+  * ensure lambda args are counted in the domain of their parent function
+  * Ensure dominion is working properly for let / lambda bindings
 ## CodeGen
   * GMP
-  * conv recursive functinos to anamorphisms
+  * conv recursive functions to anamorphisms (attempt to always avoid stacking)
 
 !!
 mutual generalisation. ? make sigma type using inferred forward refs
@@ -46,16 +51,17 @@ Make args consecutive in parser (not list)
   2. Memory management (esp sharing)
   3. containers
 
-# ImpSyn
-  QTT = (Int , Int)
-  Arg =
-    | Regsize
-    | Poly
-    | Sum
-    | Record
-  Symbol : [Args , QTT , Frame] Body
+* out of scope record fields
+* record lensing / coercing
+* sums + split-tree
+* qtt
+* polymorphism
+* allocator interface
+* Pap
+* free variables
+* fold-build
 
-?? Open questions
+Open questions
 # codegen array of a sumtype (varying size leaves)
 # Deep BiCasts / lazy leaf cast
 # Cata , Ana , Para , Hylo morphisms
@@ -66,3 +72,7 @@ Make args consecutive in parser (not list)
   Lens : { get s a , set s a s }
   rect . x . get
   rect . x . set
+
+some : ∏(#2)((∀0 → {1 : %i8}) → (∀0 → ∀1))
+
+many : ∏(#3)((∀0 → {1 : %i8}) → (∀2 → {1 : (μf0 $! Var (VArg 0))}))

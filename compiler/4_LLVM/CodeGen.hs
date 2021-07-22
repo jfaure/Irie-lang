@@ -304,8 +304,8 @@ cgTypeAtomic = let
   x -> pure $ case x of
     THPrim p   -> primTy2llvm p
     THArray t  -> _ -- LT.ArrayType $ cgType t
-    THSum   ls -> tyLabel
-    THSplit ls -> tyLabel
+--  THSum   ls -> tyLabel
+--  THSplit ls -> tyLabel
 --  THProd p   -> tyLabel
     THSet  0   -> tyLabel
     x -> error $ "MkStg: not ready for ty: " ++ show x

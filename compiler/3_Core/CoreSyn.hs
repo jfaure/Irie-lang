@@ -17,10 +17,10 @@ dv_ f = traceShowM =<< (V.freeze f)
 
 type IMap      = IM.IntMap
 type HName     = Text -- human readable name
-type IName     = Int    -- Int name: index into bind|type vectors
-type BiSubName = Int    -- index into bisubs
-type IField    = Int    -- product-type fields index
-type ILabel    = Int    -- sum-type labels     index
+type IName     = Int  -- Int name: index into bind|type vectors
+type BiSubName = Int  -- index into bisubs
+type IField    = Int  -- product-type fields index
+type ILabel    = Int  -- sum-type labels     index
 
 data VName
  = VBind IName -- bind   map
@@ -41,7 +41,7 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | Cons    (IM.IntMap Term) -- convert to record
  | Proj    Term IField
  | Label   ILabel [Expr]
- | Match   Type (IM.IntMap Expr) (Maybe Expr)
+ | Match   Type (IM.IntMap Expr) (Maybe Expr) -- type is the return type of this expression
  | List    [Expr]
  | TTLens  Term [IField] LensOp
 
@@ -52,37 +52,40 @@ data LensOp = LensGet | LensSet Expr | LensOver Expr
 
 -- Head constructors in the profinite distributive lattice of types
 data TyHead
- = THVar      BiSubName  -- ix to bisubs; temp type variable that generalizes to THBound if survives biunification
- | THBound    IName      -- generalized THVar (pi-bound debruijn index) (note. make new THVars to biunify pi binders)
- | THArg      IName      -- ix to monotype env (type of a lambda-bound)
- | THRec      IName      -- tyOf ix to bindMap (must be guarded and covariant) placeholder while checking binding
- | THExt      IName      -- tyOf ix to externs
+ = THPrim     PrimType
+ | THExt      IName -- tyOf ix to externs
+ | THSet      Uni   -- Type of types
+ | THPoison   -- marker for inconsistencies found during inference
+ | THTop | THBot -- TODO was this problematic ?
 
- | THSet      Uni
- | THPrim     PrimType
+ -- Type constructors
  | THArrow    [TyMinus] TyPlus -- degenerate case of THPi
- | THTuple    [TyPlus]         -- possibly unnecessary
-
+ | THTuple    (V.Vector TyPlus) -- ordered form of THproduct
  | THProduct  (IM.IntMap TyPlus)
- | THSumty    (IM.IntMap [TyPlus])
-
--- | THProd     [IField]
- | THSum      [ILabel]
- | THSplit    [ILabel]
-
+ | THSumTy    (IM.IntMap TyPlus)
  | THArray    TyPlus
 
- -- when is binder implicit ?
- | THBi Int Type                 -- deBruijn pi binder
--- | THBiElim (V.Vector Type) Type -- no need to eagerly substitute typevars
+ -- Experimental
+ | THHasVars  [IName] [IName] (Maybe Type)
+ | THBinder   -- pi & mu
 
- | THPi Pi -- dependent function space. Always implicit, for explicit, write `∏(x:_) x -> Z`
- | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type
+ -- Type variables
+ | THVar      BiSubName -- ix to bisubs; generalizes to THBound if survives biunification and simplification
+ | THArg      IName -- ix to monotype env (type of a lambda-bound)
+ | THBound    IName -- pi-bound debruijn index, (replace with fresh THVar when biunify pi binders)
+ | THRec      IName -- tyOf ix to bindMap placeholder for forward / mutual references
+ | THMuBound  IName -- mu-bound debruijn index (must be guarded and covariant) 
+ | THArgGuard IName -- temp marker for THArgs being substituted in case it's a recursive type
+
+ -- Binders
+ | THMu IName Type-- recursive type
+ | THBi Int Type  -- deBruijn pi binder
+ | THPi Pi        -- dependent function space. implicitly bound. (for explicit: `∏(x:_) x -> Z`)
+ | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
 
  -- type Families | indexed types
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
- | THFam Type [Type] [Expr] -- type of things it can index, and things indexing it (both can be [])
-  -- | THSetFn    [Uni] | THTop Kind | THBot Kind
+ | THFam Type [Type] [Expr] -- type of indexables, and things indexing it (both can be [])
 
 data Pi = Pi [(IName , Type)] Type
 
@@ -102,11 +105,11 @@ data Expr
 
 data Bind -- indexes in the bindmap
  = WIP
- | Guard     { mutuals :: [IName] , args :: [IName] }
- | Mutual    { tvars :: Dominion , naiveExpr :: Expr }
+ | Guard     { mutuals :: [IName] , args :: [IName] , tvar :: IName }
+ | Mutual    { tvars :: Dominion , naiveExpr :: Expr , recursive :: Bool , tvar :: IName }
 
  | Checking  { mutuals :: [IName] 
-             , monoMorphic :: Maybe (Dominion , Expr) -- if set, shouldn't generalise itself (request a mutual bind do so)
+             , monoMorphic :: Maybe (Dominion , Expr) -- if set, shouldn't generalise itself (request a mutual bind do it)
              , doGen :: Bool
              , recTy :: Type
              }
@@ -131,6 +134,8 @@ data Dominion = Dominion {
 data BiSub = BiSub {
    _pSub :: [TyHead]
  , _mSub :: [TyHead]
+ , _pQ :: Int
+ , _mQ :: Int
 }
 
 makeLenses ''BiSub

@@ -25,6 +25,7 @@ import Data.List (words)
 --import Data.Maybe
 --import Debug.Trace
 
+{-
 data Pipeline = Pipeline {
    parseArgs   :: [String] -> IO CmdLine
  , parseFile   :: FilePath -> IO P.Module -- (Either (ParseErrorBundle Text Void) P.Module) 
@@ -74,6 +75,7 @@ judgeFile p resolver file = (parseFile p) file >>= \parsed ->
 
 runPipeline :: CmdLine -> IO GlobalResolver
 runPipeline cmdLine = _
+-}
 
 --
 

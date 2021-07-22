@@ -1,3 +1,10 @@
+-- Main : IO
+-- IO = ##
+--   ret    : %i8
+--   fileIO : { In , Out }
+
+-- Text = [ N : { Char , Text } | Z : {} ]
+-- Pretty a = { ret : a , pretty : a -> Text }
 --ParseState a = ##
 --  stream : String
 --  ret    : a
@@ -20,26 +27,29 @@ String =
 -- _>>_ = \f x => \a => x (f a)
 identity x = x
 _>>_ = \f x a => x (f a)
-pure x ps = ps . ret . set x
+--pure x ps = ps . ret . set x
+pure x ps = { ret = x }
 
 --parser primitives
 parseOK pstate = pstate . cok . set 1
 parseKO pstate = pstate . cok . set 0
 _<|>_ = \pa pb pstate => ifE (pa pstate . cok) (pa pstate) (pb pstate)
---optional v = v <|> \ps => ps . ret . set Null
--- 
+optional v = v <|> \ps => ps . ret . set Null
+
 -- -- : f a -> f [a]
--- some v = v >> \ps => many v ps . ret . over (Next (ps . ret))
--- many v = some v <|> pure Null
+-- TODO need to fmap ( . ret . over ..)
+fmap f ps = pure (f (ps . ret))
+some v = v >> \ps => (\p2 => pure (p2 . ret . over (Next (ps . ret))) ) many v ps
+many v = pure Null
 
 -- satisfy pred pstate = case pstate . stream of
 --   | Next x xs => pstate . set (ifE (pred x) { cok = 0 , stream = xs , ret = x } { cok = 0 })
 --   | Null      => parseKO pstate
--- 
+
 -- eof pstate = case pstate . stream of
 --   | Null      => parseOK pstate
 --   | Next x xs => parseKO pstate
--- 
+
 -- --x y = eq y 3
 -- xd c = satisfy (\x => eq x c)
 -- char c = satisfy (eq 'B')

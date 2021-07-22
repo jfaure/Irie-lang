@@ -15,8 +15,8 @@ nropOuterParens = \case { '(' : xs -> init xs ; x -> x }
 
 prettyBind bindSrc bis names = \case
   Checking m e g ty -> "CHECKING: " <> show m <> show e <> show g <> " : " <> show ty
-  Guard m ars -> "GUARD : " <> show m <> show ars
-  Mutual d m -> "MUTUAL: " <> show d <> show m
+  Guard m ars tvar -> "GUARD : " <> show m <> show ars <> show tvar
+  Mutual d m isRec tvar -> "MUTUAL: " <> show d <> show m <> show isRec <> show tvar
   WIP -> "WIP"
   BindOK expr -> prettyExpr' bindSrc bis names "\n  " expr <> "\n"
 
@@ -57,7 +57,7 @@ prettyTerm bindSrc bis names = let
     sr (field , val) = show field <> " " <> (toS $ srcFieldNames bindSrc V.! field) <> "@" <> pT val
     in "{ " <> (intercalate " ; " (sr <$> IM.toList ts)) <> " }"
   Proj    t f -> pT t <> "." <> show f <> (toS $ srcFieldNames bindSrc V.! f)
-  Label   l t -> prettyLabel l <> "@" <> intercalate " " (pE <$> t)
+  Label   l t -> prettyLabel l <> "@" <> intercalate " " (parens . pE <$> t)
   Match caseTy ts d -> let
     showLabel l t = prettyLabel l <> " => " <> pE' "" t
     in clMagenta "\\case " <> clGreen (" : " <> prettyTy bis names caseTy) <> ")\n    | "
@@ -78,7 +78,7 @@ prettyTyRaw = prettyTy V.empty V.empty
 prettyTy bis names = let
   pTH = prettyTyHead bis names
   in \case
-  []  -> "??"
+  []  -> "_"
   [x] -> pTH x
   x   -> "(" <> (intercalate " & " $ pTH <$> x) <> ")"
 
@@ -86,14 +86,18 @@ prettyTyHead bis names = let
  pTy = prettyTy bis names
  pTH = prettyTyHead bis names
  in \case
+ THTop        -> "⊤"
+ THBot        -> "⊥"
  THPrim     p -> prettyPrimType p
  THArg      i -> "λ" <> show i
  THVar      i -> "τ" <> show i
  THBound    i -> "∀" <> show i
+ THMuBound  t -> "μ" <> show t
+ THMu v     t -> "μ" <> show v <> "." <> pTy t
 -- THImplicit i -> "∀" <> show i
 -- THAlias    i -> "π" <> show i
  THExt      i -> "E" <> show i
- THRec      t -> "μ" <> show t
+ THRec      t -> "Rec" <> show t
 
  THArrow    [] ret -> error $ "panic: fntype with no args: [] → (" <> pTy ret <> ")"
  THArrow    args ret -> "(" <> intercalate " → " (pTy <$> (args <> [ret])) <> ")"
@@ -105,10 +109,12 @@ prettyTyHead bis names = let
 --   showLabel (l , t) = show l <> "#" <> show t
 --   s  = intercalate "\n  | " $ showLabel <$> M.toList sumTy
 --   in " 〈" <> s <> " 〉"
- THSum l -> " 〈" <> show l <> " 〉"
- THSplit l -> "Split〈" <> show l <> " 〉"
+-- THSum l -> " 〈" <> show l <> " 〉"
+-- THSplit l -> "Split〈" <> show l <> " 〉"
 -- THProd  l -> " {" <> intercalate "," (show <$> l) <> "} "
+ THSumTy  l -> "[" <> intercalate "," ((\(l,ty) -> show l <> " : " <> pTy ty) <$> IM.toList l) <> "]"
  THProduct  l -> "{" <> intercalate "," ((\(l,ty) -> show l <> " : " <> pTy ty) <$> IM.toList l) <> "}"
+ THTuple  l -> "{" <> intercalate "," (pTy <$> V.toList l) <> "}"
 
  THArray    t -> "@" <> show t
 
@@ -124,6 +130,7 @@ prettyTyHead bis names = let
    indexes = case ix of { [] -> "" ; ix -> " $! (" <> intercalate " " (show <$> ix) <> "))" }
    in "(Family " <> pTy fnTy <> ")" <> indexes
 -- THInstr i ars -> show i <> show ars
+ x -> show x
 
 clBlack   x = "\x1b[30m" <> x <> "\x1b[0m"
 clRed     x = "\x1b[31m" <> x <> "\x1b[0m" 

@@ -2,9 +2,9 @@ module CoreUtils where
 ----------------------------------------------------
 -- Various utility functions operating on CoreSyn --
 ----------------------------------------------------
+import Prim
 import CoreSyn
 import ShowCore()
-import Data.List
 import qualified Data.IntMap as IM
 --import qualified Data.Vector as V
 --import qualified Data.IntSet as IS
@@ -28,6 +28,13 @@ addArrowArgs args = \case
   [THSi (Pi p t) _] -> [THPi (Pi p $ addArrowArgs args t)]
   [THBi i t] -> [THBi i $ addArrowArgs args t]
   x -> [THArrow args x]
+
+onRetType :: (Type -> Type) -> Type -> Type
+onRetType fn = \case
+  [THArrow as r] -> [THArrow as (onRetType fn r)]
+  [THPi (Pi p t)] -> [THPi (Pi p $ onRetType fn t)]
+  x -> fn x
+--x -> x --onRetType fn <$> x
 
 isArrowTy = \case
   [THArrow{}] -> True
@@ -117,23 +124,29 @@ doSub newTy (ty:tys) = if eqTyHead newTy ty
   then mergeTyHead newTy ty ++ tys
   else (ty : doSub newTy tys)
 
+-- generally mergeing depends on polarities. We only merge equal types (typevars mostly) here
+-- Note output(+) (%i1 | %i32) is (%i1) by subtyping, but codegen needs to know the 'biggest' type
+-- Also, The 'biggest' type is not always the negative merge
 mergeTyHead :: TyHead -> TyHead -> [TyHead]
 mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   let join = [t1 , t2]
       zM = zipWith mergeTypes
   in case join of
   [THSet a , THSet b] -> [THSet $ max a b]
-  [THPrim a , THPrim b]  -> if a == b then [t1] else join
+  [THPrim a , THPrim b]  -> if a == b then [t1] else case (a,b) of
+--  (PrimInt x , PrimInt y) -> [THPrim $ PrimInt $ max x y]
+    _ -> join
   [THBound a , THBound b]-> if a == b then [t1] else join
   [THVar a , THVar b]    -> if a == b then [t1] else join
   [THArg a , THArg b]    -> if a == b then [t1] else join
   [THRec a , THRec b]    -> if a == b then [t1] else join
   [THExt a , THExt  b]   -> if a == b then [t1] else join
 --  [THAlias a , THAlias b] -> if a == b then [t1] else join
-  [THSum a , THSum b]     -> [THSum   $ union a b] --[THSum (M.unionWith mergeTypes a b)]
-  [THSplit a , THSplit b] -> [THSplit $ union a b] --[THSum (M.unionWith mergeTypes a b)]
+--[THSum a , THSum b]     -> [THSum   $ union a b] --[THSum (M.unionWith mergeTypes a b)]
+--[THSplit a , THSplit b] -> [THSplit $ union a b] --[THSum (M.unionWith mergeTypes a b)]
 --[THProd a , THProd b]   -> [THProd $ intersect a b] -- [THProd (M.unionWith mergeTypes a b)]
-  [THProduct a , THProduct b]   -> [THProduct $ IM.intersectionWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
+  [THSumTy a   , THSumTy b]   -> [THSumTy $ IM.unionWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
+  [THProduct a , THProduct b] -> [THProduct $ IM.intersectionWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
   [THArrow d1 r1 , THArrow d2 r2]
     | length d1 == length d2 -> [THArrow (zM d1 d2) (mergeTypes r1 r2)]
   [THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!
