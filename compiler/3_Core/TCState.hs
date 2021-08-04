@@ -23,6 +23,7 @@ data TCEnvState s = TCEnvState {
  , _level   :: Dominion
  , _deBruijn:: MV.MVector s Int
  , _quants  :: Int
+ , _mus     :: Int
  , _bis     :: MV.MVector s BiSub -- typeVars
  , _domain  :: MV.MVector s BiSub -- Type  -- monotype env
  , _muEqui  :: IntMap IName -- equivalence classes for mu types, + -> -
@@ -35,12 +36,10 @@ makeLenses ''TCEnvState
 tcFail e = (errors %= (e:)) *> pure (Fail e)
 
 dup pos ty = ty `forM` \case
-  THVar x -> use bis >>= \v -> if pos
-    then MV.modify v (\(BiSub p m qp qm) -> BiSub p m (qp+1) qm) x
-    else MV.modify v (\(BiSub p m qp qm) -> BiSub p m qp (qm+1)) x
-  THArg x -> use domain >>= \v -> if pos
-    then MV.modify v (\(BiSub p m qp qm) -> BiSub p m (qp+1) qm) x
-    else MV.modify v (\(BiSub p m qp qm) -> BiSub p m qp (qm+1)) x
+  THVar x -> use bis >>= \v -> MV.modify v
+    (\(BiSub p m qp qm) -> if pos then BiSub p m (qp+1) qm else BiSub p m qp (qm+1)) x
+  THArg x -> use domain >>= \v -> MV.modify v
+    (\(BiSub p m qp qm) -> if pos then BiSub p m (qp+1) qm else BiSub p m qp (qm+1)) x
   THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
   THTuple   tys -> dup pos `traverse_` tys
   THProduct tys -> dup pos `traverse_` tys

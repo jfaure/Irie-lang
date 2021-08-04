@@ -177,7 +177,6 @@ cgTerm = let
 --    branches -> MultiIf branches elseE
 
   Cons fields      -> _ -- alloc =<< (cgTerm `mapM` fields)
-  Proj  t f        -> _ -- cgTerm t >>= \t -> loadIdx t f
   Label i tts      -> do -- merge argframes
     rawTerms <- (cgTerm . (\(Core t ty) -> t)) `mapM` tts
     let args  = op <$> rawTerms
@@ -300,7 +299,6 @@ cgTypeAtomic = let
 --THRec r    -> gets (did_ . _pSub . (V.! r) . typeVars . coreModule) >>= cgType
   THVar{} -> pure voidPtrType
   THArg{} -> pure voidPtrType
-  THRec{} -> pure voidPtrType
   x -> pure $ case x of
     THPrim p   -> primTy2llvm p
     THArray t  -> _ -- LT.ArrayType $ cgType t

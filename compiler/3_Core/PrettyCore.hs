@@ -56,7 +56,7 @@ prettyTerm bindSrc bis names = let
   Cons    ts -> let
     sr (field , val) = show field <> " " <> (toS $ srcFieldNames bindSrc V.! field) <> "@" <> pT val
     in "{ " <> (intercalate " ; " (sr <$> IM.toList ts)) <> " }"
-  Proj    t f -> pT t <> "." <> show f <> (toS $ srcFieldNames bindSrc V.! f)
+--Proj    t f -> pT t <> "." <> show f <> (toS $ srcFieldNames bindSrc V.! f)
   Label   l t -> prettyLabel l <> "@" <> intercalate " " (parens . pE <$> t)
   Match caseTy ts d -> let
     showLabel l t = prettyLabel l <> " => " <> pE' "" t
@@ -97,7 +97,7 @@ prettyTyHead bis names = let
 -- THImplicit i -> "∀" <> show i
 -- THAlias    i -> "π" <> show i
  THExt      i -> "E" <> show i
- THRec      t -> "Rec" <> show t
+-- THRec      t -> "Rec" <> show t
 
  THArrow    [] ret -> error $ "panic: fntype with no args: [] → (" <> pTy ret <> ")"
  THArrow    args ret -> "(" <> intercalate " → " (pTy <$> (args <> [ret])) <> ")"

@@ -2,28 +2,33 @@
 --  | Nil : List
 --  | Cons : Int -> (List -> List)
 --
---L a =
---  | Nil : L
---  | Cons : a -> (L -> L)
+L a =
+  | Nil : L
+  | Cons : a -> (L -> L)
 
 --pure x v = { ret = x }
---_>>_ = \f x a => x (f a)
---pOK ps = ps . cok . set 1
---printList l = case l of
---  | Nil => 0
---  | Cons i ll => plus (putNumber i) (printList ll)
+_>>_ = \f x a => x (f a)
+----pOK ps = ps . cok . set 1
+printList l = case l of
+  | Nil => 0
+  | Cons i ll => plus (putNumber i) (printList ll)
 
-r = r
-f = plus r 1
+Inc l = case l of
+  | Nil => Nil
+  | Cons i ll => Cons (plus 1 i) (Inc ll)
+
+scanSum n l = ifE 0 l (scanSum (sub n 1) (Cons n l))
+
+--go = scanSum 5 Nil
+
+--r a = r (plus a 1)
+--hm f x = f f x (\x => x)
+
+--g x = g
+--f = plus r 1
 --join a b = ifE 1 a b
 --s = join r r
 
---Inc l = case l of
---  | Nil => Nil
---  | Cons i ll => Cons (plus 1 i) (Inc ll)
-
--- : Int -> [] -> []
---scanSum n l = ifE (le n 0) l (scanSum (sub n 1) (Cons n l))
 --one = Cons 12 Nil
 --two = Inc one
 --main = printList one

@@ -33,8 +33,24 @@ onRetType :: (Type -> Type) -> Type -> Type
 onRetType fn = \case
   [THArrow as r] -> [THArrow as (onRetType fn r)]
   [THPi (Pi p t)] -> [THPi (Pi p $ onRetType fn t)]
+  [THMu m t] -> [THMu m (onRetType fn t)]
   x -> fn x
 --x -> x --onRetType fn <$> x
+
+getRetTy = \case
+  [THArrow _ r] -> getRetTy r -- currying
+  [THPi (Pi ps t)] -> getRetTy t
+  [THBi i t] -> getRetTy t
+  x -> x
+
+isTyCon = \case
+ THArrow  {} -> True
+ THTuple  {} -> True
+ THProduct{} -> True
+ THSumTy  {} -> True
+ THArray  {} -> True
+ _ -> False
+
 
 isArrowTy = \case
   [THArrow{}] -> True
@@ -42,12 +58,6 @@ isArrowTy = \case
   [THBi i t] -> isArrowTy t
   [THSi (Pi p t) _] -> isArrowTy t
   x -> False
-
-getRetTy = \case
-  [THArrow _ r] -> getRetTy r -- currying
-  [THPi (Pi ps t)] -> getRetTy t
-  [THBi i t] -> getRetTy t
-  x -> x
 
 flattenArrowTy ty = let
   go = \case
@@ -78,7 +88,7 @@ tyOfExpr  = \case
 expr2Ty judgeBind e = case e of
  Ty x -> pure x
  Core c ty -> case c of
-   Var (VBind x) -> pure [THRec x]
+   Var (VBind i) -> pure [THRecSi i []]
    Var (VArg x)  -> pure [THArg x] -- TODO ?!
    App (Var (VBind fName)) args -> pure [THRecSi fName args]
    x -> error $ "raw term cannot be a type: " ++ show e
@@ -139,7 +149,6 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   [THBound a , THBound b]-> if a == b then [t1] else join
   [THVar a , THVar b]    -> if a == b then [t1] else join
   [THArg a , THArg b]    -> if a == b then [t1] else join
-  [THRec a , THRec b]    -> if a == b then [t1] else join
   [THExt a , THExt  b]   -> if a == b then [t1] else join
 --  [THAlias a , THAlias b] -> if a == b then [t1] else join
 --[THSum a , THSum b]     -> [THSum   $ union a b] --[THSum (M.unionWith mergeTypes a b)]

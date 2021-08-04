@@ -361,8 +361,7 @@ ttArg , tt :: Parser TT
     ] <?> "tt"
 --appOrArg = mfApp <|> arg >>= \fn -> option fn $ choice
   appOrArg = arg >>= \fn -> option fn (choice
-    [ -- Proj fn <$ reservedChar '.' <*> (idenNo_ >>= newFLabel)
---  , lexeme (char ',') *> ((\t -> P.Label 0 [t]) <$> appOrArg)
+    [ --  , lexeme (char ',') *> ((\t -> P.Label 0 [t]) <$> appOrArg)
       case fn of
 --      Lit l -> LitArray . (l:) <$> some literalP
         P.Label l [] -> P.Label l <$> some arg

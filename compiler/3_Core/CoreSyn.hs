@@ -6,21 +6,20 @@ module CoreSyn where
 import Prim
 import qualified Data.Vector         as V
 import qualified Data.IntMap.Strict  as IM
---import qualified Data.IntSet         as IS
 import Control.Lens hiding (List)
 
-d_ x   = let
+global_debug = True
+d_ x   = if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
 did_ x = d_ x x
 dv_ f = traceShowM =<< (V.freeze f)
 
-type IMap      = IM.IntMap
 type HName     = Text -- human readable name
 type IName     = Int  -- Int name: index into bind|type vectors
 type BiSubName = Int  -- index into bisubs
-type IField    = Int  -- product-type fields index
-type ILabel    = Int  -- sum-type labels     index
+type IField    = Int  -- product-type fields
+type ILabel    = Int  -- sum-type labels
 
 data VName
  = VBind IName -- bind   map
@@ -30,8 +29,8 @@ data VName
 data Term -- β-reducable (possibly to a type) and type annotated
  = Var     !VName
  | Lit     Literal
- | Hole    -- to be inferred
- | Poison  -- didn't typecheck
+ | Hole    -- to be inferred : Bot
+ | Poison  -- typecheck inconsistency
 
  | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
  | App     Term [Term] -- IName [Term]
@@ -39,14 +38,11 @@ data Term -- β-reducable (possibly to a type) and type annotated
 
  -- data constructions
  | Cons    (IM.IntMap Term) -- convert to record
- | Proj    Term IField
  | Label   ILabel [Expr]
  | Match   Type (IM.IntMap Expr) (Maybe Expr) -- type is the return type of this expression
  | List    [Expr]
- | TTLens  Term [IField] LensOp
 
--- | Coerce  Type Type
--- | Split   Int Expr -- eliminator: \split nArgs f → f args
+ | TTLens  Term [IField] LensOp
 
 data LensOp = LensGet | LensSet Expr | LensOver Expr
 
@@ -59,23 +55,24 @@ data TyHead
  | THTop | THBot -- TODO was this problematic ?
 
  -- Type constructors
- | THArrow    [TyMinus] TyPlus -- degenerate case of THPi
+ | THArrow    [TyMinus] TyPlus  -- degenerate case of THPi
  | THTuple    (V.Vector TyPlus) -- ordered form of THproduct
  | THProduct  (IM.IntMap TyPlus)
  | THSumTy    (IM.IntMap TyPlus)
  | THArray    TyPlus
 
  -- Experimental
- | THHasVars  [IName] [IName] (Maybe Type)
- | THBinder   -- pi & mu
+ | THVars [Int]
 
  -- Type variables
- | THVar      BiSubName -- ix to bisubs; generalizes to THBound if survives biunification and simplification
- | THArg      IName -- ix to monotype env (type of a lambda-bound)
- | THBound    IName -- pi-bound debruijn index, (replace with fresh THVar when biunify pi binders)
- | THRec      IName -- tyOf ix to bindMap placeholder for forward / mutual references
- | THMuBound  IName -- mu-bound debruijn index (must be guarded and covariant) 
- | THArgGuard IName -- temp marker for THArgs being substituted in case it's a recursive type
+ | THVar       BiSubName -- generalizes to THBound if survives biunification and simplification
+ | THArg       IName -- ix to monotype env (type of a lambda-bound)
+ | THBound     IName -- pi-bound debruijn index, (replace with fresh THVar when biunify pi binders)
+ | THMuBound   IName -- mu-bound debruijn index (must be guarded and covariant) 
+ | THArgGuard  IName -- temp marker for THArgs being substituted in case it's a recursive type
+ | THVarGuard  IName
+ | THVarLoop   IName
+ | THArgLoop   IName
 
  -- Binders
  | THMu IName Type-- recursive type
@@ -130,7 +127,6 @@ data Dominion = Dominion {
    tVarRange :: (Int , Int) -- stack of tvars
 } deriving Show
 
--- bisubs always reference themselves, so the initial mu. is implicit
 data BiSub = BiSub {
    _pSub :: [TyHead]
  , _mSub :: [TyHead]

@@ -31,7 +31,7 @@ biSub a b = let
 
 -- merge types and attempt to eliminate the THVar
 --solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
-solveTVar _ newTy [] = [newTy] -- TODO dangerous ?
+--solveTVar _ newTy [] = [newTy] -- TODO dangerous ?
 solveTVar varI newTy (ty:tys) = if eqTyHead newTy ty
   then mergeTyHead newTy ty `mergeTypes` tys
   else ty : solveTVar varI newTy tys
@@ -46,7 +46,6 @@ atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub
   (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readPrimExtern` i)<$>use externs
 
   -- Bound vars (removed at THBi, so should never be encountered during biunification)
---(THBound x , THBound y) -> pure biEQ
   (THBound i , x) -> error $ "unexpected THBound: " <> show i
   (x , THBound i) -> error $ "unexpected THBound: " <> show i
   (THBi nb x , y) -> do
@@ -55,8 +54,7 @@ atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub
     bisubs <- (`MV.grow` nb) =<< use bis
     let blen = MV.length bisubs
         tvars = [blen - nb .. blen - 1] 
-    tvars `forM_` \i -> MV.write bisubs i (BiSub [] [] 0 1) -- TODO is it right to preemptively dupe argTypes here ?
-    -- I won't allow aggressive recursion to dupe guarded variables that aren't unrolled
+    tvars `forM_` \i -> MV.write bisubs i (BiSub [] [] 0 1)
     bis .= bisubs
     r <- biSub (substFreshTVars (blen - nb) x) [y]
     -- todo is it ok that substitution of debruijns doesn't distinguish between + and - types
@@ -71,33 +69,49 @@ atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub
   (THVar p , THVar m) -> use bis >>= \v -> BiEQ <$ do
     MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar p : a) b qa (qb)) m
     MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) (qa) qb) p
+--  BiSub ppty pmty ppq pmq <- MV.read v p
+--  BiSub mpty mmty mpq mmq <- MV.read v m
+--  MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar p : a) b (max qa ppq) qb) m
   (THVar p , THArg m) -> BiEQ <$ do
-    use bis >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub a (THArg m : b) qa (qb)) p --MV.modify v (over pSub (THArg p : )) m
-    use domain >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub (foldr (solveTVar p) [THVar m] a) b qa (qb)) m --MV.modify v (over mSub (foldr (solveTVar p) [THVar m])) p
+    use bis >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub a (THArg m : b) qa (qb)) p
+    use domain >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar p : a) b qa (qb)) m
   (THArg p , THVar m) -> BiEQ <$ do
-    use bis >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub (THArg p : a) b qa (qb)) m --MV.modify v (over pSub (THArg p : )) m
-    use domain >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub a (foldr (solveTVar p) [THVar m] b) (qb) qb) p --MV.modify v (over mSub (foldr (solveTVar p) [THVar m])) p
-  (p , THVar m) -> use bis    >>= \v->BiEQ <$
-    MV.modify v (\(BiSub a b qa qb) -> BiSub (p : a) b qa (qb)) m
-    <* dup False [p]
-  (THVar p , other) -> use bis >>= \v -> BiEQ <$
-    MV.modify v (\(BiSub a b qa qb) -> BiSub a (m:b) (qa) qb) p
---  <* dup True [other]
-  (THArg i , m) -> use domain >>= \v->BiEQ <$ --MV.modify v (over mSub (foldr (solveTVar i) [m])) i $> BiEQ
-      MV.modify v (\(BiSub a b qa qb) -> BiSub a (foldr (solveTVar i) [m] b) (qa) qb) i
-      <* dup True [m]
-  -- TODO should we ignore + on lambda ? -- pure BiEq
-  (p , THArg i) -> use domain >>= \v -> BiEQ <$
-      MV.modify v (\(BiSub a b qa qb) -> BiSub (foldr (solveTVar i) [p] a) b qa (qb)) i
-      <* dup False [p]
+    use bis >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub (THArg p : a) b qa (qb)) m
+    use domain >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) (qb) qb) p
+  (THArg p , THArg m) -> use domain >>= \v -> BiEQ <$ do
+    MV.modify v (\(BiSub a b qa qb) -> BiSub (THArg p : a) b qa (qb)) m
+    MV.modify v (\(BiSub a b qa qb) -> BiSub a (THArg m : b) (qa) qb) p
 
-  (THRec m , x) -> use wip >>= \w -> do
-    Guard ms ars tvar <- MV.read w m
-    biSub [THVar tvar] [x]
-    pure BiEQ
---  case ars of
---    [] -> biSub [THRec m] [x] --pure BiEQ
---    ars -> biSub (addArrowArgs ((\x->[THArg x]) <$> ars) [THRec m]) [x] -- -> Checking m y doGen (x:ty)) m *> pure BiEQ
+  (THVar p , m) -> use bis >>= \v -> MV.read v p >>= \t    -> do
+    MV.modify v (\(BiSub a b qa qb) -> BiSub a (m : b) qa qb) p
+    dup True [m]
+    biSub (filter isTyCon (_pSub t)) [m]
+  (p , THVar m) -> use bis >>= \v -> (_mSub <$> MV.read v m) >>= \t    -> do
+    MV.modify v (\(BiSub a b qa qb) -> BiSub (p : a) b qa qb) m
+    dup False [p]
+    biSub [p] (filter isTyCon t)
+  (THArg p , m) -> use domain >>= \v -> MV.read v p >>= \t -> do
+    MV.modify v (\(BiSub a b qa qb) -> BiSub a (m : b) qa qb) p
+    dup True [m]
+    biSub (filter isTyCon (_pSub t)) [m]
+  (p , THArg m) -> use domain >>= \v -> MV.read v m >>= \t -> do
+    MV.modify v (\(BiSub a b qa qb) -> BiSub (p : a) b qa qb) m
+    dup False [p]
+    biSub [p] (filter isTyCon (_mSub t))
+
+--(p , THVar m) -> use bis    >>= \v->BiEQ <$
+--  MV.modify v (\(BiSub a b qa qb) -> BiSub (p : a) b qa (qb)) m
+--  <* dup False [p]
+--(THVar p , other) -> use bis >>= \v -> BiEQ <$
+--  MV.modify v (\(BiSub a b qa qb) -> BiSub a (m:b) (qa) qb) p
+--  <* dup True [other]
+--(THArg i , m) -> use domain >>= \v->BiEQ <$ --MV.modify v (over mSub (foldr (solveTVar i) [m])) i $> BiEQ
+--    MV.modify v (\(BiSub a b qa qb) -> BiSub a (m:b) (qa) qb) i
+--    <* dup True [m]
+---- TODO should we ignore + on lambda ? -- pure BiEq
+--(p , THArg i) -> use domain >>= \v -> BiEQ <$
+--    MV.modify v (\(BiSub a b qa qb) -> BiSub (p:a) b qa (qb)) i
+--    <* dup False [p]
 
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
   (THArrow ars ret ,  THSumTy x) -> pure BiEQ --_
@@ -129,13 +143,9 @@ atomicBiSub p m = (\go -> if True {-debug getGlobalFlags-} then trace ("⚛bisub
     Just found -> if found == y then pure BiEQ else error $ "mu types not equal: " <> show x <> " /= " <> show y
     Nothing -> error $ "panic Mu bound variable without outer binder!" -- TODO can maybe be legit
   -- TODO can unrolling recursive types loop ?
-  (x , THMuBound y) -> use domain >>= \d -> MV.read d y >>= biSub [x] . _pSub -- unroll recursive types
-  (THMuBound x , y) -> use domain >>= \d -> MV.read d x >>= biSub [y] . _mSub -- unroll recursive types
+  (x , THMuBound y) | y>0 -> use domain >>= \d -> MV.read d y >>= biSub [x] . _pSub -- unroll recursive types
+  (THMuBound x , y) | x>0 -> use domain >>= \d -> MV.read d x >>= biSub [y] . _mSub -- unroll recursive types
 
-  -- TODO sort out typevars
---(THRec m , THRec y) -> if (m == y) then pure BiEQ else error "recursive types are not equal"
---(THArrow{} , THRec{}) -> pure BiEQ -- TODO
---(THRec m , THRec y) -> pure BiEQ -- if (m == y) then pure BiEQ else error "recursive types are not equal"
   (THRecSi f1 a1, THRecSi f2 a2) -> if f1 == f2
     then if (length a1 == length a2) && all identity (zipWith termEq a1 a2)
       then pure BiEQ
@@ -206,8 +216,8 @@ check' es ars labTys inferred gotTy = let
 --  (t , THPi [] ty tyArgs) -> check'' [t] (tyAp ty tyArgs)
 --  (THPi [] ty tyArgs , t) -> check'' (tyAp ty tyArgs) [t]
     (x , THArg y) -> True -- ?!
-    (THRec x , THRec y) -> x == y
-    (THRec m , x) -> True -- TODO read ty in the bindMap
+--  (THRec x , THRec y) -> x == y
+--  (THRec m , x) -> True -- TODO read ty in the bindMap
     (THRecSi f1 a1 , THRecSi f2 a2) -> _
     (THRecSi f1 a1 , THFam{}) -> True -- TODO read from bindMap
     (THFam f ars [] , x) -> checkAtomic (THArrow ars f) x

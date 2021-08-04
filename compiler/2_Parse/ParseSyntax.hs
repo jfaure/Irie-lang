@@ -89,7 +89,6 @@ data TT
 
  -- tt primitives (sum , product , list)
  | Cons   [(FName , TT)] -- can be used to type itself
- | Proj   TT FName
  | TTLens TT [FName] (LensOp TT)
  | Label  LName [TT]
  | Match  [(LName , FreeVars , [Pattern] , TT)]

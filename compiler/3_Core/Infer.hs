@@ -29,25 +29,23 @@ judgeModule pm hNames exts = let
     deBruijn' <- MV.new 0
     wip'      <- MV.replicate nBinds WIP
     domain'   <- MV.new nArgs
---  qtt'      <- MV.replicate nArgs (QTT 0 0)
     fieldsV   <- MV.replicate nFields Nothing
     labelsV   <- MV.replicate nLabels Nothing
     [0 .. nArgs-1] `forM_` \i -> MV.write domain' i (BiSub [] [] 0 0)
 
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
-      { -- _pmodule  = pm
+      {
         _pBinds   = pBinds'
       , _bindWIP  = 0
       , _externs  = exts
       , _wip      = wip'
---    , _mode     = Reader
       , _bis      = bis'
       , _deBruijn = deBruijn'
       , _level    = Dominion (-1,-1)
       , _quants   = 0
+      , _mus      = 0
       , _muEqui   = mempty
       , _domain   = domain'
---    , _qtt      = qtt'
       , _fields   = fieldsV
       , _labels   = labelsV
       , _errors   = []
@@ -56,7 +54,6 @@ judgeModule pm hNames exts = let
     bis''    <- V.unsafeFreeze (st ^. bis)
     domain'' <- V.unsafeFreeze (st ^. domain)
     wip''    <- V.unsafeFreeze (st ^. wip)
---  qtt''    <- V.unsafeFreeze (st ^. qtt)
     pure $ JudgedModule hNames wip'' bis'' mempty{- qtt''-} domain''
 
 -- generalisation (and therefore type checking of usertypes) happens here
@@ -99,7 +96,7 @@ judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
     cd <- use level
     MV.write wip' bindINm (Mutual cd jb False tvarIdx)
     if (minimum (bindINm:ms) == bindINm) then fromJust . head <$> generaliseBinds bindINm ms else pure jb
--- Check annotation if given (against non-generalised type ??)
+-- Check annotation if given
 --bindTy <- maybe (pure genTy) (\ann -> checkAnnotation ann genTy mainArgTys (V.fromList argTys)) tyAnn
 
 generaliseBinds i ms = use wip >>= \wip' -> do
@@ -110,27 +107,24 @@ generaliseBinds i ms = use wip >>= \wip' -> do
       substVars = \(recTVar , m , args , cd , naiveExpr) ->
         let Dominion (bStart , bEnd) = cd -- current dominion
             traceTVars range b = range `forM_` \i -> MV.read b i >>= \s -> traceM (show i <> ": " <> show s :: Text)
+            traceVars = do
+              traceM $ "gen: " <> show args <> " , " <> show cd
+              use bis    >>= traceTVars [bStart - 1 .. bEnd]
+              traceM "-- ^ TVars v TArgs"
+              use domain >>= traceTVars args
         in do
-        traceM $ "gen: " <> show args <> " , " <> show cd
-        use bis    >>= traceTVars [bStart .. bEnd]
-        traceM "-- ^ TVars v TArgs"
-        use domain >>= traceTVars args
---      use domain >>= traceTVars (if args == [0] then [0..2] else args)
 
---      let addMuBinder = do -- only after generalising+substituting do we know if recursive
---            Mutual _ _ isRec tvar <- MV.read wip' m
---            pure $ \ty -> if isRec then [THMu (-1-m) ty] else ty
-
-        -- mSub because we did bisubs on this typevar whereas we really wanted to merge
-        recVar <- use bis >>= \b -> (_mSub <$> MV.read b recTVar)
         done <- case naiveExpr of
           Core (Abs ars free x _ty) ty -> do -- TODO add mu bind to the return type
-            (arTys , g) <- substTVars recVar {-addMuBinder-} args ty -- (mergeTypes recVar ty)
---          (_ , merge) <- substTVars addMuBinder [] recVar
+            let argTys = (\(x,_t)->[THArg x]) <$> ars
+            biSub (addArrowArgs argTys ty) [THVar recTVar]
+            traceVars
+            g <- substTVars recTVar
             pure $ Core (Abs ars free x g) g -- $ mergeTypes merge g
           Core expr ty -> do
-            (arTys , g) <- substTVars recVar {-addMuBinder-} [] ty --(mergeTypes recVar ty)
-            pure $ Core expr g -- <$> (addMuBinder g)
+            biSub ty [THVar recTVar]
+            traceVars
+            Core expr <$> substTVars recTVar
           t -> pure t
         done <$ MV.write wip' m (BindOK done)
   mutuals <- (i : ms) `forM` getMutual -- Usually a singleton list
@@ -161,95 +155,105 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
 --  * unify inseparable variables (co-occurence `a&b -> a|b` and indistinguishables `a->b->a|b`)
 --  * remove variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int`
 --  * roll up recursive types
-substTVars recVar {-addMuToRetTy-} ars inferredTy = let
+substTVars recTVar = let
+  concatTypes = foldl mergeTypes []
   nullLattice pos = \case
     [] -> pure $ if pos then [THTop] else [THBot] -- [] -> incQuants >>= \q -> pure [THBound q]
     t  -> pure t
-  incQuants = quants <<%= (+1) -- add a forall quantified THBound variable
-  argTys = (\x->[THArg x]) <$> ars
-  rmGuards = filter $ \case { THArgGuard{}->False ; _->True }
-  -- TODO in positive joins of types, can rm tvars if positive occurences are indistinguishable
-  -- in particular if it only appears once (as is very often the case in Match exprs)
 
-  guardArg pos v = use domain >>= \d -> -- TODO don't overwrite MuBounds ?
-    MV.modify d (over (if pos then pSub else mSub) (const [THArgGuard v])) v
-  checkRec pos v = use domain >>= \d -> ((if pos then _pSub else _mSub) <$> MV.read d v)
-    <&> filter (\case {THMuBound v->True ; x -> False}) <&> map (\case {THMuBound v->v;})
+  -- non-polar variables that reference nothing (or themselves) become forall quantified
+  addPiBound pos vars v = MV.read vars v >>= \bisub@(BiSub pty mty pq mq) -> let
+    incQuants = quants <<%= (+1) -- add a forall quantified THBound variable
+--  in case did_ (if pos then mty else pty) of
+--  [THBound x] -> pure [THBound x]
+--  _ ->
+    in d_ (show v <> " " <> show pos <> ": " <> show bisub :: Text) $ case if pos then mq else pq of
+      0 -> pure []
+      nonZ -> incQuants >>= \q -> do
+        traceM $ show v <> " " <> show pos <> " =∀" <> show q <> " lam@ " <> show bisub
+        -- TODO rm only the appropriate guard
+        let rmGuards = filter $ \case { THArgGuard v->False ; THVarGuard v->False ; _->True }
+        MV.modify vars (\(BiSub p m qp qm) -> did_ $ BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) v
+        (if pos then _pSub else _mSub) <$> MV.read vars v
 
+  rmGuards = filter $ \case { THArgGuard v->False ; THVarGuard v->False ; THVarLoop v->False ; THArgLoop v->False;_->True }
   subst pos ty = let
-    getAVs l t = \case { []->(l,t) ; THArg i : xs -> getAVs (i:l) t xs ; x:xs -> getAVs l (x:t) xs}
-    (argVars , otherTys) = getAVs [] [] ty
-    in substArgVars pos otherTys argVars
---  in foldr mergeTypes [] <$> ((:) <$> substArgVars pos argVars <*> mapM (substTyHead pos) otherTys)
+    addMu d r v = (MV.read d v <&> if pos then _pSub else _mSub) <&> \case
+      [THMuBound m] -> [THMu m r]
+      _ -> r
+    in use domain >>= \dom -> use bis >>= \b -> do
+    (vars , avars , guardedTs) <- {-did_ <$> -}substVs pos ty
 
-  substArgVars pos joinTys v = let getTy = if pos then _pSub else _mSub in use domain >>= \d -> do
-    (muBinders , bs)  <- unzip <$> v `forM` \i -> MV.read d i >>= \var -> case getTy var of
-      -- if we are in a recursive type, we don't "own" these args (for mu-binding)
-      mT@[THArgGuard m] -> pure (False , var)
-      mT@[THMuBound m]  -> pure (False , var)
-      v -> (True , var) <$ guardArg pos i
-    tys <- zip v bs `forM` \(v , var@(BiSub pty mty pq mq)) ->
-      case getTy var of --d_ (show pos <> show v <> show x :: Text) x of
-        [] -> case mq * pq of -- if pos then mq else pq of
-          0 -> pure []
-          nonZ -> incQuants >>= \q -> do
-            traceM $ show v <> " " <> show pos <> " =∀" <> show q <> " lam@ " <> show var
-            MV.modify d (\(BiSub p m qp qm) -> BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) v
-            getTy <$> MV.read d v
-        [THMuBound v] -> pure [THMuBound v] -- recursive argVar was already seen earlier
-        t -> subst pos t --pure t
-    -- If ArgVar is contains itself, insert a mu binder at it's introduction
-    -- Also save the recursive type in it's place to help with unrolling later
-    joinTs <- mapM (substTyHead pos) joinTys
-    let retT = foldr mergeTypes [] (joinTs ++ tys)
-    mus <- checkRec pos `mapM` (snd <$> filter fst (zip muBinders v)) <&> concat
-    pure $ case mus of
-      [] -> retT
-      [m] -> [THMu m (filter (\case{THMuBound m->False;x->True}) retT)] -- TODO probably can avoid joining the Mubound in the first place
-      -- TODO handle multiple mus (they can be merged)
+    traceShowM (pos , vars , avars , guardedTs)
+    vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (const [THVarGuard x])) x
+    avars `forM` \x -> MV.modify dom (over (if pos then pSub else mSub) (const [THArgGuard x])) x
+    t <- concatTypes <$> mapM (substTyHead pos) guardedTs
+    t1 <- foldM (addMu dom) t avars
+    foldM (addMu b) t1 vars
+
+  -- We need to distinguish unguarded type variable loops (recursive type | indistinguishable vars)
+  -- [a , b , c] var loops are all the same var; so if one is generalised, need to gen all of them
+  substVs pos ty = let
+    fn (v,a,o) = \case
+      THVar x -> (x:v,a,o)
+      THArg x -> (v,x:a,o)
+      x       -> (v,a,x:o)
+    x@(vars , avars , other) = foldl fn ([],[],[]) ty
+    in if null vars && null avars then pure ([],[],ty) else
+      use domain >>= \dom -> use bis >>= \b -> do
+      r <- (\(v,a,t) -> (v,a,mergeTypes t other)) <$> substV pos vars avars
+      traceShowM r
+      pure r
+
+  -- If a type variable was already guarded (ie. we're in a recursive type), don't touch it
+  substV pos vars avars = let getTy = if pos then _pSub else _mSub in
+    use domain >>= \dom -> use bis >>= \b -> do
+    varTypes <- vars `forM` \x -> (getTy <$> MV.read b x) >>= \t -> case t of
+      []             -> (Nothing,) <$> addPiBound pos b x
+      [THVarGuard v] -> pure (Nothing , t)
+      _              -> (Just x,t) <$ MV.modify b (over (if pos then pSub else mSub) ((const [THVarLoop x]))) x
+    argTypes <- avars `forM` \x -> (getTy <$> MV.read dom x) >>= \t -> case t of
+      []             -> (Nothing,) <$> addPiBound pos dom x
+      [THArgGuard v] -> pure (Nothing , t)
+      _              -> (Just x,t) <$ MV.modify dom (over (if pos then pSub else mSub) (const [THArgLoop x])) x
+    let ts = snd <$> (varTypes ++ argTypes)
+        v' = catMaybes $ fst <$> varTypes
+        a' = catMaybes $ fst <$> argTypes
+        varsTy = concatTypes ts
+
+    (v,a,t) <- substVs pos varsTy
+    pure (v'++v,a'++a,t)
 
   substTyHead pos ty = let
     subst' = subst pos
     getTy = if pos then _pSub else _mSub
-    in case ty of
-    THVar v -> use bis >>= \b -> (getTy <$> MV.read b v) >>= \ty -> MV.read b v
-      >>= \bisub@(BiSub pty mty pq mq) -> case ty of
-      x:xs  -> subst pos (x:xs) -- non-empty TVar cannot be generalised
-      [] -> case if pos then mq else pq of
-        0 -> pure [] -- polar variables (only present at 1 polarity) can be dropped
-        nonZ -> incQuants >>= \q -> do --if pos then pure [] else do -- !! TODO check this
-          traceM $ show v <> " " <> show pos <> " =∀" <> show q <> " @ " <> show bisub
-          MV.modify b (\(BiSub p m qp qm) -> BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) v
-          getTy <$> MV.read b v
+    in use domain >>= \dom -> use bis >>= \b -> case ty of
+    -- TODO ! add all vars in the loop as the same pi-bound
+    THVarLoop x -> addPiBound pos b x
+    THArgLoop x -> addPiBound pos dom x
 
-    THArg v -> substArgVars pos [] [v]
-    THArgGuard v -> use domain >>= \d -> -- recursive type TODO don't overwrite type joins
-      [THMuBound v] <$ MV.modify d (over (if pos then pSub else mSub) (const [THMuBound v])) v
-
+    THArgGuard v -> [THMuBound v]
+      <$ MV.modify dom (over (if pos then pSub else mSub) (const [THMuBound v])) v
+    THVarGuard v -> [THMuBound (1-v)]
+      <$ MV.modify b (over (if pos then pSub else mSub) (const [THMuBound (1-v)])) v
     THArrow ars ret -> (\arsTy retTy -> [THArrow arsTy retTy]) <$> subst (not pos) `mapM` ars <*> subst' ret
     THTuple   tys -> (\x->[THTuple x])   <$> (subst' `traverse` tys)
     THProduct tys -> (\x->[THProduct x]) <$> (subst' `traverse` tys)
     THSumTy   tys -> (\x->[THSumTy   x]) <$> (subst' `traverse` tys)
     THBi b ty -> (\t->[THBi b t]) <$> subst' ty
     THMu b ty -> (\t->[THMu b t]) <$> subst' ty
-
-    -- TODO weird; review handling of placeholder types when inferring mutual functions
-    THRec r   -> use wip >>= \wip' -> MV.read wip' r >>= \case
-      BindOK b -> pure $ getRetTy $ tyOfExpr b
-      Mutual dom expr isRec tvar -> do -- recursive type
-        [THMuBound (-r-1)] <$ MV.write wip' r (Mutual dom expr True tvar)
-      x -> error $ show x -- Mutual / recursive?
-    t -> pure [t]
-  in do
-  let ty = recVar `mergeTypes` addArrowArgs argTys inferredTy
-  -- if a typevar contained itself, add mu binder before making a fn type
---rawGenTy <- (onRetType <$> addMuToRetTy) <*> subst True ty
+    t@THPrim{}  -> pure [t]
+    t@THBound{} -> pure [t]
+    t@THMuBound{}-> pure [t]
+    t -> error $ show t --pure [t]
+  in do --use bis >>= \b -> do
+  let ty = [THVar recTVar]
+  traceM $ toS $ "Subst: " <> prettyTyRaw ty
   rawGenTy <- subst True ty
   q <- use quants
-  traceM $ toS $ "Subst: " <> show q <> ". " <> prettyTyRaw ty --(addArrowArgs argTys inferredTy)
   let genTy = if q > 0 then [THBi q rawGenTy] else rawGenTy
   traceM (toS $ prettyTyRaw genTy)
-  pure (argTys , genTy)
+  pure genTy
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
@@ -259,8 +263,6 @@ infer = let
 -- dup False `mapM` argTys
    (biret , [retV]) <- withBiSubs 1 (\idx -> dup True [THVar idx] *> biSub_ fTy (addArrowArgs argTys [THVar idx]))
    pure $ (biret , [THVar retV])
-   -- Blindly dupe the +retVar and don't read it immediately;
-   -- this avoids having to recurse through types to dup guarded variables during biunification
 
  in \case
   P.WildCard -> pure $ Core Hole [THSet 0]
@@ -393,13 +395,6 @@ infer = let
       tys = pattern2Ty <$> patterns
     in do
     altExprs <- infer `mapM` rawTTs
---  let unJust = \case { Just x -> x ; Nothing -> error "need labelType" }
---  labTys   <- map unJust <$> (use labels >>= \l -> (MV.read l) `mapM` altLabels)
---  let getArgTys = \case
---        [THArrow ars1 r] -> ars1 ++ getArgTys r-- TODO more nesting ?
---        t -> [t]
---      argTys = getArgTys <$> labTys
-    --TODO merge types with labels (mergeTypes altTys)]
     let altTys = tyOfExpr <$> altExprs
     retTy <- foldl mergeTypes [] <$> pure altTys -- (tyOfExpr <$> altExprs)
     let unpat = \case { P.PArg i -> i ; x -> error $ "not ready for pattern: " <> show x }
