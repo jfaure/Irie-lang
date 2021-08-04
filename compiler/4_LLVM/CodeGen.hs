@@ -298,7 +298,7 @@ cgTypeAtomic = let
 --THArg a    -> gets (did_ . _mSub . (V.! a) . argTypes . coreModule) >>= cgType
 --THRec r    -> gets (did_ . _pSub . (V.! r) . typeVars . coreModule) >>= cgType
   THVar{} -> pure voidPtrType
-  THArg{} -> pure voidPtrType
+--THArg{} -> pure voidPtrType
   x -> pure $ case x of
     THPrim p   -> primTy2llvm p
     THArray t  -> _ -- LT.ArrayType $ cgType t

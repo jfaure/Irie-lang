@@ -5,6 +5,7 @@ import BiUnify
 import qualified ParseSyntax as P
 import CoreSyn as C
 import CoreUtils
+import TypeCheck
 import TCState
 import PrettyCore
 import DesugarParse
@@ -25,13 +26,13 @@ judgeModule pm hNames exts = let
   nLabels = M.size (pm ^. P.parseDetails . P.labels)
   pBinds' = V.fromListN nBinds (pm ^. P.bindings)
   in runST $ do
-    bis'      <- MV.new 0
     deBruijn' <- MV.new 0
     wip'      <- MV.replicate nBinds WIP
-    domain'   <- MV.new nArgs
     fieldsV   <- MV.replicate nFields Nothing
     labelsV   <- MV.replicate nLabels Nothing
-    [0 .. nArgs-1] `forM_` \i -> MV.write domain' i (BiSub [] [] 0 0)
+    bis'      <- MV.new nArgs
+    [0 .. nArgs-1] `forM_` \i -> MV.write bis' i (BiSub [] [] 0 0)
+--  domain'   <- MV.new nArgs
 
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
       {
@@ -45,15 +46,14 @@ judgeModule pm hNames exts = let
       , _quants   = 0
       , _mus      = 0
       , _muEqui   = mempty
-      , _domain   = domain'
       , _fields   = fieldsV
       , _labels   = labelsV
       , _errors   = []
       }
 
     bis''    <- V.unsafeFreeze (st ^. bis)
-    domain'' <- V.unsafeFreeze (st ^. domain)
     wip''    <- V.unsafeFreeze (st ^. wip)
+    let domain'' = V.take nArgs bis''
     pure $ JudgedModule hNames wip'' bis'' mempty{- qtt''-} domain''
 
 -- generalisation (and therefore type checking of usertypes) happens here
@@ -76,10 +76,9 @@ judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
           args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
           in (tt , args)
     (tt , args) <- getTT . (V.! bindINm) <$> use pBinds
-    traceShowM args -- TODO args should always be consecutive !!
+    -- TODO guarantee that args are always consecutive !!
 
     ((tvarIdx , jb , ms) , resultTy) <- withBiSubs 1 $ \idx -> do
-      -- dup True [THVar idx] *> biSub_ fTy (addArrowArgs argTys [THVar idx]))
       MV.write wip' bindINm (Guard [] args idx)
       svLvl <- use level
       level .= Dominion (snd (tVarRange svLvl) + 1, snd (tVarRange svLvl))
@@ -87,7 +86,7 @@ judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
       let jb = case expr of
             Core x ty -> case args of
               [] -> Core x ty
-              ars-> Core (Abs (zip ars ((\x->[THArg x]) <$> args)) mempty x ty) ty
+              ars-> Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x ty) ty
             t -> t
       bindWIP .= svwip
       Guard ms _ars tVar <- MV.read wip' bindINm
@@ -107,16 +106,13 @@ generaliseBinds i ms = use wip >>= \wip' -> do
       substVars = \(recTVar , m , args , cd , naiveExpr) ->
         let Dominion (bStart , bEnd) = cd -- current dominion
             traceTVars range b = range `forM_` \i -> MV.read b i >>= \s -> traceM (show i <> ": " <> show s :: Text)
-            traceVars = do
-              traceM $ "gen: " <> show args <> " , " <> show cd
-              use bis    >>= traceTVars [bStart - 1 .. bEnd]
-              traceM "-- ^ TVars v TArgs"
-              use domain >>= traceTVars args
+            traceVars = pure () --use bis >>= \b -> [0..MV.length b -1] `forM` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
+--            traceM $ "gen: " <> show args <> " , " <> show cd
+--            use bis    >>= traceTVars [bStart - 1 .. bEnd]
         in do
-
         done <- case naiveExpr of
           Core (Abs ars free x _ty) ty -> do -- TODO add mu bind to the return type
-            let argTys = (\(x,_t)->[THArg x]) <$> ars
+            let argTys = (\(x,_t)->[THVar x]) <$> ars
             biSub (addArrowArgs argTys ty) [THVar recTVar]
             traceVars
             g <- substTVars recTVar
@@ -128,8 +124,8 @@ generaliseBinds i ms = use wip >>= \wip' -> do
           t -> pure t
         done <$ MV.write wip' m (BindOK done)
   mutuals <- (i : ms) `forM` getMutual -- Usually a singleton list
-  (mutuals `forM` substVars) <* (quants .= 0)
- 
+  (mutuals `forM` substVars) <* (quants .= 0) <* (mus .= 0)
+
 checkAnnotation :: P.TT -> Type -> [[P.TT]] -> V.Vector Type -> TCEnv s Type
 checkAnnotation ann inferredTy mainArgTys argTys = do
   ann <- tyExpr <$> infer ann
@@ -140,8 +136,8 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
   labelsV <- V.freeze =<< use labels
   unless (check exts argTys labelsV inferredTy annTy)
     $ error (show inferredTy <> "\n!<:\n" <> show ann)
-  -- ? Prefer user's type annotation over the inferred one; except
-  -- TODO we may have inferred some missing information !
+  -- ? Prefer user's type annotation over the inferred one
+  -- ! we may have inferred some missing information !
   -- type families are special: we need to insert the list of labels as retTy
   pure $ case getRetTy inferredTy of
     s@[THFam{}] -> case flattenArrowTy annTy of
@@ -158,101 +154,121 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
 substTVars recTVar = let
   concatTypes = foldl mergeTypes []
   nullLattice pos = \case
-    [] -> pure $ if pos then [THTop] else [THBot] -- [] -> incQuants >>= \q -> pure [THBound q]
-    t  -> pure t
+    [] -> if pos then [THBot] else [THTop] -- [] -> incQuants >>= \q -> pure [THBound q]
+    t  -> t
 
   -- non-polar variables that reference nothing (or themselves) become forall quantified
-  addPiBound pos vars v = MV.read vars v >>= \bisub@(BiSub pty mty pq mq) -> let
-    incQuants = quants <<%= (+1) -- add a forall quantified THBound variable
---  in case did_ (if pos then mty else pty) of
---  [THBound x] -> pure [THBound x]
---  _ ->
-    in d_ (show v <> " " <> show pos <> ": " <> show bisub :: Text) $ case if pos then mq else pq of
-      0 -> pure []
-      nonZ -> incQuants >>= \q -> do
-        traceM $ show v <> " " <> show pos <> " =∀" <> show q <> " lam@ " <> show bisub
-        -- TODO rm only the appropriate guard
-        let rmGuards = filter $ \case { THArgGuard v->False ; THVarGuard v->False ; _->True }
-        MV.modify vars (\(BiSub p m qp qm) -> did_ $ BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) v
-        (if pos then _pSub else _mSub) <$> MV.read vars v
+  rmGuards = filter $ \case { THVarLoop v -> False; _->True }
+  shouldGeneralise pos bisub@(BiSub pty mty pq mq) = (if pos then mq else pq) > 0
+  generaliseVar pos vars v bisub@(BiSub pty mty pq mq) = let incQuants = quants <<%= (+1) in incQuants >>= \q -> do
+    when global_debug $ traceM $ show v <> " " <> show pos <> " =∀" <> show q <> " " <> show bisub
+    MV.modify vars (\(BiSub p m qp qm) -> BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) v
+--  case (if pos then pty else mty , if pos then mty else pty) of
+--    ([] , t) -> t `forM` \case
+--      THVar i -> MV.modify vars (\(BiSub p m qp qm) ->
+--            BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) i
+--      THVarLoop i -> MV.modify vars (\(BiSub p m qp qm) ->
+--            BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) i
+--    _ -> pure []
+    (if pos then _pSub else _mSub) <$> MV.read vars v
 
-  rmGuards = filter $ \case { THArgGuard v->False ; THVarGuard v->False ; THVarLoop v->False ; THArgLoop v->False;_->True }
-  subst pos ty = let
+  addPiBound pos vars v = MV.read vars v >>= \bisub ->
+    if shouldGeneralise pos bisub then generaliseVar pos vars v bisub
+    else d_ (show v <> show pos <> show bisub :: Text) $ pure []
+
+  subst pos ty = nullLattice pos <$> let
     addMu d r v = (MV.read d v <&> if pos then _pSub else _mSub) <&> \case
       [THMuBound m] -> [THMu m r]
       _ -> r
-    in use domain >>= \dom -> use bis >>= \b -> do
-    (vars , avars , guardedTs) <- {-did_ <$> -}substVs pos ty
+    in use bis >>= \b -> do
+    svMu <- use mus
+    (vars , guardedTs) <- substVs pos ty
 
-    traceShowM (pos , vars , avars , guardedTs)
-    vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (const [THVarGuard x])) x
-    avars `forM` \x -> MV.modify dom (over (if pos then pSub else mSub) (const [THArgGuard x])) x
-    t <- concatTypes <$> mapM (substTyHead pos) guardedTs
-    t1 <- foldM (addMu dom) t avars
-    foldM (addMu b) t1 vars
+    case guardedTs of
+      -- (Unguarded) loop: if any of these vars is generalised, they should all be generalised to the same THBound
+      [THVarLoop n] -> do
+        bs <- (\v -> (v,) <$> MV.read b v) `mapM` vars
+        case find (shouldGeneralise pos . snd) bs of
+          Nothing -> pure []
+          Just (first , bisub) -> do
+            q <- use quants
+            v <- generaliseVar pos b first bisub
+            vars `forM` \i -> MV.modify b (\(BiSub p m qp qm) ->
+              BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) i
+            pure v
+      _  -> do
+        vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (const [THVarGuard x])) x
+        t <- concatTypes <$> mapM (substTyHead pos) guardedTs
+        mus .= svMu
+        r <- foldM (addMu b) t vars -- TODO should only be one Mu !!
+        vars  `forM` \x -> MV.modify b (\(BiSub p m qp qm) -> if pos then BiSub [THVar x] m qp qm else BiSub p [THVar x] qp qm) x
+         --over (if pos then pSub else mSub) (const [THVar x])) x
+        pure r
 
   -- We need to distinguish unguarded type variable loops (recursive type | indistinguishable vars)
   -- [a , b , c] var loops are all the same var; so if one is generalised, need to gen all of them
   substVs pos ty = let
-    fn (v,a,o) = \case
-      THVar x -> (x:v,a,o)
-      THArg x -> (v,x:a,o)
-      x       -> (v,a,x:o)
-    x@(vars , avars , other) = foldl fn ([],[],[]) ty
-    in if null vars && null avars then pure ([],[],ty) else
-      use domain >>= \dom -> use bis >>= \b -> do
-      r <- (\(v,a,t) -> (v,a,mergeTypes t other)) <$> substV pos vars avars
-      traceShowM r
+    fn (v,o) = \case
+      THVar x -> (x:v,o)
+      x       -> (v,x:o)
+    x@(vars , other) = foldl fn ([],[]) ty
+    in if null vars then pure ([],ty) else
+      use bis >>= \b -> do
+      r <- (\(v,t) -> (v,mergeTypes t other)) <$> substV pos vars
+--    traceShowM r
       pure r
 
-  -- If a type variable was already guarded (ie. we're in a recursive type), don't touch it
-  substV pos vars avars = let getTy = if pos then _pSub else _mSub in
-    use domain >>= \dom -> use bis >>= \b -> do
-    varTypes <- vars `forM` \x -> (getTy <$> MV.read b x) >>= \t -> case t of
+  -- Check if type variables were already guarded (ie. we're in a recursive type)
+  substV pos vars = let getTy = if pos then _pSub else _mSub in
+    use bis >>= \b -> do
+    varTypes <- vars `forM` \x -> (getTy <$> MV.read b x) >>= \t -> case t of --d_ (show x <> show t :: Text) t of
       []             -> (Nothing,) <$> addPiBound pos b x
       [THVarGuard v] -> pure (Nothing , t)
       _              -> (Just x,t) <$ MV.modify b (over (if pos then pSub else mSub) ((const [THVarLoop x]))) x
-    argTypes <- avars `forM` \x -> (getTy <$> MV.read dom x) >>= \t -> case t of
-      []             -> (Nothing,) <$> addPiBound pos dom x
-      [THArgGuard v] -> pure (Nothing , t)
-      _              -> (Just x,t) <$ MV.modify dom (over (if pos then pSub else mSub) (const [THArgLoop x])) x
-    let ts = snd <$> (varTypes ++ argTypes)
+    let ts = snd <$> varTypes
         v' = catMaybes $ fst <$> varTypes
-        a' = catMaybes $ fst <$> argTypes
         varsTy = concatTypes ts
 
-    (v,a,t) <- substVs pos varsTy
-    pure (v'++v,a'++a,t)
+    (v,t) <- substVs pos varsTy
+    pure (v'++v,t)
 
   substTyHead pos ty = let
     subst' = subst pos
     getTy = if pos then _pSub else _mSub
-    in use domain >>= \dom -> use bis >>= \b -> case ty of
+    in use bis >>= \b -> case ty of
     -- TODO ! add all vars in the loop as the same pi-bound
     THVarLoop x -> addPiBound pos b x
-    THArgLoop x -> addPiBound pos dom x
 
-    THArgGuard v -> [THMuBound v]
-      <$ MV.modify dom (over (if pos then pSub else mSub) (const [THMuBound v])) v
-    THVarGuard v -> [THMuBound (1-v)]
-      <$ MV.modify b (over (if pos then pSub else mSub) (const [THMuBound (1-v)])) v
-    THArrow ars ret -> (\arsTy retTy -> [THArrow arsTy retTy]) <$> subst (not pos) `mapM` ars <*> subst' ret
+    THVarGuard v -> mus <<%= (+1) >>= \m -> let mb = [THMuBound m] in
+      mb <$ MV.modify b (over (if pos then pSub else mSub) (const mb)) v
+    THArrow ars ret -> do -- THArrow changes polarity => make sure not to miss quantifying vars in the result-type
+      ret `forM` \case
+        THVar x -> dupVar True x
+        x -> pure ()
+--    ars `forM` \x -> x `forM` \case
+--      THVar x -> dupVar False x
+--      x -> pure ()
+      (\arsTy retTy -> [THArrow arsTy retTy]) <$> subst (not pos) `mapM` ars <*> subst' ret
     THTuple   tys -> (\x->[THTuple x])   <$> (subst' `traverse` tys)
     THProduct tys -> (\x->[THProduct x]) <$> (subst' `traverse` tys)
     THSumTy   tys -> (\x->[THSumTy   x]) <$> (subst' `traverse` tys)
     THBi b ty -> (\t->[THBi b t]) <$> subst' ty
     THMu b ty -> (\t->[THMu b t]) <$> subst' ty
-    t@THPrim{}  -> pure [t]
-    t@THBound{} -> pure [t]
-    t@THMuBound{}-> pure [t]
-    t -> error $ show t --pure [t]
+    t -> pure [t]
+--  t@THPrim{}  -> pure [t]
+--  t@THBound{} -> pure [t]
+--  t@THMuBound{}-> pure [t]
+--  t@THTop{} -> pure [t]
+--  t@THBot{} -> pure [t]
+--  t@THExt{} -> pure [t]
+--  t -> error $ show t --pure [t]
   in do --use bis >>= \b -> do
   let ty = [THVar recTVar]
-  traceM $ toS $ "Subst: " <> prettyTyRaw ty
+  when global_debug $ traceM $ toS $ "Subst: " <> prettyTyRaw ty
   rawGenTy <- subst True ty
   q <- use quants
   let genTy = if q > 0 then [THBi q rawGenTy] else rawGenTy
-  traceM (toS $ prettyTyRaw genTy)
+  when global_debug $ traceM (toS $ prettyTyRaw genTy)
   pure genTy
 
 infer :: P.TT -> TCEnv s Expr
@@ -260,8 +276,7 @@ infer = let
   -- App is the only place typechecking can fail
   -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
  biUnifyApp fTy argTys = do
--- dup False `mapM` argTys
-   (biret , [retV]) <- withBiSubs 1 (\idx -> dup True [THVar idx] *> biSub_ fTy (addArrowArgs argTys [THVar idx]))
+   (biret , [retV]) <- withBiSubs 1 (\idx -> biSub_ fTy (addArrowArgs argTys [THVar idx]))
    pure $ (biret , [THVar retV])
 
  in \case
@@ -275,9 +290,9 @@ infer = let
     P.VBind b   -> judgeLocalBind b -- polytype env
     P.VLocal l  -> do -- monotype env (fn args)
 --    _+ 1 to +qtt, also yolo _+ 1 to -qtt in case this is a funciton type (not ideal)
-      use domain >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub a b (1+qa) (qb)) l
+      use bis >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub a b (qa) (qb)) l
 
-      pure $ Core (Var $ VArg l) [THArg l]
+      pure $ Core (Var $ VArg l) [THVar l]
     P.VExtern i -> (`readParseExtern` i) <$> use externs >>= \case
       Left b  -> judgeLocalBind b -- was a forward reference not an extern
       Right e -> pure e
@@ -290,14 +305,14 @@ infer = let
         in (tt , args)
       (tt , args) = getTT top
     in do
-    traceShowM args -- TODO args should always be consecutive !!
+    -- TODO args should always be consecutive !!
     infer tt <&> \case
       Core x ty -> case args of
         [] -> Core x ty
         ars-> let
-          argTys = (\x->[THArg x]) <$> ars
+          argTys = (\x->[THVar x]) <$> ars
           ty'    = addArrowArgs argTys ty
-          in Core (Abs (zip ars ((\x->[THArg x]) <$> args)) mempty x ty') ty'
+          in Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x ty') ty'
       t -> t
 
   P.App fTT argsTT -> do
@@ -332,12 +347,12 @@ infer = let
     in case record of
     Core f _ -> case maybeSet of
       P.LensGet    -> do -- for get, we need a typevar for the destination
-        (_bs , [retTy]) <- withBiSubs 1 $ \ix -> dup True [THVar ix] *> biSub recordTy (mkExpected [THVar ix])
+        (_bs , [retTy]) <- withBiSubs 1 $ \ix -> biSub recordTy (mkExpected [THVar ix])
         pure $ Core (TTLens f fields LensGet) [THVar retTy]
 --    P.LensSet x  -> infer x >>= \ammo -> let expect = mkExpected (tyOfExpr ammo)
 --      in biSub recordTy [THProduct IM.empty] $> Core (TTLens f fields (LensSet ammo)) expect
       P.LensSet x  -> do
-        (ammo , [retVar]) <- withBiSubs 1 $ \ix -> dup True [THVar ix] *> do
+        (ammo , [retVar]) <- withBiSubs 1 $ \ix -> do
           ammo <- infer x
           let expect = mkExpected (tyOfExpr ammo)
           -- TODO don't overwrite foralls within expect
@@ -347,8 +362,6 @@ infer = let
 
       P.LensOver x -> infer x >>= \fn -> do
         (bs , [tyOld, tyNew]) <- withBiSubs 2 $ \ ix -> do
-          dup False [THVar (ix+1)]
-          dup True [THVar ix]
           biSub [THArrow [[THVar ix]] [THVar (ix+1)]] (tyOfExpr fn)
           biSub recordTy (mkExpected [THVar (ix+1)])
         pure $ Core (TTLens f fields (LensOver fn)) (mkExpected [THVar tyNew])
@@ -400,7 +413,7 @@ infer = let
     let unpat = \case { P.PArg i -> i ; x -> error $ "not ready for pattern: " <> show x }
         mkFn pat free (Core t tyAltRet) = let
           argNames = unpat <$> pat
-          argTys   = (\i -> [THArg i]) <$> argNames
+          argTys   = (\i -> [THVar i]) <$> argNames
           args     = zip argNames argTys
           in (Core (Abs args free t tyAltRet) tyAltRet
              , [THTuple $ V.fromList argTys])

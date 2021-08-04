@@ -13,6 +13,11 @@
 --import imports/subtype
 import imports/list
 
+--join a b = ifE 1 a b
+--_>>_ = \f x a => x (f a)
+
+--∏(#3)((a → b → ∏c(c → c) → d) → b → d)
+
 --r = ##
 --loop = (backref 3)
 --backref = (plus64 2)

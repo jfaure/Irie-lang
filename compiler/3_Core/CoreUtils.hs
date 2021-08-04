@@ -2,11 +2,10 @@ module CoreUtils where
 ----------------------------------------------------
 -- Various utility functions operating on CoreSyn --
 ----------------------------------------------------
-import Prim
 import CoreSyn
 import ShowCore()
 import qualified Data.IntMap as IM
---import qualified Data.Vector as V
+import qualified Data.Vector as V (zipWith)
 --import qualified Data.IntSet as IS
 
 -- substitute all pi bound variables for new typevars;
@@ -19,6 +18,8 @@ substFreshTVars tvarStart = Prelude.map $ let
   THBound i -> THVar (tvarStart + i)
   THArrow as ret -> THArrow (r <$> as) (r ret)
   THProduct as -> THProduct $ r <$> as
+  THTuple as -> THTuple $ r <$> as
+  THMu m t -> THMu m $ r t
   t -> t
 
 addArrowArgs [] = identity
@@ -89,7 +90,7 @@ expr2Ty judgeBind e = case e of
  Ty x -> pure x
  Core c ty -> case c of
    Var (VBind i) -> pure [THRecSi i []]
-   Var (VArg x)  -> pure [THArg x] -- TODO ?!
+   Var (VArg x)  -> pure [THVar x] -- TODO ?!
    App (Var (VBind fName)) args -> pure [THRecSi fName args]
    x -> error $ "raw term cannot be a type: " ++ show e
  x -> error $ "raw term cannot be a type: " ++ show x
@@ -121,11 +122,12 @@ kindOf = \case
   THPrim{}  -> KPrim
   THVar{}   -> KVar
   THArrow{} -> KArrow
+  THBound{} -> KBound
   _ -> KAny
 
-
 mergeTypes :: [TyHead] -> [TyHead] -> [TyHead]
-mergeTypes l1 l2 = foldr doSub l2 l1
+--mergeTypes l1 l2 = concat $ foldr doSub [] <$> (groupBy eqTyHead (l1 ++ l2))
+mergeTypes l1 l2 = foldr doSub [] (sortBy (\a b -> (kindOf a) `compare` (kindOf b)) $ l2 ++ l1)
 
 -- add head constructors, transitions and flow edges
 doSub :: TyHead -> [TyHead] -> [TyHead]
@@ -142,27 +144,24 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   let join = [t1 , t2]
       zM = zipWith mergeTypes
   in case join of
+  [THMu a t1, THMu b t2] | a == b -> [THMu a (t1 `mergeTypes` t2)]
+  [THTop , THTop] -> [THTop]
+  [THBot , THBot] -> [THBot]
   [THSet a , THSet b] -> [THSet $ max a b]
   [THPrim a , THPrim b]  -> if a == b then [t1] else case (a,b) of
 --  (PrimInt x , PrimInt y) -> [THPrim $ PrimInt $ max x y]
     _ -> join
-  [THBound a , THBound b]-> if a == b then [t1] else join
-  [THVar a , THVar b]    -> if a == b then [t1] else join
-  [THArg a , THArg b]    -> if a == b then [t1] else join
-  [THExt a , THExt  b]   -> if a == b then [t1] else join
---  [THAlias a , THAlias b] -> if a == b then [t1] else join
---[THSum a , THSum b]     -> [THSum   $ union a b] --[THSum (M.unionWith mergeTypes a b)]
---[THSplit a , THSplit b] -> [THSplit $ union a b] --[THSum (M.unionWith mergeTypes a b)]
---[THProd a , THProd b]   -> [THProd $ intersect a b] -- [THProd (M.unionWith mergeTypes a b)]
+  [THMuBound a , THMuBound b] -> if a == b then [t1] else join
+  [THBound a , THBound b]     -> if a == b then [t1] else join
+  [THVar a , THVar b]         -> if a == b then [t1] else join
+  [THExt a , THExt  b]        -> if a == b then [t1] else join
   [THSumTy a   , THSumTy b]   -> [THSumTy $ IM.unionWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
   [THProduct a , THProduct b] -> [THProduct $ IM.intersectionWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
+  [THTuple a , THTuple b]     -> [THTuple $ V.zipWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
   [THArrow d1 r1 , THArrow d2 r2]
     | length d1 == length d2 -> [THArrow (zM d1 d2) (mergeTypes r1 r2)]
   [THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!
   [THPi (Pi b1 t1) , THPi (Pi b2 t2)] -> [THPi $ Pi (b1 ++ b2) (mergeTypes t1 t2)]
   [THPi (Pi b1 t1) , t2] -> [THPi $ Pi b1 (mergeTypes t1 [t2])]
   [t1 , THPi (Pi b1 t2)] -> [THPi $ Pi b1 (mergeTypes [t1] t2)]
---[THRecSi r1 a1 , THRecSi r2 a2] -> if r1 == r2
---  then [THRecSi r1 (zipWith mergeTypes a1 a2)]
---  else join
   _ -> join

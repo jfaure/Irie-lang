@@ -4,28 +4,29 @@ import Prim
 import CoreSyn
 import ShowCore()
 
-import qualified Data.Vector        as V
+import qualified Data.Vector as V
+import qualified Data.Text as T
 import qualified Data.IntMap.Strict as IM
 import qualified Data.IntSet as IS
-import Data.List (init)
 import Text.Printf
 
 parens x = "(" <> x <> ")"
-nropOuterParens = \case { '(' : xs -> init xs ; x -> x }
+--nropOuterParens = \case { '(' : xs -> T.init xs ; x -> x }
 
-prettyBind bindSrc bis names = \case
+prettyBind showExpr bindSrc bis names = \case
   Checking m e g ty -> "CHECKING: " <> show m <> show e <> show g <> " : " <> show ty
   Guard m ars tvar -> "GUARD : " <> show m <> show ars <> show tvar
   Mutual d m isRec tvar -> "MUTUAL: " <> show d <> show m <> show isRec <> show tvar
   WIP -> "WIP"
-  BindOK expr -> prettyExpr' bindSrc bis names "\n  " expr <> "\n"
+  BindOK expr -> prettyExpr' showExpr bindSrc bis names "\n  " expr <> "\n"
 
-prettyExpr bindSrc bis names = prettyExpr' bindSrc bis names ""
-prettyExpr' bindSrc bis names pad = let
+prettyExpr showExpr bindSrc bis names = prettyExpr' showExpr bindSrc bis names ""
+prettyExpr' showExpr bindSrc bis names pad = let
   pTy = prettyTy bis names
   pT = prettyTerm bindSrc bis names
   in \case
-  Core term ty -> " = " <> pad <> pT term <> clGreen (" : " <> pTy ty)
+  Core term ty -> let prettyTy = clGreen $ " : " <> pTy ty
+    in if showExpr then " = " <> pad <> pT term <> prettyTy else prettyTy
   Ty t         -> " =: " <> pad <> clGreen (pTy t)
   e -> pad <> show e
 
@@ -35,11 +36,12 @@ prettyVName bindSrc = \case
   VBind i -> let nm = toS $ (srcBindNames bindSrc) V.! i in if nm == "_" then "π" <> show i else "\"" <> nm <> "\""
   VExt i ->  "E" <> show i <> "\"" <> (toS $ (srcExtNames  bindSrc) V.! i) <> "\""
 
+prettyTerm :: _ -> _ -> _ -> _ -> Text
 prettyTerm bindSrc bis names = let
   pTy = prettyTy bis names
   pT  = prettyTerm  bindSrc bis names
-  pE  = prettyExpr  bindSrc bis names
-  pE' = prettyExpr' bindSrc bis names
+  pE  = prettyExpr  False bindSrc bis names
+  pE' = prettyExpr' False bindSrc bis names
   prettyFree x = if IS.null x then "" else "Γ(" <> show x <> ")"
   in \case
   Hole -> " _ "
@@ -48,39 +50,40 @@ prettyTerm bindSrc bis names = let
   Abs ars free term ty -> let
     prettyArg (i , ty) = "(λ" <> clYellow (show i) <> ")" -- " : " <> clGreen (pTy ty) <> ")"
     prettyArg' (i , ty) = show i
-    in {-pad <> -} (clYellow $ "λ " <> intercalate " " (prettyArg' <$> ars)) <> prettyFree free <> " => " {-<> pad-} <> pT term
+    in {-pad <> -} (clYellow $ "λ " <> T.intercalate " " (prettyArg' <$> ars)) <> prettyFree free <> " => " {-<> pad-} <> pT term
      -- <> "   : " <> clGreen (pTy ty)
-  App     f args -> "(" <> pT f <> clMagenta " < " <> intercalate " " (pT <$> args) <> ")"
+  App     f args -> "(" <> pT f <> clMagenta " < " <> T.intercalate " " (pT <$> args) <> ")"
   Instr   p -> "(" <> show p <> ")"
 
   Cons    ts -> let
     sr (field , val) = show field <> " " <> (toS $ srcFieldNames bindSrc V.! field) <> "@" <> pT val
-    in "{ " <> (intercalate " ; " (sr <$> IM.toList ts)) <> " }"
+    in "{ " <> (T.intercalate " ; " (sr <$> IM.toList ts)) <> " }"
 --Proj    t f -> pT t <> "." <> show f <> (toS $ srcFieldNames bindSrc V.! f)
-  Label   l t -> prettyLabel l <> "@" <> intercalate " " (parens . pE <$> t)
+  Label   l t -> prettyLabel l <> "@" <> T.intercalate " " (parens . pE <$> t)
   Match caseTy ts d -> let
     showLabel l t = prettyLabel l <> " => " <> pE' "" t
     in clMagenta "\\case " <> clGreen (" : " <> prettyTy bis names caseTy) <> ")\n    | "
-      <> intercalate "\n    | " (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts) <> "\n    |_ " <> maybe "Nothing" pE d <> "\n"
-  List    ts -> "[" <> (concatMap pE ts) <> "]"
+      <> T.intercalate "\n    | " (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts) <> "\n    |_ " <> maybe "Nothing" pE d <> "\n"
+--List    ts -> "[" <> (T.concatMap pE ts) <> "]"
 
-  TTLens r target ammo -> pT r <> " . " <> intercalate "." (show <$> target) <> prettyLens bindSrc bis names ammo
+  TTLens r target ammo -> pT r <> " . " <> T.intercalate "." (show <$> target) <> prettyLens bindSrc bis names ammo
 
 prettyLabel = clMagenta . show
 
 prettyLens bindSrc bis names = \case
   LensGet -> " . get "
-  LensSet  tt -> " . set ("  <> prettyExpr bindSrc bis names tt <> ")"
-  LensOver tt -> " . over (" <> prettyExpr bindSrc bis names tt <> ")"
+  LensSet  tt -> " . set ("  <> prettyExpr False bindSrc bis names tt <> ")"
+  LensOver tt -> " . over (" <> prettyExpr False bindSrc bis names tt <> ")"
 
 prettyTyRaw = prettyTy V.empty V.empty
 
+prettyTy :: _ -> _ -> Type -> Text
 prettyTy bis names = let
   pTH = prettyTyHead bis names
   in \case
   []  -> "_"
   [x] -> pTH x
-  x   -> "(" <> (intercalate " & " $ pTH <$> x) <> ")"
+  x   -> "(" <> (T.intercalate " & " $ pTH <$> x) <> ")"
 
 prettyTyHead bis names = let
  pTy = prettyTy bis names
@@ -89,7 +92,7 @@ prettyTyHead bis names = let
  THTop        -> "⊤"
  THBot        -> "⊥"
  THPrim     p -> prettyPrimType p
- THArg      i -> "λ" <> show i
+-- THArg      i -> "λ" <> show i
  THVar      i -> "τ" <> show i
  THBound    i -> "∀" <> show i
  THMuBound  t -> "μ" <> show t
@@ -99,8 +102,8 @@ prettyTyHead bis names = let
  THExt      i -> "E" <> show i
 -- THRec      t -> "Rec" <> show t
 
- THArrow    [] ret -> error $ "panic: fntype with no args: [] → (" <> pTy ret <> ")"
- THArrow    args ret -> "(" <> intercalate " → " (pTy <$> (args <> [ret])) <> ")"
+ THArrow    [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> pTy ret <> ")"
+ THArrow    args ret -> "(" <> T.intercalate " → " (pTy <$> (args <> [ret])) <> ")"
 -- THProd     prodTy -> let
 --   showField (f , t) = show f <> ":" <> show t
 --   p = intercalate " ; " $ showField <$> M.toList prodTy
@@ -112,9 +115,9 @@ prettyTyHead bis names = let
 -- THSum l -> " 〈" <> show l <> " 〉"
 -- THSplit l -> "Split〈" <> show l <> " 〉"
 -- THProd  l -> " {" <> intercalate "," (show <$> l) <> "} "
- THSumTy  l -> "[" <> intercalate "," ((\(l,ty) -> show l <> " : " <> pTy ty) <$> IM.toList l) <> "]"
- THProduct  l -> "{" <> intercalate "," ((\(l,ty) -> show l <> " : " <> pTy ty) <$> IM.toList l) <> "}"
- THTuple  l -> "{" <> intercalate "," (pTy <$> V.toList l) <> "}"
+ THSumTy  l -> "[" <> T.intercalate "," ((\(l,ty) -> show l <> " : " <> pTy ty) <$> IM.toList l) <> "]"
+ THProduct  l -> "{" <> T.intercalate "," ((\(l,ty) -> show l <> " : " <> pTy ty) <$> IM.toList l) <> "}"
+ THTuple  l -> "{" <> T.intercalate "," (pTy <$> V.toList l) <> "}"
 
  THArray    t -> "@" <> show t
 
@@ -124,10 +127,10 @@ prettyTyHead bis names = let
 -- THCore t ty -> "↑(" <> show t <> " : " <> show ty <> ")" -- term in type context
 
  THSet   uni -> "Set" <> show uni
- THRecSi f ars -> "(μf" <> show f <> " $! " <> intercalate " " (show <$> ars) <> ")"
+ THRecSi f ars -> "(μf" <> show f <> " $! " <> T.intercalate " " (show <$> ars) <> ")"
  THFam f ixable ix -> let
    fnTy = case ixable of { [] -> f ; x -> [THArrow x f] }
-   indexes = case ix of { [] -> "" ; ix -> " $! (" <> intercalate " " (show <$> ix) <> "))" }
+   indexes = case ix of { [] -> "" ; ix -> " $! (" <> T.intercalate " " (show <$> ix) <> "))" }
    in "(Family " <> pTy fnTy <> ")" <> indexes
 -- THInstr i ars -> show i <> show ars
  x -> show x

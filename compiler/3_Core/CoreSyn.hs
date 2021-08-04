@@ -8,7 +8,8 @@ import qualified Data.Vector         as V
 import qualified Data.IntMap.Strict  as IM
 import Control.Lens hiding (List)
 
-global_debug = True
+global_debug = False
+--global_debug = True
 d_ x   = if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
@@ -46,6 +47,13 @@ data Term -- β-reducable (possibly to a type) and type annotated
 
 data LensOp = LensGet | LensSet Expr | LensOver Expr
 
+-- TODO improve this
+-- Typemerge should be very fast
+type Type     = TyPlus
+type Uni      = Int
+type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
+type TyPlus   = [TyHead] -- output types (lattice join)
+
 -- Head constructors in the profinite distributive lattice of types
 data TyHead
  = THPrim     PrimType
@@ -55,7 +63,7 @@ data TyHead
  | THTop | THBot -- TODO was this problematic ?
 
  -- Type constructors
- | THArrow    [TyMinus] TyPlus  -- degenerate case of THPi
+ | THArrow    [TyMinus] TyPlus  -- degenerate case of THPi (bot -> top is the largest fn type)
  | THTuple    (V.Vector TyPlus) -- ordered form of THproduct
  | THProduct  (IM.IntMap TyPlus)
  | THSumTy    (IM.IntMap TyPlus)
@@ -66,13 +74,11 @@ data TyHead
 
  -- Type variables
  | THVar       BiSubName -- generalizes to THBound if survives biunification and simplification
- | THArg       IName -- ix to monotype env (type of a lambda-bound)
+ | THVarGuard  IName     -- marker for vars when substituting a guarded type (mu.bound if seen again)
+ | THVarLoop   IName     -- unguarded variable loops
+ | THVarCircle [IName]
  | THBound     IName -- pi-bound debruijn index, (replace with fresh THVar when biunify pi binders)
  | THMuBound   IName -- mu-bound debruijn index (must be guarded and covariant) 
- | THArgGuard  IName -- temp marker for THArgs being substituted in case it's a recursive type
- | THVarGuard  IName
- | THVarLoop   IName
- | THArgLoop   IName
 
  -- Binders
  | THMu IName Type-- recursive type
@@ -113,11 +119,6 @@ data Bind -- indexes in the bindmap
  | BindOK    Expr
  | BindKO -- failed typecheck -- use Poison ?
 
-type Type     = TyPlus
-type Uni      = Int
-type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
-type TyPlus   = [TyHead] -- output types (lattice join)
-
 -- arrows have 2 special cases: pap and currying
 --data ArrBiSub = ArrAp | ArrPAp [BiCast] | ArrCurry [BiCast]
 data BiCast = BiEQ | BiCast Term | CastApp [BiCast] (Maybe [Type]) | BiInst [BiSub] BiCast | BiFail Text
@@ -138,8 +139,8 @@ makeLenses ''BiSub
 makeLenses ''QTT
 
 -- label for the different head constructors. (KAny is '_' in a way top of the entire universe)
-data Kind = KPrim | KArrow | KVar | KArg | KSum | KProd | KRec | KAny
- deriving Eq
+data Kind = KPrim | KArrow | KVar | KSum | KProd | KRec | KAny | KBound
+ deriving (Eq , Ord)
 
 -- wip module, not quite as polished as an Import module (still contains typevars and arg infos)
 data JudgedModule = JudgedModule {

@@ -114,15 +114,16 @@ deriving instance Eq FracInstrs
 deriving instance Eq ArrayInstrs
 deriving instance Eq TyInstrs
 
-prettyPrimType = \case
-  PrimInt x -> "%i" ++ show x
-  PrimNat x -> "%ui" ++ show x
-  PrimFloat f -> "%f" ++ show f
-  PrimArr prim -> "%@[" ++ show prim ++ "]"
-  PrimTuple prim -> "%tuple(" ++ show prim ++ ")"
-  PtrTo t -> "%ptr(" ++ show t ++ ")"
-  PrimExtern   tys -> "%extern(" ++ show tys ++ ")"
-  PrimExternVA tys-> "%externVA(" ++ show tys ++ ")"
+prettyPrimType :: PrimType -> Text
+prettyPrimType = toS . \case
+  PrimInt x        -> "%i" <> show x
+  PrimNat x        -> "%ui" <> show x
+  PrimFloat f      -> "%f" <> show f
+  PrimArr prim     -> "%@[" <> show prim <> "]"
+  PrimTuple prim   -> "%tuple(" <> show prim <> ")"
+  PtrTo t          -> "%ptr(" <> show t <> ")"
+  PrimExtern   tys -> "%extern(" <> show tys <> ")"
+  PrimExternVA tys -> "%externVA(" <> show tys <> ")"
 
 primSubtypeOf :: PrimType -> PrimType -> Bool
 PrimInt a `primSubtypeOf` PrimInt b = a <= b
