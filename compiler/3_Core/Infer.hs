@@ -37,6 +37,7 @@ judgeModule pm hNames exts = let
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
       {
         _pBinds   = pBinds'
+      , _bisubNoSubtype = []
       , _bindWIP  = 0
       , _externs  = exts
       , _wip      = wip'
@@ -94,32 +95,29 @@ judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
 
     cd <- use level
     MV.write wip' bindINm (Mutual cd jb False tvarIdx)
-    if (minimum (bindINm:ms) == bindINm) then fromJust . head <$> generaliseBinds bindINm ms else pure jb
+    if minimum (bindINm:ms) == bindINm then fromJust . head <$> generaliseBinds bindINm ms else pure jb
 -- Check annotation if given
 --bindTy <- maybe (pure genTy) (\ann -> checkAnnotation ann genTy mainArgTys (V.fromList argTys)) tyAnn
 
 generaliseBinds i ms = use wip >>= \wip' -> do
-  let getArs = \case { Core (Abs ars free x ty) t -> (fst <$> ars) ; _->[] }
-      getMutual m = do
-        Mutual cd naiveExpr isRec recTVar <- MV.read wip' m -- if isrec
-        pure (recTVar , m , getArs naiveExpr , cd , naiveExpr)
-      substVars = \(recTVar , m , args , cd , naiveExpr) ->
-        let Dominion (bStart , bEnd) = cd -- current dominion
-            traceTVars range b = range `forM_` \i -> MV.read b i >>= \s -> traceM (show i <> ": " <> show s :: Text)
-            traceVars = pure () --use bis >>= \b -> [0..MV.length b -1] `forM` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
---            traceM $ "gen: " <> show args <> " , " <> show cd
---            use bis    >>= traceTVars [bStart - 1 .. bEnd]
+  let getMutual m = do
+        Mutual cd naiveExpr isRec recTVar <- MV.read wip' m
+        pure (m , recTVar , cd , naiveExpr)
+      substVars = \(m , recTVar , cd , naiveExpr) -> let
+        Dominion (bStart , bEnd) = cd -- current dominion
+        traceVars = pure () --use bis >>= \b -> [0..MV.length b -1] `forM` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
         in do
-        done <- case naiveExpr of
-          Core (Abs ars free x _ty) ty -> do -- TODO add mu bind to the return type
-            let argTys = (\(x,_t)->[THVar x]) <$> ars
-            biSub (addArrowArgs argTys ty) [THVar recTVar]
+        done <- case did_ $ naiveExpr of
+          Core expr coreTy -> let
+            ty = case expr of -- inferrence produces the return type of Abs, ignoring arguments
+              Abs ars free x fnTy -> addArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
+              _ -> coreTy
+            in do
             traceVars
-            g <- substTVars recTVar
-            pure $ Core (Abs ars free x g) g -- $ mergeTypes merge g
-          Core expr ty -> do
-            biSub ty [THVar recTVar]
-            traceVars
+            -- check for recursive type
+            use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
+              [] -> BiEQ <$ MV.write v recTVar (BiSub ty [] 0 0)
+              t  -> biSub ty [THVar recTVar] -- ! recursive expression
             Core expr <$> substTVars recTVar
           t -> pure t
         done <$ MV.write wip' m (BindOK done)
@@ -137,7 +135,7 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
   unless (check exts argTys labelsV inferredTy annTy)
     $ error (show inferredTy <> "\n!<:\n" <> show ann)
   -- ? Prefer user's type annotation over the inferred one
-  -- ! we may have inferred some missing information !
+  -- ! we may have inferred some missing information
   -- type families are special: we need to insert the list of labels as retTy
   pure $ case getRetTy inferredTy of
     s@[THFam{}] -> case flattenArrowTy annTy of
@@ -163,6 +161,7 @@ substTVars recTVar = let
   generaliseVar pos vars v bisub@(BiSub pty mty pq mq) = let incQuants = quants <<%= (+1) in incQuants >>= \q -> do
     when global_debug $ traceM $ show v <> " " <> show pos <> " =∀" <> show q <> " " <> show bisub
     MV.modify vars (\(BiSub p m qp qm) -> BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) v
+    -- Co-occurence analysis ?
 --  case (if pos then pty else mty , if pos then mty else pty) of
 --    ([] , t) -> t `forM` \case
 --      THVar i -> MV.modify vars (\(BiSub p m qp qm) ->
@@ -310,9 +309,8 @@ infer = let
       Core x ty -> case args of
         [] -> Core x ty
         ars-> let
-          argTys = (\x->[THVar x]) <$> ars
-          ty'    = addArrowArgs argTys ty
-          in Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x ty') ty'
+          fnTy = addArrowArgs ((\x->[THVar x]) <$> ars) ty
+          in Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x fnTy) ty
       t -> t
 
   P.App fTT argsTT -> do

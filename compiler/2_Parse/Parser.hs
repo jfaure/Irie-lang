@@ -38,7 +38,6 @@ data ParseState = ParseState {
 }
 makeLenses ''ParseState
 
---type Parser = ParsecT Void Text (ST.State ParseState)
 type Parser = ParsecT Void Text (Prelude.State ParseState)
 
 --getOffset

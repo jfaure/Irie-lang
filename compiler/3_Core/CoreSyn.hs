@@ -8,8 +8,8 @@ import qualified Data.Vector         as V
 import qualified Data.IntMap.Strict  as IM
 import Control.Lens hiding (List)
 
-global_debug = False
---global_debug = True
+--global_debug = False
+global_debug = True
 d_ x   = if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
@@ -60,7 +60,11 @@ data TyHead
  | THExt      IName -- tyOf ix to externs
  | THSet      Uni   -- Type of types
  | THPoison   -- marker for inconsistencies found during inference
- | THTop | THBot -- TODO was this problematic ?
+ | THTop | THBot
+
+ -- Experimental
+ | TyCon ()
+ | THVars [Int]
 
  -- Type constructors
  | THArrow    [TyMinus] TyPlus  -- degenerate case of THPi (bot -> top is the largest fn type)
@@ -69,22 +73,18 @@ data TyHead
  | THSumTy    (IM.IntMap TyPlus)
  | THArray    TyPlus
 
- -- Experimental
- | THVars [Int]
-
- -- Type variables
- | THVar       BiSubName -- generalizes to THBound if survives biunification and simplification
- | THVarGuard  IName     -- marker for vars when substituting a guarded type (mu.bound if seen again)
- | THVarLoop   IName     -- unguarded variable loops
- | THVarCircle [IName]
- | THBound     IName -- pi-bound debruijn index, (replace with fresh THVar when biunify pi binders)
- | THMuBound   IName -- mu-bound debruijn index (must be guarded and covariant) 
-
  -- Binders
  | THMu IName Type-- recursive type
  | THBi Int Type  -- deBruijn pi binder
  | THPi Pi        -- dependent function space. implicitly bound. (for explicit: `∏(x:_) x -> Z`)
  | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
+
+ -- Type variables
+ | THVar       BiSubName -- generalizes to THBound if survives biunification and simplification
+ | THVarGuard  IName     -- mark vars when substituting a guarded type (mu.bound if seen again)
+ | THVarLoop   IName     -- unguarded variable loops
+ | THBound     IName -- pi-bound debruijn index, (replace with fresh THVar when biunify pi binders)
+ | THMuBound   IName -- mu-bound debruijn index (must be guarded and covariant) 
 
  -- type Families | indexed types
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr

@@ -1,27 +1,25 @@
-# Nimzo
+# Irie
 Array-oriented subtyping calculus of inductive constructions for high-performance distributed systems. [Basic language reference](languageDocumentation.md)
 
-## Calculus of inductive constructions
-Dependent types have long served to write proofs which can be used to guarantee a program's correctness. In combination with subtyping, they introduce possibilities for powerful optimisations.
+## Origin
+Irie was created because there exists no pure functional language with first-class subtyping and an extreme emphasis on performance. Irie's philosophy is to focus exclusively on a simple but powerful core language, capable of naturally expressing additional language features as native functions. That language is the subtyping calculus of constructions.
 
-## Array-oriented
-Much of the power of a machine is in its ability to process vast quantities of organised data. Manipulating information with aggregate operations and generally thinking in terms of arrays corresponds more closely to our algorithms. The compiler also finds aggregate operations easier to coordinate operations and optimize (esp. by removal of temporary structures via shortcut fusion). Tensors are multi-dimensional arrays and correspond to many types of organised data.
-
-## Distributed computing
-High level abstractions are necessary if we are to comfortably program using GPUs and distributed networks, since forking GPU kernels and sending programs over a network is far too tedious, error-prone and inflexible to do by hand. I propose to abstract implementation and optimisation details away from the terms and into the types.
+## Performance
+Memory locality has become one of the key factors for performance, since cpu cache misses are very expensive (10 to 10000 times slower than a cpu instruction). Functional compilers take on the responsibility of managing all memory for the programmer, who has historically had good reason to distrust them. However, functional languages contain enough information that they could do a better job than even a C programmer using malloc can realistically maintain. For the next generation of functional compilers, a GC is no longer acceptable. Irie aims to compile all data driven functions with essentially a custom allocator, which emphasizes arena style blanket-frees to completely clean up the data-stack when data falls out of scope, as well as a tailored memory representation for recursive datas. In particular, for the familiar list type: `List a = Empty | Next a (List a)` the (List a) pointer can be made implicit by use of an array. In fact all recursive data structures can exploit one implicit pointer, or in the case of Peano arithmetic, directly become machine numbers. (I note here that it is essential to optimize such data structures directly rather than ask users to use an opaque datatype (eg. `Vector a`), since that tends to be annoying and doesn't scale at all).
 
 ## Subtyping
 Subtyping describes data flow explicitly and allows more accurate types, notably we can cleanly represent many desirable features, listed below. The key principle is that a subtyping relation (A <: B) is a proof of the existence of a function (A -> B), which the compiler can automatically call. Some points about subtyping:
 * Records with more fields are subtypes of those with less fields
 * Sum types with less fields are subtypes of those with more
-* Subtyping relations on algebraic data (records and sum types) are useful for proof irrelevance, quantitative type theory, and so forth
-* Effectful functions are supertypes of pure ones, which obviates the need for explicitly calling glue functions such as pure/return/etc.
+* Subtyping relations on algebraic data (records and sum types) are useful for quantitative type theory (including proof irrelevance).
 * The dependent function space contains subtypes of the non-dependent function space
-* Polymorphism is subtyping, eg: `Int <: forall a. a`
 * Subtyping polymorphism is a sweet spot between parametric polymorphism and ad-hoc polymorphism, which enables us to say exactly what we mean.
-* Bi-variant type parameters permit us to accurately describe structures where insertable types are different to those that can be examined; e.g. input of any graphical component into a list after which we can use only their 'onClick' functions
+* Bi-variant type parameters permit us to describe structures where insertable types are different to those that can be examined; e.g. input of any graphical component into a list after which we can use only their 'onClick' functions
 * Subtyping increases the power of our types, and allow us to leverage automatic subtyping coercions to cleanly separate algorithms from optimisations
-* In conjunction with dependent types, the scope of possible optimisation opportunities becomes infinite, and subtyping can give types the power they need to guide an algorithm to its perfect implementation (which can become very complicated in the presence of GPUs or distributed systems)
+* Dependent types and subtyping gives types the power they need to guide an algorithm to its perfect implementation (which can become very complicated in the presence of GPUs or distributed systems)
+
+## Distributed computing
+High level abstractions are necessary if we are to comfortably program using GPUs and distributed networks, since forking GPU kernels and sending programs over a network is far too tedious, error-prone and inflexible to do by hand. I propose to abstract implementation and optimisation details away from the terms and into the types.
 
 # Roadmap
 - Language:

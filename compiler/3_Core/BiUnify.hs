@@ -1,5 +1,5 @@
+ -- See presentation/TypeTheory for commentary
 module BiUnify where
--- See presentation/TypeTheory for commentary
 import Prim
 import CoreSyn as C
 import CoreUtils
@@ -7,12 +7,18 @@ import TCState
 import PrettyCore
 import Externs
 
-import qualified Data.Vector.Mutable as MV -- mutable vectors
 import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
+import qualified Data.Text as T
 import Control.Lens
 
-failBiSub msg a b = error $ "failed bisub:\n    " <> show a <> "\n<--> " <> show b <> "\n" <> msg --pure False
+failBiSub :: (Show a , Show b) => Text -> a -> b -> TCEnv s BiCast
+failBiSub msg a b = let
+  msg =  msg <> "\nnot a subtype:\n" <> show a <> "\n<:\n" <> show b
+--in BiEQ <$ (bisubNoSubtype %= (msg:))
+  in panic msg
+--handleBiSubFailure = (bisubNoSubtype <<%= (const [])) >>= panic . T.concat
 
 biSub_ a b = do
   when global_debug $ traceM ("bisub: " <> prettyTyRaw a <> " <==> " <> prettyTyRaw b)
@@ -48,8 +54,8 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
   (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readPrimExtern` i)<$>use externs
 
   -- Bound vars (removed at THBi, so should never be encountered during biunification)
-  (THBound i , x) -> error $ "unexpected THBound: " <> show i
-  (x , THBound i) -> error $ "unexpected THBound: " <> show i
+  (THBound i , x) -> panic $ "unexpected THBound: " <> show i
+  (x , THBound i) -> panic $ "unexpected THBound: " <> show i
   (THBi nb x , y) -> do
     -- make new THVars for the debruijn bound vars here
     level %= (\(Dominion (f,x)) -> Dominion (f,x+nb))
@@ -77,7 +83,7 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
     in BiEQ <$ (go `IM.traverseWithKey` y) -- TODO bicasts
   (THSumTy x , THSumTy y) -> let
     go label subType = case y IM.!? label of -- y must contain supertypes of all x labels
-      Nothing -> error $ "Sumtype: label not present: " ++ show label
+      Nothing -> failBiSub ("Sumtype: label not present: " <> show label) p m
       Just superType -> biSub superType subType
     in BiEQ <$ (go `IM.traverseWithKey` x) -- TODO bicasts
   (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
@@ -109,17 +115,18 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
     MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar p : a) b qa qb) m
     MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) qa qb) p
     dupVar True m
---  dupVar True m
 --  dupVar False p
   (THVar p , m) -> use bis >>= \v -> (_pSub <$> MV.read v p) >>= \t -> do
     MV.modify v (\(BiSub a b qa qb) -> BiSub a (m : b) (1+qa) qb) p
-    dupp p True [m] -- Not entirely convinced by this , although it should only affect higher-rank polymorphism
+    dupp p True [m] -- Not entirely convinced by this , should only affect higher-rank polymorphism
     biSub t [m]
---  biSub (filter isTyCon t) [m]
   (p , THVar m) -> use bis >>= \v -> (_mSub <$> MV.read v m) >>= \t    -> do
     MV.modify v (\(BiSub a b qa qb) -> BiSub (p : a) b qa qb) m
---  dup False [p]
---  biSub [p] (filter isTyCon t)
+--  case m == 53 || m == 38 of -- recursive types shouldn't be dup'd
+--    True  -> pure [] --dupp m True [p] -- special case for recursive bisub
+--    False -> dupp m False [p]
+--  dupp m False [p]
+--  when (isTyCon p) (void $ dupp m False [p])
     biSub [p] t
 
   (a , b) -> failBiSub "no relation" a b
@@ -136,13 +143,6 @@ arrowBiSub (argsp,argsm) (retp,retm) = let -- zipWithM biSub args2 args1 *> biSu
 primBiSub p1 m1 = case (p1 , m1) of
   (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (BiCast (Instr Zext)) else (failBiSub "primint no subtype" p1 m1)
   (p , m) -> if (p /= m) then (failBiSub "primtypes no bisub" p1 m1) else pure BiEQ
-mkTcFailMsg gotTerm gotTy expTy =
-  ("subsumption failure:"
-  <> "\nExpected: " <> show expTy
-  <> "\nGot:      " <> show gotTy
--- <> "\n" <> show (unVar gotTy) <> " <:? " <> show expected
-  <> "\nIn the expression: " <> show gotTy
-  )
 
 -- deciding term equalities ..
 termEq t1 t2 = case (t1,t2) of
@@ -154,8 +154,5 @@ termEq t1 t2 = case (t1,t2) of
 tyAp :: [TyHead] -> IM.IntMap Expr -> [TyHead]
 tyAp ty argMap = map go ty where
   go :: TyHead -> TyHead = \case
---  THArg y -> case IM.lookup y argMap of
---    Nothing -> THArg y
---    Just (Ty [t]) -> t
     THArrow as ret -> THArrow (map go <$> as) (go <$> ret)
     x -> x

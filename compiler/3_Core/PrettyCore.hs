@@ -11,7 +11,7 @@ import qualified Data.IntSet as IS
 import Text.Printf
 
 parens x = "(" <> x <> ")"
---nropOuterParens = \case { '(' : xs -> T.init xs ; x -> x }
+unParens x = if T.head x == '(' then T.drop 1 (T.dropEnd 1 x) else x
 
 prettyBind showExpr bindSrc bis names = \case
   Checking m e g ty -> "CHECKING: " <> show m <> show e <> show g <> " : " <> show ty
@@ -22,10 +22,10 @@ prettyBind showExpr bindSrc bis names = \case
 
 prettyExpr showExpr bindSrc bis names = prettyExpr' showExpr bindSrc bis names ""
 prettyExpr' showExpr bindSrc bis names pad = let
-  pTy = prettyTy bis names
+  pTy = prettyTy (Just bindSrc)
   pT = prettyTerm bindSrc bis names
   in \case
-  Core term ty -> let prettyTy = clGreen $ " : " <> pTy ty
+  Core term ty -> let prettyTy = clGreen  $ " : " <> unParens (pTy ty)
     in if showExpr then " = " <> pad <> pT term <> prettyTy else prettyTy
   Ty t         -> " =: " <> pad <> clGreen (pTy t)
   e -> pad <> show e
@@ -36,9 +36,9 @@ prettyVName bindSrc = \case
   VBind i -> let nm = toS $ (srcBindNames bindSrc) V.! i in if nm == "_" then "π" <> show i else "\"" <> nm <> "\""
   VExt i ->  "E" <> show i <> "\"" <> (toS $ (srcExtNames  bindSrc) V.! i) <> "\""
 
-prettyTerm :: _ -> _ -> _ -> _ -> Text
+--prettyTerm :: _ -> _ -> _ -> _ -> Text
 prettyTerm bindSrc bis names = let
-  pTy = prettyTy bis names
+  pTy = prettyTy (Just bindSrc)
   pT  = prettyTerm  bindSrc bis names
   pE  = prettyExpr  False bindSrc bis names
   pE' = prettyExpr' False bindSrc bis names
@@ -62,7 +62,7 @@ prettyTerm bindSrc bis names = let
   Label   l t -> prettyLabel l <> "@" <> T.intercalate " " (parens . pE <$> t)
   Match caseTy ts d -> let
     showLabel l t = prettyLabel l <> " => " <> pE' "" t
-    in clMagenta "\\case " <> clGreen (" : " <> prettyTy bis names caseTy) <> ")\n    | "
+    in clMagenta "\\case " <> clGreen (" : " <> pTy caseTy) <> ")\n    | "
       <> T.intercalate "\n    | " (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts) <> "\n    |_ " <> maybe "Nothing" pE d <> "\n"
 --List    ts -> "[" <> (T.concatMap pE ts) <> "]"
 
@@ -75,35 +75,45 @@ prettyLens bindSrc bis names = \case
   LensSet  tt -> " . set ("  <> prettyExpr False bindSrc bis names tt <> ")"
   LensOver tt -> " . over (" <> prettyExpr False bindSrc bis names tt <> ")"
 
-prettyTyRaw = prettyTy V.empty V.empty
+prettyTyRaw = prettyTy Nothing
 
-prettyTy :: _ -> _ -> Type -> Text
-prettyTy bis names = let
-  pTH = prettyTyHead bis names
+--prettyTy :: _ -> _ -> Type -> Text
+prettyTy bindSrc = let
+  pTH = prettyTyHead bindSrc
   in \case
   []  -> "_"
   [x] -> pTH x
   x   -> "(" <> (T.intercalate " & " $ pTH <$> x) <> ")"
 
-prettyTyHead bis names = let
- pTy = prettyTy bis names
- pTH = prettyTyHead bis names
+number2CapLetter i = let
+  letter = (chr ((i `mod` 26) + ord 'A'))
+  overflow = i `div` 26
+  in if overflow > 0 then (letter `T.cons` show overflow) else T.singleton letter
+number2xyz i = let
+  letter = (chr ((i `mod` 3) + ord 'x'))
+  overflow = i `div` 3
+  in if overflow > 0 then (letter `T.cons` show overflow) else T.singleton letter
+
+prettyTyHead bindSrc = let
+ pTy = prettyTy bindSrc
+ pTH = prettyTyHead bindSrc
  in \case
  THTop        -> "⊤"
  THBot        -> "⊥"
  THPrim     p -> prettyPrimType p
 -- THArg      i -> "λ" <> show i
  THVar      i -> "τ" <> show i
- THBound    i -> "∀" <> show i
- THMuBound  t -> "μ" <> show t
- THMu v     t -> "μ" <> show v <> "." <> pTy t
+ THBound    i -> number2CapLetter i
+-- THBound    i -> "∀" <> show i
+ THMuBound  t -> {-"μ" <>-} number2xyz t
+ THMu v     t -> "μ" <> number2xyz v <> "." <> pTy t
 -- THImplicit i -> "∀" <> show i
 -- THAlias    i -> "π" <> show i
  THExt      i -> "E" <> show i
 -- THRec      t -> "Rec" <> show t
 
  THArrow    [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> pTy ret <> ")"
- THArrow    args ret -> "(" <> T.intercalate " → " (pTy <$> (args <> [ret])) <> ")"
+ THArrow    args ret -> parens $ T.intercalate " → " (pTy <$> (args <> [ret]))
 -- THProd     prodTy -> let
 --   showField (f , t) = show f <> ":" <> show t
 --   p = intercalate " ; " $ showField <$> M.toList prodTy
@@ -115,13 +125,18 @@ prettyTyHead bis names = let
 -- THSum l -> " 〈" <> show l <> " 〉"
 -- THSplit l -> "Split〈" <> show l <> " 〉"
 -- THProd  l -> " {" <> intercalate "," (show <$> l) <> "} "
- THSumTy  l -> "[" <> T.intercalate "," ((\(l,ty) -> show l <> " : " <> pTy ty) <$> IM.toList l) <> "]"
- THProduct  l -> "{" <> T.intercalate "," ((\(l,ty) -> show l <> " : " <> pTy ty) <$> IM.toList l) <> "}"
- THTuple  l -> "{" <> T.intercalate "," (pTy <$> V.toList l) <> "}"
+ THSumTy   l -> let
+   prettyLabel (l,ty) = (maybe (show l) (\bindSrc -> toS (srcLabelNames bindSrc V.! l)) bindSrc) <> " : " <> pTy ty
+   in "[" <> T.intercalate " | " (prettyLabel <$> IM.toList l) <> "]"
+ THProduct l -> let
+   prettyField (f,ty) = (maybe (show f) (\bindSrc -> toS (srcFieldNames bindSrc V.! f)) bindSrc) <> " : " <> pTy ty
+   in "{" <> T.intercalate "," (prettyField <$> IM.toList l) <> "}"
+ THTuple  l  -> "{" <> T.intercalate "," (pTy <$> V.toList l) <> "}"
 
  THArray    t -> "@" <> show t
 
- THBi i t -> "∏(#" <> show i  <> ")" <> pTy t
+-- THBi i t -> "∏(#" <> show i  <> ")" <> pTy t
+ THBi i t -> "∏ " <> (T.intercalate " " $ number2CapLetter <$> [0..i-1]) <> " → " <> pTy t
  THPi pi  -> "∏(" <> show pi <> ")"
  THSi pi arsMap -> "Σ(" <> show pi <> ") where (" <> show arsMap <> ")"
 -- THCore t ty -> "↑(" <> show t <> " : " <> show ty <> ")" -- term in type context

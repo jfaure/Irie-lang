@@ -19,6 +19,7 @@ data TCEnvState s = TCEnvState {
 -- , _qtt     :: MV.MVector s QTT -- indexed by argnames, like domain
 
  -- state
+ , _bisubNoSubtype :: [Text]
  , _bindWIP :: IName
  , _level   :: Dominion
  , _deBruijn:: MV.MVector s Int
@@ -39,6 +40,7 @@ dupVar pos x = use bis >>= \v -> MV.modify v
 
 dupp p pos ty = let dup = dupp p in ty `forM` \case
   THVar x | x /= p -> dupVar pos x
+--THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
   THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
   THTuple   tys -> dup pos `traverse_` tys
   THProduct tys -> dup pos `traverse_` tys
