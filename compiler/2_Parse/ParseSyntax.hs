@@ -4,25 +4,16 @@
 module ParseSyntax where -- import qualified as PSyn
 
 import Prim
+import MixfixSyn
 import qualified Data.Map as M
---import qualified Data.HashMap.Strict as HM
---import qualified Data.Vector as V
 import Control.Lens
 
-type IName = Int
-type HName = Text
 type FName = IName -- record  fields
 type LName = IName -- sumtype labels
 type FreeVar = IName -- let or non-local argument needed deeper in a function nest
 type ImplicitArg = (IName , Maybe TT) -- implicit arg with optional type annotation
 type FreeVars = IntSet
 type NameMap = M.Map HName IName
-
-data MixFixName = MFHole | MFName HName deriving (Show , Eq)
-type MixFixDef = [MixFixName]
-
-data Fixity = Fixity Assoc (Maybe Int) [IName]
-data Assoc = AssocNone | AssocLeft | AssocRight
 
 data ImportDecl -- extern types can't be checked (eg. syscalls / C apis etc..)
  = Extern   { externName :: HName , externType :: TT }
@@ -31,49 +22,46 @@ data ImportDecl -- extern types can't be checked (eg. syscalls / C apis etc..)
 data Module = Module {
    _moduleName :: HName
 
- , _imports    :: [HName]
- , _externFns  :: [ImportDecl]
- , _bindings   :: [TopBind] -- top binds
+ , _imports     :: [HName]
+ , _externFns   :: [ImportDecl]
+ , _bindings    :: [TopBind] -- hNameBinds
+-- , _mixfixWords :: [MFWord]  -- hNameMFWords
 
  , _parseDetails :: ParseDetails
 }
 
+-- HNames and local scope
 data ParseDetails = ParseDetails {
- -- Note. mixFixDefs stored in these maps are partial:
- -- for mf, the first, and for postfixes the first 2 elems of the mixfixdef list are implicit
-   _mixFixDefs    :: M.Map HName [(MixFixDef , TTName)] -- all mixfixDefs starting with a name
- , _postFixDefs   :: M.Map HName [(MixFixDef , TTName)] -- mixfixes starting with _
- , _hNameBinds    :: (Int , NameMap) -- count anonymous args (>= nameMap size)
+   _hNameBinds    :: (Int , NameMap) -- also count anonymous (lambda) (>= nameMap size)
  , _hNameLocals   :: [NameMap] -- let-bound
  , _hNameArgs     :: [NameMap]
+ -- keep a total count to deal with overloads
+ , _hNameMFWords  :: (Int , M.Map HName [MFWord])
  , _freeVars      :: FreeVars
  , _nArgs         :: Int
  , _hNamesNoScope :: NameMap
  , _fields        :: NameMap
  , _labels        :: NameMap
--- , fixities     :: V.Vector Fixity
 }
 
-data TopBind = FunBind {
+data TopBind = FunBind { fnDef :: !FnDef }
+
+data FnDef = FnDef {
    fnNm         :: HName
+-- , fnIsRec      :: Bool
+ , fnMixfixName :: Maybe MixfixDef
  , implicitArgs :: [ImplicitArg]
  , fnFreeVars   :: FreeVars
  , fnMatches    :: [FnMatch]
  , fnSig        :: (Maybe TT)
--- , fnIsRec      :: Bool
 }
+
 data FnMatch = FnMatch [ImplicitArg] [Pattern] TT
 
 data TTName
  = VBind   IName
  | VLocal  IName
  | VExtern IName
-
--- info on record fields
-data FieldInfo = FieldInfo {
-   mixfix     :: Int
- , dependents :: FName
-}
 
 data LensOp a = LensGet | LensSet a | LensOver a deriving Show
 
@@ -85,7 +73,7 @@ data TT
  -- lambda-calculus
  | Abs TopBind
  | App TT [TT]
- | InfixTrain TT [(TT, TT)] -- precedence unknown
+ | Juxt [TT] -- may contain mixfixes to resolve
 
  -- tt primitives (sum , product , list)
  | Cons   [(FName , TT)] -- can be used to type itself
@@ -100,6 +88,7 @@ data TT
  -- term primitives
  | Lit     Literal
  | LitArray [Literal]
+ | Poison Text -- for mixfix resolution
 
 -- patterns represent arguments of abstractions
 data Pattern
@@ -135,11 +124,10 @@ prettyTTName = \case
 
 --deriving instance Show Module
 deriving instance Show ParseDetails
+deriving instance Show FnDef
 deriving instance Show TopBind
 deriving instance Show ImportDecl
 deriving instance Show TTName
-deriving instance Show Fixity
-deriving instance Show Assoc
 deriving instance Show FnMatch 
 deriving instance Show TT
 deriving instance Show Pattern

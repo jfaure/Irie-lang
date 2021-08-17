@@ -11,16 +11,13 @@
 --import imports/fin
 --import imports/printf
 --import imports/subtype
-import imports/list
+--import imports/list
+import imports/prelude
+
+--z a = if a then 6 else 5
 
 --join a b = ifE 1 a b
 --_>>_ = \f x a => x (f a)
-
---∏(#3)((a → b → ∏c(c → c) → d) → b → d)
-
---r = ##
---loop = (backref 3)
---backref = (plus64 2)
 
 --r1 = mkTuple 3 2
 --main = plus64 3 2

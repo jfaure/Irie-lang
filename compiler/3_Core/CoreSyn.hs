@@ -7,31 +7,34 @@ import Prim
 import qualified Data.Vector         as V
 import qualified Data.IntMap.Strict  as IM
 import Control.Lens hiding (List)
+import MixfixSyn
 
---global_debug = False
-global_debug = True
-d_ x   = if not global_debug then identity else let
+global_debug = False
+--global_debug = True
+d_ x   = let --if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
 did_ x = d_ x x
 dv_ f = traceShowM =<< (V.freeze f)
 
-type HName     = Text -- human readable name
-type IName     = Int  -- Int name: index into bind|type vectors
-type BiSubName = Int  -- index into bisubs
-type IField    = Int  -- product-type fields
-type ILabel    = Int  -- sum-type labels
+-- INames are indexes into the main bindings vector
+type ExtIName    = Int  -- VExterns
+type BiSubName   = Int  -- index into bisubs
+type IField      = Int  -- product-type fields
+type ILabel      = Int  -- sum-type labels
+type Table a     = V.Vector a -- map of IName -> a
 
 data VName
- = VBind IName -- bind   map
- | VArg  IName -- bisub  map
- | VExt  IName -- extern map (incl. prim instrs)
+ = VBind   IName -- bind   map
+ | VQBind  ModuleIName IName
+ | VArg    IName -- bisub  map
+ | VExt    IName -- extern map (incl. prim instrs and mixfixwords)
 
 data Term -- β-reducable (possibly to a type) and type annotated
  = Var     !VName
  | Lit     Literal
  | Hole    -- to be inferred : Bot
- | Poison  -- typecheck inconsistency
+ | Poison Text -- typecheck inconsistency
 
  | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
  | App     Term [Term] -- IName [Term]
@@ -54,6 +57,13 @@ type Uni      = Int
 type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
 type TyPlus   = [TyHead] -- output types (lattice join)
 
+data TyCon -- Type constructors
+ = THArrow    [TyMinus] TyPlus -- degenerate case of THPi (bot -> top is the largest)
+ | THTuple    (V.Vector  TyPlus) -- ordered form of THproduct
+ | THProduct  (IntMap TyPlus)
+ | THSumTy    (IntMap TyPlus)
+ | THArray    TyPlus
+
 -- Head constructors in the profinite distributive lattice of types
 data TyHead
  = THPrim     PrimType
@@ -62,16 +72,7 @@ data TyHead
  | THPoison   -- marker for inconsistencies found during inference
  | THTop | THBot
 
- -- Experimental
- | TyCon ()
- | THVars [Int]
-
- -- Type constructors
- | THArrow    [TyMinus] TyPlus  -- degenerate case of THPi (bot -> top is the largest fn type)
- | THTuple    (V.Vector TyPlus) -- ordered form of THproduct
- | THProduct  (IM.IntMap TyPlus)
- | THSumTy    (IM.IntMap TyPlus)
- | THArray    TyPlus
+ | THTyCon !TyCon
 
  -- Binders
  | THMu IName Type-- recursive type
@@ -80,11 +81,12 @@ data TyHead
  | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
 
  -- Type variables
+ | THVars      IntSet
  | THVar       BiSubName -- generalizes to THBound if survives biunification and simplification
  | THVarGuard  IName     -- mark vars when substituting a guarded type (mu.bound if seen again)
  | THVarLoop   IName     -- unguarded variable loops
- | THBound     IName -- pi-bound debruijn index, (replace with fresh THVar when biunify pi binders)
- | THMuBound   IName -- mu-bound debruijn index (must be guarded and covariant) 
+ | THBound     IName     -- pi-bound debruijn index, (replace with fresh THVar when biunify pi binders)
+ | THMuBound   IName     -- mu-bound debruijn index (must be guarded and covariant) 
 
  -- type Families | indexed types
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
@@ -104,7 +106,12 @@ data TCError
 data Expr
  = Core     Term Type
  | Ty       Type
- | Fail     TCError
+
+ -- Temporary in infer
+ | QVar     (ModuleIName , IName)
+ | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
+ | ExprApp  Expr [Expr] -- output of solvemixfixes
+ | Fail     Text -- TCError
 
 data Bind -- indexes in the bindmap
  = WIP
@@ -112,12 +119,28 @@ data Bind -- indexes in the bindmap
  | Mutual    { tvars :: Dominion , naiveExpr :: Expr , recursive :: Bool , tvar :: IName }
 
  | Checking  { mutuals :: [IName] 
-             , monoMorphic :: Maybe (Dominion , Expr) -- if set, shouldn't generalise itself (request a mutual bind do it)
+             , monoMorphic :: Maybe (Dominion , Expr) -- if set, shouldn't generalise itself (ask (the first seen) mutual bind do it)
              , doGen :: Bool
              , recTy :: Type
              }
  | BindOK    Expr
  | BindKO -- failed typecheck -- use Poison ?
+
+-- mixfixWords :: [MFWord]
+-- hNameMFWords :: M.Map HName [MFIName]
+data ExternVar
+ = ForwardRef IName -- not extern
+ | Imported   Expr
+
+ | NotInScope       HName
+ | AmbiguousBinding HName -- bindings overlap not allowed
+
+ | Importable ModuleIName IName -- read allBinds
+ | MixfixyVar Mixfixy -- for solvemixfixes
+data Mixfixy = Mixfixy
+ { ambigBind   :: Maybe (ModuleIName , IName)
+ , ambigMFWord :: [QMFWord] --[(ModuleIName , [QMFWord])]
+ }
 
 -- arrows have 2 special cases: pap and currying
 --data ArrBiSub = ArrAp | ArrPAp [BiCast] | ArrCurry [BiCast]
@@ -146,9 +169,6 @@ data Kind = KPrim | KArrow | KVar | KSum | KProd | KRec | KAny | KBound
 data JudgedModule = JudgedModule {
    bindNames   :: V.Vector HName
  , judgedBinds :: V.Vector Bind
- , typeVars    :: V.Vector BiSub
- , qtts        :: V.Vector QTT
- , argTypes    :: V.Vector BiSub
 }
 
 data BindSource = BindSource {

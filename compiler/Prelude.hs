@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-module Prelude ( module Protolude , String , error , iMap2Vector , fromJust) --, module GHC.Show , module GHC.Err , id , String)
+module Prelude ( module Protolude , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName)
 where
 import Protolude hiding (check , Type , Fixity(..) , moduleName , option
  , try , some , many -- conflict with megaparsec
@@ -11,9 +11,11 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Map as M
 
 type String = [Char]
+type IName  = Int
+type ModuleIName = Int
+type HName  = Text
 
 --error (s :: String) = panic $ toS s
---
 fromJust = fromMaybe (panic "fromJust")
 
 iMap2Vector mp = V.create $ do

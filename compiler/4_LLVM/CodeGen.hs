@@ -23,7 +23,7 @@ import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Instruction hiding (gep)
 
 --mkStg :: V.Vector Expr -> V.Vector (HName , Bind) -> V.Vector QTT -> L.Module
-mkStg externBindings coreMod@(JudgedModule bindNames coreBinds tyVars qtt argTys) = let
+mkStg externBindings coreMod@(JudgedModule bindNames coreBinds) = let
   mkVAFn ty nm = L.GlobalDefinition functionDefaults
     { name = L.mkName nm , linkage = L.External , parameters=([],True) , returnType = ty }
   nBinds = V.length coreBinds
@@ -292,7 +292,7 @@ cgTypeAtomic = let
   voidPtrType = polyType -- tyLabel -- LT.ptr $ LT.StructureType False []
   in \case
   THExt i       -> gets externs >>= (cgType . tyExpr . (`readPrimExtern` i))
-  THArrow tys t -> (\ars retTy -> L.FunctionType retTy ars False)
+  THTyCon (THArrow tys t) -> (\ars retTy -> L.FunctionType retTy ars False)
     <$> (cgType `mapM` tys) <*> cgType t
 --THVar v    -> gets (did_ . _pSub . (V.! v) . typeVars . coreModule) >>= cgType
 --THArg a    -> gets (did_ . _mSub . (V.! a) . argTypes . coreModule) >>= cgType
@@ -301,7 +301,7 @@ cgTypeAtomic = let
 --THArg{} -> pure voidPtrType
   x -> pure $ case x of
     THPrim p   -> primTy2llvm p
-    THArray t  -> _ -- LT.ArrayType $ cgType t
+--  THArray t  -> _ -- LT.ArrayType $ cgType t
 --  THSum   ls -> tyLabel
 --  THSplit ls -> tyLabel
 --  THProd p   -> tyLabel

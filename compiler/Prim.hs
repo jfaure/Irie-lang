@@ -48,6 +48,7 @@ data PrimInstr
  | CallExt    Text
 
  | Pow Int -- pow application
+ | Power   -- numerical power
  | MkTuple
  | MkPAp Int
  | Zext
@@ -71,9 +72,9 @@ data TyInstrs
  | Arrow   -- : Set -> Set
 
  -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
-data Predicates = EQCmp | GECmp | GCmp | LECmp | LCmp
+data Predicates = EQCmp | NEQCmp | GECmp | GTCmp | LECmp | LTCmp
 data IntInstrs   = Add | Sub | Mul | SDiv | SRem
-                 | And | Or | Xor | Shl | Shr
+                 | And | Or | Not | Xor | Shl | Shr
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
 data NatInstrs   = UDiv | URem
 data ArrayInstrs = ExtractVal | InsertVal | Gep

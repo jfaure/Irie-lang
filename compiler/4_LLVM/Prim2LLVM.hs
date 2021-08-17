@@ -157,8 +157,8 @@ primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
       EQCmp-> \a b -> L.ICmp IP.EQ      a b []
       LECmp-> \a b -> L.ICmp IP.SLE     a b []
       GECmp-> \a b -> L.ICmp IP.SGE     a b []
-      LCmp -> \a b -> L.ICmp IP.SLT     a b []
-      GCmp -> \a b -> L.ICmp IP.SGT     a b []
+      LTCmp-> \a b -> L.ICmp IP.SLT     a b []
+      GTCmp-> \a b -> L.ICmp IP.SGT     a b []
   NatInstr i  -> case i of
       UDiv -> \a b -> L.UDiv False a b []
       URem -> \a b -> L.URem a b []

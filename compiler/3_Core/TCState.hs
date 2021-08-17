@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 module TCState where
+import MixfixSyn
 import CoreSyn
 import Externs
 import qualified ParseSyntax as P
@@ -30,10 +31,11 @@ data TCEnvState s = TCEnvState {
 
  , _labels  :: MV.MVector s (Maybe Type)
  , _fields  :: MV.MVector s (Maybe Type)
- }
+}
+
 makeLenses ''TCEnvState
 
-tcFail e = (errors %= (e:)) *> pure (Fail e)
+tcFail e = error $ e -- Poison e _ --(errors %= (e:)) *> pure (Fail e)
 
 dupVar pos x = use bis >>= \v -> MV.modify v
     (\(BiSub p m qp qm) -> if pos then BiSub p m (qp+1) qm else BiSub p m qp (qm+1)) x
@@ -41,10 +43,11 @@ dupVar pos x = use bis >>= \v -> MV.modify v
 dupp p pos ty = let dup = dupp p in ty `forM` \case
   THVar x | x /= p -> dupVar pos x
 --THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
-  THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
-  THTuple   tys -> dup pos `traverse_` tys
-  THProduct tys -> dup pos `traverse_` tys
-  THSumTy   tys -> dup pos `traverse_` tys
+  THTyCon t -> case t of
+    THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
+    THTuple   tys -> dup pos `traverse_` tys
+    THProduct tys -> dup pos `traverse_` tys
+    THSumTy   tys -> dup pos `traverse_` tys
   THBi b ty -> void $ dup pos ty
   THMu b ty -> void $ dup pos ty
   x -> pure ()

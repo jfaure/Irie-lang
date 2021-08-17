@@ -10,14 +10,13 @@ import Externs
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
-import qualified Data.Text as T
 import Control.Lens
 
 failBiSub :: (Show a , Show b) => Text -> a -> b -> TCEnv s BiCast
 failBiSub msg a b = let
-  msg =  msg <> "\nnot a subtype:\n" <> show a <> "\n<:\n" <> show b
+  msg' =  toS msg <> "\nnot a subtype:\n" <> show a <> "\n<:\n" <> show b
 --in BiEQ <$ (bisubNoSubtype %= (msg:))
-  in panic msg
+  in error msg'
 --handleBiSubFailure = (bisubNoSubtype <<%= (const [])) >>= panic . T.concat
 
 biSub_ a b = do
@@ -71,24 +70,10 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
 --  pure . did_ $ BiInst insts r
     pure r
 
-  (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
-  (THArrow ars ret ,  THSumTy x) -> pure BiEQ --_
+  (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)
+--(THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
   (THPi (Pi p ty) , y) -> biSub ty [y]
   (x , THPi (Pi p ty)) -> biSub [x] ty
-  (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSub x y
-  (THProduct x , THProduct y) -> let -- record: fields in the second must all be in the first
-    go k ty = case x IM.!? k of
-      Nothing -> failBiSub ("field: '" <> show k <> "' not found.") p m
-      Just t2 -> biSub t2 ty
-    in BiEQ <$ (go `IM.traverseWithKey` y) -- TODO bicasts
-  (THSumTy x , THSumTy y) -> let
-    go label subType = case y IM.!? label of -- y must contain supertypes of all x labels
-      Nothing -> failBiSub ("Sumtype: label not present: " <> show label) p m
-      Just superType -> biSub superType subType
-    in BiEQ <$ (go `IM.traverseWithKey` x) -- TODO bicasts
-  (THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
-  (THArrow ars ret, THTuple y) -> pure BiEQ -- labelBiSub-- TODO
-  (THTuple y, THArrow ars ret) -> pure BiEQ -- labelBiSub-- TODO
 
   -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
   -- Recursive types are not deBruijn indexed ! this means we must note the equivalent mu types
@@ -131,6 +116,24 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
 
   (a , b) -> failBiSub "no relation" a b
 
+biSubTyCon p m = \case
+  (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
+  (THArrow ars ret ,  THSumTy x) -> pure BiEQ --_
+  (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSub x y
+  (THProduct x , THProduct y) -> let -- record: fields in the second must all be in the first
+    go k ty = case x IM.!? k of
+      Nothing -> failBiSub ("field: '" <> show k <> "' not found.") p m
+      Just t2 -> biSub t2 ty
+    in BiEQ <$ (go `IM.traverseWithKey` y) -- TODO bicasts
+  (THSumTy x , THSumTy y) -> let
+    go label subType = case y IM.!? label of -- y must contain supertypes of all x labels
+      Nothing -> failBiSub ("Sumtype: label not present: " <> show label) p m
+      Just superType -> biSub superType subType
+    in BiEQ <$ (go `IM.traverseWithKey` x) -- TODO bicasts
+  (THArrow ars ret, THTuple y) -> pure BiEQ -- labelBiSub-- TODO
+  (THTuple y, THArrow ars ret) -> pure BiEQ -- labelBiSub-- TODO
+
+
 arrowBiSub (argsp,argsm) (retp,retm) = let -- zipWithM biSub args2 args1 *> biSub ret1 ret2
  -- Note. App return is never cast (?!)
   bsArgs [] [] = pure ([] , Nothing) <* biSub retp retm
@@ -154,5 +157,5 @@ termEq t1 t2 = case (t1,t2) of
 tyAp :: [TyHead] -> IM.IntMap Expr -> [TyHead]
 tyAp ty argMap = map go ty where
   go :: TyHead -> TyHead = \case
-    THArrow as ret -> THArrow (map go <$> as) (go <$> ret)
+    THTyCon (THArrow as ret) -> THTyCon $ THArrow (map go <$> as) (go <$> ret)
     x -> x

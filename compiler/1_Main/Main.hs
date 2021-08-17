@@ -1,4 +1,4 @@
--- main =~ Text >> Parse >> Core >> STG >> LLVM
+-- main = Text >> Parse >> Core >> STG >> LLVM
 import CmdLine
 import qualified ParseSyntax as P
 import Parser
@@ -38,10 +38,10 @@ text2Core :: CmdLine -> GlobalResolver -> FilePath -> Text
   -> IO (GlobalResolver , Externs , JudgedModule)
 text2Core flags resolver fName progText = do
   parsed <- case parseModule fName progText of
-     Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
-     Right r -> pure r
+    Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
+    Right r -> pure r
   let modNameMap = parsed ^. P.parseDetails . P.hNameBinds . _2
-      hNames = let getNm (P.FunBind nm _ _ _ _) = nm in getNm <$> V.fromList (parsed ^. P.bindings)
+      hNames = let getNm (P.FunBind fnDef) = P.fnNm fnDef in getNm <$> V.fromList (parsed ^. P.bindings)
 
   importPaths <- (findModule searchPath . toS) `mapM` (parsed ^. P.imports)
 --(modResolver , localImports) <- unzip . map (\(a,b,c)->a) <$> doFile flags resolver `mapM` importPaths
@@ -49,28 +49,28 @@ text2Core flags resolver fName progText = do
 
   -- let-rec on judgedBinds
   let localNames   = parsed ^. P.parseDetails . P.hNameBinds . _2
+      mixfixNames  = parsed ^. P.parseDetails . P.hNameMFWords . _2
       unknownNames = parsed ^. P.parseDetails . P.hNamesNoScope
       labelNames   = iMap2Vector $ parsed ^. P.parseDetails . P.labels
       fieldNames   = iMap2Vector $ parsed ^. P.parseDetails . P.fields
 
-      (tmpResolver , exts) = resolveImports resolver localNames unknownNames
-      judgedModule@(JudgedModule bindNames judgedBinds bis qtt argTys) = judgeModule parsed hNames exts
+--    (tmpResolver , exts) = resolveImports resolver localNames mixfixNames unknownNames
+      (tmpResolver , exts) = resolveImports modResolver localNames mixfixNames unknownNames
+      judgedModule@(JudgedModule bindNames judgedBinds) = judgeModule parsed hNames exts
       newResolver = addModule2Resolver tmpResolver (bind2Expr <$> judgedBinds)
 
   let judged'    = V.zip bindNames judgedBinds
-      namedBinds = (\(nm,j)->clYellow nm <> toS (prettyBind False (BindSource _ bindNames _ labelNames fieldNames) bis argTys j)) <$> judged'
+      namedBinds = (\(nm,j)->clYellow nm <> toS (prettyBind False (BindSource _ bindNames _ labelNames fieldNames) j)) <$> judged'
       putPass :: Text -> IO () = \case
         "args"       -> print flags
         "source"     -> putStr =<< readFile fName
         "parseTree"  -> putStrLn $ P.prettyModule parsed
---      "core"       -> putStrLn $ show judged
         "core"       -> void $ T.IO.putStrLn `mapM` namedBinds
         "namedCore"  -> void $ T.IO.putStrLn `mapM` namedBinds
         _ -> pure ()
       addPass passNm = putStrLn ("\n  ---  \n" :: Text) *> putPass passNm
   putPass `mapM_` (printPass flags)
   pure (newResolver , exts , judgedModule)
---pure ((newResolver , Import modNameMap judged') , exts , judgedModule)
 
 ---------------------------------
 -- Phase 2: codegen, linking, jit
@@ -118,55 +118,3 @@ repl2 = mapM T.IO.putStrLn =<< replWith [] (\st line -> pure $! line : st)
 testrepl = replCore defaultCmdLine
 
 testjit = LD.testJIT
-
--- data Pipeline = Pipeline {
---    parseArgs   :: [String] -> IO CmdLine
---  , parseFile   :: FilePath -> IO P.Module -- (Either (ParseErrorBundle Text Void) P.Module) 
---  , importPaths :: [Text] -> IO [FilePath]
---  , typeCheck   :: GlobalResolver -> P.Module -> V.Vector P.HName -> P.NameMap -> P.NameMap -> JudgedModule
---  , mkllvm      :: Externs -> JudgedModule -> LLVM.AST.Module
---  , linker      :: IO ()
---  , runJIT      :: Maybe (Word -> [LD.ModuleAST] -> LD.ModuleAST -> IO ())
--- }
--- 
--- defaultPipeline = Pipeline {
---    parseArgs = parseCmdLine
---  , parseFile = \fname -> (parseModule fname <$> T.IO.readFile fname) >>= \case
---      Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
---      Right r -> pure r
---  , importPaths = mapM (findModule searchPath . toS)
---  , typeCheck = \resolver parsed hNames localNames unknownNames -> let
---      (tmpResolver , exts) = resolveImports resolver localNames unknownNames
---      judgedModule@(JudgedModule bindNames judgedBinds bis qtt argTys) = judgeModule parsed hNames exts
---      newResolver = addModule2Resolver tmpResolver (bind2Expr <$> judgedBinds)
---    in judgedModule
---  , mkllvm = mkStg
---  , runJIT = Just $ LD.runJIT
---  , linker = pure ()
--- }
--- 
--- addPrintPasse :: String -> Pipeline -> Pipeline
--- addPrintPasse pass p = case pass of
--- --  "args"      -> print flags
---   "source"    -> p{parseFile = \f -> (putStr =<< readFile f) *> (parseFile p) f }
---   "parseTree" -> p{parseFile = parseFile p >=> \parsed -> parsed <$ putStrLn (P.prettyModule parsed)}
--- --"core"      -> p{typeCheck = (typeCheck p) void $ T.IO.putStrLn `mapM` namedBinds }
--- --"core"      -> putStrLn $ show judged
--- --"namedCore" -> void $ T.IO.putStrLn `mapM` namedBinds
--- --"llvm-hs"   -> p{mkllvm = (mkllvm p) >>= \s -> let text = ppllvm s
--- --  in s <$ TL.IO.putStrLn text *> TL.IO.writeFile "/tmp/aryaOut.ll" text}
--- --"llvm-cpp"  -> p{mkllvm = (mkllvm p) >>= \s -> s <$ LD.dumpModule s}
---   _           -> p
--- 
--- judgeFile p resolver file = (parseFile p) file >>= \parsed ->
---   let hNames = let getNm (P.FunBind nm _ _ _ _) = nm in getNm <$> V.fromList (_bindings parsed)
---       localNames   = parsed ^. P.parseDetails . P.hNameBinds . _2
---       unknownNames = parsed ^. P.parseDetails . P.hNamesNoScope
---   in do
---   paths <- (importPaths p) (parsed ^. P.imports)
---   pure $ (typeCheck p) resolver parsed hNames localNames unknownNames
--- 
--- runPipeline :: CmdLine -> IO GlobalResolver
--- runPipeline cmdLine = _
-
-

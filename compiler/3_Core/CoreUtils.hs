@@ -8,6 +8,9 @@ import qualified Data.IntMap as IM
 import qualified Data.Vector as V (zipWith)
 --import qualified Data.IntSet as IS
 
+mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (singleton <$> args) (singleton retTy)
+mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
+
 -- substitute all pi bound variables for new typevars;
 -- otherwise guarded debruijn vars won't be biunified on contact with TVar
 -- ; ie. TVar slots may contain stale debruijns, after which the pi-binder context is lost
@@ -16,45 +19,42 @@ substFreshTVars tvarStart = Prelude.map $ let
   r = substFreshTVars tvarStart
   in \case
   THBound i -> THVar (tvarStart + i)
-  THArrow as ret -> THArrow (r <$> as) (r ret)
-  THProduct as -> THProduct $ r <$> as
-  THTuple as -> THTuple $ r <$> as
-  THMu m t -> THMu m $ r t
+  THMu m t  -> THMu m $ r t
+  THTyCon t -> THTyCon $ case t of
+    THArrow as ret -> THArrow (r <$> as) (r ret)
+    THProduct as   -> THProduct $ r <$> as
+    THTuple as     -> THTuple $ r <$> as
   t -> t
 
 addArrowArgs [] = identity
 addArrowArgs args = \case
-  [THArrow as r] -> [THArrow (as ++ args) r]
+  [THTyCon (THArrow as r)] -> [THTyCon $ THArrow (as ++ args) r]
   [THPi (Pi p t)]   -> [THPi (Pi p $ addArrowArgs args t)]
   [THSi (Pi p t) _] -> [THPi (Pi p $ addArrowArgs args t)]
   [THBi i t] -> [THBi i $ addArrowArgs args t]
-  x -> [THArrow args x]
+  x -> [THTyCon $ THArrow args x]
 
 onRetType :: (Type -> Type) -> Type -> Type
 onRetType fn = \case
-  [THArrow as r] -> [THArrow as (onRetType fn r)]
+  [THTyCon (THArrow as r)] -> [THTyCon $ THArrow as (onRetType fn r)]
   [THPi (Pi p t)] -> [THPi (Pi p $ onRetType fn t)]
   [THMu m t] -> [THMu m (onRetType fn t)]
   x -> fn x
 --x -> x --onRetType fn <$> x
 
 getRetTy = \case
-  [THArrow _ r] -> getRetTy r -- currying
+  [THTyCon (THArrow _ r)] -> getRetTy r -- currying
   [THPi (Pi ps t)] -> getRetTy t
   [THBi i t] -> getRetTy t
   x -> x
 
 isTyCon = \case
- THArrow  {} -> True
- THTuple  {} -> True
- THProduct{} -> True
- THSumTy  {} -> True
- THArray  {} -> True
- _ -> False
+ THTyCon{} -> True
+ _         -> False
 
 
 isArrowTy = \case
-  [THArrow{}] -> True
+  [THTyCon (THArrow{})] -> True
   [THPi (Pi p t)] -> isArrowTy t
   [THBi i t] -> isArrowTy t
   [THSi (Pi p t) _] -> isArrowTy t
@@ -62,18 +62,19 @@ isArrowTy = \case
 
 flattenArrowTy ty = let
   go = \case
-    [THArrow d r] -> let (d' , r') = go r in (d ++ d' , r')
+    [THTyCon (THArrow d r)] -> let (d' , r') = go r in (d ++ d' , r')
     t -> ([] , t)
   in (\(ars,r) -> [THArrow ars r]) . go $ ty
 
+tyOfTy :: Type -> Type
 tyOfTy t = case t of
   [] -> _
   [THRecSi f ars] -> let
     arTys = take (length ars) $ repeat [THSet 0]
     uni = maximum $ (\case { [THSet n] -> n ; x -> 0 }) <$> arTys
-    in [THArrow arTys [THSet uni]]
+    in [THTyCon $ THArrow arTys [THSet uni]]
   [t] -> [THSet 0]
-  t  -> error $ "multiple types: " ++ show t
+  t  -> panic $ "multiple types: " <> show t
 
 tyExpr = \case -- expr found as type, (note. raw exprs cannot be types however)
   Ty t -> t
@@ -83,6 +84,7 @@ tyOfExpr  = \case
   Core x ty -> ty
   Ty t      -> tyOfTy t
   Fail e    -> []
+--ExprApp e a -> panic $ "ExprApp: " <> show e <> " [" <> show a <> "]"
 
 -- expr2Ty :: _ -> Expr -> TCEnv s Type
 -- Expression is a type (eg. untyped lambda calculus is both a valid term and type)
@@ -121,7 +123,7 @@ eqTyHead a b = kindOf a == kindOf b
 kindOf = \case
   THPrim{}  -> KPrim
   THVar{}   -> KVar
-  THArrow{} -> KArrow
+  THTyCon (THArrow{}) -> KArrow
   THBound{} -> KBound
   _ -> KAny
 
@@ -155,11 +157,11 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   [THBound a , THBound b]     -> if a == b then [t1] else join
   [THVar a , THVar b]         -> if a == b then [t1] else join
   [THExt a , THExt  b]        -> if a == b then [t1] else join
-  [THSumTy a   , THSumTy b]   -> [THSumTy $ IM.unionWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
-  [THProduct a , THProduct b] -> [THProduct $ IM.intersectionWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
-  [THTuple a , THTuple b]     -> [THTuple $ V.zipWith mergeTypes a b] -- [THProd (M.unionWith mergeTypes a b)]
-  [THArrow d1 r1 , THArrow d2 r2]
-    | length d1 == length d2 -> [THArrow (zM d1 d2) (mergeTypes r1 r2)]
+  [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of -- TODO depends on polarity (!)
+    [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy $ IM.unionWith mergeTypes a b]
+    [THProduct a , THProduct b] -> [THTyCon $ THProduct $ IM.intersectionWith mergeTypes a b]
+    [THTuple a , THTuple b]     -> [THTyCon $ THTuple $ V.zipWith mergeTypes a b]
+    [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM d1 d2) (mergeTypes r1 r2)]
   [THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!
   [THPi (Pi b1 t1) , THPi (Pi b2 t2)] -> [THPi $ Pi (b1 ++ b2) (mergeTypes t1 t2)]
   [THPi (Pi b1 t1) , t2] -> [THPi $ Pi b1 (mergeTypes t1 [t2])]

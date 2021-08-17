@@ -8,8 +8,9 @@ import CoreUtils
 import TypeCheck
 import TCState
 import PrettyCore
-import DesugarParse
+import DesugarParse (matches2TT)
 import Externs
+import Mixfix
 
 import Control.Lens
 import Data.List (unzip4, zipWith3, foldl1, span)
@@ -32,11 +33,9 @@ judgeModule pm hNames exts = let
     labelsV   <- MV.replicate nLabels Nothing
     bis'      <- MV.new nArgs
     [0 .. nArgs-1] `forM_` \i -> MV.write bis' i (BiSub [] [] 0 0)
---  domain'   <- MV.new nArgs
 
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
-      {
-        _pBinds   = pBinds'
+      { _pBinds   = pBinds'
       , _bisubNoSubtype = []
       , _bindWIP  = 0
       , _externs  = exts
@@ -55,7 +54,7 @@ judgeModule pm hNames exts = let
     bis''    <- V.unsafeFreeze (st ^. bis)
     wip''    <- V.unsafeFreeze (st ^. wip)
     let domain'' = V.take nArgs bis''
-    pure $ JudgedModule hNames wip'' bis'' mempty{- qtt''-} domain''
+    pure $ JudgedModule hNames wip''
 
 -- generalisation (and therefore type checking of usertypes) happens here
 judgeBind :: IName -> TCEnv s Expr
@@ -72,7 +71,7 @@ judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
 
   WIP -> use wip >>= \wip' -> do
     svwip <- bindWIP <<.= bindINm
-    let getTT (P.FunBind hNm implicits freeVars matches tyAnn) = let
+    let getTT (P.FunBind (P.FnDef hNm mf implicits freeVars matches tyAnn)) = let
           (mainArgs , mainArgTys , tt) = matches2TT matches
           args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
           in (tt , args)
@@ -107,7 +106,7 @@ generaliseBinds i ms = use wip >>= \wip' -> do
         Dominion (bStart , bEnd) = cd -- current dominion
         traceVars = pure () --use bis >>= \b -> [0..MV.length b -1] `forM` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
         in do
-        done <- case did_ $ naiveExpr of
+        done <- case naiveExpr of
           Core expr coreTy -> let
             ty = case expr of -- inferrence produces the return type of Abs, ignoring arguments
               Abs ars free x fnTy -> addArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
@@ -129,7 +128,7 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
   ann <- tyExpr <$> infer ann
   let inferArg = \case { [x] -> tyExpr <$> infer x ; [] -> pure [THSet 0] }
   argAnns  <- inferArg `mapM` mainArgTys
-  let annTy = case mainArgTys of { [] -> ann ; x  -> [THArrow argAnns ann] }
+  let annTy = case mainArgTys of { [] -> ann ; x  -> mkTyArrow argAnns ann }
   exts <- use externs
   labelsV <- V.freeze =<< use labels
   unless (check exts argTys labelsV inferredTy annTy)
@@ -173,7 +172,7 @@ substTVars recTVar = let
 
   addPiBound pos vars v = MV.read vars v >>= \bisub ->
     if shouldGeneralise pos bisub then generaliseVar pos vars v bisub
-    else d_ (show v <> show pos <> show bisub :: Text) $ pure []
+    else pure [] --d_ (show v <> show pos <> show bisub :: Text) $ pure []
 
   subst pos ty = nullLattice pos <$> let
     addMu d r v = (MV.read d v <&> if pos then _pSub else _mSub) <&> \case
@@ -240,17 +239,18 @@ substTVars recTVar = let
 
     THVarGuard v -> mus <<%= (+1) >>= \m -> let mb = [THMuBound m] in
       mb <$ MV.modify b (over (if pos then pSub else mSub) (const mb)) v
-    THArrow ars ret -> do -- THArrow changes polarity => make sure not to miss quantifying vars in the result-type
-      ret `forM` \case
-        THVar x -> dupVar True x
-        x -> pure ()
---    ars `forM` \x -> x `forM` \case
---      THVar x -> dupVar False x
---      x -> pure ()
-      (\arsTy retTy -> [THArrow arsTy retTy]) <$> subst (not pos) `mapM` ars <*> subst' ret
-    THTuple   tys -> (\x->[THTuple x])   <$> (subst' `traverse` tys)
-    THProduct tys -> (\x->[THProduct x]) <$> (subst' `traverse` tys)
-    THSumTy   tys -> (\x->[THSumTy   x]) <$> (subst' `traverse` tys)
+    THTyCon t -> (\t -> [THTyCon t]) <$> case t of
+      THArrow ars ret -> do -- THArrow changes polarity => make sure not to miss quantifying vars in the result-type
+        ret `forM` \case
+          THVar x -> dupVar True x
+          x -> pure ()
+--      ars `forM` \x -> x `forM` \case
+--        THVar x -> dupVar False x
+--        x -> pure ()
+        (\arsTy retTy -> THArrow arsTy retTy) <$> subst (not pos) `mapM` ars <*> subst' ret
+      THTuple   tys -> THTuple   <$> (subst' `traverse` tys)
+      THProduct tys -> THProduct <$> (subst' `traverse` tys)
+      THSumTy   tys -> THSumTy   <$> (subst' `traverse` tys)
     THBi b ty -> (\t->[THBi b t]) <$> subst' ty
     THMu b ty -> (\t->[THMu b t]) <$> subst' ty
     t -> pure [t]
@@ -278,27 +278,45 @@ infer = let
    (biret , [retV]) <- withBiSubs 1 (\idx -> biSub_ fTy (addArrowArgs argTys [THVar idx]))
    pure $ (biret , [THVar retV])
 
+ inferApp f args = let
+   setRetTy retTy biret castArgs = \case -- ! we must set the retTy since ttApp doesn't
+     Core (App f args) _ -> case biret of
+       CastApp _ (Just pap) -> let -- handle PAp
+         mkpap = Instr (MkPAp (length pap))
+         in Core (App mkpap (f : castArgs args biret)) retTy
+       CastApp _ Nothing    -> Core (App f (castArgs args biret)) retTy
+       _ -> Core (App f args) retTy --error $ show x
+     Core f _ -> Core f retTy
+     t -> t
+   in do
+     (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
+     let castArg (a :: Term) = \case { BiCast f -> App f [a] ; _ -> a }
+         castArgs args' cast = case cast of
+           CastApp ac maybePap -> zipWith castArg args' (ac ++ repeat BiEQ) -- TODO why not enough bisubs ?!
+           x -> args'
+     x <- setRetTy retTy biret castArgs <$> ttApp judgeBind f args
+     pure x
+
+ handleExtern = \case
+   ForwardRef b       -> judgeLocalBind b -- was a forward reference not an extern
+   Imported e         -> pure e
+   NotInScope  h      -> tcFail $ "not in scope: " <> show h
+   AmbiguousBinding h -> tcFail $ "ambiguous binding: " <> show h
+   MixfixyVar m       -> pure $ MFExpr m
+
+ judgeLocalBind b = judgeBind b <&> \case
+   Core e ty -> Core (Var $ VBind b) ty -- no need to inline the body
+   t -> t
  in \case
   P.WildCard -> pure $ Core Hole [THSet 0]
 
-  P.Var v -> let
-      judgeLocalBind b = judgeBind b <&> \case
-        Core e ty -> Core (Var $ VBind b) ty -- don't copy the body
-        t -> t
-    in case v of -- vars : lookup in appropriate environment
+  P.Var v -> case v of -- vars : lookup in appropriate environment
     P.VBind b   -> judgeLocalBind b -- polytype env
-    P.VLocal l  -> do -- monotype env (fn args)
---    _+ 1 to +qtt, also yolo _+ 1 to -qtt in case this is a funciton type (not ideal)
-      use bis >>= \v-> MV.modify v (\(BiSub a b qa qb) -> BiSub a b (qa) (qb)) l
-
-      pure $ Core (Var $ VArg l) [THVar l]
-    P.VExtern i -> (`readParseExtern` i) <$> use externs >>= \case
-      Left b  -> judgeLocalBind b -- was a forward reference not an extern
-      Right e -> pure e
-
+    P.VLocal l  -> pure $ Core (Var (VArg l)) [THVar l]
+    P.VExtern i -> use externs >>= \e -> handleExtern (readParseExtern e i)
   P.Abs top -> let
     -- unlike topBind, don't bother generalising the type
-      getTT (P.FunBind hNm implicits freeVars matches tyAnn) = let
+      getTT (P.FunBind (P.FnDef hNm mf implicits freeVars matches tyAnn)) = let
         (mainArgs , mainArgTys , tt) = matches2TT matches
         args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
         in (tt , args)
@@ -313,64 +331,54 @@ infer = let
           in Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x fnTy) ty
       t -> t
 
-  P.App fTT argsTT -> do
-    f    <- infer fTT
-    args <- infer `mapM` argsTT
-    (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
-    let castArg (a :: Term) = \case { BiCast f -> App f [a] ; _ -> a }
-        castArgs args' cast = case cast of
-          CastApp ac maybePap -> zipWith castArg args' (ac ++ repeat BiEQ) -- TODO why not enough bisubs ?!
-          x -> args'
-    x <- ttApp judgeBind f args <&> \case -- ! we must set the retTy since ttApp doesn't
-      Core (App f args) _ -> case biret of
-        CastApp _ (Just pap) -> let -- handle PAp
-          mkpap = Instr (MkPAp (length pap))
-          in Core (App mkpap (f : castArgs args biret)) retTy
-        CastApp _ Nothing    -> Core (App f (castArgs args biret)) retTy
-        _ -> Core (App f args) retTy --error $ show x
-      Core f _ -> Core f retTy
-      t -> t
-    pure x
+  P.Juxt juxt -> let
+    inferExprApp = \case
+      ExprApp fE [] -> error "panic"
+      ExprApp fE argsE -> inferExprApp fE >>= \f -> (inferExprApp `mapM`  argsE) >>= inferApp f
+      QVar (m,i) -> use externs >>= \e -> handleExtern (readQParseExtern e m i)
+      core -> pure core
+    in inferExprApp =<< (solveMixfixes <$> (infer `mapM` juxt))
+
+  P.App fTT argsTT -> infer fTT >>= \f -> (infer `mapM` argsTT) >>= inferApp f
 
   P.Cons construct -> do
     let (fields , rawTTs) = unzip construct
     exprs <- infer `mapM` rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) }) <$> exprs
-    pure $ Core (Cons (IM.fromList $ zip fields tts)) [THProduct (IM.fromList $ zip fields tys)]
+    pure $ Core (Cons (IM.fromList $ zip fields tts)) [THTyCon $ THProduct (IM.fromList $ zip fields tys)]
 
   P.TTLens tt fields maybeSet -> infer tt >>= \record -> let
       recordTy = tyOfExpr record
       mkExpected :: Type -> Type
-      mkExpected dest = foldr (\fName ty -> [THProduct (IM.singleton fName ty)]) dest fields
+      mkExpected dest = foldr (\fName ty -> [THTyCon $ THProduct (IM.singleton fName ty)]) dest fields
     in case record of
     Core f _ -> case maybeSet of
       P.LensGet    -> do -- for get, we need a typevar for the destination
         (_bs , [retTy]) <- withBiSubs 1 $ \ix -> biSub recordTy (mkExpected [THVar ix])
         pure $ Core (TTLens f fields LensGet) [THVar retTy]
---    P.LensSet x  -> infer x >>= \ammo -> let expect = mkExpected (tyOfExpr ammo)
---      in biSub recordTy [THProduct IM.empty] $> Core (TTLens f fields (LensSet ammo)) expect
+
       P.LensSet x  -> do
         (ammo , [retVar]) <- withBiSubs 1 $ \ix -> do
           ammo <- infer x
           let expect = mkExpected (tyOfExpr ammo)
           -- TODO don't overwrite foralls within expect
-          biSub [THBi 1 [THArrow [[THBound 0 , THProduct mempty]] (THBound 0 : expect)]] [THArrow [recordTy] [THVar ix]]
+          biSub [THBi 1 (mkTyArrow [[THBound 0] , [THTyCon (THProduct mempty)]] (THBound 0 : expect))] (mkTyArrow [recordTy] [THVar ix])
           pure ammo
         pure $ Core (TTLens f fields (LensSet ammo)) [THVar retVar]
 
       P.LensOver x -> infer x >>= \fn -> do
         (bs , [tyOld, tyNew]) <- withBiSubs 2 $ \ ix -> do
-          biSub [THArrow [[THVar ix]] [THVar (ix+1)]] (tyOfExpr fn)
+          biSub (mkTyArrow [[THVar ix]] [THVar (ix+1)]) (tyOfExpr fn)
           biSub recordTy (mkExpected [THVar (ix+1)])
         pure $ Core (TTLens f fields (LensOver fn)) (mkExpected [THVar tyNew])
-    t -> panic "record type must be a term" -- pure t
+    t -> error "record type must be a term" -- pure t
 
   -- TODO Set0 not general enough (want a forall (a : _))
   P.Label l tts -> infer `mapM` tts <&> \exprs -> let
     -- label return type could be anything of type label (?!)
 --  labTy = addArrowArgs (tyOfExpr <$> exprs) [THSet 0] --[THPi $ Pi [(0,[])] [THBound 0]]
-    labTy = [THTuple $ V.fromList $ tyOfExpr <$> exprs]
-    in Core (Label l exprs) [THSumTy $ IM.singleton l labTy]
+    labTy = [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
+    in Core (Label l exprs) [THTyCon $ THSumTy $ IM.singleton l labTy]
 
   P.TySum alts -> do -- alts are function types
     -- 1. Check against ann (retTypes must all subsume the signature)
@@ -385,7 +393,7 @@ infer = let
     sumArgsMap <- go `mapM` alts
 --  use labels >>= \labelsV -> sumArgsMap `forM` \(l,t) -> MV.write labelsV l (Just t)
     let --sumTy = [THSum $ fst <$> sumArgsMap]
-        sumTy = [THSumTy $ IM.fromList sumArgsMap]
+        sumTy = [THTyCon $ THSumTy $ IM.fromList sumArgsMap]
         returnTypes = getFamilyTy . snd <$> sumArgsMap
         getFamilyTy x = case getRetTy x of -- TODO currying ?
 --        [THRecSi m ars] -> [THArrow (take (length ars) $ repeat [THSet 0]) sumTy]
@@ -399,7 +407,7 @@ infer = let
     -- * find the type of the sum type being deconstructed
     -- * find the type of it's alts (~ lambda abstractions)
     -- * type of Match is (sumTy -> Join altTys)
-      mkFnTy vals = [THTuple $ V.fromList vals] -- \case { [] -> [THSet 0] ; x -> [THArrow (drop 1 x) [THSet 0]] }
+      mkFnTy vals = [THTyCon $ THTuple $ V.fromList vals] -- \case { [] -> [THSet 0] ; x -> [THArrow (drop 1 x) [THSet 0]] }
       pattern2Ty = mkFnTy . \case
         [] -> []
         P.PArg _ : xs -> [THSet 0] : [pattern2Ty xs]
@@ -414,44 +422,48 @@ infer = let
           argTys   = (\i -> [THVar i]) <$> argNames
           args     = zip argNames argTys
           in (Core (Abs args free t tyAltRet) tyAltRet
-             , [THTuple $ V.fromList argTys])
+             , [THTyCon $ THTuple $ V.fromList argTys])
         (alts , altTys) = unzip $ zipWith3 mkFn patterns freeVars altExprs
         altLabelsMap = IM.fromList $ zip altLabels alts
-        scrutTy = [THSumTy $ IM.fromList $ zip altLabels altTys] -- [THSplit altLabels]
-        matchTy = [THArrow [scrutTy] retTy]
+        scrutTy = [THTyCon $ THSumTy $ IM.fromList $ zip altLabels altTys] -- [THSplit altLabels]
+        matchTy = mkTyArrow [scrutTy] retTy
     pure $ Core (Match retTy altLabelsMap Nothing) matchTy
 
   -- desugar --
   P.LitArray literals -> let
     ty = typeOfLit (fromJust $ head literals) -- TODO merge (join) all tys ?
-    in pure $ Core (Lit . Array $ literals) [THArray [ty]]
+    in pure $ Core (Lit . Array $ literals) [THTyCon $ THArray [ty]]
 
   P.Lit l  -> pure $ Core (Lit l) [typeOfLit l]
---  P.TyListOf t -> (\x-> Ty [THArray x]) . yoloExpr2Ty <$> infer t
-  P.InfixTrain lArg train -> infer $ resolveInfixes (\_->const True) lArg train -- TODO
+--  P.InfixTrain lArg train -> infer $ resolveInfixes (\_->const True) lArg train -- TODO
   x -> error $ "inference engine not ready for parsed tt: " <> show x
 
 -----------------
 -- TT Calculus --
 -----------------
--- How to handle Application of mixtures of types and terms
+-- How to handle Application of Exprs (mixture of types and terms)
 --ttApp :: _ -> Expr -> [Expr] -> TCEnv s Expr
-ttApp readBind fn args = -- trace (clYellow (show fn <> " $ " <> show args)) $
- case fn of
-  Core cf ty -> case cf of
-    Instr (TyInstr Arrow)  -> expr2Ty readBind `mapM` args <&> \case
-      { [a , b] -> Ty [THArrow [a] b] }
-    Instr (TyInstr MkIntN) -> case args of
-      [Core (Lit (Int i)) ty] -> pure $ Ty [THPrim (PrimInt $ fromIntegral i)]
-    coreFn -> let
-      (ars , end) = span (\case {Core{}->True ; _->False}) args
-      app = App cf $ (\(Core t _ty)->t) <$> ars -- drop argument types
-      in pure $ case end of
-        [] -> Core app [] -- don't forget to set retTy
-        x  -> error $ "term applied to type: " <> show app <> show x
-  Ty f -> case f of -- always a type family
-    -- TODO match arities ?
-    [THFam f a ixs] -> pure $ Ty [THFam f (drop (length args) a) (ixs ++ args)]
---  x -> pure $ Ty [THFam f [] args]
-    x -> error $ "ttapp panic: " <> show x <> " $ " <> show args
-  _ -> error $ "ttapp: not a function: " <> show fn <> " $ " <> show args
+ttApp readBind fn args = let -- trace (clYellow (show fn <> " $ " <> show args)) $
+ ttApp' = ttApp readBind
+ in case fn of
+   ExprApp f2 args2 -> (`ttApp'` args) =<< (ttApp' f2 args2)
+   Core cf ty -> case cf of
+     Var (VBind i) -> readBind i >>= \f -> ttApp' f args
+--   Instr (MkPAp n) -> case args of
+--     f : args' -> ttApp' f args'
+     Instr (TyInstr Arrow)  -> expr2Ty readBind `mapM` args <&> \case
+       { [a , b] -> Ty $ mkTyArrow [a] b }
+     Instr (TyInstr MkIntN) -> case args of
+       [Core (Lit (Int i)) ty] -> pure $ Ty [THPrim (PrimInt $ fromIntegral i)]
+     coreFn -> let
+       (ars , end) = span (\case {Core{}->True ; _->False}) args
+       app = App cf $ (\(Core t _ty)->t) <$> ars -- drop argument types
+       in pure $ case end of
+         [] -> Core app [] -- don't forget to set retTy
+         x  -> error $ "term applied to type: " <> show app <> show x
+   Ty f -> case f of -- always a type family
+     -- TODO match arities ?
+     [THFam f a ixs] -> pure $ Ty [THFam f (drop (length args) a) (ixs ++ args)]
+--   x -> pure $ Ty [THFam f [] args]
+     x -> error $ "ttapp panic: " <> show x <> " $ " <> show args
+   _ -> error $ "ttapp: not a function: " <> show fn <> " $ " <> show args
