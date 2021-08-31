@@ -1,13 +1,9 @@
 {-# Language TypeFamilies #-}
 module Prim2LLVM where
-
 import Prim
 import CoreSyn
+import CoreUtils
 import Externs
---import Control.Monad.ST.Lazy -- maybe needed
---import Control.Monad.State.Lazy
---import Control.Monad.Primitive (PrimMonad,PrimState,primitive)
---import Data.Maybe
 import Data.List (unzip3 , (!!))
 import Data.String
 import qualified Data.Text as T (pack)
@@ -15,6 +11,7 @@ import qualified Data.ByteString.Short as BS
 import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
+import qualified Data.Vector as V
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Type as LT
 import qualified LLVM.AST.Typed as LT
@@ -22,20 +19,12 @@ import qualified LLVM.AST.IntegerPredicate as IP
 import qualified LLVM.AST.FloatingPointPredicate as FP
 import qualified LLVM.AST.Constant as C
 import LLVM.AST.AddrSpace
-import LLVM.AST.Global
-import LLVM.AST.Linkage
+import LLVM.AST.Global  as L
+import LLVM.AST.Linkage as L
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Instruction hiding (gep)
 
--- nat, nat, array, irregular array, tree
--- TODO wrapper types ? esp. optimize extracting data out of a container
-data DataTypes = Enum | Peano | Flat | SumTypeList | Tree
-data SubData = SubData | Wrap
-
--- patch up missing PrimMonad instance for lazy ST
---instance PrimMonad (ST s) where
---  type PrimState (ST s) = s
---  primitive = strictToLazyST . primitive
+data SumKinds = Enum | Peano | Flat | SumTypeList | Tree
 
 type CGEnv s a = StateT (CGState s) (ST s) a
 type CGBodyEnv s a = IRBuilderT (StateT (CGState s) (ST s)) a
@@ -49,17 +38,54 @@ data CGState s = CGState {
  , llvmDefs   :: [L.Definition]
 
  -- Internal State
+ , stack           :: [CallGraph]
+ , primDecls       :: Maybe (MV.MVector s (Maybe L.Definition))
+ , gmpDecls        :: Maybe (MV.MVector s (Maybe L.Definition))
  , moduleUsedNames :: M.Map BS.ShortByteString Int
- , stack           :: [CallGraph s]
 }
 
-data CallGraph s = CallGraph {
+data DataArg = DataArg { qtt :: Int , aframe :: L.Operand , dOp :: L.Operand } deriving Show
+
+data CallGraph = CallGraph {
    regArgs      :: IM.IntMap L.Operand
- , dataArgs     :: IM.IntMap DataArg -- incl. temp datas. these must all be consumed !
  , splits       :: [Split]   -- sumtypes split earlier on this SF
+ , retLoc       :: Maybe L.Operand
+ , dynRetDrops  :: Maybe L.Operand
+ , contextNm    :: [L.Name] -- for naming structs
 } deriving Show
 
-data DataArg = DataArg { qtt :: Int , aframe :: L.Operand , dOp :: L.Operand } deriving Show
+data RecordField = Dropped | Geppable | Gepped L.Operand deriving Show
+data CGOp -- Annotated llvm operands returned by terms. Also pass down a dyn ret drop array
+ = LLVMOp   { op :: L.Operand }
+ -- Note. Records. if we have a Just retloc in scope, we have to write out a struct
+ -- Else we can track all its fields, only write it iff passed to function (byval)
+ | RawStruct{ fieldOps       :: V.Vector L.Operand }
+ | Record   { recordOp       :: L.Operand
+            , fieldTypes     :: V.Vector L.Type
+            , localSubRecord :: Maybe (V.Vector RecordField)
+            , structName     :: L.Name
+            }
+ | Struct   { fieldTys       :: V.Vector L.Type
+            , structOp       :: L.Operand
+            }
+-- | LensOver { object         :: L.Operand -- whole struct
+--            , lensAddr       :: L.Operand -- field pointer
+--            }
+ deriving Show
+
+commitLocalRecord (Record oldRecord fTys subRecord nm) = case subRecord of
+  Nothing -> pure oldRecord
+  Just v  -> let
+    go newFieldOps i field = case field of
+      Dropped  -> pure newFieldOps
+      Gepped l -> pure (l : newFieldOps)
+      Geppable -> (\l -> (l : newFieldOps)) <$> loadIdx oldRecord i
+    in do
+      newFields <- V.ifoldM go [] v
+      sret      <- alloca' (mkStruct_t $ LT.typeOf <$> newFields) Nothing
+      consStruct sret newFields
+
+mkSTGOp = LLVMOp
 
 data Split = Split { -- a data opened by Match (may be reused or freed)
    lname      :: ILabel
@@ -67,54 +93,29 @@ data Split = Split { -- a data opened by Match (may be reused or freed)
  , components :: IM.IntMap L.Operand -- datas here were split from this SF
 } deriving Show
 
--- currency used in the code generator
-data STGOp = STGOp  {
-   op  :: L.Operand
- , fr  :: Maybe DataFrame
-} deriving Show
 type DataFrame = L.Operand
---data DataFrame = TreeFrame L.Operand | FlatFrame L.Operand
---data DataFrame = DFTree { getDFrame :: L.Operand } | DFList { getDFrame :: L.Operand } deriving Show
-
--- TODO
--- * trim (fn property)
--- * dups
--- Want to know: qtt of arg use + arg build
-
--- ??
--- inplaceing sublists
--- Implicit pointers (esp. flat data)
--- paps (pap vs fn ptr)
--- poly & copyable data
--- wrap frames; eg. containers (to avoid frame-merge)
--- size classes + extensible fastbins (on frame-merge)
--- foldr elim ; foldr f z = \case Empty => z ; (Leaf x) => f x z ; (Node l k r) => foldr f (f k (foldr f z r)) l
--- extraction (esp. list)
-
--- !!
--- Builder qtt
--- PAP: fn ptrs are lists of ptrs, if first is NULL, then it's a PAP
-
--- fnDef:
---   dataArgs become 2 args; add the frame
--- fnApp:
---   dup args if needed by fn
---   codegen each arg + give fn frame
---   maybe end the ret frame builder
--- Label: like fnApp, also
---   merge data arg frames (or make a frame)
---   either newFrag, or pushFlat
--- Match:
---   insert extra dups on each branch ; report min for the whole branch statement
---   register split data (basically directly inline the splitter fns)
---   if frame not used: then free frame else free frags (if useful)
-
 modifySF f = modify $ \x->x { stack = (\(x:xs) -> f x : xs) (stack x) }
+getSF :: CGBodyEnv s CallGraph
+getSF = gets (fromJust . head . stack)
+getRetLoc :: CGBodyEnv s (Maybe L.Operand)
+getRetLoc = gets (retLoc . fromJust . head . stack)
+setRetLocM :: Maybe L.Operand -> CGBodyEnv s ()
+setRetLocM r = (modifySF $ \x->x {retLoc = r })
+setRetLoc :: L.Operand -> CGBodyEnv s L.Operand
+setRetLoc r = r <$ (modifySF $ \x->x {retLoc = Just r })
+delRetLoc :: CGBodyEnv s ()
+delRetLoc = modifySF $ \x->x {retLoc = Nothing }
+
+data FNRet
+ = RetReg
+ | RetRecord
+ | RetBigint
+ deriving Show
 
 data StgWIP
  = TWIP   (HName , Bind)
 
- | STGFn     { retData :: Bool , freeArgs :: [IName] , fnOp :: L.Operand }
+ | STGFn       { retData :: !FNRet , freeArgs :: [IName] , fnOp :: L.Operand }
 -- | STGDataFn { freeArgs :: [IName] , fnOp :: L.Operand , sts :: IM.IntMap QTT }
  | STGConstant { fnOp :: L.Operand } -- top level functions for now
 
@@ -123,16 +124,6 @@ data StgWIP
  deriving Show
 
 getVAFn retTy nm = L.ConstantOperand (C.GlobalReference (LT.ptr $ LT.FunctionType retTy [] True) (L.mkName nm))
-frAlloc_mergeFrames args      = getVAFn frameType   "fralloc_mergeFrames" `call'` args
-frAlloc_shareFrame args       = getVAFn frameType   "fralloc_shareFrames" `call'` [args]
-frAlloc_freeFrame frame       = getVAFn voidPtrType "fralloc_freeFrame" `call'` [frame]
-frAlloc_isSingle frame        = getVAFn intType     "fralloc_isSingle" `call'` [frame]
-frAlloc_new frame sz          = getVAFn voidPtrType "fralloc_newFrag" `call'` [frame , sz]
-frAlloc_freeFrag frame ptr sz = getVAFn voidPtrType "fralloc_freeFrag" `call'` [frame,ptr,sz]
-
-frAlloc_DFList_mergeFrames args = getVAFn frameType "fralloc_DFList_mergeFrames" `call'` args
-frAlloc_push frame sz           = getVAFn voidPtrType "fralloc_push" `call'` [frame , sz]
-frAlloc_pop  frame ptr sz       = getVAFn voidPtrType "fralloc_pop" `call'` [frame,sz] -- ! no ptr needed
 
 freshTopName :: BS.ShortByteString -> CGEnv s L.Name
 freshTopName suggestion = do
@@ -142,17 +133,19 @@ freshTopName suggestion = do
 
 -- most llvm instructions take flags, stg wants functions on operands
 primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
+ NumInstr n -> case n of
+  BitInstr i  -> case i of
+      And  -> \a b -> L.And             a b []
+      Or   -> \a b -> L.Or              a b []
+      Xor  -> \a b -> L.Xor             a b []
+      ShL  -> \a b -> L.Shl False False a b []
+      ShR  -> \a b -> L.LShr False      a b []
   IntInstr i  -> case i of
       Add  -> \a b -> L.Add False False a b []
       Sub  -> \a b -> L.Sub False False a b []
       Mul  -> \a b -> L.Mul False False a b []
       SDiv -> \a b -> L.SDiv False      a b []
       SRem -> \a b -> L.SRem            a b []
-      And  -> \a b -> L.And             a b []
-      Or   -> \a b -> L.Or              a b []
-      Xor  -> \a b -> L.Xor             a b []
-      Shl  -> \a b -> L.Shl False False a b []
-      Shr  -> \a b -> L.LShr False      a b []
   PredInstr p -> case p of
       EQCmp-> \a b -> L.ICmp IP.EQ      a b []
       LECmp-> \a b -> L.ICmp IP.SLE     a b []
@@ -169,17 +162,24 @@ primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
       FDiv -> \a b -> L.FDiv L.noFastMathFlags a b []
       FRem -> \a b -> L.FRem L.noFastMathFlags a b []
       FCmp -> \a b -> L.FCmp FP.UEQ a b []
-  t -> error $ show t
+ t -> error $ show t
 
 -- basically is it bigger than register size
-isDataTyHead = \case { {-THSum{}->True ; THSplit{}->True-} ; THExt 21->True ; _->False } -- HACK
+isDataTyHead = \case { THTyCon (THProduct{})->True ; THPrim PrimBigInt->True ; THExt 21->True ; _->False } -- HACK
+dataRetKind = \case
+  THPrim (PrimBigInt)   -> RetBigint
+  THTyCon (THProduct{}) -> RetRecord
+  _ -> RetReg
 
+isStructTy  = \case { LT.StructureType{} -> True ; LT.NamedTypeReference{} -> True ; _ -> False }
+isStructPtr = \case { LT.PointerType s _ -> isStructTy s ; _ -> False }
 primTy2llvm :: PrimType -> L.Type =
   let doExtern isVa tys =
         let (argTys, [retTy]) = splitAt (length tys -1) tys
         in LT.FunctionType retTy argTys isVa
   in \case
   PrimInt   i   -> LT.IntegerType $ fromIntegral i
+  PrimBigInt    -> LT.NamedTypeReference "mpz_struct_t"
   PrimFloat f   -> LT.FloatingPointType $ case f of
       HalfTy    -> LT.HalfFP
       FloatTy   -> LT.FloatFP
@@ -215,22 +215,42 @@ emitArray nm arr = let
 --------------------------
 -- IRBuilder extensions --
 --------------------------
---voidPtrType = charPtrType -- llvm doesn't allow void pointers
-tagBits = 32
-voidPtrType = LT.ptr $ LT.NamedTypeReference "ANY"
+-- horrible C typedefs
+size_t     = i32_t  -- Note. any of unsigned char -> unsigned long long
+int_t      = i32_t
+
+mkStruct_t = LT.StructureType False
+charPtr_t  = LT.ptr i8_t
+iN_t       = LT.IntegerType
+i1_t       = LT.IntegerType 1
+i8_t       = LT.IntegerType 8
+i32_t      = LT.IntegerType 32
+i64_t      = LT.IntegerType 64
+half_t : float_t : double_t : fP128_t : pPC_FP128_t = LT.FloatingPointType <$>
+  [ LT.HalfFP , LT.FloatFP , LT.DoubleFP , LT.FP128FP , LT.PPC_FP128FP]
+
+top_t = LT.ptr $ LT.NamedTypeReference "Top"
+bot_t = LT.ptr $ LT.NamedTypeReference "Bot"
+opaque_t    = LT.ptr $ LT.NamedTypeReference "Void"
+voidPtrType = LT.ptr $ LT.NamedTypeReference "Void"
 frameType   = LT.ptr $ LT.NamedTypeReference "Fr"
+tagBits = 32
 polyType = voidPtrType -- LT.ptr $ LT.NamedTypeReference "A"
 charPtrType :: L.Type = LT.PointerType (LT.IntegerType 8) (AddrSpace 0)
-intType    = LT.IntegerType 32
-sumTagType = LT.IntegerType tagBits
-constTag   = L.ConstantOperand . C.Int tagBits
-boolType   = LT.IntegerType 1
-constI32   = L.ConstantOperand . C.Int 32
-polyFnType'= LT.FunctionType voidPtrType [] True -- `char* f(..)`
-polyFnType = LT.ptr polyFnType'
+intType     = LT.IntegerType 32
+sumTagType  = LT.IntegerType tagBits
+constTag    = L.ConstantOperand . C.Int tagBits
+boolType    = LT.IntegerType 1
+constIN b x = L.ConstantOperand (C.Int b x)
+constI1     = constIN 1
+constI32    = constIN 32
+constI64    = constIN 64
+polyFnType' = LT.FunctionType voidPtrType [] True -- `char* f(..)`
+polyFnType  = LT.ptr polyFnType'
 varArgsFnTy retTy = LT.ptr $ LT.FunctionType retTy [] True
 
 load' ptr = load ptr 0
+storePtr ty ptr op = bitcast ptr (LT.ptr ty) >>= \p -> store' p op
 store' ptr op = store ptr 0 op
 alloca' ty op = alloca ty op 0
 call' f = call f . map (,[])
@@ -253,6 +273,8 @@ gep addr is = let
   in emitInstr ty $ (L.GetElementPtr False addr is [])
 
 -- load a value from an array (~pointer to array)
+zext' ty v = zext v ty
+bitcast' a b = bitcast b a
 loadIdx :: L.Operand -> Int -> CGBodyEnv s L.Operand
 loadIdx ptr i = load' =<< (ptr `gep` [constI32 0, constI32 $ fromIntegral i])
 storeIdx :: L.Operand -> Int -> L.Operand -> CGBodyEnv s ()
@@ -286,6 +308,10 @@ mkSizedPtrList ptrType ops = flip named "ptrListSZ" $  let -- + size variable
   storeIdx ptr 1 ptrList
   pure ptr
 
+consStruct ptr vals = let
+  ty = LT.StructureType False $ LT.typeOf <$> vals
+  in ptr <$ zipWithM (\v i -> storeIdx ptr i v) vals ([0..] :: [Int])
+
 mkStruct :: Maybe L.Type -> [L.Operand] -> CGBodyEnv s L.Operand
 mkStruct maybeTy vals = let
   ty    = case maybeTy of
@@ -315,18 +341,162 @@ pApAp pap papArity llArgs =
 --   if doPhi then phi phiNodes
 --   else pure (L.ConstantOperand C.TokenNone)
 
-mkBranchTable :: L.Operand -> [C.Constant] -> [(BS.ShortByteString , CGBodyEnv s STGOp)] -> CGBodyEnv s STGOp
+mkBranchTable :: L.Operand -> [C.Constant] -> [(BS.ShortByteString , CGBodyEnv s CGOp)] -> CGBodyEnv s CGOp
 mkBranchTable scrut labels alts = mdo
   switch scrut defaultBlock (zip labels entryBlocks)
   (entryBlocks , phiNodes , phiNodesFrames) <- unzip3 <$> alts `forM` \(blockNm , cg) -> do
     entry <- block `named` blockNm
-    STGOp retOp maybeDFrame <- cg <* br endBlock
+    retOp <- op <$> cg
+    br endBlock
+--  STGOp retOp maybeDFrame struct <- cg <* br endBlock
     exit <- currentBlock
-    pure (entry , (retOp , exit) , (,exit) <$> maybeDFrame)
+    pure (entry , (retOp , exit) , (,exit) <$> Nothing)
   defaultBlock <- (block `named` "default") <* unreachable
   endBlock <- block `named` "end"
-  op <- phi phiNodes
+  phiOp <- phi phiNodes
   dframe <- case catMaybes phiNodesFrames of
     []  -> pure Nothing
     ars -> Just <$> phi ars
-  pure $ STGOp op dframe
+  pure $ LLVMOp phiOp
+
+cgType :: [TyHead] -> CGEnv s L.Type
+cgType = \x -> case x of
+  [t] -> cgTypeAtomic t
+  [THExt 1 , _] -> pure $ intType
+  [_ , THExt 1] -> pure $ intType
+  x   -> pure polyType
+--x   -> panic $ "lattice Type: " ++ show x
+
+cgTypeAtomic = \case --x -> case did_ x of
+  THExt i -> gets externs >>= (cgType . tyExpr . (`readPrimExtern` i))
+  THTyCon t -> case t of
+    THArrow   tys t -> (\ars retTy -> L.FunctionType retTy ars False) <$> (cgType `mapM` tys) <*> cgType t
+    THProduct tyMap -> mkStruct_t <$> (cgType `mapM` IM.elems tyMap)
+--  THSumTy   tyMap ->
+--  THArray t  -> _ -- LT.ArrayType $ cgType t
+--THVar v    -> gets (did_ . _pSub . (V.! v) . typeVars . coreModule) >>= cgType
+--THArg a    -> gets (did_ . _mSub . (V.! a) . argTypes . coreModule) >>= cgType
+--THRec r    -> gets (did_ . _pSub . (V.! r) . typeVars . coreModule) >>= cgType
+  THVar{} -> panic "thvar found in codegen!" -- pure voidPtrType
+  x -> pure $ case x of -- can be generated non monadically
+    THTop    -> top_t
+    THBot    -> bot_t
+    THPrim p -> primTy2llvm p
+    THSet  0 -> tyLabel
+    x -> error $ "MkStg: not ready for ty: " ++ show x
+tyLabel = voidPtrType -- HACK
+
+----------------
+-- Primitives --
+----------------
+literal2Stg :: Literal -> CGEnv s C.Constant
+literal2Stg l = let
+  mkChar c = C.Int 8 $ toInteger $ ord c 
+  in case l of
+  Char c    -> pure $ mkChar c
+  String s  -> flip emitArray (mkChar<$>(s++['\0'])) =<< freshTopName "str"
+--Array  x  -> emitArray $ (literal2Stg <$> x)
+  Int i     -> pure $ C.Int 32 i
+--  Frac f    -> C.Float (LF.Double $ fromRational f)
+  x -> error $ show x
+
+-- generate fn for prim instructions (ie. if need a function pointer for them)
+emitPrimFunction instr argTys retTy = do
+  nm <- freshTopName "instr" -- TODO nah
+  (params, blocks) <- runIRBuilderT emptyIRBuilder $ do
+    params@[a,b] <- argTys `forM` \ty -> L.LocalReference ty <$> fresh
+    ret =<< emitInstr (LT.typeOf a) ((primInstr2llvm instr) a b)
+    pure params
+  let fnParams = (\(L.LocalReference ty nm) -> Parameter ty nm []) <$> params
+  emitFunction nm fnParams retTy blocks
+
+emitFunction :: L.Name -> [Parameter] -> LT.Type -> [L.BasicBlock] -> CGEnv s L.Operand
+emitFunction label fnParams retty blocks =
+  let def = L.GlobalDefinition L.functionDefaults
+        { name        = label
+        , parameters  = (fnParams, False)
+        , returnType  = retty
+        , basicBlocks = blocks
+        }
+      argTys = (\(Parameter ty nm at)->ty) <$> fnParams
+      funty = LT.ptr $ LT.FunctionType retty argTys False
+      fnOp = L.ConstantOperand $ C.GlobalReference funty label
+  in fnOp <$ emitDef def
+
+--------------------
+-- declare on use --
+--------------------
+mkExtDecl nm argTys retTy = L.GlobalDefinition functionDefaults
+  { name=L.mkName nm
+  , linkage = L.External , parameters=(map (\t -> Parameter t "" []) argTys , False)
+  , returnType = retTy
+  }
+
+printf : snprintf : puts : strtol : atoi : abort : exit : system : rand : srand : llvm_stacksave : llvm_stackrestore : llvm_uadd_with_overflow_i32 : llvm_prefetch : llvm_abs : llvm_smax : llvm_smin : llvm_umax : llvm_umin : llvm_sqrt_f64 : llvm_powi_f64_i32 : llvm_pow_f64 : llvm_sin_f64 : llvm_cos_f64 : llvm_exp_f64 : llvm_exp2_f64 : llvm_log_f64 : llvm_log10_f64 : llvm_log2_f64 : llvm_floor_f64 : llvm_ceil_f64 : llvm_trunc_f64 : llvm_rint_f64 : llvm_memcpy_p0i8_p0i8_i64 : llvm_memmove_p0i8_p0i8_i64 : llvm_memset_p0i8_i64 : llvm_expect : llvm_load_relative_i32 : primDeclsLen : _ = [0..] :: [Int]
+
+vecPrimDecls = V.fromList rawPrimDecls
+rawPrimDecls =
+ [ L.GlobalDefinition functionDefaults
+    { name=L.mkName "printf" , linkage=L.External , parameters=([Parameter charPtr_t "" []],True) , returnType=i32_t }
+ , L.GlobalDefinition functionDefaults
+    { name=L.mkName "snprintf",linkage=L.External , parameters=([],True) , returnType=i32_t }
+ , mkExtDecl "puts"   [charPtr_t] i32_t
+ , mkExtDecl "strtol" [charPtr_t , LT.ptr charPtr_t , i32_t] i32_t
+ , mkExtDecl "atoi"   [charPtr_t] i32_t
+ , mkExtDecl "abort"  [] LT.VoidType
+ , mkExtDecl "exit"   [i32_t] LT.VoidType
+ , mkExtDecl "system" [charPtr_t] i32_t
+ , mkExtDecl "rand"   [] i32_t
+ , mkExtDecl "srand"  [i32_t] i32_t
+ , mkExtDecl "llvm.stacksave"    [] charPtr_t
+ , mkExtDecl "llvm.stackrestore" [charPtr_t] LT.VoidType
+ , mkExtDecl "llvm.uadd.with.overflow.i32" [i32_t] (mkStruct_t [i32_t , i1_t])
+ , mkExtDecl "llvm.prefetch" [charPtr_t , i32_t , i32_t ] LT.VoidType
+ -- llvm stdlib (all are overloaded on bitwidth / floattype)
+ , mkExtDecl "llvm.abs"  [i32_t] i32_t -- overloaded bitwidth
+ , mkExtDecl "llvm.smax" [i32_t , i32_t] i32_t
+ , mkExtDecl "llvm.smin" [i32_t , i32_t] i32_t
+ , mkExtDecl "llvm.umax" [i32_t , i32_t] i32_t
+ , mkExtDecl "llvm.umin" [i32_t , i32_t] i32_t
+ , mkExtDecl "llvm.sqrt.f64" [double_t] double_t
+ , mkExtDecl "llvm.powi.f64.i32" [double_t , i32_t] double_t
+ , mkExtDecl "llvm.pow.f64"   [double_t , double_t] double_t
+ , mkExtDecl "llvm.sin.f64"   [double_t] double_t
+ , mkExtDecl "llvm.cos.f64"   [double_t] double_t
+ , mkExtDecl "llvm.exp.f64"   [double_t] double_t
+ , mkExtDecl "llvm.exp2.f64"  [double_t] double_t
+ , mkExtDecl "llvm.log.f64"   [double_t] double_t
+ , mkExtDecl "llvm.log10.f64" [double_t] double_t
+ , mkExtDecl "llvm.log2.f64"  [double_t] double_t
+ , mkExtDecl "llvm.floor.f64" [double_t] double_t
+ , mkExtDecl "llvm.ceil.f64"  [double_t] double_t
+ , mkExtDecl "llvm.trunc.f64" [double_t] double_t
+ , mkExtDecl "llvm.rint.f64"  [double_t] i32_t
+ -- fma etc..
+ , mkExtDecl "llvm.memcpy.p0i8.p0i8.i64" [charPtr_t , charPtr_t , i64_t , i1_t] LT.VoidType
+-- , mkExtDecl "llvm.memcpy.inline.p0i8.p0i8.i64" [charPtr_t , charPtr_t , i64_t , i1_t] LT.VoidType
+ , mkExtDecl "llvm.memmove.p0i8.p0i8.i64" [charPtr_t , charPtr_t , i64_t , i1_t] LT.VoidType
+ , mkExtDecl "llvm.memset.p0i8.i64" [charPtr_t , i64_t , i1_t] LT.VoidType
+
+-- , mkExtDecl "llvm.ptrmask" [ptr_t , iN_t] ptr_t
+ , mkExtDecl "llvm.expect.i1" [i1_t , i1_t] i1_t -- overloaded
+ , mkExtDecl "llvm.load.relative.i32" [charPtr_t , i32_t] charPtr_t --load ptr + ptr[offset]
+ ]
+
+getPrimDecl :: Int -> CGEnv s L.Operand
+getPrimDecl iname = let
+  mkRef (L.GlobalDefinition f) = let
+    argTys = (\(Parameter ty nm at)->ty) <$> fst (parameters f)
+    fnTy = LT.FunctionType (L.returnType f) argTys (snd (parameters f))
+    in L.ConstantOperand $ C.GlobalReference (LT.ptr fnTy) (L.name f)
+ 
+  getDecl iname v = MV.read v iname >>= \case
+    Just op -> pure $ mkRef op
+    Nothing -> let val = vecPrimDecls V.! iname
+      in mkRef val <$ MV.write v iname (Just val)
+
+  in gets primDecls >>= \case
+    Nothing -> MV.replicate primDeclsLen Nothing >>= \v -> do
+      modify $ \x->x{ primDecls = Just v }
+      getDecl iname v
+    Just  v -> getDecl iname v

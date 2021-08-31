@@ -16,6 +16,7 @@ import Text.Megaparsec hiding (many)
 import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy.IO as TL.IO
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
 import Control.Lens
 import System.Console.Haskeline
 import Data.List (words)
@@ -56,7 +57,10 @@ text2Core flags resolver fName progText = do
 
 --    (tmpResolver , exts) = resolveImports resolver localNames mixfixNames unknownNames
       (tmpResolver , exts) = resolveImports modResolver localNames mixfixNames unknownNames
-      judgedModule@(JudgedModule bindNames judgedBinds) = judgeModule parsed hNames exts
+      srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
+      (judgedModule , errors) = judgeModule parsed hNames exts srcInfo
+      TCErrors scopeErrors biunifyErrors = errors
+      JudgedModule modNm bindNames judgedBinds = judgedModule
       newResolver = addModule2Resolver tmpResolver (bind2Expr <$> judgedBinds)
 
   let judged'    = V.zip bindNames judgedBinds
@@ -69,6 +73,8 @@ text2Core flags resolver fName progText = do
         "namedCore"  -> void $ T.IO.putStrLn `mapM` namedBinds
         _ -> pure ()
       addPass passNm = putStrLn ("\n  ---  \n" :: Text) *> putPass passNm
+  (T.IO.putStrLn . formatError srcInfo)      `mapM` biunifyErrors
+  (T.IO.putStrLn . formatScopeError) `mapM` scopeErrors
   putPass `mapM_` (printPass flags)
   pure (newResolver , exts , judgedModule)
 

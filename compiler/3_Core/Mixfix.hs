@@ -3,10 +3,8 @@ module Mixfix (solveMixfixes) where
 import Prelude hiding (sourceLine)
 import MixfixSyn
 import CoreSyn
-import ShowCore
-import PrettyCore
+import ShowCore()
 import qualified Data.List as DL
-import qualified Data.List.NonEmpty as NE
 import Text.Megaparsec
 import Control.Monad (fail)
 

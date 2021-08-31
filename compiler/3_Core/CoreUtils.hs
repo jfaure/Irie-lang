@@ -4,6 +4,8 @@ module CoreUtils where
 ----------------------------------------------------
 import CoreSyn
 import ShowCore()
+import PrettyCore
+import Prim
 import qualified Data.IntMap as IM
 import qualified Data.Vector as V (zipWith)
 --import qualified Data.IntSet as IS
@@ -25,6 +27,14 @@ substFreshTVars tvarStart = Prelude.map $ let
     THProduct as   -> THProduct $ r <$> as
     THTuple as     -> THTuple $ r <$> as
   t -> t
+
+getArrowArgs = \case
+  [THTyCon (THArrow as r)] -> (as , r)
+  t -> panic $ "not a function type: " <> prettyTyRaw t
+
+--splitArrowArg = \case
+--  [THTyCon (THArrow (a:as) r)] -> (a , addArrowArgs as r)
+--  t -> panic $ "expected function type: " <> prettyTyRaw t
 
 addArrowArgs [] = identity
 addArrowArgs args = \case
@@ -51,7 +61,6 @@ getRetTy = \case
 isTyCon = \case
  THTyCon{} -> True
  _         -> False
-
 
 isArrowTy = \case
   [THTyCon (THArrow{})] -> True
@@ -84,7 +93,7 @@ tyOfExpr  = \case
   Core x ty -> ty
   Ty t      -> tyOfTy t
   Fail e    -> []
---ExprApp e a -> panic $ "ExprApp: " <> show e <> " [" <> show a <> "]"
+  PoisonExpr-> []
 
 -- expr2Ty :: _ -> Expr -> TCEnv s Type
 -- Expression is a type (eg. untyped lambda calculus is both a valid term and type)
@@ -123,7 +132,12 @@ eqTyHead a b = kindOf a == kindOf b
 kindOf = \case
   THPrim{}  -> KPrim
   THVar{}   -> KVar
-  THTyCon (THArrow{}) -> KArrow
+  THTyCon t -> case t of
+    THArrow{}   -> KArrow
+    THProduct{} -> KProd
+    THSumTy{}   -> KSum
+    THTuple{}   -> KTuple
+    THArray{}   -> KArray
   THBound{} -> KBound
   _ -> KAny
 
@@ -152,15 +166,17 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   [THSet a , THSet b] -> [THSet $ max a b]
   [THPrim a , THPrim b]  -> if a == b then [t1] else case (a,b) of
 --  (PrimInt x , PrimInt y) -> [THPrim $ PrimInt $ max x y]
+    (PrimBigInt , PrimInt y) -> [THPrim $ PrimBigInt]
+    (PrimInt y , PrimBigInt) -> [THPrim $ PrimBigInt]
     _ -> join
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
   [THBound a , THBound b]     -> if a == b then [t1] else join
   [THVar a , THVar b]         -> if a == b then [t1] else join
   [THExt a , THExt  b]        -> if a == b then [t1] else join
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of -- TODO depends on polarity (!)
-    [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy $ IM.unionWith mergeTypes a b]
-    [THProduct a , THProduct b] -> [THTyCon $ THProduct $ IM.intersectionWith mergeTypes a b]
-    [THTuple a , THTuple b]     -> [THTyCon $ THTuple $ V.zipWith mergeTypes a b]
+    [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ IM.unionWith mergeTypes a b]
+    [THProduct a , THProduct b] -> [THTyCon $ THProduct $ IM.unionWith mergeTypes a b]
+    [THTuple a , THTuple b]     -> [THTyCon $ THTuple   $ V.zipWith    mergeTypes a b]
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM d1 d2) (mergeTypes r1 r2)]
   [THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!
   [THPi (Pi b1 t1) , THPi (Pi b2 t2)] -> [THPi $ Pi (b1 ++ b2) (mergeTypes t1 t2)]

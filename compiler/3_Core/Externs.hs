@@ -51,10 +51,10 @@ data Externs = Externs {
 
 -- exported functions to resolve ParseSyn.VExterns
 readQParseExtern = \(Externs nms binds) modNm iNm -> if modNm >= V.length binds
-  then ForwardRef iNm -- It's in the current module !
+  then ForwardRef iNm -- ie. not available yet , must typecheck as forwardRef | mutual binding
   else Imported $ (binds V.! modNm) V.! iNm
-readParseExtern  = \(Externs nms binds) i -> case nms V.! i of
-  Importable modNm iNm -> Imported $ (binds V.! modNm) V.! iNm
+readParseExtern  = \e@(Externs nms binds) i -> case nms V.! i of
+  Importable modNm iNm -> readQParseExtern e modNm iNm
   x -> x
 
 --readParseExtern = \(Externs nms binds) i -> let (modNm , iNm) = nms V.! i
@@ -90,7 +90,7 @@ resolveImports (GlobalResolver n curResolver prevBinds curMFWords) localNames mi
     flattenMFMap = concat . map snd
     in case (binds , mfWords) of
     (Just [] , _)  -> error $ "impossible: empty imap ?!"
-    (Just [(0     , iNm)] , Nothing)-> Imported $ (prevBinds V.! 0) V.! iNm -- inline prims
+    (Just [(0     , iNm)] , Nothing)-> Imported $ (prevBinds V.! 0) V.! iNm -- resolve prims directly
     (Just [(modNm , iNm)] , Nothing)-> Importable modNm iNm
     (Just [oneBind] , Just mfWords) -> MixfixyVar $ Mixfixy (Just oneBind) (flattenMFMap mfWords)
     (Nothing        , Just mfWords) -> MixfixyVar $ Mixfixy Nothing (flattenMFMap mfWords)
@@ -138,15 +138,17 @@ primTys :: [(HName , PrimType)] =
   [ ("Bool"    , PrimInt 1)
   , ("Int"     , PrimInt 32)
   , ("Int64"   , PrimInt 64)
+  , ("BigInt"  , PrimBigInt)
   , ("Char"    , PrimInt 8)
   , ("Nat"     , PrimNat 32)
   , ("Float"   , PrimFloat FloatTy )
   , ("Double"  , PrimFloat DoubleTy)
   , ("CharPtr" , PtrTo $ PrimInt 8 )
+  , ("CString" , PtrTo $ PrimInt 8 )
   , ("IntArray", PrimArr $ PrimInt 32)
   ]
 
-[i, b, f, c, ia, str, set , i64] = getPrimTy <$> ["Int", "Bool", "Double", "Char", "IntArray", "CharPtr", "Set" , "Int64"]
+[i, bi, b, f, c, ia, str, set , i64] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64"]
 
 --substPrimTy i = THPrim $ primTyBinds V.! i
 
@@ -158,17 +160,10 @@ tyFns = [
 --  , ("_→_", (ArrowTy , ([set] , set)))
   ]
 
---extFns :: [(HName , (HName , Type))] =
---[ ("printf" , ("printf" , [THArrow (mkExtTy str : repeat []) (mkExtTy i)]))
---[ ("printf" , ("printf" , [THArrow [mkExtTy str] (mkExtTy i)]))
---, ("strtol" , ("strtol" , [THArrow [mkExtTy str , mkExtTy str , mkExtTy i] (mkExtTy i)]))
---]
-
 instrs :: [(HName , (PrimInstr , Type))] =
-  [ --("ifThenE"     , (IfThenE , [THArrow [[THExt b] , [THExt set] , [THExt set]] [THExt set]]))
-    ("addOverflow" , (AddOverflow , mkTyArrow [[THExt i] , []] []))
-  , ("unlink"      , (Unlink , mkTyArrow [[THExt str] , mkTHArrow [THExt c,THExt str] (THExt str)] [THExt str]))
-  , ("link"        , (Link , mkTHArrow [THExt c] (THExt str)))
+  [ ("addOverflow" , (AddOverflow , mkTyArrow [[THExt i] , []] []))
+--, ("unlink"      , (Unlink , mkTyArrow [[THExt str] , mkTHArrow [THExt c,THExt str] (THExt str)] [THExt str]))
+--, ("link"        , (Link , mkTHArrow [THExt c] (THExt str)))
   , ("strtol"      , (StrToL , mkTHArrow [THExt str] (THExt i)))
   , ("mkTuple"     , (MkTuple , [THTyCon $ THTuple mempty]))
   , ("ifThenElse"  , (IfThenE , [THBi 1 $ mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]))
@@ -176,45 +171,53 @@ instrs :: [(HName , (PrimInstr , Type))] =
 
 primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("Arrow" , (TyInstr Arrow  , ([set,set] , set)))
-  , ("add64" , (IntInstr Add   , ([i64, i64] , i64) ))
-  , ("add"   , (IntInstr Add   , ([i, i] , i) ))
-  , ("sub"   , (IntInstr Sub   , ([i, i] , i) ))
-  , ("pow"   , (Power          , ([i, i] , i) ))
-  , ("mul"   , (IntInstr Mul   , ([i, i] , i) ))
-  , ("div"   , (NatInstr UDiv  , ([i, i] , i) ))
-  , ("rem"   , (NatInstr URem  , ([i, i] , i) ))
-  , ("fdiv"  , (FracInstr FDiv , ([f, f] , f) ))
-  , ("frem"  , (FracInstr FRem , ([i, i] , i) ))
-  , ("fadd"  , (FracInstr FAdd , ([f, f] , f) ))
-  , ("fsub"  , (FracInstr FSub , ([f, f] , f) ))
-  , ("fmul"  , (FracInstr FMul , ([f, f] , f) ))
---, ("fcmp"  , (FracInstr FCmp , ([f, f] , f) ))
-  , ("le"    , (PredInstr LECmp , ([i, i] , b) ))
-  , ("ge"    , (PredInstr GECmp , ([i, i] , b) ))
-  , ("lt"    , (PredInstr LTCmp , ([i, i] , b) ))
-  , ("gt"    , (PredInstr GTCmp , ([i, i] , b) ))
-  , ("eq"    , (PredInstr EQCmp , ([i, i] , b) ))
-  , ("ne"    , (PredInstr NEQCmp, ([i, i] , b) ))
+  , ("puts"  , (Puts , ([str] , i)))
+  , ("putNumber" , (PutNbr , ([i] , i)))
   , ("IntN"  , (TyInstr MkIntN , ([i] , set)))
   , ("primLen" , (Len , ([ia] , i)))
-  , ("putNumber" , (PutNbr , ([i] , i)))
+  , ("add64" , (NumInstr (IntInstr Add    ) , ([i64, i64] , i64) ))
+  , ("add"   , (NumInstr (IntInstr Add    ) , ([i, i] , i) ))
+  , ("sub"   , (NumInstr (IntInstr Sub    ) , ([i, i] , i) ))
+  , ("pow"   , (NumInstr (IntInstr IPow   ) , ([i, i] , i) ))
+  , ("mul"   , (NumInstr (IntInstr Mul    ) , ([i, i] , i) ))
+  , ("div"   , (NumInstr (NatInstr UDiv   ) , ([i, i] , i) ))
+  , ("rem"   , (NumInstr (NatInstr URem   ) , ([i, i] , i) ))
+  , ("fdiv"  , (NumInstr (FracInstr FDiv  ) , ([f, f] , f) ))
+  , ("frem"  , (NumInstr (FracInstr FRem  ) , ([i, i] , i) ))
+  , ("fadd"  , (NumInstr (FracInstr FAdd  ) , ([f, f] , f) ))
+  , ("fsub"  , (NumInstr (FracInstr FSub  ) , ([f, f] , f) ))
+  , ("fmul"  , (NumInstr (FracInstr FMul  ) , ([f, f] , f) ))
+--, ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , f) ))
+  , ("le"    , (NumInstr (PredInstr LECmp ) , ([i, i] , b) ))
+  , ("ge"    , (NumInstr (PredInstr GECmp ) , ([i, i] , b) ))
+  , ("lt"    , (NumInstr (PredInstr LTCmp ) , ([i, i] , b) ))
+  , ("gt"    , (NumInstr (PredInstr GTCmp ) , ([i, i] , b) ))
+  , ("eq"    , (NumInstr (PredInstr EQCmp ) , ([i, i] , b) ))
+  , ("ne"    , (NumInstr (PredInstr NEQCmp) , ([i, i] , b) ))
   , ("zext"  , (Zext  , ([b] , i) ))
-  , ("sdiv"  , (IntInstr SDiv , ([i, i] , i) ))
-  , ("srem"  , (IntInstr SRem , ([i, i] , i) ))
-  , ("bitXOR"   , (IntInstr Xor  , ([i, i] , i) ))
-  , ("bitAND"   , (IntInstr And  , ([i, i] , i) ))
-  , ("bitOR"    , (IntInstr Xor  , ([i, i] , i) ))
-  , ("bitNOT"   , (IntInstr Not  , ([i, i] , i) ))
-  , ("bitSHL"   , (IntInstr Shl  , ([i, i] , i) ))
-  , ("bitSHR"   , (IntInstr Shr  , ([i, i] , i) ))
+  , ("sdiv"  , (NumInstr (IntInstr SDiv) , ([i, i] , i) ))
+  , ("srem"  , (NumInstr (IntInstr SRem) , ([i, i] , i) ))
+  , ("bitXOR", (NumInstr (BitInstr Xor ) , ([i, i] , i) ))
+  , ("bitAND", (NumInstr (BitInstr And ) , ([i, i] , i) ))
+  , ("bitOR" , (NumInstr (BitInstr Xor ) , ([i, i] , i) ))
+  , ("bitNOT", (NumInstr (BitInstr Not ) , ([i, i] , i) ))
+  , ("bitSHL", (NumInstr (BitInstr ShL ) , ([i, i] , i) ))
+  , ("bitSHR", (NumInstr (BitInstr ShR ) , ([i, i] , i) ))
+
+  , ("gmp-putNumber" , (GMPPutNbr , ([bi] , i)))
+  , ("gmp-add"  , (GMPInstr (IntInstr Add) , ([bi, bi] , bi) ))
+  , ("gmp-sub"  , (GMPInstr (IntInstr Sub) , ([bi, bi] , bi) ))
+  , ("gmp-mul"  , (GMPInstr (IntInstr Mul) , ([bi, bi] , bi) ))
   ]
 
 typeOfLit = \case
   String{}  -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   Array{}   -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
-  PolyInt{} -> THPrim (PrimInt 32)
-  Int 0     -> THPrim (PrimInt 1)
-  Int 1     -> THPrim (PrimInt 1)
+  PolyInt{} -> THPrim PrimBigInt
   Int{}     -> THPrim (PrimInt 32)
+--PolyInt{} -> THPrim (PrimInt 32)
+--Int 0     -> THPrim (PrimInt 1)
+--Int 1     -> THPrim (PrimInt 1)
+--Int{}     -> THPrim (PrimInt 32)
   Char{}    -> THPrim (PrimInt 8) --THExt 3
   x -> error $ "don't know type of literal: " <> show x

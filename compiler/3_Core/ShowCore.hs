@@ -20,3 +20,5 @@ deriving instance Show Pi
 deriving instance Show BiCast
 deriving instance Show ExternVar
 deriving instance Show Mixfixy
+deriving instance Show BiSubError
+deriving instance Show TmpBiSubError

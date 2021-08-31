@@ -1,78 +1,21 @@
 # Compiler coding style
-  * avoid zipwith / zip since lists can be diff lengths
+  * Use semialign; in particular careful with zipwith / zip since lists can be diff lengths
 ## Top
   * language server
-  * precompiled modules
-  * Error reporting
-  * Linker
+  * precompiled modules ('binary' haskell package)
+  * Linker; invoke clang
 ## Parse
-  * Source locations
-  * linefolds
-  * rec
+  * Use [n..] numbered args from Parser in a safer way
 ## Types
-  * type annotations: bounded quantification for constants , comments
-  * qtt typevars + record fields
-  * Dependent normalisation
-  * Tuple
-  * f x = _no_x is subtype of f = _
-  * ensure pi binders are always lifted to the top level
-  * ensure lambda args are counted in the domain of their parent function
-  * Ensure dominion is working properly for let / lambda bindings
-## CodeGen
-  * GMP
-  * conv recursive functions to anamorphisms (attempt to always avoid stacking)
+  * check let | rec
+  * don't allow field name collisions in tycon
+  * fn Apps are Poison iff the function ret type depends on the poison arg
+  * Dependent normalisation & Staging
+## Codegen
+  * opportunistic instrs that read Terms also need a dumber version for Operands
+  * do asmIdx resolution here
+  * figure out how ffi handles passing [n x %i1] by value
+  * record cons: if term is trivial, write it unconditionally
 
 !!
-mutual generalisation. ? make sigma type using inferred forward refs
-fralloc: (flat & shared data)
-repl & linking & print JIT results somehow
-llvm record subtyping (offset table header) # { x : i32 } <: { x : i64 }
-Make args consecutive in parser (not list)
-
-# Mutual functions (vs rec function)
-  `f = g a
-   g = (f a)`
-  1. frontRef increases tc-stack
-  2. Checking i => top tc-stack (g) is mutual with i(f) => merge g with whatever f instantiates it to
-
-# Type variable lifespan
-  1. top-bind : a,a+n args + stack1 of THVars
-  2. abs      : b,b+n args + stack2 of THVars -- don't bother generalising
-  3. topbind2 : c,c+n args + stack3 of THVars 
-  4. b2 backrefs top-bind => mutual !! (will be generalised without fully accounting for f)
-
-  -- add g IName + dominion to f , set no-gen flag
-  -- on gen, if noGen set, leave "Checking" and write dom there
-  * judgeBind update prevDom bisubs
-
-# Polymorphism
-  1. Record subtyping
-     Record = Base Record (local indexer)
-  2. Memory management (esp sharing)
-  3. containers
-
-* out of scope record fields
-* record lensing / coercing
-* sums + split-tree
-* qtt
-* polymorphism
-* allocator interface
-* Pap
-* free variables
-* fold-build
-
-Open questions
-# codegen array of a sumtype (varying size leaves)
-# Deep BiCasts / lazy leaf cast
-# Cata , Ana , Para , Hylo morphisms
-# Newtype (opt-out of subtyping)
-# partial typecheck (normalization + insane dependents)
-# Lens
-  * '.' (get : s -> a) (set : s -> a -> s)
-  Lens : { get s a , set s a s }
-  rect . x . get
-  rect . x . set
-
-some : ∏(#2)((∀0 → {1 : %i8}) → (∀0 → ∀1))
-
-many : ∏(#3)((∀0 → {1 : %i8}) → (∀2 → {1 : (μf0 $! Var (VArg 0))}))
+repl & linking & typecase in JIT to print results

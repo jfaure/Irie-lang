@@ -1,10 +1,9 @@
 -- Core Language (compiler pipeline = Text >> Parse >> Core >> STG >> LLVM)
-
 {-# LANGUAGE TemplateHaskell #-}
-{-# OPTIONS  -funbox-strict-fields #-}
 module CoreSyn where
 import Prim
 import qualified Data.Vector         as V
+import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
 import Control.Lens hiding (List)
 import MixfixSyn
@@ -23,6 +22,7 @@ type BiSubName   = Int  -- index into bisubs
 type IField      = Int  -- product-type fields
 type ILabel      = Int  -- sum-type labels
 type Table a     = V.Vector a -- map of IName -> a
+type SrcOff      = Int  -- offset into the source file
 
 data VName
  = VBind   IName -- bind   map
@@ -32,13 +32,14 @@ data VName
 
 data Term -- β-reducable (possibly to a type) and type annotated
  = Var     !VName
- | Lit     Literal
+ | Lit     !Literal
  | Hole    -- to be inferred : Bot
- | Poison Text -- typecheck inconsistency
+ | Poison  !Text -- typecheck inconsistency
 
  | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
  | App     Term [Term] -- IName [Term]
- | Instr   PrimInstr
+ | Instr   !PrimInstr
+ | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
  -- data constructions
  | Cons    (IM.IntMap Term) -- convert to record
@@ -46,9 +47,9 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | Match   Type (IM.IntMap Expr) (Maybe Expr) -- type is the return type of this expression
  | List    [Expr]
 
- | TTLens  Term [IField] LensOp
+ | TTLens  Term [IField] LensOp -- Expr because we need to know the type of the record
 
-data LensOp = LensGet | LensSet Expr | LensOver Expr
+data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs a lens for extracting field
 
 -- TODO improve this
 -- Typemerge should be very fast
@@ -56,6 +57,7 @@ type Type     = TyPlus
 type Uni      = Int
 type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
 type TyPlus   = [TyHead] -- output types (lattice join)
+holeTy = []
 
 data TyCon -- Type constructors
  = THArrow    [TyMinus] TyPlus -- degenerate case of THPi (bot -> top is the largest)
@@ -72,7 +74,8 @@ data TyHead
  | THPoison   -- marker for inconsistencies found during inference
  | THTop | THBot
 
- | THTyCon !TyCon
+ | THFieldCollision Type Type
+ | THTyCon {-# UNPACK #-} !TyCon
 
  -- Binders
  | THMu IName Type-- recursive type
@@ -95,23 +98,25 @@ data TyHead
 data Pi = Pi [(IName , Type)] Type
 
 -- TODO handle recursion
-data QTT = QTT { _qttReads :: Int , _qttBuilds :: Int } deriving Show
-
-data TCError
- = ErrBiSub     Text
- | ErrTypeCheck Text
- | Err Text
-  deriving Show
+--data QTT = QTT { _qttReads :: Int , _qttBuilds :: Int } deriving Show
+data TmpBiSubError = TmpBiSubError { msg :: Text , got :: Type , expected :: Type }
+data BiSubError = BiSubError SrcOff TmpBiSubError
+data ScopeError
+  = ScopeError Text
+  | AmbigBind  Text
+data TCErrors = TCErrors [ScopeError] [BiSubError]
 
 data Expr
  = Core     Term Type
  | Ty       Type
+ | Set      !Int Type
 
- -- Temporary in infer
+ -- Temporary exprs for solveMixfixes
  | QVar     (ModuleIName , IName)
  | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
  | ExprApp  Expr [Expr] -- output of solvemixfixes
  | Fail     Text -- TCError
+ | PoisonExpr
 
 data Bind -- indexes in the bindmap
  = WIP
@@ -124,7 +129,7 @@ data Bind -- indexes in the bindmap
              , recTy :: Type
              }
  | BindOK    Expr
- | BindKO -- failed typecheck -- use Poison ?
+ | BindKO -- failed typecheck
 
 -- mixfixWords :: [MFWord]
 -- hNameMFWords :: M.Map HName [MFIName]
@@ -142,9 +147,20 @@ data Mixfixy = Mixfixy
  , ambigMFWord :: [QMFWord] --[(ModuleIName , [QMFWord])]
  }
 
--- arrows have 2 special cases: pap and currying
---data ArrBiSub = ArrAp | ArrPAp [BiCast] | ArrCurry [BiCast]
-data BiCast = BiEQ | BiCast Term | CastApp [BiCast] (Maybe [Type]) | BiInst [BiSub] BiCast | BiFail Text
+type ASMIdx = IName -- Field|Label-> Idx in sorted list (ie. the direct index used in codegen)
+data BiCast
+ = BiEQ
+ | CastInstr PrimInstr
+ | CastProduct Int [(ASMIdx , BiCast)] -- number of drops, and indexes into the parent struct
+ | CastLeaf    ASMIdx BiCast -- Lens
+ | CastLeaves  [BiCast]
+
+ | CastApp [BiCast] (Maybe [Type]) BiCast -- argcasts , maybe papcast , retcast
+ | BiInst  [BiSub] BiCast -- instantiate polytypes
+ | CastFn Term
+-- | BiFail Text
+-- | CastSequence [BiCast]
+-- | BiCast Term
 
 -- generalisation needs to know which THVars and THArgs are dominated in a particular context
 data Dominion = Dominion {
@@ -154,20 +170,21 @@ data Dominion = Dominion {
 data BiSub = BiSub {
    _pSub :: [TyHead]
  , _mSub :: [TyHead]
- , _pQ :: Int
- , _mQ :: Int
+ , _pQ   :: Int
+ , _mQ   :: Int
 }
 
 makeLenses ''BiSub
-makeLenses ''QTT
+--makeLenses ''QTT
 
--- label for the different head constructors. (KAny is '_' in a way top of the entire universe)
-data Kind = KPrim | KArrow | KVar | KSum | KProd | KRec | KAny | KBound
+-- label for the different head constructors. (KAny is in a way top of the entire universe)
+data Kind = KPrim | KArrow | KVar | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
  deriving (Eq , Ord)
 
--- wip module, not quite as polished as an Import module (still contains typevars and arg infos)
+data SrcInfo = SrcInfo Text (VU.Vector Int)
 data JudgedModule = JudgedModule {
-   bindNames   :: V.Vector HName
+   modName     :: HName
+ , bindNames   :: V.Vector HName
  , judgedBinds :: V.Vector Bind
 }
 

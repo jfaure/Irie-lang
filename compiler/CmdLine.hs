@@ -31,7 +31,7 @@ cmdLineDecls :: Parser CmdLine
 cmdLineDecls = CmdLine
   <$> (option parsePrintPass)
       (short 'p' <> long "print"
-      <> help "print a pass: source|parseTree|preCore|core|stg|llvm"
+      <> help (toS $ "print compiler pass(es separated by ',') : [" <> T.intercalate " | " printPasses <> "]")
       <> value [])
   <*> switch
       (short 'j' <> long "jit"
@@ -48,10 +48,10 @@ cmdLineDecls = CmdLine
       <> help "don't import prelude implicitly")
   <*> (optional . strOption) (
       (short 'o')
-      <> help "Write output to file")
+      <> help "Write llvm output to file")
   <*> many (argument str (metavar "FILE"))
 
-progDescription = "Compiler and Interpreter for the Irie language, an array oriented calculus of inductive constructions for system level programming."
+progDescription = "Compiler and Interpreter for the Irie language, a subtyping CoC for system level programming."
 cmdLineInfo =
   let description = fullDesc
         <> header "Irie compiler/interpreter"

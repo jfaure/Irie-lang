@@ -1,19 +1,20 @@
-{-# LANGUAGE TemplateHaskell , DeriveGeneric #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS  -funbox-strict-fields #-}
-
 module ParseSyntax where -- import qualified as PSyn
-
 import Prim
 import MixfixSyn
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Control.Lens
+import Text.Megaparsec.Pos
 
-type FName = IName -- record  fields
-type LName = IName -- sumtype labels
-type FreeVar = IName -- let or non-local argument needed deeper in a function nest
-type ImplicitArg = (IName , Maybe TT) -- implicit arg with optional type annotation
-type FreeVars = IntSet
-type NameMap = M.Map HName IName
+type FName        = IName -- record  fields
+type LName        = IName -- sumtype labels
+type FreeVar      = IName -- non-local argument
+type FreeVars     = IntSet
+type ImplicitArg  = (IName , Maybe TT) -- implicit (? no) arg with optional type annotation
+type NameMap      = M.Map HName IName
+type SourceOffset = Int
 
 data ImportDecl -- extern types can't be checked (eg. syscalls / C apis etc..)
  = Extern   { externName :: HName , externType :: TT }
@@ -25,7 +26,6 @@ data Module = Module {
  , _imports     :: [HName]
  , _externFns   :: [ImportDecl]
  , _bindings    :: [TopBind] -- hNameBinds
--- , _mixfixWords :: [MFWord]  -- hNameMFWords
 
  , _parseDetails :: ParseDetails
 }
@@ -42,13 +42,15 @@ data ParseDetails = ParseDetails {
  , _hNamesNoScope :: NameMap
  , _fields        :: NameMap
  , _labels        :: NameMap
+ , _newLines      :: [Int]
 }
 
-data TopBind = FunBind { fnDef :: !FnDef }
+data TopBind = FunBind { fnDef :: FnDef }
+data LetRecT = Let | Rec | LetOrRec
 
 data FnDef = FnDef {
    fnNm         :: HName
--- , fnIsRec      :: Bool
+ , fnRecType    :: !LetRecT
  , fnMixfixName :: Maybe MixfixDef
  , implicitArgs :: [ImplicitArg]
  , fnFreeVars   :: FreeVars
@@ -62,26 +64,22 @@ data TTName
  = VBind   IName
  | VLocal  IName
  | VExtern IName
-
 data LensOp a = LensGet | LensSet a | LensOver a deriving Show
-
--- Parser Expressions (types and terms are syntactically equivalent)
-data TT
+data TT -- Type|Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
  | WildCard -- "_"
 
  -- lambda-calculus
  | Abs TopBind
  | App TT [TT]
- | Juxt [TT] -- may contain mixfixes to resolve
+ | Juxt SourceOffset [TT] -- may contain mixfixes to resolve
 
  -- tt primitives (sum , product , list)
  | Cons   [(FName , TT)] -- can be used to type itself
- | TTLens TT [FName] (LensOp TT)
+ | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
  | Match  [(LName , FreeVars , [Pattern] , TT)]
  | List   [TT]
--- | TySum  [(LName , [TT])]
  | TySum [(LName , [ImplicitArg] , TT)] -- function signature
  | TyListOf TT
 
@@ -101,26 +99,36 @@ data Pattern
 -- | PAs   IName Pattern
 -- | match sum-of-product ?
 
+data ParseState = ParseState {
+   _indent          :: Pos -- start of line indentation (need to save it for subparsers)
+ , _piBound         :: [[ImplicitArg]]
+ , _tmpReserved     :: [S.Set Text]
+
+ , _moduleWIP       :: Module -- result
+}
+
 makeLenses ''Module
 makeLenses ''ParseDetails
+makeLenses ''ParseState
 
-showL ind = Prelude.concatMap $ (('\n' : ind) ++) . show
-prettyModule m = show (m^.moduleName) ++ " {\n"
-    ++ "imports: " ++ showL "  " (m^.imports)  ++ "\n"
-    ++ "binds:   " ++ showL "  " (m^.bindings) ++ "\n"
---  ++ "locals:  " ++ showL "  " (m^.locals)   ++ "\n"
-    ++ show (m^.parseDetails) ++ "\n}"
-prettyParseDetails p = Prelude.concatMap ("\n  " ++) 
-    [ "binds:  " ++ show (p^.hNameBinds)
-    , "args:   " ++ show (p^.hNameArgs)
-    , "extern: " ++ show (p^.hNamesNoScope)
-    , "fields: " ++ show (p^.fields)
-    , "labels: " ++ show (p^.labels)
+showL ind = Prelude.concatMap $ (('\n' : ind) <>) . show
+prettyModule m = show (m^.moduleName) <> " {\n"
+    <> "imports: " <> showL "  " (m^.imports)  <> "\n"
+    <> "binds:   " <> showL "  " (m^.bindings) <> "\n"
+--  <> "locals:  " <> showL "  " (m^.locals)   <> "\n"
+    <> show (m^.parseDetails) <> "\n}"
+prettyParseDetails p = Prelude.concatMap ("\n  " <>) 
+    [ "binds:  "   <> show (p^.hNameBinds)
+    , "args:   "   <> show (p^.hNameArgs)
+    , "extern: "   <> show (p^.hNamesNoScope)
+    , "fields: "   <> show (p^.fields)
+    , "labels: "   <> show (p^.labels)
+    , "newlines: " <> show (p^.newLines)
     ]
-prettyTTName = \case
-    VBind x   -> "π" ++ show x 
-    VLocal  x -> "λ" ++ show x
-    VExtern x -> "?" ++ show x
+prettyTTName :: TTName -> Text = \case
+    VBind x   -> "π" <> show x 
+    VLocal  x -> "λ" <> show x
+    VExtern x -> "?" <> show x
 
 --deriving instance Show Module
 deriving instance Show ParseDetails
@@ -131,3 +139,4 @@ deriving instance Show TTName
 deriving instance Show FnMatch 
 deriving instance Show TT
 deriving instance Show Pattern
+deriving instance Show LetRecT

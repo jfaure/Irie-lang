@@ -1,9 +1,7 @@
 module PrettyCore where
-
 import Prim
 import CoreSyn
 import ShowCore()
-
 import qualified Data.Vector as V
 import qualified Data.Text as T
 import qualified Data.IntMap.Strict as IM
@@ -14,8 +12,8 @@ parens x = "(" <> x <> ")"
 unParens x = if T.head x == '(' then T.drop 1 (T.dropEnd 1 x) else x
 
 prettyBind showExpr bindSrc = \case
-  Checking m e g ty -> "CHECKING: " <> show m <> show e <> show g <> " : " <> show ty
-  Guard m ars tvar -> "GUARD : " <> show m <> show ars <> show tvar
+  Checking m e g ty     -> "CHECKING: " <> show m <> show e <> show g <> " : " <> show ty
+  Guard m ars tvar      -> "GUARD : " <> show m <> show ars <> show tvar
   Mutual d m isRec tvar -> "MUTUAL: " <> show d <> show m <> show isRec <> show tvar
   WIP -> "WIP"
   BindOK expr -> prettyExpr' showExpr bindSrc "\n  " expr <> "\n"
@@ -56,6 +54,7 @@ prettyTerm bindSrc = let
      -- <> "   : " <> clGreen (pTy ty)
   App     f args -> "(" <> pT f <> clMagenta " < " <> T.intercalate " " (pT <$> args) <> ")"
   Instr   p -> "%" <> show p <> "%"
+  Cast  i t -> "(" <> show i <> ")<" <> show t <> ">"
 
   Cons    ts -> let
     sr (field , val) = show field <> " " <> (toS $ srcFieldNames bindSrc V.! field) <> "@" <> pT val
@@ -75,7 +74,7 @@ prettyLabel = clMagenta . show
 prettyLens bindSrc = \case
   LensGet -> " . get "
   LensSet  tt -> " . set ("  <> prettyExpr False bindSrc tt <> ")"
-  LensOver tt -> " . over (" <> prettyExpr False bindSrc tt <> ")"
+  LensOver cast tt -> " . over (" <> "<" <> show cast <> ">" <> prettyExpr False bindSrc tt <> ")"
 
 prettyTyRaw = prettyTy Nothing
 
@@ -122,8 +121,8 @@ prettyTyHead bindSrc = let
      in "[" <> T.intercalate " | " (prettyLabel <$> IM.toList l) <> "]"
    THProduct l -> let
      prettyField (f,ty) = (maybe (show f) (\bindSrc -> toS (srcFieldNames bindSrc V.! f)) bindSrc) <> " : " <> pTy ty
-     in "{" <> T.intercalate "," (prettyField <$> IM.toList l) <> "}"
-   THTuple  l  -> "{" <> T.intercalate "," (pTy <$> V.toList l) <> "}"
+     in "{" <> T.intercalate " , " (prettyField <$> IM.toList l) <> "}"
+   THTuple  l  -> "{" <> T.intercalate " , " (pTy <$> V.toList l) <> "}"
 
    THArray    t -> "@" <> show t
 

@@ -1,10 +1,10 @@
 {-# LANGUAGE TemplateHaskell #-}
 module TCState where
-import MixfixSyn
 import CoreSyn
 import Externs
 import qualified ParseSyntax as P
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Mutable as MV
 import Control.Lens
 
@@ -15,33 +15,38 @@ data TCEnvState s = TCEnvState {
  , _externs :: Externs
 
  -- out
- , _wip     :: MV.MVector s Bind
- , _errors  :: [TCError]
--- , _qtt     :: MV.MVector s QTT -- indexed by argnames, like domain
+ , _wip        :: MV.MVector s Bind
+ , _biFails    :: [BiSubError]
+ , _scopeFails :: [ScopeError]
 
  -- state
- , _bisubNoSubtype :: [Text]
- , _bindWIP :: IName
- , _level   :: Dominion
- , _deBruijn:: MV.MVector s Int
- , _quants  :: Int
- , _mus     :: Int
- , _bis     :: MV.MVector s BiSub -- typeVars
- , _muEqui  :: IntMap IName -- equivalence classes for mu types, + -> -
+ , _srcRefs  :: Maybe SrcInfo
+ , _tmpFails :: [TmpBiSubError] -- App local bisub failures
+ , _bindWIP  :: IName
+ , _level    :: Dominion
+ , _deBruijn :: MV.MVector s Int
+ , _quants   :: Int
+ , _mus      :: Int
+ , _bis      :: MV.MVector s BiSub -- typeVars
+ , _muEqui   :: IntMap IName -- equivalence classes for mu types, + -> -
 
- , _labels  :: MV.MVector s (Maybe Type)
- , _fields  :: MV.MVector s (Maybe Type)
+ , _normFields :: VU.Vector IName
+ , _normLabels :: VU.Vector IName
+
+-- , _labels   :: MV.MVector s (Maybe Type)
+-- , _fields   :: MV.MVector s (Maybe Type)
 }
 
 makeLenses ''TCEnvState
 
-tcFail e = error $ e -- Poison e _ --(errors %= (e:)) *> pure (Fail e)
+--tcFail e = error $ e -- Poison e _ --(errors %= (e:)) *> pure (Fail e)
 
 dupVar pos x = use bis >>= \v -> MV.modify v
     (\(BiSub p m qp qm) -> if pos then BiSub p m (qp+1) qm else BiSub p m qp (qm+1)) x
 
 dupp p pos ty = let dup = dupp p in ty `forM` \case
   THVar x | x /= p -> dupVar pos x
+--THVar x -> dupVar pos x
 --THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
   THTyCon t -> case t of
     THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x

@@ -1,0 +1,107 @@
+A list of resources I have found instructive or useful during Irie developement:
+
+Functional programming with bananas, lenses, envelopes and barbed wire
+https://maartenfokkinga.github.io/utwente/mmf91m.pdf
+
+Quotient inductive inductive types
+https://arxiv.org/pdf/2006.11736.pdf
+
+elaborating dependent (co)pattern matching
+http://www2.tcs.ifi.lmu.de/~abel/icfp18.pdf
+
+algebraic subtyping
+https://www.cl.cam.ac.uk/~sd601/thesis.pdf
+
+The fire triangle
+https://www.xn--pdrot-bsa.fr/articles/dcbpv.pdf
+
+A polymorphic lambda-calculus with higher-order sized types
+http://www2.tcs.ifi.lmu.de/~abel/diss.pdf
+
+polymorphism , subtyping and type inference in mlsub
+https://dl.acm.org/doi/pdf/10.1145/3093333.3009882
+
+How to Keep your neighbors in order
+https://personal.cis.strath.ac.uk/conor.mcbride/Pivotal.pdf
+
+Turing-Completeness totally free
+https://strathprints.strath.ac.uk/60166/1/McBride_LNCS2015_Turing_completeness_totally_free.pdf
+
+ML^F Raising ML to the power of System F
+http://pauillac.inria.fr/~remy/mlf/icfp.pdf
+ML^F thesis
+http://gallium.inria.fr/~remy/mlf/mlf.pdf
+
+Parsing MixFix operators
+http://www.cse.chalmers.se/~nad/publications/danielsson-norell-mixfix.pdf
+
+Dependent types with subtyping and late-bound overloading
+https://www.irif.fr/~gc/papers/infcomp99.pdf
+
+GADT meet subtyping
+http://gallium.inria.fr/~remy/gadts/Scherer-Remy:gadts-subtyping@short2012.pdf
+
+The semantics of rank polymorphism
+https://arxiv.org/pdf/1907.00509.pdf
+
+## Other references
+Boxy Types: Inference for higher-rank types and impredicativity
+https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/boxy-icfp.pdf
+
+Approximate Normalization for Gradual Types
+https://arxiv.org/pdf/1906.06469.pdf
+
+Generic level polymorphic N-ary Functions
+https://gallais.github.io/pdf/tyde19.pdf
+
+Arity-Generic Datatype-Generic Programming
+https://www.seas.upenn.edu/~sweirich/papers/aritygen.pdf
+
+Do Be Do Be Do
+https://arxiv.org/pdf/1611.09259.pdf
+
+Supermonads and superapplicatives
+https://jbracker.de/publications/2017-BrackerNilsson-SupermonadsAndSuperapplicatives-UnderConsideration.pdf
+
+goto.ucsd.edu/~pmr/papers/liquid-types-pldi08.pdf
+
+Idris, a general purpose dependently typed programming language: design and implementation
+https://eb.host.cs.st-andrews.ac.uk/drafts/impldtp.pdf
+
+Quantitative type theory
+https://bentnib.org/quantitative-type-theory.pdf
+
+Dependent Types in Haskell: Theory and Practice
+
+compiling to Vulkan in Futhark
+https://futhark-lang.org/student-projects/steffen-msc-project.pdf
+
+resource dependent algebraic effects
+https://eb.host.cs.st-andrews.ac.uk/drafts/dep-eff.pdf
+
+dependent types references
+https://math.stackexchange.com/questions/3466976/online-reference-book-for-implementing-concepts-in-type-theory/3468022#3468022
+
+higher-order dynamic pattern unification for dependent types and records
+http://www2.tcs.ifi.lmu.de/~abel/unif-sigma-long.pdf
+
+Unification algorithm for coq featuring universe polymorphism and overloading
+https://www.mpi-sws.org/~beta/papers/unicoq.pdf
+
+Computational interpretations of linear logic
+https://core.ac.uk/download/pdf/81933277.pdf
+
+Syntax and semantics of QTT
+https://bentnib.org/quantitative-type-theory.pdf
+
+Use-once variables and linear objects -- storage management, reflection and multi-threading
+http://www.pipeline.com/~hbaker1/Use1Var.html
+
+Deferring the details and deriving programs
+http://liamoc.net/images/deferring.pdf
+
+Zip Fusion with Hyperfunctions
+http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.36.4961&rep=rep1&type=pdf
+
+elaborating dependent (co)pattern matching
+https://dl.acm.org/doi/10.1145/3236770
