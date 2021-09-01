@@ -1,6 +1,6 @@
 name:                irie
 version:             0.1.0.0
-github:              "jfaure/nimzo"
+github:              "jfaure/irie"
 license:             BSD3
 author:              "James Faure"
 maintainer:          "james.faure@epitech.eu"
@@ -12,31 +12,38 @@ extra-source-files:
 synopsis:            Array oriented calculus of inductive constructions
 category:            Compilers
 
-description:         Please see the README on GitHub at <https://github.com/jfaure/nimzo#readme>
+description:         Please see the README on GitHub at <https://github.com/jfaure/irie#readme>
 
 dependencies:
-- deepseq
-- primitive
 - base-noprelude
 - protolude
+- deepseq
+- binary
+- primitive
+- semialign
 # - hashable
 - text
 - vector
+- vector-binary-instances
 - containers
+- unordered-containers
 - lens
 - parser-combinators
-- megaparsec > 7.0
+- megaparsec > 8.0
 - transformers
 - optparse-applicative
 - bytestring
 - mtl
-- unordered-containers
 - filepath
 - directory
 - haskeline
+- process
 - llvm-hs-pure >= 9.0.0
 - llvm-hs >= 9.0.0
+
 - llvm-hs-pretty
+# - array
+# - prettyprinter
 
 default-extensions:
 - LambdaCase
@@ -53,6 +60,7 @@ default-extensions:
 - RecursiveDo
 - OverloadedStrings
 - DeriveDataTypeable
+- DeriveGeneric
 # - TypeFamilies
 # - GADTs
 # - PolyKinds
@@ -70,8 +78,8 @@ default-extensions:
 
 ghc-options:  -Wno-deprecations -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
 executables:
-  nimzo-exe:
-#   dependencies: nimzo
+  irie-exe:
+#   dependencies: irie 
     source-dirs:
     - compiler/
     - compiler/1_Main/
@@ -83,8 +91,8 @@ executables:
     ghc-options:  -fdefer-typed-holes -Wno-typed-holes -Wunused-imports # -Wunused-binds -threaded
 
 #tests:
-#  nimzo-test:
+#  irie-test:
 #    main:                Spec.hs
 #    source-dirs:         test
 #    ghc-options: -threaded
-#    #   dependencies: nimzo
+#    #   dependencies: irie 

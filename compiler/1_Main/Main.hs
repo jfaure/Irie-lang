@@ -19,12 +19,16 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import Control.Lens
 import System.Console.Haskeline
+--import System.Process
+--import System.IO (hClose)
 import Data.List (words)
 
 searchPath = ["./" , "Library/"]
 
 main = getArgs >>= main'
 sh   = main' . Data.List.words -- simplest way to pass cmdline args in ghci
+shL  = main' . (["-p" , "llvm-hs"] ++ ) . Data.List.words
+demo = main' $ Data.List.words "demo.ii -p llvm-hs"
 
 main' args = parseCmdLine args >>= \cmdLine -> -- initGlobalFlags >>= \cmdLine ->
   when ("args" `elem` printPass cmdLine) (print cmdLine)
@@ -93,6 +97,11 @@ codegen flags input@(resolver , exts , judgedModule) = let
   in input <$ do
     putPass `mapM_` printPass flags
     when (jit flags) $ LD.runJIT (optlevel flags) [] llvmMod
+
+--pipe2vimcat txt = do
+--  (Just vimcatIn,_, _, _) <- createProcess (proc "vimcat" ["--cmd", "syntax on\n --color=always"]) { std_in = CreatePipe }
+--  TL.IO.hPutStrLn vimcatIn txt
+--  hClose vimcatIn
 
 ----------
 -- Repl --

@@ -54,7 +54,7 @@ prettyTerm bindSrc = let
      -- <> "   : " <> clGreen (pTy ty)
   App     f args -> "(" <> pT f <> clMagenta " < " <> T.intercalate " " (pT <$> args) <> ")"
   Instr   p -> "%" <> show p <> "%"
-  Cast  i t -> "(" <> show i <> ")<" <> show t <> ">"
+  Cast  i t -> "(" <> show i <> ")\n    <" <> show t <> ">"
 
   Cons    ts -> let
     sr (field , val) = show field <> " " <> (toS $ srcFieldNames bindSrc V.! field) <> "@" <> pT val

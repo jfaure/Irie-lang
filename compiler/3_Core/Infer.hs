@@ -406,7 +406,9 @@ infer = let
           expect = [THTyCon $ THProduct newMap]
           in do
           -- retcast always bieq , since we gave it a fresh retvar ..
-          CastApp [argCast] pap BiEQ  <- biSub (tyOfExpr fn) (mkTyArrow [leafTy] retVar)
+          argCast <- biSub (tyOfExpr fn) (mkTyArrow [leafTy] retVar) <&> \case
+            CastApp [argCast] pap BiEQ  -> argCast
+            BiEQ                        -> BiEQ
           -- resolving to asmIdx..  sadly need to re-sort all fields on normalised index
           -- ! do this at codegen
           nf <- use normFields

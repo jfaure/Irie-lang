@@ -12,15 +12,45 @@
 --import imports/printf
 --import imports/subtype
 --import imports/list
-import imports/prelude
+--import imports/prelude
 
---z a = if a then 6 else 5
+-- _>>_ : Π A B -> { ret : A } & B -> (A -> B -> C) -> C
+--_>>_ = \a f => f (a.ret) a
 
---join a b = ifE 1 a b
---_>>_ = \f x a => x (f a)
+--self x = x x
+--_>_ = \a f => f a
+--_<_ = \a f => a f
+--five = add 3 2
+--inc a = gmp-add 4 a
 
---r1 = mkTuple 3 2
---main = plus64 3 2
+-- main = puts "hello"
+-- main = gmp-putNumber (gmp-add 9 (gmp-sub 3 -2))
+
+--main = putNumber (rectangle 3 . y . b)
+--rectangle a = { x = { y = 314 , g = 3 , x = 7 } , y = { a = 2 , b = 52 } }
+--rc r = gmp-putNumber (r . b)
+--main = rc ((rectangle 0 . y) . b . over inc)
+
+--inc a  = gmp-add 1 a
+--square = { x = 325 , y = gmp-add 1 9235 }
+--f = square . x
+--leaf = square . x . over inc
+--copy = gmp-putNumber (leaf . y)
+inc a = gmp-add a 1111
+--xInc = ({ x = 325 , y = gmp-add 111 101} . x . over inc)
+main = gmp-putNumber (({ x = 325 , y = gmp-add 32 3252352} . x . over inc) . y)
+
+--leafg = square . y
+--extractCast  = gmp-add 1 (square . x)
+--ov = (square . x . over inc)
+--main = gmp-putNumber (ov . x)
+
+--main   = gmp-putNumber ((square . x . over inc) . y)
+--fCollision = { z = 3 , z = 2 }
+--incX = square 0 . x . over inc
+
+--poly i = add 5 ((i i) 1)
+--try = poly (\x => x)
 
 --comb t a b = ifE t a b
 --f x = { p = plus x 1 }
@@ -28,12 +58,12 @@ import imports/prelude
 --  ifE (pa pstate . cok) (pa pstate) (pb pstate)
 --f = { x = 3 } . x . over (plus 2)
 
+--join a b = ifE 1 a b
 -- _>>_ = \f x a => x (f a)
 --five x = ifE x 5 3
 --g z = ifE (eq z 10) z z
 --f x = plus (g x) x
 --iff x y z = ifE (ifE x y z)
-
 
 --r x = {f = x}
 

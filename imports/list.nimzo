@@ -4,30 +4,32 @@
 --
 L a =
   | Nil : L
-  | Cons : a -> (L -> L)
+  | Cons : Arrow a (Arrow L L)
 
 --pure x v = { ret = x }
 ----pOK ps = ps . cok . set 1
 
 _>>_ = \f x a => x (f a)
-_<_ = \f x => f x
+_<_  = \f x => f x
+
+z = add < 5
 
 self x = x x
-r a = r (plus a 1)
-g x = g
-ifE2 = ifE
-join a b = ifE 1 a b
-s = join g g
+--r a = r (add a 1)
+--g x = g
+ifE2 = ifThenElse
+join a b = ifThenElse 1 a b
+--s = join g g
 
 printList l = case l of
   | Nil => 0
-  | Cons i ll => plus (putNumber i) (printList ll)
+  | Cons i ll => add (putNumber i) (printList ll)
 
 Inc l = case l of
   | Nil => Nil
-  | Cons i ll => Cons (plus 1 i) (Inc ll)
+  | Cons i ll => Cons (add 1 i) (Inc ll)
 
-scanSum n l = ifE (le n 0) l (scanSum (sub n 1) (Cons n l))
+scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
 
 --level a = let px x = plus a x in plus 3
 

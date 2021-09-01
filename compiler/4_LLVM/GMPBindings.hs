@@ -130,8 +130,14 @@ getGMPDecl iname = let
 --Lit (Int i) -> getRetPtr >>= \r -> lift (GMP.getGMPDecl GMP.init_set_ui) >>= \f ->
 --  mkSTGOp r <$ call' f [r , constI64 i]
 
+isGMPStruct = \case { LT.NamedTypeReference "mpz_struct_t" -> True ; _ -> False }
+
 initSRetGMP sret  = lift (getGMPDecl init) >>= \f -> sret <$ call' f [sret]
 zext2GMP i retPtr = lift (getGMPDecl init_set_si) >>= \f -> retPtr <$ call' f [retPtr , i]
+
+initGMPFields fTys sret = let
+  go i fTy = when (isGMPStruct fTy) (void $ gepTy fTy sret [constI32 0 , constI32 (fromIntegral i)])
+  in sret <$ V.imapM go fTys
 
 initGMPInt i retPtr = let base10 = constI32 10 in
   if   i < 2 ^ (64 - 1) -- signed i64 max

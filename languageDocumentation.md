@@ -1,4 +1,7 @@
 # Top level
+An Irie file is a normal (dependent) record of bindings. This means it has a "module signature"; A type for it and therefore all the bindings it defines.
+
+# Records
 Identifiers may freely mix alphanumerical characters and symbols,
 they are space (or reserved character) separated
 Modules are first class dependent records, ie. a list of assignments

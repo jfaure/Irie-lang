@@ -51,39 +51,90 @@ data CallGraph = CallGraph {
  , splits       :: [Split]   -- sumtypes split earlier on this SF
  , retLoc       :: Maybe L.Operand
  , dynRetDrops  :: Maybe L.Operand
- , contextNm    :: [L.Name] -- for naming structs
+ , retCast      :: Maybe BiCast
+ , contextNm    :: [L.Name] -- for naming structs (eg. fn1.\.{})
 } deriving Show
 
 data RecordField = Dropped | Geppable | Gepped L.Operand deriving Show
-data CGOp -- Annotated llvm operands returned by terms. Also pass down a dyn ret drop array
- = LLVMOp   { op :: L.Operand }
+data CGType
+ = LLVMType   LT.Type
+ | StructType (V.Vector L.Type) (Maybe L.Name)
+
+-- Annotated llvm operands returned by terms. CGState Also passes down sret locations and a dyn retdrop array
+-- Important ! codegen often matches partially on the CGOps it expects
+-- This will obviously error if biunification slipped up, but better here than in llvm.
+data CGOp
+ = LLVMOp   { op' :: L.Operand } -- all info dynamically stored in here
  -- Note. Records. if we have a Just retloc in scope, we have to write out a struct
  -- Else we can track all its fields, only write it iff passed to function (byval)
- | RawStruct{ fieldOps       :: V.Vector L.Operand }
- | Record   { recordOp       :: L.Operand
+ | RawFields{ fieldOps       :: V.Vector (CGOp , L.Type) }
+ | Struct   { structOp       :: L.Operand
+            , fieldTys       :: V.Vector L.Type
+--          , structName     :: L.Name
+            }
+ | SubRecord{ structCGOp     :: CGOp
             , fieldTypes     :: V.Vector L.Type
-            , localSubRecord :: Maybe (V.Vector RecordField)
-            , structName     :: L.Name
+            , localSubRecord :: V.Vector RecordField
+--          , structName     :: L.Name
             }
- | Struct   { fieldTys       :: V.Vector L.Type
-            , structOp       :: L.Operand
+ | LensAddr { structCGOp     :: CGOp -- what to return
+            , lensTy         :: L.Type
+            , lensAddr       :: CGOp -- L.Operand
             }
--- | LensOver { object         :: L.Operand -- whole struct
---            , lensAddr       :: L.Operand -- field pointer
---            }
+ | FunctionOp { fnPtrOp :: L.Operand
+              , free    :: [IName]
+              }
+ | GMPFnOp    { fnPtrOp    :: L.Operand }
+ | RecordFnOp { fnPtrOp    :: L.Operand
+              , free       :: [IName]
+              , fieldTypes :: V.Vector L.Type
+              }
  deriving Show
 
-commitLocalRecord (Record oldRecord fTys subRecord nm) = case subRecord of
-  Nothing -> pure oldRecord
-  Just v  -> let
+markLoc :: BS.ShortByteString -> CGBodyEnv s L.Name
+markLoc nm = mdo { br b ; b <- block `named` nm ; pure b }
+op cgop = case cgop of
+  LLVMOp o -> o
+  x -> error $ show x
+
+-- Commit all CGOp info to dynamic memory
+cgOp2Arg :: CGOp -> CGBodyEnv s L.Operand
+cgOp2Arg = \case
+  LLVMOp o -> pure o
+
+cgTypeOf = \case
+  LLVMOp o -> LT.typeOf o
+
+subCastRecord indxs = \case
+  RawFields fs -> RawFields (V.fromList ((\i -> fs V.! i) <$> indxs))
+  SubRecord struct fts subFs -> _
+  Struct struct fieldTys -> Struct struct fieldTys
+  Struct struct fieldTys -> SubRecord (LLVMOp struct) fieldTys mempty
+  x -> error $ "not ready for: " <> show x
+
+commitRecord :: Maybe L.Operand -> CGOp -> CGBodyEnv s CGOp
+commitRecord retLoc r = let
+  commitFields retLoc fieldTs newFields = do
+    sret <- maybe (alloca' (mkStruct_tV fieldTs) Nothing) pure retLoc
+    consStructV fieldTs sret newFields
+    pure $ Struct sret fieldTs
+  in case r of
+  SubRecord (LLVMOp oldRecord) fTys subRecord -> let
     go newFieldOps i field = case field of
       Dropped  -> pure newFieldOps
       Gepped l -> pure (l : newFieldOps)
       Geppable -> (\l -> (l : newFieldOps)) <$> loadIdx oldRecord i
     in do
-      newFields <- V.ifoldM go [] v
-      sret      <- alloca' (mkStruct_t $ LT.typeOf <$> newFields) Nothing
-      consStruct sret newFields
+      newFields <- V.fromList <$> V.ifoldM go [] subRecord
+      let fieldTs = LT.typeOf <$> newFields
+      commitFields retLoc fieldTs newFields
+--RawFields newFields -> commitFields retLoc (cgTypeOf <$> newFields) =<< (cgOp2Arg `mapM` newFields)
+  RawFields newFields -> commitFields retLoc (snd <$> newFields) =<< ((cgOp2Arg . fst) `mapM` newFields)
+  Struct struct fTys  -> let structTy = mkStruct_tV fTys in case retLoc of
+    Just r -> Struct r fTys <$ (load' struct >>= store' r) -- need to copy an existing struct
+  LensAddr struct lensTy vv@(LLVMOp v) ->   case retLoc of
+    Just r -> LensAddr (LLVMOp r) lensTy vv <$ (load' v >>= store' r)
+  x -> error $ "not ready for: " <> show x
 
 mkSTGOp = LLVMOp
 
@@ -92,7 +143,7 @@ data Split = Split { -- a data opened by Match (may be reused or freed)
  , sframe     :: L.Operand -- the parent frame
  , components :: IM.IntMap L.Operand -- datas here were split from this SF
 } deriving Show
-
+  
 type DataFrame = L.Operand
 modifySF f = modify $ \x->x { stack = (\(x:xs) -> f x : xs) (stack x) }
 getSF :: CGBodyEnv s CallGraph
@@ -105,10 +156,12 @@ setRetLoc :: L.Operand -> CGBodyEnv s L.Operand
 setRetLoc r = r <$ (modifySF $ \x->x {retLoc = Just r })
 delRetLoc :: CGBodyEnv s ()
 delRetLoc = modifySF $ \x->x {retLoc = Nothing }
+getDelRetLoc :: CGBodyEnv s (Maybe L.Operand)
+getDelRetLoc = getRetLoc <* delRetLoc
 
 data FNRet
  = RetReg
- | RetRecord
+ | RetRecord (V.Vector LT.Type)
  | RetBigint
  deriving Show
 
@@ -118,6 +171,7 @@ data StgWIP
  | STGFn       { retData :: !FNRet , freeArgs :: [IName] , fnOp :: L.Operand }
 -- | STGDataFn { freeArgs :: [IName] , fnOp :: L.Operand , sts :: IM.IntMap QTT }
  | STGConstant { fnOp :: L.Operand } -- top level functions for now
+ | STGConstantFn { fnOp :: L.Operand , freeArgs :: [IName] } -- top level functions for now
 
  | LLVMTy L.Type
  | LLVMInstr PrimInstr -- we avoid generating functions for these if possible
@@ -166,13 +220,11 @@ primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
 
 -- basically is it bigger than register size
 isDataTyHead = \case { THTyCon (THProduct{})->True ; THPrim PrimBigInt->True ; THExt 21->True ; _->False } -- HACK
-dataRetKind = \case
-  THPrim (PrimBigInt)   -> RetBigint
-  THTyCon (THProduct{}) -> RetRecord
-  _ -> RetReg
-
-isStructTy  = \case { LT.StructureType{} -> True ; LT.NamedTypeReference{} -> True ; _ -> False }
+isStructTy  = \case { LT.StructureType{} -> True ; _ -> False }
+isTypeRef   = \case { LT.NamedTypeReference{} -> True ; _ -> False }
 isStructPtr = \case { LT.PointerType s _ -> isStructTy s ; _ -> False }
+isTypeRefPtr = \case { LT.PointerType s _ -> isTypeRef s ; _ -> False }
+
 primTy2llvm :: PrimType -> L.Type =
   let doExtern isVa tys =
         let (argTys, [retTy]) = splitAt (length tys -1) tys
@@ -219,6 +271,7 @@ emitArray nm arr = let
 size_t     = i32_t  -- Note. any of unsigned char -> unsigned long long
 int_t      = i32_t
 
+mkStruct_tV= mkStruct_t . V.toList
 mkStruct_t = LT.StructureType False
 charPtr_t  = LT.ptr i8_t
 iN_t       = LT.IntegerType
@@ -256,6 +309,9 @@ alloca' ty op = alloca ty op 0
 call' f = call f . map (,[])
 mkNullPtr = L.ConstantOperand . C.Null
 
+gepTy ty addr is = emitInstr (LT.ptr ty) (L.GetElementPtr False addr is [])
+
+-- TODO remove this
 gep :: L.Operand -> [L.Operand] -> CGBodyEnv s L.Operand
 gep addr is = let
   ty = gepType (LT.typeOf addr) is
@@ -275,10 +331,12 @@ gep addr is = let
 -- load a value from an array (~pointer to array)
 zext' ty v = zext v ty
 bitcast' a b = bitcast b a
+--loadIdx :: L.Type -> L.Operand -> Int -> CGBodyEnv s L.Operand
+--loadIdx fTy ptr i = load' =<< gep fTy ptr [constI32 0, constI32 $ fromIntegral i]
 loadIdx :: L.Operand -> Int -> CGBodyEnv s L.Operand
-loadIdx ptr i = load' =<< (ptr `gep` [constI32 0, constI32 $ fromIntegral i])
-storeIdx :: L.Operand -> Int -> L.Operand -> CGBodyEnv s ()
-storeIdx ptr i op = (`store'` op) =<< ptr `gep` [constI32 0, constI32 $ fromIntegral i]
+loadIdx ptr i = load' =<< gep ptr [constI32 0, constI32 $ fromIntegral i]
+storeIdx :: L.Type -> L.Operand -> Int -> L.Operand -> CGBodyEnv s ()
+storeIdx fTy ptr i op = (`store'` op) =<< gepTy fTy ptr [constI32 0, constI32 $ fromIntegral i]
 
 mkArray ar = let
   ty = LT.typeOf $ fromJust $ head ar
@@ -296,21 +354,20 @@ mkPtrList ty ops = do
   store' ptr arr
   pure ptr
 
-mkSizedPtrList ptrType ops = flip named "ptrListSZ" $  let -- + size variable
-  sz = fromIntegral $ length ops -- C.Int 32 (fromIntegral $ 1 + length ops)
-  arrTy = LT.ArrayType sz ptrType
-  structType = LT.StructureType False [ intType , arrTy ]
-  undef = L.ConstantOperand (C.Undef arrTy)
-  in do
-  ptr <- alloca' structType Nothing
-  storeIdx ptr 0 (constI32 $ fromIntegral sz)
-  ptrList <- foldM (\arr (i,v) -> insertValue arr v [i]) undef (zip [0..] ops)
-  storeIdx ptr 1 ptrList
-  pure ptr
+--mkSizedPtrList ptrType ops = flip named "ptrListSZ" $  let -- + size variable
+--  sz = fromIntegral $ length ops -- C.Int 32 (fromIntegral $ 1 + length ops)
+--  arrTy = LT.ArrayType sz ptrType
+--  structType = LT.StructureType False [ intType , arrTy ]
+--  undef = L.ConstantOperand (C.Undef arrTy)
+--  in do
+--  ptr <- alloca' structType Nothing
+--  storeIdx ptr 0 (constI32 $ fromIntegral sz)
+--  ptrList <- foldM (\arr (i,v) -> insertValue arr v [i]) undef (zip [0..] ops)
+--  storeIdx ptr 1 ptrList
+--  pure ptr
 
-consStruct ptr vals = let
-  ty = LT.StructureType False $ LT.typeOf <$> vals
-  in ptr <$ zipWithM (\v i -> storeIdx ptr i v) vals ([0..] :: [Int])
+consStructV fTys ptr vals = ptr <$ V.imapM (\i v -> storeIdx (fTys V.! i) ptr i v) vals
+consStruct ptr vals = ptr <$ V.imapM_ (\i v -> storeIdx (LT.typeOf v) ptr i v) (V.fromList vals)
 
 mkStruct :: Maybe L.Type -> [L.Operand] -> CGBodyEnv s L.Operand
 mkStruct maybeTy vals = let

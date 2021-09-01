@@ -4,6 +4,7 @@
 resolver: lts-17.7
 compiler: ghc-8.10.4
 
+allow-newer: true
 nix:
  enable: true
  pure: false

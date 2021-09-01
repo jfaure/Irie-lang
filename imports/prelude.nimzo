@@ -1,3 +1,4 @@
+-- n = non-assoc , a = assoc , r = rassoc , l = lassoc
 --_._  { r12 } = navigation
 _<<_ { a11 } = \f g a => f (g a)
 _>>_ { a11 } = \g f a => f (g a)
@@ -6,8 +7,8 @@ _^_  { r10 } = pow
 _B~_ { r9 }  = bitNOT
 
 _B&_ { a8 } = bitAND
-_B<<_{ a8 } = bitSHL
-_B>>_{ a8 } = bitSHR
+_B<<_{ n8 } = bitSHL
+_B>>_{ n8 } = bitSHR
 
 _*_  { a7 } = mul
 _/_  { l7 } = fdiv -- float division
@@ -53,5 +54,5 @@ if1    = if 0 then 3 else 4
 if2 = if 0 then 1 else if 1 then 3 else 4
 if3 = if 1 then 5 else 0 * 2 * 9
 megaIf = if 1 then 5 + 1 else 0 * 7 * 9
-----plus = _+_
+--plus = _+_
 -}
