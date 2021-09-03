@@ -21,7 +21,7 @@ dependencies:
 - binary
 - primitive
 - semialign
-# - hashable
+- these
 - text
 - vector
 - vector-binary-instances

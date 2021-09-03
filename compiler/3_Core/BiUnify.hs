@@ -35,12 +35,12 @@ biSub :: TyPlus -> TyMinus -> TCEnv s BiCast
 biSub a b = let
   in case (a , b) of
   -- lattice top and bottom
-  ([] ,  _) -> pure BiEQ
-  (_  , []) -> pure BiEQ
+  ([] ,  _)  -> pure BiEQ
+  (_  , [])  -> pure BiEQ
+  ([p] , [m])-> atomicBiSub p m
   -- lattice subconstraints
-  ((p1:p2:p3) , m) -> biSub [p1] m *> biSub (p2:p3) m
-  (p , (m1:m2:m3)) -> biSub p [m1] *> biSub p (m2:m3)
-  ([p] , [m])      -> atomicBiSub p m
+  (p:ps@(p1:p2) , m) -> biSub [p] m *> biSub ps m
+  (p , m:ms) -> biSub p [m] *> biSub p ms
 
 -- merge types and attempt to eliminate the THVar
 --solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
@@ -124,7 +124,7 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
 
   (a , b) -> failBiSub "" [a] [b]
 
--- used for computing both differences between 2 IntMaps
+-- used for computing both differences between 2 IntMaps (sadly alignWith won't give us the ROnly map key)
 data KeySubtype
   = LOnly Type         -- OK by record | sumtype subtyping
   | ROnly IField Type  -- KO field not present
@@ -139,7 +139,7 @@ biSubTyCon p m = \case
     normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
     go leafCasts normIdx ty = case ty of
       LOnly a   {- drop     -} -> pure $ leafCasts --(field : drops , leafCasts)
-      ROnly f a {- no subty -} -> leafCasts <$ failBiSub ("Product type: field not present: " <> show f) [p] [m]
+      ROnly f a {- no subty -} -> leafCasts <$ failBiSub ("Record: absent field: "<>show f) [p] [m]
       Both  a b {- leafcast -} -> biSub a b <&> (\x -> (normIdx , x) : leafCasts) -- leaf bicast
     in V.ifoldM go [] normalized <&> \leafCasts ->
        let drops = V.length normalized - length leafCasts -- TODO rm filthy list length
@@ -158,8 +158,8 @@ biSubTyCon p m = \case
 
 arrowBiSub (argsp,argsm) (retp,retm) = let
   bsArgs [] [] = ([] , Nothing , ) <$> biSub retp retm
-  bsArgs x  [] = ([] , Just x  , ) <$> biSub (addArrowArgs x retp) retm  -- Partial application
-  bsArgs []  x = ([] , Nothing , ) <$> biSub retp (addArrowArgs x retm)  -- Returns a function
+  bsArgs x  [] = ([] , Just x  , ) <$> biSub (prependArrowArgs x retp) retm  -- Partial application
+  bsArgs []  x = ([] , Nothing , ) <$> biSub retp (prependArrowArgs x retm)  -- Returns a function
   bsArgs (p : ps) (m : ms) = (\arg (xs,pap,retbi) -> (arg:xs , pap , retbi)) <$> biSub m p <*> bsArgs ps ms
   in (\(argCasts, pap, retCast) -> CastApp argCasts pap retCast) <$> bsArgs argsp argsm
 

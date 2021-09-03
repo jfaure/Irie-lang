@@ -20,21 +20,17 @@ data TCEnvState s = TCEnvState {
  , _scopeFails :: [ScopeError]
 
  -- state
- , _srcRefs  :: Maybe SrcInfo
- , _tmpFails :: [TmpBiSubError] -- App local bisub failures
- , _bindWIP  :: IName
- , _level    :: Dominion
- , _deBruijn :: MV.MVector s Int
- , _quants   :: Int
- , _mus      :: Int
- , _bis      :: MV.MVector s BiSub -- typeVars
- , _muEqui   :: IntMap IName -- equivalence classes for mu types, + -> -
-
+ , _srcRefs    :: Maybe SrcInfo
+ , _tmpFails   :: [TmpBiSubError] -- App local bisub failures
+ , _bindWIP    :: IName
+ , _level      :: Dominion
+ , _deBruijn   :: MV.MVector s Int
+ , _quants     :: Int
+ , _mus        :: Int
+ , _bis        :: MV.MVector s BiSub -- typeVars
+ , _muEqui     :: IntMap IName -- equivalence classes for mu types, + -> -
  , _normFields :: VU.Vector IName
  , _normLabels :: VU.Vector IName
-
--- , _labels   :: MV.MVector s (Maybe Type)
--- , _fields   :: MV.MVector s (Maybe Type)
 }
 
 makeLenses ''TCEnvState

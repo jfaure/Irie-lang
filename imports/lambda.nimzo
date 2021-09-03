@@ -5,3 +5,13 @@ K x y = x
 Y f = let g x = f (x x) in g g 
 f = \x => x
 Y2 f = (\ g => g g) (\ x => f (x x))
+
+--y f = let g x = f (x x) in g g
+--y f = (\v => f (v v)) (\v => f (v v))
+--fix f = f (fix f)
+-- --ycbv f = let g x = let e v = (x x) v in (f e) in g g
+-- --varArg f = (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v))
+-- varArg f = let g x = f (\v => (x x) v) in g g
+-- r f x = f
+-- -- : Top -> rec v (Top -> v) -- : rec v (Top -> v)
+

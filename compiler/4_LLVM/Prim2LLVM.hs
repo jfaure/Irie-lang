@@ -3,20 +3,23 @@ module Prim2LLVM where
 import Prim
 import CoreSyn
 import CoreUtils
+import PrettyCore (number2xyz , number2CapLetter)
 import Externs
 import Data.List (unzip3 , (!!))
 import Data.String
-import qualified Data.Text as T (pack)
+import qualified Data.Text as T (pack , unpack)
 import qualified Data.ByteString.Short as BS
 import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Type as LT
 import qualified LLVM.AST.Typed as LT
 import qualified LLVM.AST.IntegerPredicate as IP
 import qualified LLVM.AST.FloatingPointPredicate as FP
+import qualified LLVM.AST.FunctionAttribute as FA
 import qualified LLVM.AST.Constant as C
 import LLVM.AST.AddrSpace
 import LLVM.AST.Global  as L
@@ -33,6 +36,8 @@ data CGState s = CGState {
    wipBinds   :: MV.MVector s StgWIP
  , externs    :: Externs --V.Vector Expr
  , coreModule :: JudgedModule
+ , normFields :: VU.Vector IName
+ , normLabels :: VU.Vector IName
 
  -- Output
  , llvmDefs   :: [L.Definition]
@@ -42,6 +47,7 @@ data CGState s = CGState {
  , primDecls       :: Maybe (MV.MVector s (Maybe L.Definition))
  , gmpDecls        :: Maybe (MV.MVector s (Maybe L.Definition))
  , moduleUsedNames :: M.Map BS.ShortByteString Int
+ , typeVars        :: Int -- number of typevars used (eg. A -> B) => 2
 }
 
 data DataArg = DataArg { qtt :: Int , aframe :: L.Operand , dOp :: L.Operand } deriving Show
@@ -53,23 +59,27 @@ data CallGraph = CallGraph {
  , dynRetDrops  :: Maybe L.Operand
  , retCast      :: Maybe BiCast
  , contextNm    :: [L.Name] -- for naming structs (eg. fn1.\.{})
+ , complexity   :: Int      -- how worthwhile to inline
 } deriving Show
 
 data RecordField = Dropped | Geppable | Gepped L.Operand deriving Show
 data CGType
  = LLVMType   LT.Type
- | StructType (V.Vector L.Type) (Maybe L.Name)
+ | StructType (V.Vector L.Type) (Maybe L.Name) deriving Show
+
+type CGT = L.Type -- will switch to cgtype soon
 
 -- Annotated llvm operands returned by terms. CGState Also passes down sret locations and a dyn retdrop array
--- Important ! codegen often matches partially on the CGOps it expects
+-- Important ! codegen frequently matches partially on the CGOps it expects
 -- This will obviously error if biunification slipped up, but better here than in llvm.
+-- TODO use CGType in here
 data CGOp
  = LLVMOp   { op' :: L.Operand } -- all info dynamically stored in here
  -- Note. Records. if we have a Just retloc in scope, we have to write out a struct
  -- Else we can track all its fields, only write it iff passed to function (byval)
  | RawFields{ fieldOps       :: V.Vector (CGOp , L.Type) }
  | Struct   { structOp       :: L.Operand
-            , fieldTys       :: V.Vector L.Type
+            , fieldTypes     :: V.Vector L.Type
 --          , structName     :: L.Name
             }
  | SubRecord{ structCGOp     :: CGOp
@@ -81,15 +91,36 @@ data CGOp
             , lensTy         :: L.Type
             , lensAddr       :: CGOp -- L.Operand
             }
- | FunctionOp { fnPtrOp :: L.Operand
-              , free    :: [IName]
+ | FunctionOp { fnPtrOp  :: L.Operand
+              , free     :: [IName]
+              , argTypes :: [L.Type] -- for PAps and lambdas
+              , retType  :: L.Type
+              }
+ | Inlineable { llvmFn  :: CGOp
+              , termAbs :: ([IName] , Term)
+              }
+ | PapOp      { fn       :: CGOp -- knows the arg types of the pap
+              , captures :: [CGOp]
               }
  | GMPFnOp    { fnPtrOp    :: L.Operand }
  | RecordFnOp { fnPtrOp    :: L.Operand
               , free       :: [IName]
               , fieldTypes :: V.Vector L.Type
               }
+ | DynFn      { fnPtrOp  :: L.Operand
+              , retSize  :: L.Operand -- nonZero for sret arguments
+              }
  deriving Show
+
+fieldNames2ASM coreKeys f normFields = let
+  normalised  = V.fromList $ IM.keys $ IM.mapKeys (normFields VU.!) coreKeys
+  Just asmIdx = V.findIndex (== normFields VU.! f) normalised
+  in asmIdx
+labelNames2ASM = fieldNames2ASM
+
+-- preferably use less yolo way
+modifyField :: V.Vector a -> Int -> a -> V.Vector a
+modifyField fields asmIdx newVal = runST $ V.unsafeThaw fields >>= \v -> MV.write v asmIdx newVal *> V.unsafeFreeze v
 
 markLoc :: BS.ShortByteString -> CGBodyEnv s L.Name
 markLoc nm = mdo { br b ; b <- block `named` nm ; pure b }
@@ -108,7 +139,7 @@ cgTypeOf = \case
 subCastRecord indxs = \case
   RawFields fs -> RawFields (V.fromList ((\i -> fs V.! i) <$> indxs))
   SubRecord struct fts subFs -> _
-  Struct struct fieldTys -> Struct struct fieldTys
+  Struct struct fieldTys | length indxs == V.length fieldTys -> Struct struct fieldTys
   Struct struct fieldTys -> SubRecord (LLVMOp struct) fieldTys mempty
   x -> error $ "not ready for: " <> show x
 
@@ -168,7 +199,8 @@ data FNRet
 data StgWIP
  = TWIP   (HName , Bind)
 
- | STGFn       { retData :: !FNRet , freeArgs :: [IName] , fnOp :: L.Operand }
+ | STGFn       { retData :: !FNRet , stgargTypes :: [CGT] , stgretType :: CGT
+               , freeArgs :: [IName] , fnOp :: L.Operand , inlineable :: Maybe ([IName] , Term) }
 -- | STGDataFn { freeArgs :: [IName] , fnOp :: L.Operand , sts :: IM.IntMap QTT }
  | STGConstant { fnOp :: L.Operand } -- top level functions for now
  | STGConstantFn { fnOp :: L.Operand , freeArgs :: [IName] } -- top level functions for now
@@ -185,7 +217,16 @@ freshTopName suggestion = do
   modify $ \x->x{ moduleUsedNames = M.insert suggestion (nameCount + 1) (moduleUsedNames x) }
   pure $ L.Name $ "." <> suggestion <> "." <> fromString (show nameCount)
 
--- most llvm instructions take flags, stg wants functions on operands
+-- Todo handle all bitwidths
+emitInstrWrapper :: PrimInstr -> CGEnv s CGOp
+emitInstrWrapper i = case i of
+  n@NumInstr{} -> let
+    (argTys , retTy) = ([i32_t , i32_t] , i32_t)
+    in (emitPrimFunction i argTys retTy) <&> \fptr -> FunctionOp fptr [] argTys retTy
+--GMPInstr   -> _
+  _ -> error $ "llvm codegen: unlisted instruction: " <> show i
+
+-- most llvm instructions take flags
 primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
  NumInstr n -> case n of
   BitInstr i  -> case i of
@@ -302,14 +343,14 @@ polyFnType' = LT.FunctionType voidPtrType [] True -- `char* f(..)`
 polyFnType  = LT.ptr polyFnType'
 varArgsFnTy retTy = LT.ptr $ LT.FunctionType retTy [] True
 
-load' ptr = load ptr 0
+load' ptr          = load ptr 0
 storePtr ty ptr op = bitcast ptr (LT.ptr ty) >>= \p -> store' p op
-store' ptr op = store ptr 0 op
-alloca' ty op = alloca ty op 0
-call' f = call f . map (,[])
-mkNullPtr = L.ConstantOperand . C.Null
+store' ptr op      = store ptr 0 op
+alloca' ty op      = alloca ty op 0
+call' f            = call f . map (,[])
+mkNullPtr          = L.ConstantOperand . C.Null
 
-gepTy ty addr is = emitInstr (LT.ptr ty) (L.GetElementPtr False addr is [])
+gepTy ty addr is = emitInstr (LT.ptr ty) (L.GetElementPtr True addr is [])
 
 -- TODO remove this
 gep :: L.Operand -> [L.Operand] -> CGBodyEnv s L.Operand
@@ -426,8 +467,10 @@ cgType = \x -> case x of
 
 cgTypeAtomic = \case --x -> case did_ x of
   THExt i -> gets externs >>= (cgType . tyExpr . (`readPrimExtern` i))
+  THBound i -> (LT.ptr $ LT.NamedTypeReference $ fromString (T.unpack $ number2CapLetter i)) <$ modify (\x->x{typeVars = 1 + typeVars x})
+  THMuBound i -> pure (LT.ptr $ LT.NamedTypeReference $ fromString (T.unpack $ number2xyz i)) -- <$ modify (\x->x{typeVars = 1 + typeVars x})
   THTyCon t -> case t of
-    THArrow   tys t -> (\ars retTy -> L.FunctionType retTy ars False) <$> (cgType `mapM` tys) <*> cgType t
+    THArrow   tys t -> (\ars retTy -> LT.ptr $ L.FunctionType retTy ars False) <$> (cgType `mapM` tys) <*> cgType t
     THProduct tyMap -> mkStruct_t <$> (cgType `mapM` IM.elems tyMap)
 --  THSumTy   tyMap ->
 --  THArray t  -> _ -- LT.ArrayType $ cgType t
@@ -436,11 +479,11 @@ cgTypeAtomic = \case --x -> case did_ x of
 --THRec r    -> gets (did_ . _pSub . (V.! r) . typeVars . coreModule) >>= cgType
   THVar{} -> panic "thvar found in codegen!" -- pure voidPtrType
   x -> pure $ case x of -- can be generated non monadically
-    THTop    -> top_t
-    THBot    -> bot_t
-    THPrim p -> primTy2llvm p
-    THSet  0 -> tyLabel
-    x -> error $ "MkStg: not ready for ty: " ++ show x
+    THTop     -> top_t
+    THBot     -> bot_t
+    THPrim p  -> primTy2llvm p
+    THSet  0  -> tyLabel
+    x -> error $ "cgType: not ready for ty: " ++ show x
 tyLabel = voidPtrType -- HACK
 
 ----------------
@@ -457,19 +500,24 @@ literal2Stg l = let
 --  Frac f    -> C.Float (LF.Double $ fromRational f)
   x -> error $ show x
 
--- generate fn for prim instructions (ie. if need a function pointer for them)
+-- generate code for prim instructions, to have a fn pointer to them
 emitPrimFunction instr argTys retTy = do
-  nm <- freshTopName "instr" -- TODO nah
+  nm <- freshTopName "instr-wrapper"
   (params, blocks) <- runIRBuilderT emptyIRBuilder $ do
     params@[a,b] <- argTys `forM` \ty -> L.LocalReference ty <$> fresh
     ret =<< emitInstr (LT.typeOf a) ((primInstr2llvm instr) a b)
     pure params
   let fnParams = (\(L.LocalReference ty nm) -> Parameter ty nm []) <$> params
-  emitFunction nm fnParams retTy blocks
+      -- todo somehow add unnamed addr
+      addAttribs x = x { functionAttributes = Right FA.ArgMemOnly : {-Right FA.JumpTable :-} Right FA.AlwaysInline : functionAttributes x }
+  emitFunction nm addAttribs fnParams retTy blocks
 
-emitFunction :: L.Name -> [Parameter] -> LT.Type -> [L.BasicBlock] -> CGEnv s L.Operand
-emitFunction label fnParams retty blocks =
-  let def = L.GlobalDefinition L.functionDefaults
+emitPApFunction label term = _
+
+type FnGlobal = Global -- filthy lack of sumtype subtyping
+emitFunction :: L.Name -> (FnGlobal -> FnGlobal) -> [Parameter] -> LT.Type -> [L.BasicBlock] -> CGEnv s L.Operand
+emitFunction label modifyFn fnParams retty blocks =
+  let def = L.GlobalDefinition $ modifyFn $ L.functionDefaults
         { name        = label
         , parameters  = (fnParams, False)
         , returnType  = retty

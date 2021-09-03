@@ -8,6 +8,15 @@ import qualified Data.IntMap.Strict as IM
 import qualified Data.IntSet as IS
 import Text.Printf
 
+number2CapLetter i = let
+  letter = (chr ((i `mod` 26) + ord 'A'))
+  overflow = i `div` 26
+  in if overflow > 0 then (letter `T.cons` show overflow) else T.singleton letter
+number2xyz i = let
+  letter = (chr ((i `mod` 3) + ord 'x'))
+  overflow = i `div` 3
+  in if overflow > 0 then (letter `T.cons` show overflow) else T.singleton letter
+
 parens x = "(" <> x <> ")"
 unParens x = if T.head x == '(' then T.drop 1 (T.dropEnd 1 x) else x
 
@@ -16,7 +25,7 @@ prettyBind showExpr bindSrc = \case
   Guard m ars tvar      -> "GUARD : " <> show m <> show ars <> show tvar
   Mutual d m isRec tvar -> "MUTUAL: " <> show d <> show m <> show isRec <> show tvar
   WIP -> "WIP"
-  BindOK expr -> prettyExpr' showExpr bindSrc "\n  " expr <> "\n"
+  BindOK expr -> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
 
 prettyExpr showExpr bindSrc = prettyExpr' showExpr bindSrc ""
 prettyExpr' showExpr bindSrc pad = let
@@ -85,15 +94,6 @@ prettyTy bindSrc = let
   []  -> "_"
   [x] -> pTH x
   x   -> "(" <> (T.intercalate " & " $ pTH <$> x) <> ")"
-
-number2CapLetter i = let
-  letter = (chr ((i `mod` 26) + ord 'A'))
-  overflow = i `div` 26
-  in if overflow > 0 then (letter `T.cons` show overflow) else T.singleton letter
-number2xyz i = let
-  letter = (chr ((i `mod` 3) + ord 'x'))
-  overflow = i `div` 3
-  in if overflow > 0 then (letter `T.cons` show overflow) else T.singleton letter
 
 prettyTyHead bindSrc = let
  pTy = prettyTy bindSrc

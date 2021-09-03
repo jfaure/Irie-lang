@@ -4,18 +4,21 @@
   * language server
   * precompiled modules ('binary' haskell package)
   * Linker; invoke clang
+  * Don't repeat not-in-scope errors
+  * Error messages: show exprs with the problematic types (add 3 2 1) cryptically says: %i32 /<: (%i32 -> t7)
 ## Parse
   * Use [n..] numbered args from Parser in a safer way
 ## Types
+  * generalise anon bindings using levels
+  * add bitwidth to NumInstr
   * check let | rec
-  * don't allow field name collisions in tycon
+  * handle field name collisions (THFieldCollision)
   * fn Apps are Poison iff the function ret type depends on the poison arg
   * Dependent normalisation & Staging
 ## Codegen
   * opportunistic instrs that read Terms also need a dumber version for Operands
   * do asmIdx resolution here
   * figure out how ffi handles passing [n x %i1] by value
-  * record cons: if term is trivial, write it unconditionally
 
 !!
 repl & linking & typecase in JIT to print results

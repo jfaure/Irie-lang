@@ -5,6 +5,7 @@ import Prim
 import qualified Data.Vector         as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
+import qualified Data.Map as M
 import Control.Lens hiding (List)
 import MixfixSyn
 
@@ -21,8 +22,8 @@ type ExtIName    = Int  -- VExterns
 type BiSubName   = Int  -- index into bisubs
 type IField      = Int  -- product-type fields
 type ILabel      = Int  -- sum-type labels
-type Table a     = V.Vector a -- map of IName -> a
 type SrcOff      = Int  -- offset into the source file
+type Complexity  = Int  -- number of Apps in the Term
 
 data VName
  = VBind   IName -- bind   map
@@ -33,21 +34,24 @@ data VName
 data Term -- β-reducable (possibly to a type) and type annotated
  = Var     !VName
  | Lit     !Literal
- | Hole    -- to be inferred : Bot
+ | Question      -- attempt to infer this TT
  | Poison  !Text -- typecheck inconsistency
 
- | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
- | App     Term [Term] -- IName [Term]
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
- -- data constructions
- | Cons    (IM.IntMap Term) -- convert to record
+ | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
+ | Hole     -- argument hole (part of an implicit Abs)
+ | App     Term [Term] -- IName [Term]
+
+ | Cons    (IM.IntMap Term)
+ | TTLens  Term [IField] LensOp
+
  | Label   ILabel [Expr]
  | Match   Type (IM.IntMap Expr) (Maybe Expr) -- type is the return type of this expression
+
  | List    [Expr]
 
- | TTLens  Term [IField] LensOp -- Expr because we need to know the type of the record
 
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs a lens for extracting field
 
@@ -110,13 +114,13 @@ data Expr
  = Core     Term Type
  | Ty       Type
  | Set      !Int Type
+ | PoisonExpr
 
  -- Temporary exprs for solveMixfixes
  | QVar     (ModuleIName , IName)
  | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
  | ExprApp  Expr [Expr] -- output of solvemixfixes
  | Fail     Text -- TCError
- | PoisonExpr
 
 data Bind -- indexes in the bindmap
  = WIP
@@ -156,8 +160,11 @@ data BiCast
  | CastLeaves  [BiCast]
 
  | CastApp [BiCast] (Maybe [Type]) BiCast -- argcasts , maybe papcast , retcast
+ | CastFnRet Int BiCast -- arg count (needed by code gen)
  | BiInst  [BiSub] BiCast -- instantiate polytypes
- | CastFn Term
+ | CastOver ASMIdx BiCast Expr Type
+
+-- | CastFn {- cast for fn arg -} BiCast Expr Type -- used by lensOver to "cast" records
 -- | BiFail Text
 -- | CastSequence [BiCast]
 -- | BiCast Term
@@ -185,6 +192,8 @@ data SrcInfo = SrcInfo Text (VU.Vector Int)
 data JudgedModule = JudgedModule {
    modName     :: HName
  , bindNames   :: V.Vector HName
+ , fieldNames  :: M.Map HName IName
+ , labelNames  :: M.Map HName IName
  , judgedBinds :: V.Vector Bind
 }
 

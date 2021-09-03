@@ -28,7 +28,7 @@ searchPath = ["./" , "Library/"]
 main = getArgs >>= main'
 sh   = main' . Data.List.words -- simplest way to pass cmdline args in ghci
 shL  = main' . (["-p" , "llvm-hs"] ++ ) . Data.List.words
-demo = main' $ Data.List.words "demo.ii -p llvm-hs"
+demo = sh "demo.ii -p llvm-hs"
 
 main' args = parseCmdLine args >>= \cmdLine -> -- initGlobalFlags >>= \cmdLine ->
   when ("args" `elem` printPass cmdLine) (print cmdLine)
@@ -56,19 +56,22 @@ text2Core flags resolver fName progText = do
   let localNames   = parsed ^. P.parseDetails . P.hNameBinds . _2
       mixfixNames  = parsed ^. P.parseDetails . P.hNameMFWords . _2
       unknownNames = parsed ^. P.parseDetails . P.hNamesNoScope
+      -- TODO not here
       labelNames   = iMap2Vector $ parsed ^. P.parseDetails . P.labels
       fieldNames   = iMap2Vector $ parsed ^. P.parseDetails . P.fields
 
 --    (tmpResolver , exts) = resolveImports resolver localNames mixfixNames unknownNames
       (tmpResolver , exts) = resolveImports modResolver localNames mixfixNames unknownNames
       srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
+
       (judgedModule , errors) = judgeModule parsed hNames exts srcInfo
       TCErrors scopeErrors biunifyErrors = errors
-      JudgedModule modNm bindNames judgedBinds = judgedModule
+      JudgedModule modNm bindNames _ _ judgedBinds = judgedModule
       newResolver = addModule2Resolver tmpResolver (bind2Expr <$> judgedBinds)
 
   let judged'    = V.zip bindNames judgedBinds
-      namedBinds = (\(nm,j)->clYellow nm <> toS (prettyBind False (BindSource _ bindNames _ labelNames fieldNames) j)) <$> judged'
+      bindSrc    = BindSource _ bindNames _ labelNames fieldNames
+      namedBinds = (\(nm,j)->clYellow nm <> toS (prettyBind False bindSrc j)) <$> judged'
       putPass :: Text -> IO () = \case
         "args"       -> print flags
         "source"     -> putStr =<< readFile fName
@@ -77,7 +80,7 @@ text2Core flags resolver fName progText = do
         "namedCore"  -> void $ T.IO.putStrLn `mapM` namedBinds
         _ -> pure ()
       addPass passNm = putStrLn ("\n  ---  \n" :: Text) *> putPass passNm
-  (T.IO.putStrLn . formatError srcInfo)      `mapM` biunifyErrors
+  (T.IO.putStrLn . formatError bindSrc srcInfo)      `mapM` biunifyErrors
   (T.IO.putStrLn . formatScopeError) `mapM` scopeErrors
   putPass `mapM_` (printPass flags)
   pure (newResolver , exts , judgedModule)
@@ -86,8 +89,9 @@ text2Core flags resolver fName progText = do
 -- Phase 2: codegen, linking, jit
 ---------------------------------
 --codegen flags input@((resolver , Import bindNames judged) , exts , judgedModule) = let
-codegen flags input@(resolver , exts , judgedModule) = let
-  llvmMod    = mkStg exts judgedModule
+codegen flags input@(resolver , exts , jm@(JudgedModule modNm bindNms a b judgedBinds)) = let
+--judgedBinds' = simplifyBinds exts judgedBinds
+  llvmMod      = mkStg exts (JudgedModule modNm bindNms a b judgedBinds)
   putPass :: Text -> IO () = \case
     "llvm-hs"    -> let
       text = ppllvm llvmMod

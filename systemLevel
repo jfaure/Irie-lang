@@ -1,8 +1,0 @@
-Salut,
-je presentes mon projet de langage, un "system-level calculus of subtyping constructions", qui s'appuie sur la type theorie dans le but de construire des programs plus safe et plus performants
-
-On est d'accord qu'historiquement les langages fonctionnels ont étés tres mals fichus, que malgré la pureté et les infos supplementaires a disposition du compilateur ils reussisent qu'a operer avec un garbage collector, du lazy et autres hacks honteux.
-
-Pourtant, avec un langage de termes et de types isomorphique a la logique classique, l'expressivité est illimité, et le potentiel d'optimisations inhumaines dans le compilateur sont nombreux, en particulier avec la gestion de memoire, de multithreading et de calculs GPU / distribués.
-
-La mémoire est le terrain le plus intéressant; Le problème d'un allocateur standard est qu'il n'a aucune idée sur ce que fait le programme, et doit être prêt a tout. J'ai design mon allocateur pour exploiter au maximum les informations obtenues dans le type système (QTT en particulier) et pêut compter sur l'aide du compilateur pour gérer du bookkeeping (plutôt que l'allocateur perde du temps à les retrouver comme fait jemalloc, ou de l'overhead comme dlmalloc). Cela revient effectivement a ce que chaque fonction ai un allocateur custom accordé a son pattern d'utilisation memoire.

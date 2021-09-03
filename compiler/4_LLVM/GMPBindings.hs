@@ -136,7 +136,7 @@ initSRetGMP sret  = lift (getGMPDecl init) >>= \f -> sret <$ call' f [sret]
 zext2GMP i retPtr = lift (getGMPDecl init_set_si) >>= \f -> retPtr <$ call' f [retPtr , i]
 
 initGMPFields fTys sret = let
-  go i fTy = when (isGMPStruct fTy) (void $ gepTy fTy sret [constI32 0 , constI32 (fromIntegral i)])
+  go i fTy = when (isGMPStruct fTy) (void $ gepTy fTy sret [constI32 0 , constI32 (fromIntegral i)] >>= initSRetGMP)
   in sret <$ V.imapM go fTys
 
 initGMPInt i retPtr = let base10 = constI32 10 in

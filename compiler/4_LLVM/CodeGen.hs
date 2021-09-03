@@ -4,13 +4,15 @@ import Prim2LLVM hiding (gep)
 --import Externs
 import CoreSyn
 import CoreUtils
+import Eval
+import PrettyCore (number2xyz , number2CapLetter)
 import qualified GMPBindings as GMP
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Text as T
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
-import qualified Data.String
+import qualified Data.String as DS
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.FunctionAttribute as FA
@@ -25,23 +27,28 @@ import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Instruction as LIR hiding (gep)
 
 --mkStg :: V.Vector Expr -> V.Vector (HName , Bind) -> V.Vector QTT -> L.Module
-mkStg externBindings coreMod@(JudgedModule modName bindNames coreBinds) = let
+mkStg externBindings coreMod@(JudgedModule modName bindNames pFields pLabels coreBinds) = let
   mkVAFn ty nm = L.GlobalDefinition functionDefaults
     { name = L.mkName nm , linkage = L.External , parameters=([],True) , returnType = ty }
   nBinds = V.length coreBinds
+  nFields = M.size pFields
+  nLabels = M.size pLabels
+
   moduleDefs = runST $ do
     v <- V.unsafeThaw (TWIP <$> V.zip bindNames coreBinds)
     st <- execStateT (cgBind `mapM` [nBinds-1 , nBinds-2 .. 0]) CGState {
         wipBinds = v
+      , normFields = argSort nFields pFields
+      , normLabels = argSort nLabels pLabels
 --    , externResolver = extResolver
       , gmpDecls  = Nothing
       , primDecls = Nothing
       , externs  = externBindings
       , coreModule = coreMod
+      , typeVars   = 0
       , llvmDefs = [
-          L.TypeDefinition "A"   Nothing
-        , L.TypeDefinition "Void"Nothing
-        , L.TypeDefinition "Bot"Nothing
+          L.TypeDefinition "Void"Nothing
+--      , L.TypeDefinition "Bot"Nothing
         , L.TypeDefinition "Top"Nothing
         ]
       , moduleUsedNames = M.empty
@@ -58,9 +65,10 @@ mkStg externBindings coreMod@(JudgedModule modName bindNames coreBinds) = let
     primDecls <- case primDecls st of
       Nothing -> pure []
       Just i  -> catMaybes . V.toList <$> V.unsafeFreeze i
-    pure $ primDecls ++ gmpDecls ++ llvmDefs st
+    let tVs = (\i -> L.TypeDefinition (DS.fromString $ T.unpack $ number2CapLetter i) Nothing) <$> [0..typeVars st]
+    pure $ tVs ++ primDecls ++ gmpDecls ++ llvmDefs st
   in L.defaultModule {
-      L.moduleName        = Data.String.fromString $ T.unpack modName
+      L.moduleName        = DS.fromString $ T.unpack modName
     , L.moduleDefinitions = moduleDefs
 --  , L.moduleTargetTriple = Just "x86_64-unknown-linux-gnu" -- x86_64-pc-linux-gnu
 --  , L.moduleDataLayout = Just "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -76,7 +84,6 @@ cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case
      MV.write wip i b
      b <- case bind of
        BindOK tt -> case tt of
-         Core (Instr instr) ty -> STGFn RetReg [] <$> emitPrimFunction instr [intType , intType] intType
          Core (Abs args free t _ty) ty -> let
            (argTys , retTy) = getArrowArgs ty
            as = zipWith (\(i,_) t -> (i,t)) args argTys
@@ -110,7 +117,7 @@ dataFunction llvmNm args free body returnType attribs = cgType returnType >>= \r
   let retDropFieldsTy = LT.ArrayType (fromIntegral $ length (getStructFieldTys retTy)) i1_t
   rArgTys <- (fmap mkTyconPtr . cgType . snd) `mapM` rArgs --dArgTys <- (cgType . snd) `mapM` dArgs
 
-  ((retTy , fnParams) , blocks) <- runIRBuilderT emptyIRBuilder $ do
+  ((complex , (retTy , fnParams)) , blocks) <- runIRBuilderT emptyIRBuilder $ do
     (retPtr , rd) <- case retData of
       False -> pure (Nothing , Nothing)
       True  -> do
@@ -120,48 +127,71 @@ dataFunction llvmNm args free body returnType attribs = cgType returnType >>= \r
     rParams <- rArgTys `forM` \ty -> L.LocalReference ty <$> fresh
 
     modify $ \x -> x { stack = CallGraph
-     { regArgs  = IM.fromList$zip (fst<$>rArgs) rParams
+     { regArgs     = IM.fromList$zip (fst<$>rArgs) rParams
      , splits      = []
      , retLoc      = retPtr
      , retCast     = Nothing
      , dynRetDrops = rd
+     , complexity  = 0
      , contextNm   = [llvmNm]
      } : stack x }
-    cgTerm' body >>= \sret -> if retData then retVoid else ret sret
+    (papParams , finalRetTy) <- cgTerm body >>= \case
+      PapOp (FunctionOp fnPtr free argT retT) captures -> do
+        papArgs <- drop (length captures) argT `forM` \ty -> L.LocalReference ty <$> fresh `named` "papArgs"
+        -- TODO cgOpApp , don't commit Arg here !
+        commitArg `mapM` captures >>= \capturedDyn -> call' fnPtr (capturedDyn ++ papArgs) >>= ret
+        pure (papArgs , retT)
+      sret -> ([] , retTy) <$ if retData then retVoid else ret (op sret)
+    complex <- complexity <$> getSF
     modify $ \x -> x { stack = drop 1 (stack x) }
 
     let mkParam attrib = (\(L.LocalReference ty nm) -> Parameter ty nm attrib)
-        fnParams = mkParam [] <$> rParams
+        fnParams = mkParam [] <$> (rParams ++ papParams)
     -- llvm: "functions with sret must return void", for abi compatibility:
     -- The x86-64 ABIs require byval struct returns be copied into %rax|%eax
-    pure $ case (retPtr , rd) of
+    pure $ (complex , ) $ case (retPtr , rd) of
       (Just sret , Just rd) -> (LT.VoidType , mkParam [LP.SRet] sret : mkParam [] rd : fnParams)
       (Just sret , Nothing) -> (LT.VoidType , mkParam [LP.SRet] sret : fnParams)
-      _         -> (retTy , fnParams)
+      _         -> (finalRetTy , fnParams)
 
-  emitFunction llvmNm fnParams retTy blocks <&> \fptr -> if null fnParams
+  emitFunction llvmNm identity fnParams retTy blocks <&> \fptr -> if null fnParams
     then STGConstantFn fptr iFree
-    else STGFn retKind iFree fptr
-
-cgTerm' = fmap op . cgTerm
+    -- only save the regular args here; retKind indicates more are needed
+    else STGFn retKind rArgTys retTy iFree fptr (if complex < 2 then Just (fst <$> args , body) else Nothing)
 
 getGMPRetPtr :: Bool -> CGBodyEnv s L.Operand
 getGMPRetPtr doInit = (getRetLoc <* delRetLoc) >>= \retLoc -> let
   initGMP = alloca' GMP.mpz_struct_tname Nothing >>= if doInit then GMP.initSRetGMP else pure
   in maybe initGMP pure retLoc --(bitcast' GMP.mpz_t)
 
--- cancer functions
-getStructFieldTys = \case
+cgTerm' t = cgTerm t <&> \case -- cancer function
+  LLVMOp o -> o
+  f -> error $ "cgTerm': " <> show f
+
+getStructFieldTys = \case             -- cancer function
   LT.StructureType _ elems -> elems
   LT.PointerType s _       -> getStructFieldTys s
   x -> error $ "expected struct type, got: " <> show x
 
-getFnSRetTy fn = let -- probably dumb
-  getFn = \case
-    LT.FunctionType ret ars va -> ars
-    LT.PointerType (LT.FunctionType ret ars va) _ -> ars
-    x -> panic $ "expected function type: " <> show x
-  in (\(Just (LT.PointerType r _)) -> r) . head $ getFn (LT.typeOf fn)
+getCastRetTy ty = \case
+  CastInstr GMPZext{} -> GMP.mpz_struct_tname
+  BiEQ -> (\(LT.PointerType t _ ) -> t) ty
+  x -> error $ "not done yet: " <> show x
+
+-- cgArg = commit2mem <=< cgTerm
+-- We cannot pass cgOP information through llvm function calls , so write any important info to dynamic memory
+cgArg  :: Term -> CGBodyEnv s L.Operand
+cgArg t = cgTerm t >>= commitArg
+
+commitArg :: CGOp -> CGBodyEnv s L.Operand
+commitArg = \case
+  LLVMOp o -> pure o
+  x -> error $ "not ready to mk arg with: " <> show x
+
+-- conv CGOps to llvmOps and call appropriately
+-- TODO use cgop info when possible
+cgOpaqueApp :: L.Operand -> [Term] -> CGBodyEnv s L.Operand
+cgOpaqueApp fOp argOps = call' fOp =<< (cgArg `mapM` argOps)
 
 cgTerm :: Term -> CGBodyEnv s CGOp
 cgTerm = let
@@ -169,10 +199,12 @@ cgTerm = let
     VBind i -> lift (cgBind i) >>= \case
       STGConstant f -> pure (LLVMOp f)
       STGConstantFn f free  -> LLVMOp <$> f `call'` []
-      STGFn retData free fptr -> case retData of
-        RetReg        -> pure $ FunctionOp fptr free
-        RetRecord fts -> pure $ RecordFnOp fptr free fts
-        RetBigint     -> pure $ GMPFnOp fptr -- LLVMOp <$> (getGMPRetPtr >>= \sret -> sret <$ call' fptr [sret])
+      STGFn retData argT retT free fptr inlineable -> let
+        cgOp = case retData of
+          RetReg        -> FunctionOp fptr free argT retT
+          RetRecord fts -> RecordFnOp fptr free fts
+          RetBigint     -> GMPFnOp fptr
+        in pure $ maybe cgOp (did_ . Inlineable cgOp) inlineable
     -- Args: 1. regular args 2. dataArgs 3. splits from Match
     VArg  i -> getSF >>= \cg -> case (regArgs cg IM.!? i) of
       Just reg -> pure $ mkSTGOp reg
@@ -185,11 +217,11 @@ cgTerm = let
   -- record field access (avoid loading inline structs)
   in \x -> case x of
   Var vNm     -> cgName vNm
-  Lit (Int i) -> pure $ mkSTGOp (constI32 i)
+  Lit (Int i) -> pure $ LLVMOp (constI32 i)
   Lit l   -> mkSTGOp . L.ConstantOperand <$> lift (literal2Stg l)
-  Instr i -> error $ show i -- cgPrimInstr i -- TODO get/emit wrapper fn for instr
+  Instr i -> lift (emitInstrWrapper i)
   Abs args free t ty -> lift $ freshTopName "lam" >>= \nm ->
-    mkSTGOp . fnOp <$> dataFunction nm args [] t ty []
+    LLVMOp . fnOp <$> dataFunction nm args [] t ty []
 --MultiIf -> mkMultiIf ifsE elseE
   Label i tts      -> _
   List  args       -> _
@@ -198,54 +230,21 @@ cgTerm = let
   Cons fields      -> (getRetLoc <* delRetLoc) >>= \rl -> mkRecord rl fields
 
   -- Note. the record in question will be already casted (ie. address resolved | copied iff lensOver changes a field's size)
-  TTLens tt fields lens -> getRetLoc >>= \retLoc -> let
-     getRecordFromFn fPtr free fTypes = let
-       fcount  = V.length fTypes
-       maskTy  = LT.ArrayType (fromIntegral $ fcount) i1_t
-       arr     = L.ConstantOperand $ C.Array i1_t (replicate fcount (C.Int 1 0))
-       structT = mkStruct_tV fTypes
-       mkRecordSRet = maybe (alloca' structT Nothing >>= GMP.initGMPFields fTypes) pure retLoc
-       in (retCast <$> getSF) >>= \case -- TODO use
-         _ -> mkRecordSRet >>= \sret -> sret <$ call' fPtr [sret , arr]
-    in case lens of
+  -- TODO rm all except LensAddr cgops
+  TTLens tt fields lens -> getRetLoc >>= \retLoc -> case lens of
+    -- LensOver implemented as a Cast
     LensSet t -> error $ show lens
     LensGet -> cgTerm tt >>= \case
-      LensAddr (RawFields fs) lensTy (LLVMOp loc) -> -- let t = LT.typeOf loc in
-        LLVMOp <$> pure loc --if isStructTy lensTy || isTypeRef lensTy then pure loc else load' loc `named` "raw lens get"
-      LensAddr (Struct struct fTys) lensTy (LLVMOp loc) -> -- let t = LT.typeOf loc in
-        LLVMOp <$> if isStructTy lensTy || isTypeRef lensTy then pure loc else load' loc
---    Struct struct t -> let idx = 1
---      in gepTy (t V.! idx) struct [constI32 0 , constI32 (fromIntegral idx)] >>= \loc ->
---      LLVMOp <$> if isStructTy (t V.! idx) || isTypeRef (t V.! idx) then pure loc else load' loc
---    RecordFnOp fPtr free fTypes -> getRecordFromFn fPtr free fTypes >>= \sret -> do
---      loc <- gepTy (fTypes V.! 0) sret [constI32 0 , constI32 0]
---      LLVMOp <$> if isStructPtr (fTypes V.! 0) then pure loc else load' loc
-      x -> error $ "lens get not ready: " <> show x
-    LensOver (asmIdx , cast) (Core fn _fnty) -> let
-      overStruct fptr fTypes sret = let fTy = fTypes V.! asmIdx in do
-        loc <- gepTy fTy sret [constI32 0 , constI32 (fromIntegral asmIdx)]
-        if isStructTy fTy || isTypeRef fTy
-        then void $ call' fptr [loc , loc]
-        else load' loc >>= \v -> call' fptr [v] >>= store' loc
-        pure $ Struct sret fTypes
-      in (fnPtrOp <$> cgTerm fn) >>= \fptr -> doCast cast tt >>= \t ->
-      markLoc "lensOver" *> case t of
-      LensAddr struct lensTy loc -> _
-      RecordFnOp fPtr free fTypes -> getRecordFromFn fPtr free fTypes >>= overStruct fptr fTypes
-      Struct struct fTypes -> overStruct fptr fTypes struct
-      RawFields fields     -> let
-        (loc' , fTy) = fields V.! asmIdx
-        loc = op loc'
-        modifyField newVal = runST $ V.unsafeThaw fields >>= \v -> MV.write v asmIdx (newVal , fTy) *> V.unsafeFreeze v <&> RawFields
-        in if isStructTy fTy || isTypeRef fTy
-            then RawFields fields <$ call' fptr [loc , loc]
-            else load' loc >>= \v -> call' fptr [v] <&> modifyField . LLVMOp
-
-      x -> error $ "what? : " <> show x
+      LensAddr record lensTy (LLVMOp loc) -> case record of
+        RawFields fs       -> LLVMOp <$> pure loc
+        Struct struct fTys -> LLVMOp <$> if isStructTy lensTy || isTypeRef lensTy
+          then pure loc else load' loc
+      x -> error $ "lens expected LensAddr: " <> show x
 
   Cast cast term -> doCast cast term
 
-  App f args -> cgApp f args
+  App f args -> cgApp f args <* modifySF (\x->x{complexity=complexity x + 1})
+
   x -> error $ "MkStg: not ready for term: " <> show x
 
 productCast2dropMarkers :: Int -> [(ASMIdx , BiCast)] -> (Int , [Int])
@@ -257,49 +256,58 @@ cgApp f args = case f of
   Match ty alts d -> _ --emitMatchApp args ty alts d
   Instr i   -> case i of -- ifThenE is special since it can return data
     IfThenE -> case args of { [ifE, thenE, elseE] -> mkIf ifE thenE elseE }
-    _ -> mkSTGOp <$> cgInstrApp Nothing i args
-  Var (VBind fI) -> lift (cgBind fI) >>= \case
-    STGFn retData free fptr -> do
-      case retData of
-        RetReg    -> mkSTGOp <$> (cgTerm' `mapM` args >>= \stgops -> call' fptr stgops)
-        RetBigint -> mkSTGOp <$> (cgTerm' `mapM` args >>= \stgops -> call' fptr =<< (:stgops) <$> getGMPRetPtr False)
-        RetRecord fTys -> (getRetLoc <* delRetLoc) >>= \rl -> case args of
-          [Cast (CastProduct drops leafCasts) prodArg] -> do
-            stgops <- cgTerm' `mapM` args
-            setRetLocM rl
-            callRecordFn fTys fptr stgops -- (productCast2dropMarkers drops leafCasts) _super _sRetTy fptr stgops
-          x -> error $ show x
-  Var (VArg fI) -> gets (mkSTGOp . fromMaybe (panic $ "arg not found: " <> show fI) . (IM.!? fI) . regArgs . fromJust . head . stack)
-  Var (VExt fI) -> _
-  f -> panic $ "STG: floating function; expected binding index: " <> show f
---f -> cgTerm f >>= \f' -> call' f' =<< (cgTerm `mapM` args)
+    _ -> cgInstrApp Nothing i args
+  Var{} -> cgTerm f >>= \case
+    LLVMOp fnOp -> cgOpaqueApp fnOp args <&> LLVMOp
+    Inlineable cgOp (argNms , termFn) -> cgTerm (did_ $ etaReduce argNms args termFn) -- TODO align args into PAp
+    x -> error $ "cgapp :" <> show x
+  other -> error $ "cgapp: " <> show other
+--   Var (VBind fI) -> lift (cgBind fI) >>= \case
+--     STGFn retData free fptr inlineable -> do
+--       case did_ retData of
+--         RetReg    -> LLVMOp <$> cgOpaqueApp fptr args
+--         RetBigint -> LLVMOp <$> (cgTerm' `mapM` args >>= \stgops -> call' fptr =<< (:stgops) <$> getGMPRetPtr False)
+--         RetRecord fTys -> (getRetLoc <* delRetLoc) >>= \retLoc -> case args of
+--           [Cast (CastProduct drops leafCasts) prodArg] -> do
+--             stgops <- cgTerm' `mapM` args
+--             callRecordFn retLoc fTys fptr stgops -- (productCast2dropMarkers drops leafCasts) _super _sRetTy fptr stgops
+--           x -> error $ show x
+--   Var (VArg fI) -> getSF >>= \sf -> let
+--     fnLLOp = fromMaybe (panic $ "arg not found: " <> show fI) $ regArgs sf IM.!? fI
+--     in cgOpaqueApp fnLLOp args <&> LLVMOp
+--   Var (VExt fI) -> _
+-- --Abs args free term ty -> _ -- type of args ?
+--   f -> panic $ "STG: floating function; expected binding index: " <> show f
 
-recordApp retLoc prodCast f args = do
-  cgTerm f >>= \(RecordFnOp fptr free fTys) -> case prodCast of
-    CastProduct drops leaves -> let
-        sretTy = mkStruct_tV fTys
-        retStruct_t = sretTy
-      in do
-      args <- (cgTerm' `mapM` args)
-      r <- callRecordFn fTys fptr args -- (productCast2dropMarkers drops leaves) sretTy fTys fptr args
-      doProductCast retLoc leaves r
---    doProductCast (zipWith (\i (castI , l) -> (i,l)) ([0..]::[Int]) fields) r -- TODO admittedly not great
-
-getCastRetTy ty = \case
-  CastInstr GMPZext{} -> GMP.mpz_struct_tname
-  BiEQ -> (\(LT.PointerType t _ ) -> t) ty
-  x -> error $ "not done yet: " <> show x
+recordApp (RecordFnOp fptr free fTys) retLoc prodCast args = do
+  args <- cgTerm' `mapM` args
+  r <- callRecordFn retLoc fTys fptr args -- (productCast2dropMarkers drops leaves) sretTy fTys fptr args
+  case prodCast of
+    CastProduct drops leaves -> doProductCast retLoc leaves r
+    CastOver asmIdx preCast (Core fn _) retTy -> case r of
+      Struct struct fTys -> let fTy = fTys V.! asmIdx
+        in cgTerm fn >>= \f ->
+           if isStructTy fTy || isTypeRef fTy
+           then _ -- TODO pass down sret
+           else do
+             retT <- lift $ cgType retTy
+             loadIdx struct asmIdx >>= call' (fnPtrOp f) . (:[]) >>= storeIdx retT struct asmIdx
+             pure $ Struct struct (modifyField fTys asmIdx retT)
 
 doCast :: BiCast -> Term -> CGBodyEnv s CGOp
 doCast cast term = (getRetLoc <* delRetLoc) >>= \rl -> let
   prodCast leaves term = case term of
-    App f args      -> recordApp rl cast f args
-    f@(Var VBind{}) -> recordApp rl cast f [] -- ie. dodge args / intermediates
+    App f args      -> cgTerm f >>= \fn -> recordApp fn rl cast args
+    f@(Var VBind{}) -> cgTerm f >>= \fn -> recordApp fn rl cast [] -- ie. dodge args / intermediates
     _               -> cgTerm term >>= doProductCast rl leaves
   in case cast of
   BiEQ                     -> setRetLocM rl *> cgTerm term
-  CastInstr i              -> LLVMOp <$> cgInstrApp rl i [term]
+  CastInstr i              -> cgInstrApp rl i [term]
+  CastApp ac pap rc        -> error $ "cast app: " <> show cast
   CastProduct drops leaves -> prodCast leaves term
+  CastOver asmIdx preCast fn retTy -> cgTerm term >>= \case
+    fnRet@RecordFnOp{} -> recordApp fnRet rl cast []
+  x -> error $ "cast: " <> show x
 
 -- Generally casting products requires making a new struct
 doProductCast :: Maybe L.Operand -> [(ASMIdx , BiCast)] -> CGOp -> CGBodyEnv s CGOp
@@ -339,6 +347,7 @@ doProductCast retLoc leaves r = let
             writeRetLoc retLoc leafPtr casted
             pure $ LLVMOp casted
     in do
+    markLoc "productCast"
     rawFields <- V.imapM (readField retLoc eitherStructFields) (V.zip castedFTys leaves)
     pure $ case retLoc of
       Nothing  -> RawFields $ V.zip rawFields castedFTys
@@ -367,16 +376,14 @@ doCastOp cast operand = case cast of
   CastInstr i -> cgOpInstr i [operand]
 
 --callRecordFn (fieldCount , dropMarkers) superType ty fn args = let
-callRecordFn fTys fptr args = let
+callRecordFn retLoc fTys fptr args = let
   fieldCount = V.length fTys
   ty = mkStruct_tV fTys
   maskTy = LT.ArrayType (fromIntegral fieldCount) i1_t
 --arr    = L.ConstantOperand (C.Array i1_t (C.Int 1 . fromIntegral <$> dropMarkers))
   arr    = L.ConstantOperand (C.Array i1_t (replicate fieldCount (C.Int 1 0)))
-  gmpInit sret i fTy = when (GMP.isGMPStruct fTy)
-    $ gepTy fTy sret [constI32 0 , constI32 (fromIntegral i)] >>= void . GMP.initSRetGMP
-  newLocalSret = alloca' ty Nothing `named` "localSRet" >>= GMP.initGMPFields fTys >>= \sret -> sret <$ V.imapM_ (gmpInit sret) fTys
-  mkRecordSRet = getRetLoc >>= maybe newLocalSret pure
+  newLocalSret = alloca' ty Nothing `named` "localSRet" >>= GMP.initGMPFields fTys
+  mkRecordSRet = maybe newLocalSret pure retLoc
   in mkRecordSRet >>= \sret -> call' fptr (sret : arr : args) $> Struct sret fTys
 
 -- mk Record ; if retloc given, write to mem, else take the raw fields
@@ -490,6 +497,12 @@ cgOpInstr instr args = case instr of
 
 -- some instrs benefit from inspecting term arguments
 cgInstrApp rl instr args = case instr of
+  MkPAp n -> (cgTerm `mapM` args) <&> \case -- args of -- is n of any use ?
+    f : cgargs -> case f of
+      FunctionOp{}      -> PapOp f cgargs
+      PapOp fn captures -> PapOp fn (captures ++ cgargs)
+    _ -> error "TODO codegen partial application"
+  instr -> LLVMOp <$> case instr of
     PutNbr | [Lit (Int i)] <- args -> cgTerm' (Lit (String (show i))) >>= cgOpInstr Puts . (:[])
     Zext   | [Lit (Int i)] <- args -> pure $ constI64 i
     GMPInstr i  -> emitGMPInstr rl i args

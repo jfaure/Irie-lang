@@ -332,11 +332,19 @@ tyAnn :: Parser (Maybe ([ImplicitArg] , TT)) = let
     Just implicits -> fmap (implicits,) <$> optional (reservedChar ':' *> tt)
     Nothing        -> fmap ([],)        <$> optional (reservedChar ':' *> tt)
 
-lambda = reservedChar '\\' *> do
-  newArgNest $ do
-    eqns <- (:[]) <$> fnMatch (many singlePattern) (reserved "=>")
+-- TODO sadly will have to generalise this using levels anyway
+lambda = reservedChar '\\' *> (Var . VBind <$> addAnonBindName) <* do
+  newArgNest $ mdo
+    addBind $ FunBind $ FnDef "lambda" Let Nothing [] free eqns Nothing
+    eqns <- (:[]) <$> fnMatch (many pattern) (reserved "=>")
     free <- getFreeVars
-    pure $ Abs $ FunBind $ FnDef "lambda" LetOrRec Nothing [] free eqns Nothing
+    pure ()
+
+--lambda = reservedChar '\\' *> do
+--  newArgNest $ do
+--    eqns <- (:[]) <$> fnMatch (many singlePattern) (reserved "=>")
+--    free <- getFreeVars
+--    pure $ Abs $ FunBind $ FnDef "lambda" LetOrRec Nothing [] free eqns Nothing
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ?
@@ -354,13 +362,13 @@ ttArg , tt :: Parser TT
     , tySum      -- "|"
     , appOrArg
     ] <?> "tt"
-  appOrArg = getOffset >>= \o -> arg >>= \larg -> option larg (choice
+  argOrLens = arg >>= \larg -> option larg (lens larg) -- lens bind tighter than App
+  appOrArg = getOffset >>= \o -> argOrLens >>= \larg -> option larg (choice
     [ case larg of
 --      Lit l -> LitArray . (l:) <$> some (lexeme literalP)
         P.Label l [] -> P.Label l <$> some arg
         fn -> choice
-          [ lens fn
-          , Juxt o . (fn:) <$> some (linefold arg)
+          [ Juxt o . (fn:) <$> some (linefold argOrLens)
           , pure fn
           ]
     ])--  >>= \tt -> option tt (lens tt)

@@ -30,18 +30,23 @@ substFreshTVars tvarStart = Prelude.map $ let
 
 getArrowArgs = \case
   [THTyCon (THArrow as r)] -> (as , r)
+  [THBi i t] -> getArrowArgs t
   t -> panic $ "not a function type: " <> prettyTyRaw t
 
---splitArrowArg = \case
---  [THTyCon (THArrow (a:as) r)] -> (a , addArrowArgs as r)
---  t -> panic $ "expected function type: " <> prettyTyRaw t
+-- appendArrowArgs [] = identity
+-- appendArrowArgs args = \case
+--   [THTyCon (THArrow as r)] -> [THTyCon $ THArrow (as ++ args) r]
+--   [THPi (Pi p t)]   -> [THPi (Pi p $ appendArrowArgs args t)]
+--   [THSi (Pi p t) _] -> [THPi (Pi p $ appendArrowArgs args t)]
+--   [THBi i t] -> [THBi i $ appendArrowArgs args t]
+--   x -> [THTyCon $ THArrow args x]
 
-addArrowArgs [] = identity
-addArrowArgs args = \case
-  [THTyCon (THArrow as r)] -> [THTyCon $ THArrow (as ++ args) r]
-  [THPi (Pi p t)]   -> [THPi (Pi p $ addArrowArgs args t)]
-  [THSi (Pi p t) _] -> [THPi (Pi p $ addArrowArgs args t)]
-  [THBi i t] -> [THBi i $ addArrowArgs args t]
+prependArrowArgs [] = identity
+prependArrowArgs args = \case
+  [THTyCon (THArrow as r)] -> [THTyCon $ THArrow (args ++ as) r]
+  [THPi (Pi p t)]   -> [THPi (Pi p $ prependArrowArgs args t)]
+  [THSi (Pi p t) _] -> [THPi (Pi p $ prependArrowArgs args t)]
+  [THBi i t] -> [THBi i $ prependArrowArgs args t]
   x -> [THTyCon $ THArrow args x]
 
 onRetType :: (Type -> Type) -> Type -> Type

@@ -21,7 +21,8 @@ import qualified Data.Map as M
 import qualified Data.IntMap as IM
 import qualified Data.Text as T
 
-formatError srcInfo (BiSubError o (TmpBiSubError msg got exp)) = let
+formatError srcNames srcInfo (BiSubError o (TmpBiSubError msg got exp)) = let
+  bindSrc = Just srcNames
   srcLoc = case srcInfo of
     Nothing -> ""
     Just (SrcInfo text nlOff) -> let
@@ -31,8 +32,8 @@ formatError srcInfo (BiSubError o (TmpBiSubError msg got exp)) = let
       in "\n" <> show lineIdx <> ":" <> show col <> ": \"" <> T.takeWhile (/= '\n') (T.drop o text) <> "\""
   in srcLoc
   <> "\n" <> clRed ("No subtype" <> if T.null msg then ":" else " (" <> msg <> "):")
-  <> "\n      " <> clGreen (prettyTyRaw got)
-  <> "\n  <:? " <> clGreen (prettyTyRaw exp)
+  <> "\n      " <> clGreen (prettyTy bindSrc got)
+  <> "\n  <:? " <> clGreen (prettyTy bindSrc exp)
 
 formatScopeError = \case
   ScopeError h -> clRed "Not in scope: "      <> h
@@ -45,13 +46,9 @@ judgeModule pm hNames exts source = let
   nFields = M.size (pm ^. P.parseDetails . P.fields)
   nLabels = M.size (pm ^. P.parseDetails . P.labels)
   pBinds' = V.fromListN nBinds (pm ^. P.bindings)
-  argSort :: Int -> M.Map HName IName -> VU.Vector IName
-  argSort n hmap = let v = VU.fromList (M.elems hmap) in VU.unsafeBackpermute v v
   in runST $ do
     deBruijn' <- MV.new 0
     wip'      <- MV.replicate nBinds WIP
-    fieldsV   <- MV.replicate nFields Nothing
-    labelsV   <- MV.replicate nLabels Nothing
     bis'      <- MV.new nArgs
     [0 .. nArgs - 1] `forM_` \i -> MV.write bis' i (BiSub [] [] 0 0)
 
@@ -79,13 +76,14 @@ judgeModule pm hNames exts source = let
     bis''    <- V.unsafeFreeze (st ^. bis)
     wip''    <- V.unsafeFreeze (st ^. wip)
     let domain'' = V.take nArgs bis''
-    pure $ (JudgedModule modName hNames wip''
+    pure $ (JudgedModule modName hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , TCErrors (st ^. scopeFails) (st ^. biFails))
 
--- generalisation (and therefore type checking of usertypes) happens here
+-- inference >> generalisation >> type checking of annotations
+-- Warning. this handles mutual binds and stacks inference of forward references
 judgeBind :: IName -> TCEnv s Expr
 judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
-  BindOK e   -> pure e
+  BindOK e -> pure e
   Mutual d e isRec tvar -> pure e
 
   Guard mutuals ars tvar -> do
@@ -141,7 +139,7 @@ generaliseBinds i ms = use wip >>= \wip' -> do
                 ars `forM` \(x,_ty) -> (_mSub <$> MV.read v x) >>= \case
                   [] -> dupVar False x
                   _  -> pure () -- typevar will be substituted, don't mark it
-                pure $ addArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
+                pure $ prependArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
               _ -> pure coreTy
             -- check for recursive type
             use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
@@ -182,7 +180,6 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
 substTVars recTVar = let
   concatTypes = foldl mergeTypes []
   nullLattice pos = \case
---  [] -> if pos then [THTop] else [THBot] -- [] -> incQuants >>= \q -> pure [THBound q]
     [] -> if pos then [THBot] else [THTop] -- [] -> incQuants >>= \q -> pure [THBound q]
     t  -> t
 
@@ -235,11 +232,8 @@ substTVars recTVar = let
       THVar x -> (x:v,o)
       x       -> (v,x:o)
     x@(vars , other) = foldl fn ([],[]) ty
-    in if null vars then pure ([],ty) else
-      use bis >>= \b -> do
-      r <- (\(v,t) -> (v,mergeTypes t other)) <$> substV pos vars
---    traceShowM r
-      pure r
+    in if null vars then pure ([],ty) else use bis >>= \b ->
+      substV pos vars <&> (\(v,t) -> (v , mergeTypes t other))
 
   -- Check if type variables were already guarded (ie. we're in a recursive type)
   substV pos vars = use bis >>= \b -> do
@@ -250,9 +244,8 @@ substTVars recTVar = let
       [THVarGuard v] -> pure (Nothing , t)
       subbedTy       -> case if pos then _mSub bisub else _pSub bisub of
         -- Check the opposite polarity (if this variable's opposite will be generalised later, it can't be ignored now)
---      [] | (if pos then _mQ bisub else _pQ bisub) > 0 -> addPiBound pos b x <&> \thbound -> (Just x , thbound ++ subbedTy)
---      TODO use (not pos) ?
-        [] -> addPiBound (pos) b x <&> \thbound -> (Just x , thbound ++ subbedTy)
+        -- It will generalise if it is [] and it's opposite polarity (ours) has >0 presence
+        [] -> addPiBound pos b x <&> \thbound -> (Just x , thbound ++ subbedTy)
         _  -> (Just x,t) <$ MV.modify b (over (if pos then pSub else mSub) ((const [THVarLoop x]))) x
     let ts = snd <$> varTypes
         v' = catMaybes $ fst <$> varTypes
@@ -306,33 +299,34 @@ infer = let
   -- App is the only place typechecking can fail
   -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
  biUnifyApp fTy argTys = do
-   (biret , [retV]) <- withBiSubs 1 (\idx -> biSub_ fTy (addArrowArgs argTys [THVar idx]))
+   (biret , [retV]) <- withBiSubs 1 (\idx -> biSub_ fTy (prependArrowArgs argTys [THVar idx]))
    pure $ (biret , [THVar retV])
  retCast rc tt = case rc of { BiEQ -> tt ; c -> case tt of { Core f ty -> Core (Cast c f) ty } }
 
- checkFails o x = use tmpFails >>= \case
+ checkFails srcOff x = use tmpFails >>= \case
    [] -> pure x
-   x  -> PoisonExpr <$ (tmpFails .= []) <* (biFails %= ((map (\biErr -> BiSubError o biErr) x ++)))
+   x  -> PoisonExpr <$ (tmpFails .= []) <* (biFails %= ((map (\biErr -> BiSubError srcOff biErr) x ++)))
 
- inferApp o f args = let
+ inferApp srcOff f args = let
    setRetTy retTy biret castArgs = \case -- ! we must set the retTy since ttApp doesn't
      Core (App f args) _ -> case biret of
-       CastApp _ (Just pap) rc -> let -- handle PAp
-         mkpap = Instr (MkPAp (length pap))
-         in retCast rc (Core (App mkpap (f : castArgs args biret)) retTy)
-       CastApp _ Nothing    rc -> retCast rc (Core (App f (castArgs args biret)) retTy)
+       CastApp ac (Just pap) rc -> -- partial application
+         retCast rc (Core (App (Instr (MkPAp (length pap))) (f : castArgs args biret)) retTy)
+       CastApp ac Nothing    rc -> retCast rc (Core (App f (castArgs args biret)) retTy)
        _ -> Core (App f args) retTy
      Core f _ -> Core f retTy
      t -> t
+   -- TODO This will let slip some bieq casts on function arguments
+   castArg (a :: Term) = \case { BiEQ -> a ; CastApp [BiEQ] Nothing BiEQ -> a ; cast -> Cast cast a }
+   castArgs args' cast = case cast of
+     CastApp ac maybePap rc -> zipWith castArg args' (ac ++ repeat BiEQ) -- supplement paps with bieqs
+     BiEQ -> args'
+     x    -> _
    in do
      (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
-     let castArg (a :: Term) = \case { BiEQ -> a ; cast -> Cast cast a } -- \case { BiInstr f -> App (Instr f) [a] ; _ -> a }
-         castArgs args' cast = case cast of
-           CastApp ac maybePap rc -> zipWith castArg args' (ac ++ repeat BiEQ) -- TODO why not enough bisubs ?!
-           x -> args'
      use tmpFails >>= \case
        [] -> setRetTy retTy biret castArgs <$> ttApp judgeBind f args
-       x  -> PoisonExpr <$ (tmpFails .= []) <* (biFails %= (map (\biErr -> BiSubError o biErr) x ++))
+       x  -> PoisonExpr <$ (tmpFails .= []) <* (biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++))
 
  handleExtern = \case
    ForwardRef b       -> judgeLocalBind b -- was a forward reference not an extern
@@ -342,8 +336,8 @@ infer = let
    MixfixyVar m       -> pure $ MFExpr m
 
  judgeLocalBind b = judgeBind b <&> \case
-   Core e ty -> Core (Var $ VBind b) ty -- no need to inline the body
-   t -> t
+     Core e ty -> Core (Var $ VBind b) ty -- don't inline the body ! (
+     t -> t
  in \case
   P.WildCard -> pure $ Core Hole holeTy
 
@@ -365,18 +359,18 @@ infer = let
       Core x ty -> case args of
         []  -> Core x ty
         ars -> let
-          fnTy = addArrowArgs ((\x->[THVar x]) <$> ars) ty
-          in Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x fnTy) ty
+          fnTy = prependArrowArgs ((\x->[THVar x]) <$> ars) ty
+          in Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x ty) fnTy
       t -> t
 
   P.App fTT argsTT -> infer fTT >>= \f -> (infer `mapM` argsTT) >>= inferApp 0 f
-  P.Juxt o juxt -> let
-    inferExprApp o = \case
+  P.Juxt srcOff juxt -> let
+    inferExprApp srcOff = \case
       ExprApp fE [] -> panic "impossible: empty expr App"
-      ExprApp fE argsE -> inferExprApp o fE >>= \f -> (inferExprApp o `mapM`  argsE) >>= inferApp o f
+      ExprApp fE argsE -> inferExprApp srcOff fE >>= \f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
       QVar (m,i) -> use externs >>= \e -> handleExtern (readQParseExtern e m i)
       core -> pure core
-    in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp o
+    in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
 
   P.Cons construct -> do
     let (fields , rawTTs) = unzip construct
@@ -394,32 +388,28 @@ infer = let
       P.LensGet    -> withBiSubs 1 (\ix -> biSub recordTy (mkExpected [THVar ix]))
         <&> \(cast , [retTy]) -> Core (TTLens (Cast cast f) fields LensGet) [THVar retTy]
 
-      P.LensSet x  -> error "todo set; use lensOver"
+      P.LensSet x  -> error "todo set"
 
       P.LensOver x -> infer x >>= \fn -> do
-        -- A -> B -> C -> C & { lensPath A } -> C & { lensPath B }
-        ((expect , fieldCount , asmIdx , ac) , _tvars) <- withBiSubs 1 $ \ ix -> let
-          retVar = [THVar ix]
-          [f] = fields
-          [THTyCon (THProduct recordMap)] = recordTy
-          (Just leafTy , newMap) = IM.insertLookupWithKey (\k n o -> n) f retVar recordMap
-          expect = [THTyCon $ THProduct newMap]
-          in do
-          -- retcast always bieq , since we gave it a fresh retvar ..
-          argCast <- biSub (tyOfExpr fn) (mkTyArrow [leafTy] retVar) <&> \case
-            CastApp [argCast] pap BiEQ  -> argCast
-            BiEQ                        -> BiEQ
-          -- resolving to asmIdx..  sadly need to re-sort all fields on normalised index
-          -- ! do this at codegen
-          nf <- use normFields
-          let normalised = V.fromList $ IM.keys $ IM.mapKeys (nf VU.!) newMap
-              Just asmIdx = V.findIndex (== nf VU.! f) normalised
-          pure (expect , V.length normalised , asmIdx , argCast)
-        let lensInput = case ac of
-              BiEQ -> f
-              cast -> Cast (CastProduct 0 $ zip ([0..]::[Int]) $ replicate asmIdx BiEQ ++ (ac : replicate (fieldCount - asmIdx - 1) BiEQ)) f
-            leafAddr = (asmIdx , BiEQ) -- just need the field location, it was already casted by the product cast
-        pure $ Core (TTLens lensInput fields (LensOver leafAddr fn)) expect
+         let [singleField] = fields
+         ((ac , rc , outT) , [tyOld, tyNew, output]) <- withBiSubs 3 $ \ ix -> do
+           argCast <- biSub [THTyCon $ THArrow [[THVar ix]] [THVar (ix+1)]] (tyOfExpr fn) <&> \case
+             CastApp [argCast] pap BiEQ  -> argCast -- pap ?
+             BiEQ                        -> BiEQ
+           -- bisub the over fn with 2 fresh typevars;
+           -- note. we cannot assume anything about fn's type (could be a single typevar or otherwise not a function)
+           --       neither can we assume anything about the record's type (it's allowed to not be a THProduct)
+           -- note. the typesystem does not (probably will not) support quantifying over field presences
+           (inT , outT) <- use bis >>= \v -> (,) <$> fmap _pSub (MV.read v ix) <*> fmap _mSub (MV.read v (ix+1))
+           rCast <- biSub recordTy (THVar (ix+2) : mkExpected inT) -- over produces the same type as input record
+           pure (argCast , rCast , outT)
+         traceShowM (ac , rc)
+
+         let lensOverCast = case rc of
+               CastProduct drops [(asmIdx,cast)] -> Cast (CastOver asmIdx ac fn outT) f
+               x -> error $ "expected CastProduct: " <> show rc
+
+         pure $ Core lensOverCast [THVar output]
 
     PoisonExpr -> pure PoisonExpr
     t -> error $ "record type must be a term: " <> show t

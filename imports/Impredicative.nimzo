@@ -1,4 +1,15 @@
 -- Higher rank
+
+--self x = x x
 auto i = (i i) 3
 id x = x
 g = auto id
+
+poly i = add 5 ((i i) 1)
+try = poly (\x => x)
+auto x = x x -- : ((a0 -> a1) & a0) -> a1
+auto x = x x -- rigid typevar
+choose = ifE -- flexible typevar
+retype g x v = g v (x v) -- eta-reduces to identity
+
+--fail = auto (plus 1)
