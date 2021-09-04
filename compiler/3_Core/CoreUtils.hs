@@ -31,7 +31,7 @@ substFreshTVars tvarStart = Prelude.map $ let
 getArrowArgs = \case
   [THTyCon (THArrow as r)] -> (as , r)
   [THBi i t] -> getArrowArgs t
-  t -> panic $ "not a function type: " <> prettyTyRaw t
+  t -> trace ("not a function type: " <> prettyTyRaw t) ([] , t)
 
 -- appendArrowArgs [] = identity
 -- appendArrowArgs args = \case
@@ -183,6 +183,7 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
     [THProduct a , THProduct b] -> [THTyCon $ THProduct $ IM.unionWith mergeTypes a b]
     [THTuple a , THTuple b]     -> [THTyCon $ THTuple   $ V.zipWith    mergeTypes a b]
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM d1 d2) (mergeTypes r1 r2)]
+    x -> join
   [THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!
   [THPi (Pi b1 t1) , THPi (Pi b2 t2)] -> [THPi $ Pi (b1 ++ b2) (mergeTypes t1 t2)]
   [THPi (Pi b1 t1) , t2] -> [THPi $ Pi b1 (mergeTypes t1 [t2])]

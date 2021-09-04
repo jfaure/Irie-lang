@@ -12,3 +12,4 @@
 :def n (\_->pure ":set args parser.nimzo -p core \n:r\n main\n")
 
 :def z (\i -> pure (":r\n" ++ i))
+:def opt (\_->pure ":r\n opt\n")

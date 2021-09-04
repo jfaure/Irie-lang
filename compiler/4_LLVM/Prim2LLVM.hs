@@ -53,19 +53,21 @@ data CGState s = CGState {
 data DataArg = DataArg { qtt :: Int , aframe :: L.Operand , dOp :: L.Operand } deriving Show
 
 data CallGraph = CallGraph {
-   regArgs      :: IM.IntMap L.Operand
+   regArgs      :: IM.IntMap CGOp
  , splits       :: [Split]   -- sumtypes split earlier on this SF
  , retLoc       :: Maybe L.Operand
  , dynRetDrops  :: Maybe L.Operand
  , retCast      :: Maybe BiCast
  , contextNm    :: [L.Name] -- for naming structs (eg. fn1.\.{})
  , complexity   :: Int      -- how worthwhile to inline
+-- , gmpInts      :: [Either L.Operand L.Operand] -- gmpInts + init state
 } deriving Show
 
 data RecordField = Dropped | Geppable | Gepped L.Operand deriving Show
 data CGType
- = LLVMType   LT.Type
- | StructType (V.Vector L.Type) (Maybe L.Name) deriving Show
+ = LLVMType   !LT.Type
+ | FnType     (V.Vector CGType) CGType
+ | StructType (V.Vector CGType) (Maybe L.Name) deriving Show
 
 type CGT = L.Type -- will switch to cgtype soon
 
@@ -74,9 +76,11 @@ type CGT = L.Type -- will switch to cgtype soon
 -- This will obviously error if biunification slipped up, but better here than in llvm.
 -- TODO use CGType in here
 data CGOp
- = LLVMOp   { op' :: L.Operand } -- all info dynamically stored in here
- -- Note. Records. if we have a Just retloc in scope, we have to write out a struct
- -- Else we can track all its fields, only write it iff passed to function (byval)
+ = LLVMOp   { op'   :: L.Operand } -- Primitive constants only (i32 51)
+ | PolyOp   { poly  :: L.Operand } -- poly =? { size , value }
+ | DynFnOp  { dynFn :: L.Operand } -- raw|sret|pap
+ -- Note. Records. if we have a Just retloc in scope, we need to write it (sret)
+ -- Else we only need to track its fields, and only write it iff passed to function (which we mark byval)
  | RawFields{ fieldOps       :: V.Vector (CGOp , L.Type) }
  | Struct   { structOp       :: L.Operand
             , fieldTypes     :: V.Vector L.Type
@@ -134,7 +138,9 @@ cgOp2Arg = \case
   LLVMOp o -> pure o
 
 cgTypeOf = \case
-  LLVMOp o -> LT.typeOf o
+  LLVMOp o     -> LT.typeOf o
+  RawFields fs -> mkStruct_tV (snd <$> fs)
+  x -> error $ "cgtypeOf: " <> show x
 
 subCastRecord indxs = \case
   RawFields fs -> RawFields (V.fromList ((\i -> fs V.! i) <$> indxs))
@@ -171,8 +177,8 @@ mkSTGOp = LLVMOp
 
 data Split = Split { -- a data opened by Match (may be reused or freed)
    lname      :: ILabel
- , sframe     :: L.Operand -- the parent frame
- , components :: IM.IntMap L.Operand -- datas here were split from this SF
+ , sframe     :: L.Operand      -- the parent frame
+ , components :: IM.IntMap CGOp -- datas here were split from this SF
 } deriving Show
   
 type DataFrame = L.Operand
@@ -198,7 +204,6 @@ data FNRet
 
 data StgWIP
  = TWIP   (HName , Bind)
-
  | STGFn       { retData :: !FNRet , stgargTypes :: [CGT] , stgretType :: CGT
                , freeArgs :: [IName] , fnOp :: L.Operand , inlineable :: Maybe ([IName] , Term) }
 -- | STGDataFn { freeArgs :: [IName] , fnOp :: L.Operand , sts :: IM.IntMap QTT }
@@ -468,16 +473,13 @@ cgType = \x -> case x of
 cgTypeAtomic = \case --x -> case did_ x of
   THExt i -> gets externs >>= (cgType . tyExpr . (`readPrimExtern` i))
   THBound i -> (LT.ptr $ LT.NamedTypeReference $ fromString (T.unpack $ number2CapLetter i)) <$ modify (\x->x{typeVars = 1 + typeVars x})
-  THMuBound i -> pure (LT.ptr $ LT.NamedTypeReference $ fromString (T.unpack $ number2xyz i)) -- <$ modify (\x->x{typeVars = 1 + typeVars x})
+  THMuBound i -> pure (LT.NamedTypeReference $ fromString (T.unpack $ number2xyz i)) -- <$ modify (\x->x{typeVars = 1 + typeVars x})
   THTyCon t -> case t of
-    THArrow   tys t -> (\ars retTy -> LT.ptr $ L.FunctionType retTy ars False) <$> (cgType `mapM` tys) <*> cgType t
+    THArrow   tys t -> (\ars retTy -> L.FunctionType retTy ars False) <$> (cgType `mapM` tys) <*> cgType t
     THProduct tyMap -> mkStruct_t <$> (cgType `mapM` IM.elems tyMap)
 --  THSumTy   tyMap ->
 --  THArray t  -> _ -- LT.ArrayType $ cgType t
---THVar v    -> gets (did_ . _pSub . (V.! v) . typeVars . coreModule) >>= cgType
---THArg a    -> gets (did_ . _mSub . (V.! a) . argTypes . coreModule) >>= cgType
---THRec r    -> gets (did_ . _pSub . (V.! r) . typeVars . coreModule) >>= cgType
-  THVar{} -> panic "thvar found in codegen!" -- pure voidPtrType
+  t@THVar{} -> panic $ "thvar found in codegen: " <> show t -- pure voidPtrType
   x -> pure $ case x of -- can be generated non monadically
     THTop     -> top_t
     THBot     -> bot_t
@@ -497,12 +499,13 @@ literal2Stg l = let
   String s  -> flip emitArray (mkChar<$>(s++['\0'])) =<< freshTopName "str"
 --Array  x  -> emitArray $ (literal2Stg <$> x)
   Int i     -> pure $ C.Int 32 i
+  Fin n i   -> pure $ C.Int (fromIntegral n)  i
 --  Frac f    -> C.Float (LF.Double $ fromRational f)
   x -> error $ show x
 
 -- generate code for prim instructions, to have a fn pointer to them
 emitPrimFunction instr argTys retTy = do
-  nm <- freshTopName "instr-wrapper"
+  nm <- freshTopName (fromString $ primInstr2Nm instr) -- slightly more readable name
   (params, blocks) <- runIRBuilderT emptyIRBuilder $ do
     params@[a,b] <- argTys `forM` \ty -> L.LocalReference ty <$> fresh
     ret =<< emitInstr (LT.typeOf a) ((primInstr2llvm instr) a b)

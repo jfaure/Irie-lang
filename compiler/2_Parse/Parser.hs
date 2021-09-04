@@ -467,8 +467,8 @@ singlePattern = choice
 ---------------------
 literalP = let
   signed p = let
-    sign :: Int -> Parser Int = \i -> (single '+' *> sign i) <|> (single '-' *> sign (1+i)) <|> pure 0
-    in sign 0 >>= \s -> p <&> \n -> if (s `mod` 2) == 1 then negate n else n
+    sign :: Bool -> Parser Bool = \i -> (single '+' *> sign i) <|> (single '-' *> sign (not i)) <|> pure i
+    in sign False >>= \s -> p <&> \n -> if s then negate n else n
   -- L.charLiteral handles escaped chars (eg. \n)
   char :: Parser Char = between (single '\'') (single '\'') L.charLiteral
   stringLiteral :: Parser [Char] = choice

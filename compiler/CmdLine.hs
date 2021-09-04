@@ -16,7 +16,7 @@ data CmdLine = CmdLine
 
 defaultCmdLine = CmdLine [] False False 0 False Nothing []
 
-printPasses = ["args" , "source", "parseTree", "core", "llvm-hs" , "llvm-cpp"] :: [Text]
+printPasses = ["args" , "source", "parseTree", "types" , "core", "simple", "llvm-hs" , "llvm-cpp"] :: [Text]
 
 parsePrintPass :: ReadM [Text]
 parsePrintPass = eitherReader $ \str -> let

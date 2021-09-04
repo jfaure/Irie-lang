@@ -26,7 +26,7 @@ init : init_set_str : init_set_ui : init_set_si : init_set_d : sizeinbase : gets
  : tdiv_q_2exp : tdiv_r_2exp
  : powm : powm_ui : powm_sec : pow_ui : ui_pow_ui
  : root : rootrem : sqrt : sqrtrem : perfect_power : perfect_square_p
- : cmp : cmp_d : cmp_abs : cmp_abs_d : cmp_abs_ui
+ : cmp : cmp_d : cmp_si : cmp_ui : cmp_abs : cmp_abs_d : cmp_abs_ui
  : and : or : ior : xor : com : popcount : hamdist
  : scan0 : scan1 : setbit : clrbit : combit : tstbit
  : gmpDeclsLen : _ = [0..] :: [Int]
@@ -79,13 +79,14 @@ vecGMPDecls = V.fromList $
  , mkGMPDecl "__gmpz_sqrt"         [mpz_t , mpz_t] LT.VoidType
  , mkGMPDecl "__gmpz_sqrtrem"      [mpz_t , mpz_t , mpz_t] LT.VoidType
  , mkGMPDecl "__gmpz_perfect_power"[mpz_t] i32_t -- non-zero if perfect power
- , mkGMPDecl "__gmpz_perfect_square_p"[mpz_t] i32_t -- non-zero if perfect power
+ , mkGMPDecl "__gmpz_perfect_square_p"[mpz_t] i32_t
 
  -- number-theoretic functions
 
  -- comparisons
- , mkGMPDecl "__gmpz_cmp"        [mpz_t , mpz_t] i32_t -- non-zero if perfect power
- , mkGMPDecl "__gmpz_cmp_d"      [mpz_t , double_t] i32_t -- non-zero if perfect power
+ -- mpz_sign is a macro
+ , mkGMPDecl "__gmpz_cmp"        [mpz_t , mpz_t] i32_t
+ , mkGMPDecl "__gmpz_cmp_d"      [mpz_t , double_t] i32_t
  , mkGMPDecl "__gmpz_cmp_si"     [mpz_t , i64_t] i32_t -- gmp docs says cmp_si|ui are macros, but seems to be wrong
  , mkGMPDecl "__gmpz_cmp_ui"     [mpz_t , i64_t] i32_t -- ..
  , mkGMPDecl "__gmpz_cmp_abs"    [mpz_t , mpz_t] i32_t -- non-zero if perfect power

@@ -63,6 +63,7 @@ judgeModule pm hNames exts source = let
       , _srcRefs  = source
       , _tmpFails = []
       , _bindWIP  = 0
+      , _blen     = nArgs
       , _bis      = bis'
       , _deBruijn = deBruijn'
       , _level    = Dominion (-1,-1)
@@ -109,8 +110,8 @@ judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
       expr <- infer tt
       let jb = case expr of
             Core x ty -> case args of
-              [] -> Core x ty
-              ars-> Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x ty) ty
+              []  -> Core x ty
+              ars -> Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x ty) ty
             t -> t
       bindWIP .= svwip
       Guard ms _ars tVar <- MV.read wip' bindINm
@@ -358,9 +359,10 @@ infer = let
     infer tt <&> \case
       Core x ty -> case args of
         []  -> Core x ty
-        ars -> let
-          fnTy = prependArrowArgs ((\x->[THVar x]) <$> ars) ty
-          in Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x ty) fnTy
+        args -> let
+          argVars = (\x->[THVar x]) <$> args
+          fnTy    = prependArrowArgs argVars ty
+          in Core (Abs (zip args argVars) mempty x fnTy) fnTy
       t -> t
 
   P.App fTT argsTT -> infer fTT >>= \f -> (infer `mapM` argsTT) >>= inferApp 0 f
@@ -370,7 +372,7 @@ infer = let
       ExprApp fE argsE -> inferExprApp srcOff fE >>= \f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
       QVar (m,i) -> use externs >>= \e -> handleExtern (readQParseExtern e m i)
       core -> pure core
-    in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
+    in (solveMixfixes . did_ <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
 
   P.Cons construct -> do
     let (fields , rawTTs) = unzip construct
@@ -456,7 +458,7 @@ infer = let
     let unpat = \case { P.PArg i -> i ; x -> error $ "not implemented: pattern: " <> show x }
         mkFn pat free (Core t tyAltRet) = let
           argNames = unpat <$> pat
-          argTys   = (\i -> [THVar i]) <$> argNames
+          argTys   = (\i -> [THVar i]) <$> argNames -- TODO !! withbisubs get new thvars !
           args     = zip argNames argTys
           in (Core (Abs args free t tyAltRet) tyAltRet
              , [THTyCon $ THTuple $ V.fromList argTys])

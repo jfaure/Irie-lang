@@ -66,12 +66,16 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
   (THBi nb x , y) -> do
     -- make new THVars for the debruijn bound vars here
     level %= (\(Dominion (f,x)) -> Dominion (f,x+nb))
-    bisubs <- (`MV.grow` nb) =<< use bis
-    let blen = MV.length bisubs
-        tvars = [blen - nb .. blen - 1] 
-    tvars `forM_` \i -> MV.write bisubs i (BiSub [] [] 0 0)
-    bis .= bisubs
-    r <- biSub (substFreshTVars (blen - nb) x) [y]
+--  bisubs <- (`MV.grow` nb) =<< use bis
+--  let blen = MV.length bisubs
+--      tvars = [blen - nb .. blen - 1] 
+    (r , _) <- withBiSubs nb $ \tvars -> do
+      bisubs <- use bis
+      [tvars..tvars+nb-1] `forM_` \i -> MV.write bisubs i (BiSub [] [] 0 0)
+--    bis .= bisubs
+--    r <- biSub (substFreshTVars (blen - nb) x) [y]
+      r <- biSub (substFreshTVars tvars x) [y]
+      pure r
     -- todo is it ok that substitution of debruijns doesn't distinguish between + and - types
 --  insts <- tvars `forM` \i -> MV.read bisubs i
 --  traceM $ "Instantiate: " <> show tvars <> "----" <> show insts <> "---" <> show r

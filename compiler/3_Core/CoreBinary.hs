@@ -38,6 +38,7 @@ deriving instance Generic ArrayInstrs
 deriving instance Generic TyInstrs
 deriving instance Generic BitInstrs
 deriving instance Generic NumInstrs 
+deriving instance Generic GMPSpecial
 
 instance Binary VName
 instance Binary Term
@@ -72,3 +73,4 @@ instance Binary ArrayInstrs
 instance Binary TyInstrs
 instance Binary BitInstrs
 instance Binary NumInstrs
+instance Binary GMPSpecial

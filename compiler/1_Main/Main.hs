@@ -8,6 +8,7 @@ import CoreSyn
 import CoreUtils (bind2Expr)
 import PrettyCore
 import Infer
+import Eval
 import CodeGen
 import LLVM.Pretty
 import qualified LlvmDriver as LD
@@ -19,18 +20,19 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import Control.Lens
 import System.Console.Haskeline
---import System.Process
---import System.IO (hClose)
 import Data.List (words)
 
 searchPath = ["./" , "Library/"]
 
 main = getArgs >>= main'
-sh   = main' . Data.List.words -- simplest way to pass cmdline args in ghci
+
+-- ghci convenience functions
+sh   = main' . Data.List.words
 shL  = main' . (["-p" , "llvm-hs"] ++ ) . Data.List.words
 demo = sh "demo.ii -p llvm-hs"
+opt  = sh "demo.ii -p core,simple"
 
-main' args = parseCmdLine args >>= \cmdLine -> -- initGlobalFlags >>= \cmdLine ->
+main' args = parseCmdLine args >>= \cmdLine ->
   when ("args" `elem` printPass cmdLine) (print cmdLine)
   *> case files cmdLine of
     []  -> replCore cmdLine
@@ -66,31 +68,34 @@ text2Core flags resolver fName progText = do
 
       (judgedModule , errors) = judgeModule parsed hNames exts srcInfo
       TCErrors scopeErrors biunifyErrors = errors
-      JudgedModule modNm bindNames _ _ judgedBinds = judgedModule
+      JudgedModule modNm bindNames a b judgedBinds = judgedModule
       newResolver = addModule2Resolver tmpResolver (bind2Expr <$> judgedBinds)
 
-  let judged'    = V.zip bindNames judgedBinds
-      bindSrc    = BindSource _ bindNames _ labelNames fieldNames
-      namedBinds = (\(nm,j)->clYellow nm <> toS (prettyBind False bindSrc j)) <$> judged'
+  let simpleBinds = runST $ V.thaw judgedBinds >>= \cb -> simplifyBindings (V.length judgedBinds) cb *> V.unsafeFreeze cb
+
+  let judged'                = V.zip bindNames judgedBinds
+      bindSrc                = BindSource _ bindNames _ labelNames fieldNames
+      namedBinds showBind bs = (\(nm,j)->clYellow nm <> toS (prettyBind showBind bindSrc j)) <$> bs
       putPass :: Text -> IO () = \case
         "args"       -> print flags
         "source"     -> putStr =<< readFile fName
         "parseTree"  -> putStrLn $ P.prettyModule parsed
-        "core"       -> void $ T.IO.putStrLn `mapM` namedBinds
-        "namedCore"  -> void $ T.IO.putStrLn `mapM` namedBinds
+        "types"      -> void $ T.IO.putStrLn `mapM` namedBinds False judged'
+        "core"       -> void $ T.IO.putStrLn `mapM` namedBinds True  judged'
+        "simple"     -> void $ T.IO.putStrLn `mapM` namedBinds True  (V.zip bindNames simpleBinds)
         _ -> pure ()
       addPass passNm = putStrLn ("\n  ---  \n" :: Text) *> putPass passNm
   (T.IO.putStrLn . formatError bindSrc srcInfo)      `mapM` biunifyErrors
   (T.IO.putStrLn . formatScopeError) `mapM` scopeErrors
   putPass `mapM_` (printPass flags)
-  pure (newResolver , exts , judgedModule)
+  pure (newResolver , exts , JudgedModule modNm bindNames a b simpleBinds)
 
 ---------------------------------
 -- Phase 2: codegen, linking, jit
 ---------------------------------
 --codegen flags input@((resolver , Import bindNames judged) , exts , judgedModule) = let
 codegen flags input@(resolver , exts , jm@(JudgedModule modNm bindNms a b judgedBinds)) = let
---judgedBinds' = simplifyBinds exts judgedBinds
+  simpleBinds' = simplifyBinds exts judgedBinds
   llvmMod      = mkStg exts (JudgedModule modNm bindNms a b judgedBinds)
   putPass :: Text -> IO () = \case
     "llvm-hs"    -> let

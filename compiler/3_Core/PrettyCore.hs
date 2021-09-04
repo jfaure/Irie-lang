@@ -26,10 +26,10 @@ prettyBind showExpr bindSrc = \case
   Mutual d m isRec tvar -> "MUTUAL: " <> show d <> show m <> show isRec <> show tvar
   WIP -> "WIP"
   BindOK expr -> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
+  BindOpt complex expr -> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
 
 prettyExpr showExpr bindSrc = prettyExpr' showExpr bindSrc ""
 prettyExpr' showExpr bindSrc pad = let
-  showExpr = True
   pE  = prettyExpr' showExpr bindSrc pad
   pTy = prettyTy (Just bindSrc)
   pT = prettyTerm bindSrc
@@ -61,9 +61,10 @@ prettyTerm bindSrc = let
     prettyArg' (i , ty) = show i
     in {-pad <> -} parens $ (clYellow $ "λ " <> T.intercalate " " (prettyArg' <$> ars)) <> prettyFree free <> " => " {-<> pad-} <> pT term
      -- <> "   : " <> clGreen (pTy ty)
-  App     f args -> "(" <> pT f <> clMagenta " < " <> T.intercalate " " (pT <$> args) <> ")"
+  App     f args -> "(" <> pT f <> clMagenta "\n  < " <> T.intercalate " " (pT <$> args) <> ")"
+  PartialApp extraTs fn args -> "PartialApp " <> show extraTs <> " (" <> pT fn <> clMagenta "\n  < " <> T.intercalate " " (pT <$> args) <> ")"
   Instr   p -> "%" <> show p <> "%"
-  Cast  i t -> "(" <> show i <> ")\n    <" <> show t <> ">"
+  Cast  i t -> "(" <> show i <> ")    <" <> show t <> ">"
 
   Cons    ts -> let
     sr (field , val) = show field <> " " <> (toS $ srcFieldNames bindSrc V.! field) <> "@" <> pT val

@@ -8,6 +8,7 @@ import GHC.Show (Show(..))
 data Literal
  = Char Char
  | Int Integer -- convenience
+ | Fin Int Integer
 -- | Frac Rational
  | PolyInt   !Text -- gmp
  | PolyFrac  !Text -- gmp
@@ -39,6 +40,7 @@ data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
 data PrimInstr
  = NumInstr   !NumInstrs
  | GMPInstr   !NumInstrs
+ | GMPOther   !GMPSpecial
 
  | MemInstr   !ArrayInstrs
  | TyInstr    !TyInstrs
@@ -71,6 +73,14 @@ data NumInstrs
  | BitInstr   !BitInstrs
  | FracInstr  !FracInstrs
 
+data GMPSpecial -- special fast cases avoiding a gmpInt in favor of raw i64
+ = AddUI
+ | SubUI | UISub
+ | MulSI | MulUI | AddMul | AddMulSi | SubMul | SubMulSi
+ | Mul2Exp
+ | CMPUI | CMPAbsD | CMPAbsUI
+ | PowMUI | PowUI | UIPowUI
+
  -- type instructions
 data TyInstrs
  = MkIntN  -- : Nat -> Set --make an int with n bits
@@ -84,6 +94,15 @@ data BitInstrs   = And | Or | Not | Xor | ShL | ShR | BitRev | ByteSwap | CtPop 
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
 data ArrayInstrs = ExtractVal | InsertVal | Gep
 
+primInstr2Nm = \case
+  NumInstr i -> show i
+  GMPInstr i -> "gmp-" <> show i
+  GMPOther i -> "gmp-" <> show i
+  TyInstr  i -> show i
+  i          -> show i
+-- MemInstr   !ArrayInstrs
+
+
 deriving instance Show Literal
 deriving instance Show PrimType
 deriving instance Show FloatTy
@@ -96,6 +115,7 @@ deriving instance Show FracInstrs
 deriving instance Show ArrayInstrs
 deriving instance Show Predicates
 deriving instance Show NumInstrs
+deriving instance Show GMPSpecial
 
 deriving instance Ord Literal
 deriving instance Ord PrimType
@@ -109,6 +129,7 @@ deriving instance Ord NatInstrs
 deriving instance Ord FracInstrs
 deriving instance Ord ArrayInstrs
 deriving instance Ord NumInstrs
+deriving instance Ord GMPSpecial
 
 deriving instance Eq Literal
 deriving instance Eq PrimType
@@ -122,6 +143,7 @@ deriving instance Eq FracInstrs
 deriving instance Eq ArrayInstrs
 deriving instance Eq TyInstrs
 deriving instance Eq NumInstrs
+deriving instance Eq GMPSpecial
 
 prettyPrimType :: PrimType -> Text
 prettyPrimType = toS . \case

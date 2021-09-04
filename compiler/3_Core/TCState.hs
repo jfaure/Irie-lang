@@ -27,6 +27,7 @@ data TCEnvState s = TCEnvState {
  , _deBruijn   :: MV.MVector s Int
  , _quants     :: Int
  , _mus        :: Int
+ , _blen       :: Int
  , _bis        :: MV.MVector s BiSub -- typeVars
  , _muEqui     :: IntMap IName -- equivalence classes for mu types, + -> -
  , _normFields :: VU.Vector IName
@@ -57,12 +58,13 @@ dupp p pos ty = let dup = dupp p in ty `forM` \case
 withBiSubs :: Int -> (Int->TCEnv s a) -> TCEnv s (a , [Int]) --(a , MV.MVector s BiSub)
 withBiSubs n action = do
   bisubs <- use bis
-  let biSubLen = MV.length bisubs
-      genFn i = let tv = [THVar i] in BiSub [] [] 0 0
-      tyVars = [biSubLen .. biSubLen+n-1]
+  biLen  <- use blen
+  let tyVars   = [biLen .. biLen+n-1]
+  blen .= (biLen + n)
   bisubs <- MV.grow bisubs n
-  tyVars `forM` \i -> MV.write bisubs i (genFn i)
-  level %= (\(Dominion (f,x)) -> Dominion (f,x+n))
   bis .= bisubs
-  ret <- action biSubLen
+  tyVars `forM` \i -> MV.write bisubs i (BiSub [] [] 0 0)
+  level %= (\(Dominion (f,x)) -> Dominion (f,x+n))
+  ret <- action biLen
+--tyVars `forM` \i -> MV.write bisubs i (BiSub [] [] 0 0)
   pure (ret , tyVars)

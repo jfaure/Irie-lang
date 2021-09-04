@@ -1,26 +1,9 @@
 # Irie
 Array-oriented subtyping calculus of inductive constructions for high-performance distributed systems. [Basic language reference](languageDocumentation.md)
 
+![logo](https://cdn.discordapp.com/attachments/631043990879338496/756673093497520138/logo.png)
 ## Origin
 Irie was created because there exists no pure functional language with first-class subtyping and an extreme emphasis on performance. Irie's philosophy is to focus exclusively on a simple but powerful core language capable of naturally expressing additional language features as native functions. That language is the subtyping calculus of constructions.
-
-## Usage (as printed by irie --help)
-Irie compiler/interpreter
-
-Usage: [-p|--print ARG] [-j|--jit] [-d|--debug] [-O ARG]
-       [-n|--no-prelude] [-o ARG] [FILE]
-  Compiler and Interpreter for the Irie language, a subtyping CoC for system
-  level programming.
-
-Available options:
-  -h,--help                Show this help text
-  -p,--print ARG           print compiler pass(es separated by ',') : [args |
-                           source | parseTree | core | llvm-hs | llvm-cpp]
-  -j,--jit                 Execute program in jit
-  -d,--debug               Print information with maximum verbosity
-  -O ARG                   Optimization level [0..3]
-  -n,--no-prelude          don't import prelude implicitly
-  -o ARG                   Write llvm output to file
 
 ## Performance
 Memory locality has become one of the key factors for performance, since cpu cache misses are very expensive (10 to 10000 times slower than a cpu instruction). Functional compilers take on the responsibility of managing all memory for the programmer, who has historically had good reason to distrust them. However, functional languages contain enough information that they could do a better job than even a C programmer using malloc can realistically maintain. For the next generation of functional compilers, a GC (or refcounting everything) is no longer acceptable. Irie aims to compile all data driven functions with essentially a custom allocator, which emphasizes arena style blanket-frees to completely clean up the data-stack when data falls out of scope, as well as a tailored memory representation for recursive datas. In particular, for the familiar list type: `List a = Empty | Next a (List a)` the (List a) pointer can be made implicit by use of an array. In fact all recursive data structures can exploit one implicit pointer, or in the case of Peano arithmetic, directly become machine numbers. I note here that it is essential to optimize such data structures directly rather than ask users to use an opaque datatype (eg. `Vector a`), since that tends to be annoying and doesn't scale at all.
@@ -40,9 +23,28 @@ Subtyping describes data flow explicitly and allows more accurate types. It can 
 ## (semi)-automatic distributed computing (including GPU-offloading)
 High level abstractions are necessary if we are to comfortably program using GPUs and distributed networks, since forking GPU kernels and sending programs over a network is far too tedious, error-prone and inflexible to do by hand. I propose to abstract implementation and optimisation details away from the terms and into the types.
 
+## Usage `$ irie --help`
+```
+Irie compiler/interpreter
+
+Usage: [-p|--print ARG] [-j|--jit] [-d|--debug] [-O ARG]
+       [-n|--no-prelude] [-o ARG] [FILE]
+  Compiler and Interpreter for the Irie language, a subtyping CoC for system
+  level programming.
+
+Available options:
+  -h,--help                Show this help text
+  -p,--print ARG           print compiler pass(es separated by ',') : [args |
+                           source | parseTree | core | llvm-hs | llvm-cpp]
+  -j,--jit                 Execute program in jit
+  -d,--debug               Print information with maximum verbosity
+  -O ARG                   Optimization level [0..3]
+  -n,--no-prelude          don't import prelude implicitly
+  -o ARG                   Write llvm output to file
+```
+
 # Compiler overview
-* Source size: 4175 lines of Haskell
-* Time to compile (dependencies not timed): 14.2sec (you tried your best GHC)
+* Source size: ~5000 lines of Haskell
 
 # Roadmap
 - Language:

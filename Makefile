@@ -1,5 +1,4 @@
 # stack is very slow to realize that sometimes no work is necessary
-
 NAME	=	irie
 SrcDir	= 	compiler/
 
@@ -13,7 +12,7 @@ prof:
 	stack -j9 build --executable-profiling --ghc-options="-fprof-auto"
 # --library-profiling 
 
-#mk prof && .stack-work/dist/x86_64-linux-nix/Cabal-3.2.1.0/build/nimzo-exe/nimzo-exe demo.nimzo -p core +RTS -p -xc
+#mk prof && .stack-work/dist/x86_64-linux-nix/Cabal-3.2.1.0/build/irie-exe/irie-exe demo.ii -p llvm-hs +RTS -p -xc
 
 $(NAME): $(SRC)
 	stack -j9 build --fast --ghc-options="-dynamic" &&\

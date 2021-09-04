@@ -9,8 +9,8 @@ import qualified Data.Map as M
 import Control.Lens hiding (List)
 import MixfixSyn
 
-global_debug = False
---global_debug = True
+--global_debug = False
+global_debug = True
 d_ x   = let --if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
@@ -42,7 +42,8 @@ data Term -- β-reducable (possibly to a type) and type annotated
 
  | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
  | Hole     -- argument hole (part of an implicit Abs)
- | App     Term [Term] -- IName [Term]
+ | App     Term [Term]    -- IName [Term]
+ | PartialApp [Type] Term [Term] -- ie. a Abs (we cannot name the implicit arguments, since those are fixed at parser)
 
  | Cons    (IM.IntMap Term)
  | TTLens  Term [IField] LensOp
@@ -79,7 +80,7 @@ data TyHead
  | THTop | THBot
 
  | THFieldCollision Type Type
- | THTyCon {-# UNPACK #-} !TyCon
+ | THTyCon !TyCon
 
  -- Binders
  | THMu IName Type-- recursive type
@@ -132,8 +133,9 @@ data Bind -- indexes in the bindmap
              , doGen :: Bool
              , recTy :: Type
              }
- | BindOK    Expr
  | BindKO -- failed typecheck
+ | BindOK    Expr
+ | BindOpt   Complexity Expr -- optimized binding
 
 -- mixfixWords :: [MFWord]
 -- hNameMFWords :: M.Map HName [MFIName]

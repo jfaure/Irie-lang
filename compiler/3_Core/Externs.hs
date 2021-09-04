@@ -90,7 +90,7 @@ resolveImports (GlobalResolver n curResolver prevBinds curMFWords) localNames mi
     flattenMFMap = concat . map snd
     in case (binds , mfWords) of
     (Just [] , _)  -> error $ "impossible: empty imap ?!"
-    (Just [(0     , iNm)] , Nothing)-> Imported $ (prevBinds V.! 0) V.! iNm -- resolve prims directly
+    (Just [(0     , iNm)] , Nothing)-> Imported $ (prevBinds V.! 0) V.! iNm -- resolve primitives directly
     (Just [(modNm , iNm)] , Nothing)-> Importable modNm iNm
     (Just [oneBind] , Just mfWords) -> MixfixyVar $ Mixfixy (Just oneBind) (flattenMFMap mfWords)
     (Nothing        , Just mfWords) -> MixfixyVar $ Mixfixy Nothing (flattenMFMap mfWords)
@@ -208,6 +208,7 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("gmp-add"  , (GMPInstr (IntInstr Add) , ([bi, bi] , bi) ))
   , ("gmp-sub"  , (GMPInstr (IntInstr Sub) , ([bi, bi] , bi) ))
   , ("gmp-mul"  , (GMPInstr (IntInstr Mul) , ([bi, bi] , bi) ))
+  , ("gmp-le"   , (GMPInstr (PredInstr LECmp) , ([bi, bi] , b) ))
   ]
 
 typeOfLit = \case

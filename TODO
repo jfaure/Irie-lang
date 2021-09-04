@@ -14,10 +14,12 @@
   * check let | rec
   * handle field name collisions (THFieldCollision)
   * fn Apps are Poison iff the function ret type depends on the poison arg
+  * Warn when something has a nonsense type join
   * Dependent normalisation & Staging
 ## Codegen
   * opportunistic instrs that read Terms also need a dumber version for Operands
   * do asmIdx resolution here
+  * promote single field records to field value (worthwhile if avoids pointer indirection)
   * figure out how ffi handles passing [n x %i1] by value
 
 !!

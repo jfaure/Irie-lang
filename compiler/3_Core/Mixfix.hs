@@ -53,7 +53,11 @@ type Parser = Parsec Void JuxtStream
 prependArg a f = case f of { ExprApp f args -> ExprApp f (a:args) ; f -> ExprApp f [a] }
 -- Also need to flip the arguments (since precedence swaps reverse apps)
 appendArg  f a = case f of { ExprApp f args -> ExprApp f (a : reverse args) ; f -> ExprApp f [a] }
+--mkApp :: [Expr] -> Expr
 mkApp = \case { [a] -> a ; f:args -> ExprApp f args }
+patchMFBind m = \case
+  QVar (mod , _) -> QVar (mod , m)
+  ExprApp (QVar (mod , _)) args -> ExprApp (QVar (mod , m)) args
 
 -- juxtappositions are ExprApps unless they contain mixfixes (extract and precedence solve)
 -- prec and assoc only matters for mf chains that both want the centre argument `m1_` `_m2`
@@ -68,8 +72,8 @@ solveMixfixes :: [Expr] -> Expr = let
   arg = rawExpr <|> startPrefix
 
   -- parse expected mfwords
-  mfParts :: Maybe Expr -> (ModIName , IName) -> Prec -> [Maybe IName] -> Parser Expr
-  mfParts larg qNm fixity mfWs = let
+  mfParts :: IName -> Maybe Expr -> (ModIName , IName) -> Prec -> [Maybe IName] -> Parser Expr
+  mfParts mb larg qNm fixity mfWs = let
     mkMFParser = \case -- figure out if the mixfix ends with a hole
       []           -> pure (False , [])
       [Nothing]    -> (\a -> (True , [a])) <$> arg
@@ -79,8 +83,8 @@ solveMixfixes :: [Expr] -> Expr = let
     in mkMFParser (fmap (fst qNm ,) <$> mfWs)
       <&> (\(pf,args) -> (pf , maybe (QVar qNm : args) (\la -> QVar qNm : la : args) larg))
       >>= \case
-       (False , p) -> pure $ mkApp p
-       (True  , p) -> option (mkApp p) $ (try $ startPostfix (mkApp p) (Just (qNm , fixity)))
+       (False , p) -> pure (patchMFBind mb (mkApp p))
+       (True  , p) -> option (patchMFBind mb $ mkApp p) (try $ startPostfix (patchMFBind mb $ mkApp p) (Just (qNm , fixity)))
 
   startPostfix :: Expr -> (Maybe ((IName,IName),Prec)) -> Parser Expr
   startPostfix larg fixity = mfExpr >>= \(Mixfixy maybeBind mfWords) -> let
@@ -91,19 +95,19 @@ solveMixfixes :: [Expr] -> Expr = let
         if qNml == qNmr && assoc fixityL == AssocNone
         then fail $ "operator not associative: " <> show qNml
         else if (qNml == qNmr && assoc fixityL /= AssocRight) || prec fixityL > prec fixityR
-        then (\x -> appendArg x larg) <$> mfParts Nothing qNmr fixityR contMFWs
+        then (\x -> appendArg x larg) <$> mfParts mb Nothing qNmr fixityR contMFWs
         else case larg of -- `l_ _r` => r gets l's last arg, l gets all of r instead
           ExprApp f ars -> (\r -> ExprApp f (DL.init ars ++ [r]))
-            <$> mfParts (Just (DL.last ars)) qNmr fixityR contMFWs
+            <$> mfParts mb (Just (DL.last ars)) qNmr fixityR contMFWs
           _ -> error "impossible, fixity given for nonexistent left App"
-      Nothing -> mfParts (Just larg) qNmr fixityR contMFWs
+      Nothing -> mfParts mb (Just larg) qNmr fixityR contMFWs
     mkPostfixParser _ = fail $ "not a postfix: " <> show mfWords
     in choice (try . mkPostfixParser <$> mfWords)
         <|> maybe (fail ("not a bindName: " <> show mfWords)) (\qvar -> mkApp . ([larg , QVar qvar ] ++ ) <$> many arg) maybeBind
 
   startPrefix = mfExpr >>= \(Mixfixy maybeBind mfWords) -> let
     mkPrefixParser (QStartPrefix (MixfixDef mb mfWs fixity) qNm) =
-      mfParts Nothing qNm fixity (drop 1 mfWs)
+      mfParts mb Nothing qNm fixity (drop 1 mfWs)
     mkPrefixParser _ = fail "not a prefix"
     in choice (try . mkPrefixParser <$> mfWords) 
         <|> maybe (fail "not a bindName") (\qvar -> mkApp . (QVar qvar :) <$> many arg) maybeBind
