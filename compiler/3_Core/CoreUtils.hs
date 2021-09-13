@@ -26,6 +26,7 @@ substFreshTVars tvarStart = Prelude.map $ let
     THArrow as ret -> THArrow (r <$> as) (r ret)
     THProduct as   -> THProduct $ r <$> as
     THTuple as     -> THTuple $ r <$> as
+    THSumTy as     -> THSumTy $ r <$> as
   t -> t
 
 getArrowArgs = \case

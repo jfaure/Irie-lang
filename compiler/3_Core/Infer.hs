@@ -30,8 +30,9 @@ formatError srcNames srcInfo (BiSubError o (TmpBiSubError msg got exp)) = let
       line    = (nlOff VU.! lineIdx)
       col     = o - line - 1
       in "\n" <> show lineIdx <> ":" <> show col <> ": \"" <> T.takeWhile (/= '\n') (T.drop o text) <> "\""
-  in srcLoc
-  <> "\n" <> clRed ("No subtype" <> if T.null msg then ":" else " (" <> msg <> "):")
+  in 
+     "\n" <> clRed ("No subtype" <> if T.null msg then ":" else " (" <> msg <> "):")
+  <> srcLoc
   <> "\n      " <> clGreen (prettyTy bindSrc got)
   <> "\n  <:? " <> clGreen (prettyTy bindSrc exp)
 
@@ -172,6 +173,11 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
       x -> s
     _ -> annTy
 
+--substTVars2 recTVar = let
+--  in do
+--  1. collect all vars
+--  2.
+
 -- substTVars: recursively substitute type vars, insert foralls and μ binders, simplify types
 -- Simplifications:
 --  * remove polar variables `a&int -> int` => int->int ; `int -> a` => `int -> bot`
@@ -189,7 +195,8 @@ substTVars recTVar = let
   shouldGeneralise pos bisub@(BiSub pty mty pq mq) = (if pos then mq else pq) > 0
   generaliseVar pos vars v bisub@(BiSub pty mty pq mq) = let incQuants = quants <<%= (+1) in incQuants >>= \q -> do
     when global_debug $ traceM $ show v <> " " <> show pos <> " =∀" <> show q <> " " <> show bisub
-    MV.modify vars (\(BiSub p m qp qm) -> BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) v
+--  MV.modify vars (\(BiSub p m qp qm) -> BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) v
+    MV.modify vars (\(BiSub p m qp qm) -> BiSub (THBound q:p) (THBound q:m) qp qm) v
     -- Co-occurence analysis ?
     (if pos then _pSub else _mSub) <$> MV.read vars v
 
@@ -214,25 +221,42 @@ substTVars recTVar = let
           Just (first , bisub) -> do
             q <- use quants
             v <- generaliseVar pos b first bisub
-            vars `forM` \i -> MV.modify b (\(BiSub p m qp qm) ->
-              BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) i
+--          vars `forM` \i -> MV.modify b (\(BiSub p m qp qm) ->
+--            BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) i
+--            BiSub (THBound q:p) (THBound q:m) qp qm) i
             pure v
       _  -> do
-        vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (const [THVarGuard x])) x
+        let insertGuard x [] = [THVarGuard x]
+            insertGuard x (r : rs) = case r of
+              THVarLoop a  | a == x -> THVarGuard x : rs
+              r -> r : insertGuard x rs
+            isVar = \case { THVar{}->True ; THVarLoop{}->True ; THVarGuard{}->True; _->False }
+        vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (\y -> d_ (show x <> "replacing: " <> show y :: Text) [THVarGuard x])) x
+--      vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (\p -> THVarGuard x : filter (not . isVar) p)) x
+--      vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (insertGuard x)) x
         t <- concatTypes <$> mapM (substTyHead pos) guardedTs
         mus .= svMu
         r <- foldM (addMu b) t vars -- TODO should only be one Mu !!
-        vars  `forM` \x -> MV.modify b (\(BiSub p m qp qm) -> if pos then BiSub [THVar x] m qp qm else BiSub p [THVar x] qp qm) x
+        let insertVar x [] = [THVar x]
+            insertVar x (r : rs) = case r of
+              THVarGuard a | a == x -> THVar x : rs
+              r -> r : insertVar x rs
+
+        vars  `forM` \x -> MV.modify b (\(BiSub p m qp qm) -> if pos
+          then BiSub (insertVar x $ did_ p) m qp qm else BiSub p (insertVar x $ did_ m) qp qm) x
+--        then BiSub (THVar x : p) m qp qm else BiSub p (THVar x : m) qp qm) x
+--        then BiSub [THVar x] m qp qm else BiSub p [THVar x] qp qm) x
          --over (if pos then pSub else mSub) (const [THVar x])) x
         pure r
 
   -- We need to distinguish unguarded type variable loops (recursive type | indistinguishable vars)
-  -- [a , b , c] var loops are all the same var; so if one is generalised, need to gen all of them
+  -- a,b,c,a var loops are the same var; so if one is generalised, need to gen all of them
   substVs pos ty = let
     fn (v,o) = \case
       THVar x -> (x:v,o)
       x       -> (v,x:o)
     x@(vars , other) = foldl fn ([],[]) ty
+-- d_ (show ty <> " : " <> show (vars , other) :: Text) $ 
     in if null vars then pure ([],ty) else use bis >>= \b ->
       substV pos vars <&> (\(v,t) -> (v , mergeTypes t other))
 
@@ -240,14 +264,21 @@ substTVars recTVar = let
   substV pos vars = use bis >>= \b -> do
     varTypes <- vars `forM` \x -> MV.read b x >>= \bisub -> let
       t = if pos then _pSub bisub else _mSub bisub
-      in case t of --d_ (show x <> show t :: Text) t of
+      in case d_ (show x <> show pos <> " @ " <> show t :: Text) t of
       []             -> (Nothing,) <$> addPiBound pos b x
+      -- ?!
+      [THVar v] | v == x -> (Nothing , []) <$ MV.modify b (over (if not pos then pSub else mSub) (const [])) x--`f = f` nonsense
+--    [THVar v] -> MV.read b v >>= \new -> new <$ MV.modify b (over (if pos then pSub else mSub) (const t)) x
       [THVarGuard v] -> pure (Nothing , t)
       subbedTy       -> case if pos then _mSub bisub else _pSub bisub of
-        -- Check the opposite polarity (if this variable's opposite will be generalised later, it can't be ignored now)
+        -- Check the opposite polarity (if this variable's opposite would be generalised later, it can't be ignored now)
         -- It will generalise if it is [] and it's opposite polarity (ours) has >0 presence
         [] -> addPiBound pos b x <&> \thbound -> (Just x , thbound ++ subbedTy)
-        _  -> (Just x,t) <$ MV.modify b (over (if pos then pSub else mSub) ((const [THVarLoop x]))) x
+        _  -> let insertLoop x [] = [THVarLoop x]
+                  insertLoop x (r : rs) = case r of
+                    THVar a     | a == x -> THVarLoop x : rs
+                    r -> r : insertLoop x rs
+          in (Just x,t) <$ MV.modify b (over (if pos then pSub else mSub) (insertLoop x)) x -- loop guard
     let ts = snd <$> varTypes
         v' = catMaybes $ fst <$> varTypes
         varsTy = concatTypes ts
@@ -265,13 +296,13 @@ substTVars recTVar = let
     THVarGuard v -> mus <<%= (+1) >>= \m -> let mb = [THMuBound m] in
       mb <$ MV.modify b (over (if pos then pSub else mSub) (const mb)) v
     THTyCon t -> (\t -> [THTyCon t]) <$> case t of
-      THArrow ars ret -> do -- THArrow changes polarity => make sure not to miss quantifying vars in the result-type
+      THArrow ars ret -> do
+       -- THArrow changes polarity => dup result (in case args link to result vars)
+       -- Then inspect the args
         ret `forM` \case
           THVar x -> dupVar pos x
           x -> pure ()
---      ars `forM` \x -> x `forM` \case
---        THVar x -> dupVar False x
---        x -> pure ()
+--      ars `forM` \x -> x `forM` \case { THVar x -> dupVar False x ; x -> pure () }
         (\arsTy retTy -> THArrow arsTy retTy) <$> subst (not pos) `mapM` ars <*> subst' ret
       THTuple   tys -> THTuple   <$> (subst' `traverse` tys)
       THProduct tys -> THProduct <$> (subst' `traverse` tys)
@@ -329,12 +360,14 @@ infer = let
        [] -> setRetTy retTy biret castArgs <$> ttApp judgeBind f args
        x  -> PoisonExpr <$ (tmpFails .= []) <* (biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++))
 
- handleExtern = \case
+ -- TODO don't allow `bind = lonemixfixword`
+ handleExtern = let mfwOK = True in \case
    ForwardRef b       -> judgeLocalBind b -- was a forward reference not an extern
    Imported e         -> pure e
    NotInScope  h      -> PoisonExpr <$ (scopeFails %= (ScopeError h:))
    AmbiguousBinding h -> PoisonExpr <$ (scopeFails %= (AmbigBind h :))
-   MixfixyVar m       -> pure $ MFExpr m
+   MixfixyVar m       -> if mfwOK then pure $ MFExpr m
+     else PoisonExpr <$ (scopeFails %= (AmbigBind "mfword cannot be a binding" :))
 
  judgeLocalBind b = judgeBind b <&> \case
      Core e ty -> Core (Var $ VBind b) ty -- don't inline the body ! (
@@ -371,8 +404,9 @@ infer = let
       ExprApp fE [] -> panic "impossible: empty expr App"
       ExprApp fE argsE -> inferExprApp srcOff fE >>= \f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
       QVar (m,i) -> use externs >>= \e -> handleExtern (readQParseExtern e m i)
+      MFExpr{}   -> PoisonExpr <$ (scopeFails %= (AmbigBind "mixfix word":))
       core -> pure core
-    in (solveMixfixes . did_ <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
+    in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
 
   P.Cons construct -> do
     let (fields , rawTTs) = unzip construct
@@ -450,12 +484,14 @@ infer = let
       pattern2Ty = mkFnTy . \case
         [] -> []
         P.PArg _ : xs -> [THSet 0] : [pattern2Ty xs]
+        x -> error $ "unknown pattern: " <> show x
       tys = pattern2Ty <$> patterns
     in do
     altExprs <- infer `mapM` rawTTs
     let altTys = tyOfExpr <$> altExprs
     retTy <- foldl mergeTypes [] <$> pure altTys -- (tyOfExpr <$> altExprs)
     let unpat = \case { P.PArg i -> i ; x -> error $ "not implemented: pattern: " <> show x }
+        mkFn pat free PoisonExpr = (PoisonExpr , [])
         mkFn pat free (Core t tyAltRet) = let
           argNames = unpat <$> pat
           argTys   = (\i -> [THVar i]) <$> argNames -- TODO !! withbisubs get new thvars !

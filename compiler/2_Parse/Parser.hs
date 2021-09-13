@@ -365,7 +365,7 @@ ttArg , tt :: Parser TT
   argOrLens = arg >>= \larg -> option larg (lens larg) -- lens bind tighter than App
   appOrArg = getOffset >>= \o -> argOrLens >>= \larg -> option larg (choice
     [ case larg of
---      Lit l -> LitArray . (l:) <$> some (lexeme literalP)
+        Lit l -> LitArray . (l:) <$> some (lexeme literalP)
         P.Label l [] -> P.Label l <$> some arg
         fn -> choice
           [ Juxt o . (fn:) <$> some (linefold argOrLens)

@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-module Prelude ( module Protolude , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort)
+module Prelude ( module Protolude , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap)
 where
 import Protolude hiding (check , Type , Fixity(..) , moduleName , option
  , try , some , many -- conflict with megaparsec
@@ -21,6 +21,8 @@ fromJust = fromMaybe (panic "fromJust")
 
 argSort :: Int -> M.Map HName IName -> VU.Vector IName
 argSort n hmap = let v = VU.fromList (M.elems hmap) in VU.unsafeBackpermute v v
+
+imap f l = zipWith f ([0..] :: [Int]) l
 
 iMap2Vector mp = V.create $ do
   v <- MV.unsafeNew (M.size mp)

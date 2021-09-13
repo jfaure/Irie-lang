@@ -111,13 +111,19 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
   (THVar p , THVar m) -> use bis >>= \v -> BiEQ <$ do
     MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar p : a) b qa qb) m
     MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) qa qb) p
-    dupVar True m
+--  dupVar True m
   (THVar p , m) -> use bis >>= \v -> (_pSub <$> MV.read v p) >>= \t -> do
     MV.modify v (\(BiSub a b qa qb) -> BiSub a (m : b) qa qb) p
 --  MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar p : b) qa qb) p
     -- need to duping guarded variables that are otherwise never bisubbed
 --  (void $ dupp p True [m]) -- *> dupp p False [m] {- ? -})
-    void $ dupp p False [m]
+--  void $ dupp p False [m]
+    -- bisub stops here; make sure we dup any remaining guarded variables in m
+--  when (isTyCon m) (void $ dupp (-1) True [m])
+    case m of
+      THTyCon (THArrow ars r) -> void $ dupp (-1) True [m]
+      x -> pure ()
+
     biSub t [m]
   (p , THVar m) -> use bis >>= \v -> (_mSub <$> MV.read v m) >>= \t    -> do
 --  (void $ dupp m False [p] *> dupp m True [p]) -- ??
@@ -126,6 +132,8 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
     MV.modify v (\(BiSub a b qa qb) -> BiSub (p : a) b qa qb) m
     biSub [p] t
 
+  (x , THTyCon THArrow{}) -> failBiSub "Too many arguments"        [p] [m]
+  (THTyCon THArrow{} , x) -> failBiSub "Not enough arguments"      [p] [m]
   (a , b) -> failBiSub "" [a] [b]
 
 -- used for computing both differences between 2 IntMaps (sadly alignWith won't give us the ROnly map key)
@@ -157,8 +165,8 @@ biSubTyCon p m = \case
       Just superType -> biSub superType subType
     in BiEQ <$ (go `IM.traverseWithKey` x) -- TODO bicasts
 --(THArrow ars ret, THTuple y) -> pure BiEQ -- labelBiSub-- TODO
-  (THTuple y, THArrow ars ret) -> pure BiEQ -- labelBiSub-- TODO
-  (a , b) -> failBiSub "Type constructor mismatch" [THTyCon a] [THTyCon b]
+--(THTuple y, THArrow ars ret) -> pure BiEQ -- labelBiSub-- TODO
+  (a , b)         -> failBiSub "Type constructors mismatch" [p] [m]
 
 arrowBiSub (argsp,argsm) (retp,retm) = let
   bsArgs [] [] = ([] , Nothing , ) <$> biSub retp retm

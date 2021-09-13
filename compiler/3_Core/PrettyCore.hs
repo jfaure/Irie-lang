@@ -26,7 +26,7 @@ prettyBind showExpr bindSrc = \case
   Mutual d m isRec tvar -> "MUTUAL: " <> show d <> show m <> show isRec <> show tvar
   WIP -> "WIP"
   BindOK expr -> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
-  BindOpt complex expr -> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
+  BindOpt complex expr -> " (" <> show complex <> ")" <> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
 
 prettyExpr showExpr bindSrc = prettyExpr' showExpr bindSrc ""
 prettyExpr' showExpr bindSrc pad = let
@@ -125,7 +125,7 @@ prettyTyHead bindSrc = let
      in "{" <> T.intercalate " , " (prettyField <$> IM.toList l) <> "}"
    THTuple  l  -> "{" <> T.intercalate " , " (pTy <$> V.toList l) <> "}"
 
-   THArray    t -> "@" <> show t
+   THArray    t -> "Array " <> show t
 
 -- THBi i t -> "∏(#" <> show i  <> ")" <> pTy t
  THBi i t -> "∏ " <> (T.intercalate " " $ number2CapLetter <$> [0..i-1]) <> " → " <> pTy t

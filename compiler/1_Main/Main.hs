@@ -5,6 +5,7 @@ import Parser
 import ModulePaths
 import Externs
 import CoreSyn
+import CoreBinary()
 import CoreUtils (bind2Expr)
 import PrettyCore
 import Infer
@@ -18,84 +19,119 @@ import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy.IO as TL.IO
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
+import qualified Data.Binary as DB
 import Control.Lens
 import System.Console.Haskeline
+import System.Directory
 import Data.List (words)
 
-searchPath = ["./" , "Library/"]
+searchPath   = ["./" , "Library/"]
+objPath      = ["./"]
+objDir       = ".irie-obj/@"
+getCachePath fName = objDir <> map (\case { '/' -> '%' ; x -> x} ) fName
+doCacheCore  = True
+
+deriving instance Generic GlobalResolver
+deriving instance Generic Externs
+instance DB.Binary GlobalResolver
+instance DB.Binary Externs
+
+-- for use in ghci
+demoFile = "demo.ii"
+sh    = main' . Data.List.words
+shL   = main' . (["-p" , "llvm-hs"] ++ ) . Data.List.words
+parseTree  = sh $ demoFile <> " -p parse"
+demo  = sh $ demoFile <> " -p llvm-hs"
+core  = sh $ demoFile <> " -p core"
+types = sh $ demoFile <> " -p types"
+opt   = sh $ demoFile <> " -p simple"
 
 main = getArgs >>= main'
-
--- ghci convenience functions
-sh   = main' . Data.List.words
-shL  = main' . (["-p" , "llvm-hs"] ++ ) . Data.List.words
-demo = sh "demo.ii -p llvm-hs"
-opt  = sh "demo.ii -p core,simple"
-
 main' args = parseCmdLine args >>= \cmdLine ->
   when ("args" `elem` printPass cmdLine) (print cmdLine)
   *> case files cmdLine of
     []  -> replCore cmdLine
     av  -> doFile cmdLine primResolver `mapM_` av
 
-doFile cmdLine it f = T.IO.readFile f >>= doProgText cmdLine it f
-doProgText flags it f t = text2Core flags it f t >>= codegen flags
+doFile cmdLine r f     = T.IO.readFile f >>= doProgText cmdLine r f
+doProgText flags r f t = text2Core flags r f t >>= codegen flags
+
+type CachedData = (GlobalResolver , Externs , JudgedModule)
+decodeCoreFile :: FilePath -> IO CachedData       = DB.decodeFile
+encodeCoreFile :: FilePath -> CachedData -> IO () = DB.encodeFile
+cacheFile fp jb = createDirectoryIfMissing False objDir *> encodeCoreFile (getCachePath fp) jb
+
+doFileCached :: CmdLine -> GlobalResolver -> FilePath -> IO (GlobalResolver , Externs , JudgedModule)
+doFileCached flags resolver fName = let
+  cached            = getCachePath fName
+  isCachedFileFresh = (<) <$> getModificationTime fName <*> getModificationTime cached
+  isCachedFileOK    = doesFileExist cached >>= \exists -> if doCacheCore && exists then isCachedFileFresh else pure False
+  in isCachedFileOK >>= \case
+  -- Warning ! this will almost certainly not work when varying the import order across caches
+  False -> T.IO.readFile fName >>= text2Core flags resolver fName
+  True  -> decodeCoreFile cached >>= \(newResolver , exts , judged) -> do
+--  modResolver <- evalImports modResolver localNames mixfixNames unknownNames
+    -- TODO modResolver + recompile dependencies ?
+--  let (tmpResolver , exts) = resolveImports tmpResolver mempty mempty mempty -- localName smixfixNames unknownNames
+--      newResolver = addModule2Resolver tmpResolver (bind2Expr <$> (judgedBinds judged))
+    pure (newResolver , exts , judged)
+
+evalImports flags resolver fileNames = do
+  importPaths <- (findModule searchPath . toS) `mapM` fileNames
+  foldM (\res path -> (\(a,b,c)->a) <$> doFileCached flags res path) resolver importPaths
 
 text2Core :: CmdLine -> GlobalResolver -> FilePath -> Text
   -> IO (GlobalResolver , Externs , JudgedModule)
 text2Core flags resolver fName progText = do
+  when ("source" `elem` printPass flags) (putStr =<< readFile fName)
   parsed <- case parseModule fName progText of
     Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
     Right r -> pure r
-  let modNameMap = parsed ^. P.parseDetails . P.hNameBinds . _2
+  when ("parseTree" `elem` printPass flags) (putStrLn $ P.prettyModule parsed)
+
+  modResolver <- evalImports flags resolver (parsed ^. P.imports)
+
+  let (tmpResolver , exts) = resolveImports modResolver localNames mixfixNames unknownNames
+
+      modNameMap = parsed ^. P.parseDetails . P.hNameBinds . _2
       hNames = let getNm (P.FunBind fnDef) = P.fnNm fnDef in getNm <$> V.fromList (parsed ^. P.bindings)
-
-  importPaths <- (findModule searchPath . toS) `mapM` (parsed ^. P.imports)
---(modResolver , localImports) <- unzip . map (\(a,b,c)->a) <$> doFile flags resolver `mapM` importPaths
-  modResolver <- foldM (\res path -> (\(a,b,c)->a) <$> doFile flags res path) resolver importPaths
-
-  -- let-rec on judgedBinds
-  let localNames   = parsed ^. P.parseDetails . P.hNameBinds . _2
+      localNames   = parsed ^. P.parseDetails . P.hNameBinds . _2
       mixfixNames  = parsed ^. P.parseDetails . P.hNameMFWords . _2
       unknownNames = parsed ^. P.parseDetails . P.hNamesNoScope
-      -- TODO not here
       labelNames   = iMap2Vector $ parsed ^. P.parseDetails . P.labels
       fieldNames   = iMap2Vector $ parsed ^. P.parseDetails . P.fields
-
---    (tmpResolver , exts) = resolveImports resolver localNames mixfixNames unknownNames
-      (tmpResolver , exts) = resolveImports modResolver localNames mixfixNames unknownNames
+      nArgs        = parsed ^. P.parseDetails . P.nArgs
       srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
 
       (judgedModule , errors) = judgeModule parsed hNames exts srcInfo
       TCErrors scopeErrors biunifyErrors = errors
       JudgedModule modNm bindNames a b judgedBinds = judgedModule
+
       newResolver = addModule2Resolver tmpResolver (bind2Expr <$> judgedBinds)
 
-  let simpleBinds = runST $ V.thaw judgedBinds >>= \cb -> simplifyBindings (V.length judgedBinds) cb *> V.unsafeFreeze cb
-
-  let judged'                = V.zip bindNames judgedBinds
+      judged'                = V.zip bindNames judgedBinds
       bindSrc                = BindSource _ bindNames _ labelNames fieldNames
       namedBinds showBind bs = (\(nm,j)->clYellow nm <> toS (prettyBind showBind bindSrc j)) <$> bs
-      putPass :: Text -> IO () = \case
-        "args"       -> print flags
-        "source"     -> putStr =<< readFile fName
-        "parseTree"  -> putStrLn $ P.prettyModule parsed
-        "types"      -> void $ T.IO.putStrLn `mapM` namedBinds False judged'
-        "core"       -> void $ T.IO.putStrLn `mapM` namedBinds True  judged'
-        "simple"     -> void $ T.IO.putStrLn `mapM` namedBinds True  (V.zip bindNames simpleBinds)
-        _ -> pure ()
-      addPass passNm = putStrLn ("\n  ---  \n" :: Text) *> putPass passNm
+
+
+  when ("types"  `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds False judged')
+  when ("core"   `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds True  judged')
+  let simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
+          simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
+      coreOK = null biunifyErrors && null scopeErrors
+      judgedFinal = JudgedModule modNm bindNames a b simpleBinds
+  when ("simple" `elem` printPass flags)
+    (void $ T.IO.putStrLn `mapM` namedBinds True  (V.zip bindNames simpleBinds))
   (T.IO.putStrLn . formatError bindSrc srcInfo)      `mapM` biunifyErrors
   (T.IO.putStrLn . formatScopeError) `mapM` scopeErrors
-  putPass `mapM_` (printPass flags)
-  pure (newResolver , exts , JudgedModule modNm bindNames a b simpleBinds)
+  when (doCacheCore && coreOK) (cacheFile fName (newResolver , exts , judgedFinal))
+  pure (newResolver , exts , judgedFinal)
 
 ---------------------------------
 -- Phase 2: codegen, linking, jit
 ---------------------------------
 --codegen flags input@((resolver , Import bindNames judged) , exts , judgedModule) = let
 codegen flags input@(resolver , exts , jm@(JudgedModule modNm bindNms a b judgedBinds)) = let
-  simpleBinds' = simplifyBinds exts judgedBinds
   llvmMod      = mkStg exts (JudgedModule modNm bindNms a b judgedBinds)
   putPass :: Text -> IO () = \case
     "llvm-hs"    -> let

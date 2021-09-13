@@ -98,7 +98,7 @@ cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case
        in dataFunction i llvmNm papArgs [] patchTerm papRetT []
      Core t ty -> dataFunction i llvmNm [] [] t ty [] -- <&> \case { STGFn _ [] op -> STGConstant op ; f -> f }
      PoisonExpr -> panic $ "attempted to codegen a poison expr: " <> nm
-     Ty ty -> LLVMTy <$> cgType ty
+     Ty ty -> LLVMTy <$> cgLLVMType ty
    in do
 --   MV.write wip i b --(STGConstant $ getVAFn LT.VoidType strNm) -- don't handle recursive refs using MonadFix
      b <- case bind of
@@ -108,12 +108,11 @@ cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case
      b <$ MV.write wip i b --(STGConstant $ getVAFn LT.VoidType strNm)
  x -> pure x
 
--- DataFunctions pass extra frame arguments with their data args
 -- The full CGOp signature must be computed independent of the body in order to handle recursive references !
 dataFunction :: IName -> L.Name -> [(IName, [TyHead])] -> [(IName , LT.Type)]
   -> Term -> [TyHead] -> [FA.FunctionAttribute]
   -> CGEnv s StgWIP
-dataFunction bindINm llvmNm args free body returnType attribs = cgType returnType >>= \retTy -> let
+dataFunction bindINm llvmNm args free body returnType attribs = cgLLVMType returnType >>= \retTy -> let
     iArgs = fst<$>args ; iFree = fst<$>free
     dataRetKind = \case
       THPrim (PrimBigInt)   -> RetBigint
@@ -125,18 +124,19 @@ dataFunction bindINm llvmNm args free body returnType attribs = cgType returnTyp
     isDataTy = any isDataTyHead
     retData  = isDataTy returnType
     rArgs = args
-    mkTyconPtr t = case t of -- tycon Function arguments are always pointers (can annotate structs with byval)
-      LT.StructureType{}      -> LT.ptr t
-      LT.NamedTypeReference{} -> LT.ptr t
-      LT.FunctionType      {} -> LT.ptr t
-      t -> t
+    mkTyconPtr cgType t = case cgType of
+      FnType{}     -> LT.ptr t
+      StructType{} -> LT.ptr t
+      SumType{}    -> t
+      LLVMType{}   -> t
     retDropFieldsTy = LT.ArrayType (fromIntegral $ length (getStructFieldTys retTy)) i1_t
   in do
-  rawArgTys <- (cgType . snd) `mapM` rArgs
-  let rArgTys  = mkTyconPtr <$> rawArgTys -- structs , functions and label arguments are always pointers
-      llvmArgTys   = case retData of
-        False -> rArgTys
-        True  -> if isTypeRef retTy then LT.ptr retTy : rArgTys else LT.ptr retTy : retDropFieldsTy : rArgTys
+  argCGTypes <- (cgType . snd) `mapM` rArgs
+  let rawArgTys  = cgType2LLVMType <$> argCGTypes
+      rArgTys    = zipWith mkTyconPtr argCGTypes rawArgTys -- structs , functions and label arguments are always pointers
+      llvmArgTys = if retData
+        then if isTypeRef retTy then LT.ptr retTy : rArgTys else LT.ptr retTy : retDropFieldsTy : rArgTys
+        else rArgTys
       fnParams = zipWith (\nm ty -> Parameter ty (L.UnName nm) []) ([0..] :: [Word]) llvmArgTys
 
   -- write the fn declaration already
@@ -146,7 +146,7 @@ dataFunction bindINm llvmNm args free body returnType attribs = cgType returnTyp
       stgFn = if null fnParams then STGConstantFn fnPtr iFree else STGFn retKind llvmArgTys llvmRetT iFree fnPtr Nothing
   gets wipBinds >>= \wip -> MV.write wip bindINm stgFn
 
-  (_ {-(complex' , (retTy' , fnParams'))-} , blocks) <- runIRBuilderT emptyIRBuilder $ do
+  (() , blocks) <- runIRBuilderT emptyIRBuilder $ do
     (retPtr , rd) <- case retData of
       False -> pure (Nothing , Nothing)
       True  -> do
@@ -154,11 +154,11 @@ dataFunction bindINm llvmNm args free body returnType attribs = cgType returnTyp
         rd <- if isTypeRef retTy then pure Nothing else Just . L.LocalReference retDropFieldsTy <$> fresh
         pure (rp , rd)
     rParams <- rArgTys `forM` \ty -> L.LocalReference ty <$> fresh
-    let cgArgOps = (flip map) rParams $ \llop@(L.LocalReference ty nm) -> case ty of
-          LT.PointerType x _ -> case x of
-            LT.StructureType _ elems -> Struct llop (V.fromList elems)
-            LT.NamedTypeReference _  -> LLVMOp llop -- TODO GMPOp ?
-          primType -> LLVMOp llop
+    let mkCGOp llop cgTy = case cgTy of
+          LLVMType t        -> LLVMOp llop
+          StructType tys n  -> Struct llop (cgType2LLVMType <$> tys)
+          SumType SKArray t -> SArray llop t
+        cgArgOps = zipWith mkCGOp rParams argCGTypes
 
     modify $ \x -> x { stack = CallGraph
      { regArgs     = IM.fromList $ zip (fst<$>rArgs) cgArgOps -- rParams
@@ -169,13 +169,7 @@ dataFunction bindINm llvmNm args free body returnType attribs = cgType returnTyp
      , complexity  = 0
      , contextNm   = [llvmNm]
      } : stack x }
---  (papParams , finalRetTy) <- cgTerm body >>= \case
---    PapOp (FunctionOp fnPtr~ free argT retT) captures -> do
---      papArgs <- drop (length captures) argT `forM` \ty -> L.LocalReference ty <$> fresh `named` "papArgs"
---      -- TODO cgOpApp , don't commit Arg here !
---      commitArg `mapM` captures >>= \capturedDyn -> call' fnPtr (capturedDyn ++ papArgs) >>= ret
---      pure (papArgs , retT)
---    ~sret -> ([] , retTy) <$ if retData then retVoid else ret (op sret)
+
     cgTerm body >>= \result -> if retData then retVoid else ret (op result)
     modify $ \x -> x { stack = drop 1 (stack x) }
 
@@ -225,6 +219,7 @@ cgArg t = cgTerm t >>= commitArg
 commitArg :: CGOp -> CGBodyEnv s L.Operand
 commitArg = \case
   LLVMOp o -> pure o
+  SArray sOp elTy -> pure sOp
   x -> error $ "not ready to mk arg with: " <> show x
 
 -- conv CGOps to llvmOps and call appropriately
@@ -262,9 +257,9 @@ cgTerm = let
 --Abs args free t ty -> lift $ freshTopName "lam" >>= \nm ->
 --  dataFunction nm args [] t ty []
 --MultiIf -> mkMultiIf ifsE elseE
-  Label i tts      -> _
   List  args       -> _
-  m@(Match ty labels d) -> panic $ "floating match" -- cgTerm (Abs .. ) fresh arginames somehow
+  Label i tts      -> genLabel i tts
+  m@(Match ty labels d) -> panic $ "floating match" -- cgTerm (Abs .. )
 
   Cons fields      -> (getRetLoc <* delRetLoc) >>= \rl -> mkRecord rl fields
 
@@ -283,9 +278,9 @@ cgTerm = let
 --      in case record of
 --      RawFields fs       -> pure $ fst $ fs V.! 0
 --      Struct struct fTys -> gepTy lensTy struct gepAddr >>= loadField lensTy
---
+
       -- struct pointer passed in as an argument to this function:
-      -- this maybe should have been promoted from singleton record to field
+      -- this really should have been promoted from singleton record to field
       Struct struct fVals -> let
         lensTy = fVals V.! 0 -- field
         in gepTy lensTy struct gepAddr >>= loadField lensTy
@@ -312,7 +307,7 @@ productCast2dropMarkers drops leafCasts = let -- mark dropped fields
 
 -- catch some special term Apps here
 cgApp f args = case f of
-  Match ty alts d -> _ --emitMatchApp args ty alts d
+  Match ty alts d | [a] <- args -> (getRetLoc <* delRetLoc) >>= \rl -> cgTerm a >>= \scrut -> emitMatchApp rl scrut ty alts d
   Instr i   -> case i of -- ifThenE is special since it can return data
     IfThenE -> case args of { [ifE, thenE, elseE] -> mkIf ifE thenE elseE }
     _ -> cgInstrApp Nothing i args
@@ -321,8 +316,8 @@ cgApp f args = case f of
     Inlineable cgOp (argNms , termFn) -> cgTerm (etaReduce argNms args termFn) -- TODO align args into PAp
     FunctionOp fptr free aTs rT -> cgOpaqueApp fptr args <&> LLVMOp
     GMPFnOp fptr -> cgTerm `mapM` args >>= \ars -> getGMPRetPtr True >>= \rl -> LLVMOp rl <$ callCGOp (LLVMOp fptr) (LLVMOp rl : ars)
-    x -> error $ "cgapp :" <> show x
-  other -> error $ "cgapp: " <> show other
+    x -> error $ "cgapp of non-function:" <> show x
+  other -> error $ "cgapp of non-function : " <> show other
 
 -- recordApp can pass information to the record function
 recordApp recordFn retLoc prodCast args = let
@@ -334,7 +329,7 @@ recordApp recordFn retLoc prodCast args = let
            if isStructTy fTy || isTypeRef fTy
            then _ -- TODO pass down sret
            else do
-             retT <- lift $ cgType retTy
+             retT <- lift $ cgLLVMType retTy
              loadIdx struct asmIdx >>= call' (fnPtrOp f) . (:[]) >>= storeIdx retT struct asmIdx
              pure $ Struct struct (modifyField fTys asmIdx retT)
 
@@ -377,7 +372,7 @@ doCast cast term = (getRetLoc <* delRetLoc) >>= \rl -> let
     RawFields fs -> do
       cgFn <- cgTerm fn
       val  <- callCGOp cgFn [fst (fs V.! asmIdx)]
-      retT <- lift (cgType retTy)
+      retT <- lift (cgLLVMType retTy)
       pure $ RawFields (modifyField fs asmIdx (val , retT))
     x -> error $ "expected recordfnOp: " <> show x
   x -> error $ "cast: " <> show x
@@ -504,14 +499,14 @@ mkRecord retLoc coreFieldsMap = gets normFields >>= \nf -> let
                 pure start
           in Struct sret llvmFieldTys <$ go 0
 
--- Gmp calls
+-- Gmp helper functions calls
 callGMPFn fnName rp args = lift (GMP.getGMPDecl fnName) >>= \f -> rp <$ f `call` map (,[]) (rp : args)
 obtainRetLoc = getGMPRetPtr True >>= \rp -> rp <$ delRetLoc
 
 emitGMPInstr :: Maybe L.Operand -> NumInstrs -> [Term] -> CGBodyEnv s L.Operand
 emitGMPInstr rl i args = let
-  genArgs          = cgTerm' `mapM` args
   callNoSret fnName args   = lift (GMP.getGMPDecl fnName) >>= \f -> f `call'` args
+  genArgs          = cgTerm' `mapM` args
   callOp gmpFn rp = genArgs >>= callGMPFn gmpFn rp -- nothing to fold even knowing the term arguments
   zext64 = \case { Lit (Int i) -> pure (constI64 i) ; larg -> cgTerm' larg >>= zext' i64_t }
   in case i of
@@ -528,6 +523,7 @@ emitGMPInstr rl i args = let
 
 emitGMPOther rl j args = let
   callOp gmpFn rp = cgTerm' `mapM` args >>= callGMPFn gmpFn rp
+  callNoSret fnName = lift (GMP.getGMPDecl fnName) >>= \f -> (cgTerm' `mapM` args) >>= call' f
   in obtainRetLoc >>= \rp -> case j of
   AddUI    -> callOp GMP.add_ui rp
   SubUI    -> callOp GMP.sub_ui rp
@@ -539,41 +535,12 @@ emitGMPOther rl j args = let
   SubMul   -> callOp GMP.submul rp
   SubMulSi -> callOp GMP.submul_si rp
   Mul2Exp  -> callOp GMP.mul2exp rp
-  CMPUI    -> callOp GMP.cmp_ui rp
-  CMPAbsD  -> callOp GMP.cmp_abs_d rp
-  CMPAbsUI -> callOp GMP.cmp_abs_ui rp
+  CMPUI    -> callNoSret GMP.cmp_ui
+  CMPAbsD  -> callNoSret GMP.cmp_abs_d
+  CMPAbsUI -> callNoSret GMP.cmp_abs_ui
   PowMUI   -> callOp GMP.powm_ui rp
   PowUI    -> callOp GMP.pow_ui rp
   UIPowUI  -> callOp GMP.ui_pow_ui rp
-
--- emitMatchApp args ty alts d = case args of
---   [scrutCore] -> do
---     stgScrut  <- cgTerm scrutCore
---     retTy <- lift (cgType ty)
---     let frame = fromMaybe (panic "no frame") $ fr stgScrut
---         scrut = op stgScrut
---     tag    <- load' =<< (`gep` [constI32 0]) =<< bitcast scrut (LT.ptr sumTagType)
---     -- each branch is responsible for memory, duping frames etc..
---     ourFrame <- frAlloc_isSingle frame -- TODO suspect
---     let mkAlt l e = genAlt ourFrame frame scrut l e >>= \(STGOp op maybeD) ->
---           bitcast op retTy <&> (`STGOp` maybeD)
---         branches = ("",) . uncurry mkAlt <$> (IM.toList alts)
---     mkBranchTable tag (C.Int 32 . fromIntegral <$> IM.keys alts) branches
---   bad -> panic $ "Match should have exactly 1 argument; not " <> show (length bad)
-
--- -- also return the args consumed (Match needs to uniformize this)
--- genAlt :: L.Operand -> L.Operand -> L.Operand -> ILabel -> Expr -> CGBodyEnv s CGOp
--- genAlt isOurFrame frame scrut lName (Core (Abs args _free t ty) _ty) = do
---   altType <- lift $ LT.ptr . LT.StructureType False . (sumTagType :) <$> (cgType `mapM` (snd <$> args))
---   e   <- bitcast scrut altType
---   llArgs <- loadIdx e `mapM` [1 .. length args]
---   let newSplit = Split lName frame (IM.fromList $ zip (LLVMOp . fst<$>args) llArgs)
---    in modifySF $ \s->s{ splits = newSplit : splits s }
--- --frAlloc_freeFrag frame e (L.ConstantOperand $ C.sizeof $ LT.typeOf e) -- TODO too early ? sometimes pointless ?
--- --frAlloc_pop frame e (L.ConstantOperand $ C.sizeof $ LT.typeOf e) -- TODO too early ? sometimes pointless ?
---   r <- cgTerm t
---   modifySF $ \x -> x { splits = drop 1 (splits x) }
---   pure r
 
 isVoidTy x = case x of { LT.VoidType -> True ; x -> False }
 
@@ -609,6 +576,7 @@ cgInstrApp rl instr args = case instr of
     PutNbr | [Lit (Int i)] <- args -> cgTerm' (Lit (String (show i))) >>= cgOpInstr Puts . (:[])
     Zext   | [Lit (Int i)] <- args -> pure $ constI64 i
     GMPInstr i  -> emitGMPInstr rl i args
+    GMPOther i  -> emitGMPOther rl i args
     GMPZext p -> case args of
       [Lit (Int i)] -> (getGMPRetPtr False >>= GMP.initGMPInt i)
       [x] -> cgTerm' x >>= \i -> getGMPRetPtr False >>= \retLoc -> case compare p 64 of
@@ -624,6 +592,7 @@ mkIf ifE thenE elseE = (getRetLoc <* delRetLoc) >>= \rl -> cgTerm' ifE >>= \scru
   setRetLocM rl
   condBr scrut yes no
   yes  <- block `named` "yes"
+  setRetLocM rl
   ifOp <- cgTerm' thenE
   copyIfRl ifOp
   br res
@@ -635,6 +604,89 @@ mkIf ifE thenE elseE = (getRetLoc <* delRetLoc) >>= \rl -> cgTerm' ifE >>= \scru
 
   res <- block `named` "phi"
   LLVMOp <$> phi [(ifOp , yes) , (elseOp , no)]
+
+-- { negLen : i64 , endPtr : Ptr elTy }
+-- *endPtr is a pointer to front of the list, anyway endPtr[negLen] gives the current elem
+emitMatchApp rl scrut ty alts d = case scrut of
+  SArray sArrOp elTy -> let
+    doAlt el sOpNext k (Core (Abs args free body ty') ty) = setRetLocM rl *> do
+      let registerArg i (argI , _t) = loadIdx el i <&> \o -> (argI , LLVMOp o)
+      splitArgs <- case args of -- ! very yolo
+        [(argI , _),(nextI , _)]-> load' el <&> \o -> [(argI , LLVMOp o) , (nextI , sOpNext)]
+        [] -> pure []
+      modifySF $ \x->x{ regArgs = IM.union (regArgs x) (IM.fromList splitArgs) }
+      cgTerm body
+    llvmElTy = cgType2LLVMType elTy
+    elTyPtr  = LT.ptr llvmElTy
+    in do
+      len     <- extractValue sArrOp [0]
+      arrPtr  <- extractValue sArrOp [1]
+      lenNext <- add len (constI64 1)
+      sOpNext <- insertValue sArrOp lenNext [0]
+      let ret = SArray sArrOp elTy
+          [ (kEnd , Core (Abs [] freeN bodyEnd tyEnd) tN)
+           , (kNext  , Core (Abs [(argI,_) , (nextI,_)] freeE bodyNext tyNext) tE)
+           ] = IM.toList alts
+      mdo
+      hasNext <- icmp IP.NE len (constI64 0)
+      condBr hasNext next end
+
+      next    <- block
+      arg1    <- load' =<< gepTy llvmElTy arrPtr [len]
+      let splitArgs = IM.fromList [(argI , LLVMOp arg1) , (nextI , LLVMOp sOpNext)]
+      modifySF $ \x->x{ regArgs = IM.union (regArgs x) splitArgs }
+      nextRet <- cgTerm bodyNext <* br phiB
+
+      end    <- block
+      endRet <- cgTerm bodyEnd   <* br phiB
+
+      phiB <- block
+      -- TODO re-add (merge) cgop annotations after phi
+      LLVMOp <$> phi [(op nextRet , next) , (op endRet , end)]
+  _ -> error $ show scrut
+
+genericSum_t = mkStruct_t [i64_t , voidPtrType]
+
+genLabel :: ILabel -> [Expr] -> CGBodyEnv s CGOp
+genLabel i tts = let
+  undefArray elemTy = L.ConstantOperand $ C.Undef $ mkStruct_t [size_t , LT.ptr elemTy]
+  in case tts of
+  [] -> pure $ Enum (constI64 (fromIntegral i)) -- Enum label (also list end)
+  [Core valT valTy , Core selfT selfTy] -> let  -- Array label
+    elTy = i32_t ; elPtr = LT.ptr elTy
+    in do
+    self <- cgTerm selfT >>= \case
+      SArray s elTy -> pure s  -- already have an array
+      Enum   s      -> do -- spawn an array; Get elTy from the TT !
+        let iSz = 256
+            sz    = constSizeT (256 - 4) -- leave space to store len at end of this
+            negSz = constSizeT (4 - 256)
+        mall    <- lift (getPrimDecl malloc)
+        mem     <- lift (getPrimDecl malloc) >>= \f -> call' f [sz]
+        endPtr  <- gepTy i8_t mem [negSz]
+        bitcast endPtr (LT.ptr size_t) >>= \loc -> store' loc sz
+        ptr     <- bitcast endPtr elPtr
+        l <- insertValue (undefArray elTy) ptr [1]
+        insertValue l negSz [0]
+
+    tag <- extractValue self [0]
+    ptr <- extractValue self [1]
+--  hasSpace <- icmp IP.SLT (constI64 0) tag
+--  startB   <- currentBlock
+--  condBr hasSpace addElemB newArrayB
+--  newArrayB <- block
+--  br addElemB
+--  addElemB <- block
+    len      <- add tag (constI64 1)
+    addr     <- gepTy elTy ptr [len]
+
+--  cgop dependent ; setretloc addr
+    r <- cgTerm' valT
+    store' addr r
+
+    label <- insertValue self ptr [1]
+    pure $ SArray label (LLVMType i32_t)
+
 
 --mkBranchTable scrut [C.Int 1 1 , C.Int 1 0] (zip ["then","else"] [cgTerm thenE, cgTerm elseE])
 --mkMultiIf ((ifE,thenE):alts) elseE = genSwitch ifE [(C.Int 1 1 , thenE)] . Just =<< case alts of

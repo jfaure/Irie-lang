@@ -27,8 +27,6 @@ import LLVM.AST.Linkage as L
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Instruction hiding (gep)
 
-data SumKinds = Enum | Peano | Flat | SumTypeList | Tree
-
 type CGEnv s a = StateT (CGState s) (ST s) a
 type CGBodyEnv s a = IRBuilderT (StateT (CGState s) (ST s)) a
 data CGState s = CGState {
@@ -64,10 +62,15 @@ data CallGraph = CallGraph {
 } deriving Show
 
 data RecordField = Dropped | Geppable | Gepped L.Operand deriving Show
+
+data SumKind = SKEnum | SKPeano | SKWrapper | SKArray | SKTree deriving Show
+
 data CGType
  = LLVMType   !LT.Type
  | FnType     (V.Vector CGType) CGType
- | StructType (V.Vector CGType) (Maybe L.Name) deriving Show
+ | StructType (V.Vector CGType) (Maybe L.Name)
+ | SumType    SumKind CGType -- [ILabel]
+ deriving Show
 
 type CGT = L.Type -- will switch to cgtype soon
 
@@ -79,7 +82,10 @@ data CGOp
  = LLVMOp   { op'   :: L.Operand } -- Primitive constants only (i32 51)
  | PolyOp   { poly  :: L.Operand } -- poly =? { size , value }
  | DynFnOp  { dynFn :: L.Operand } -- raw|sret|pap
- -- Note. Records. if we have a Just retloc in scope, we need to write it (sret)
+ | Inlineable { llvmFn  :: CGOp -- RM
+              , termAbs :: ([IName] , Term)
+              }
+ -- Records. if we have a Just retloc in scope, we need to write it (sret)
  -- Else we only need to track its fields, and only write it iff passed to function (which we mark byval)
  | RawFields{ fieldOps       :: V.Vector (CGOp , L.Type) }
  | Struct   { structOp       :: L.Operand
@@ -95,25 +101,31 @@ data CGOp
             , lensTy         :: L.Type
             , lensAddr       :: CGOp -- L.Operand
             }
+
+ -- Functions
  | FunctionOp { fnPtrOp  :: L.Operand
-              , free     :: [IName]
+              , freeArgs :: [IName]
               , argTypes :: [L.Type] -- for PAps and lambdas
               , retType  :: L.Type
-              }
- | Inlineable { llvmFn  :: CGOp
-              , termAbs :: ([IName] , Term)
               }
  | PapOp      { fn       :: CGOp -- knows the arg types of the pap
               , captures :: [CGOp]
               }
  | GMPFnOp    { fnPtrOp    :: L.Operand }
  | RecordFnOp { fnPtrOp    :: L.Operand
-              , free       :: [IName]
+              , freeArgs   :: [IName]
               , fieldTypes :: V.Vector L.Type
               }
  | DynFn      { fnPtrOp  :: L.Operand
               , retSize  :: L.Operand -- nonZero for sret arguments
               }
+
+ -- Sumdata; (128 bit struct)
+ | Enum       { sOp :: L.Operand }
+ | Peano      { sOp :: L.Operand , peanos :: Int }
+ | Wrapper    { sOp :: L.Operand , elTy   :: CGType }
+ | SArray     { sOp :: L.Operand , elTy   :: CGType } -- TODO (allows datafunction to ret this by value)
+ | Tree       { sOp :: L.Operand , elTy   :: CGType }
  deriving Show
 
 fieldNames2ASM coreKeys f normFields = let
@@ -122,7 +134,7 @@ fieldNames2ASM coreKeys f normFields = let
   in asmIdx
 labelNames2ASM = fieldNames2ASM
 
--- preferably use less yolo way
+-- maybe yolo (haskell lacks linear types), but i've had it having to use (MVector s a)
 modifyField :: V.Vector a -> Int -> a -> V.Vector a
 modifyField fields asmIdx newVal = runST $ V.unsafeThaw fields >>= \v -> MV.write v asmIdx newVal *> V.unsafeFreeze v
 
@@ -130,6 +142,7 @@ markLoc :: BS.ShortByteString -> CGBodyEnv s L.Name
 markLoc nm = mdo { br b ; b <- block `named` nm ; pure b }
 op cgop = case cgop of
   LLVMOp o -> o
+  SArray o _ -> o
   x -> error $ show x
 
 -- Commit all CGOp info to dynamic memory
@@ -205,10 +218,10 @@ data FNRet
 data StgWIP
  = TWIP   (HName , Bind)
  | STGFn       { retData :: !FNRet , stgargTypes :: [CGT] , stgretType :: CGT
-               , freeArgs :: [IName] , fnOp :: L.Operand , inlineable :: Maybe ([IName] , Term) }
+               , sFreeArgs :: [IName] , fnOp :: L.Operand , inlineable :: Maybe ([IName] , Term) }
 -- | STGDataFn { freeArgs :: [IName] , fnOp :: L.Operand , sts :: IM.IntMap QTT }
  | STGConstant { fnOp :: L.Operand } -- top level functions for now
- | STGConstantFn { fnOp :: L.Operand , freeArgs :: [IName] } -- top level functions for now
+ | STGConstantFn { fnOp :: L.Operand , sFreeArgs :: [IName] } -- top level functions for now
 
  | LLVMTy L.Type
  | LLVMInstr PrimInstr -- we avoid generating functions for these if possible
@@ -266,9 +279,9 @@ primInstr2llvm :: PrimInstr -> (L.Operand -> L.Operand -> L.Instruction) = \case
 
 -- basically is it bigger than register size
 isDataTyHead = \case { THTyCon (THProduct{})->True ; THPrim PrimBigInt->True ; THExt 21->True ; _->False } -- HACK
-isStructTy  = \case { LT.StructureType{} -> True ; _ -> False }
-isTypeRef   = \case { LT.NamedTypeReference{} -> True ; _ -> False }
-isStructPtr = \case { LT.PointerType s _ -> isStructTy s ; _ -> False }
+isStructTy   = \case { LT.StructureType{} -> True ; _ -> False }
+isTypeRef    = \case { LT.NamedTypeReference{} -> True ; _ -> False }
+isStructPtr  = \case { LT.PointerType s _ -> isStructTy s ; _ -> False }
 isTypeRefPtr = \case { LT.PointerType s _ -> isTypeRef s ; _ -> False }
 
 primTy2llvm :: PrimType -> L.Type =
@@ -314,8 +327,12 @@ emitArray nm arr = let
 -- IRBuilder extensions --
 --------------------------
 -- horrible C typedefs
-size_t     = i32_t  -- Note. any of unsigned char -> unsigned long long
+size_t     = i64_t  -- Note. any of unsigned char -> unsigned long long
+constSizeT = constI64
+tag_t      = i64_t
+constTagT  = constI64
 int_t      = i32_t
+ptr_size_t = i64_t -- TODO get the real ptr size
 
 mkStruct_tV= mkStruct_t . V.toList
 mkStruct_t = LT.StructureType False
@@ -328,8 +345,8 @@ i64_t      = LT.IntegerType 64
 half_t : float_t : double_t : fP128_t : pPC_FP128_t = LT.FloatingPointType <$>
   [ LT.HalfFP , LT.FloatFP , LT.DoubleFP , LT.FP128FP , LT.PPC_FP128FP]
 
-top_t = LT.ptr $ LT.NamedTypeReference "Top"
-bot_t = LT.ptr $ LT.NamedTypeReference "Bot"
+top_t       = LT.ptr $ LT.NamedTypeReference "Top"
+bot_t       = LT.ptr $ LT.NamedTypeReference "Bot"
 opaque_t    = LT.ptr $ LT.NamedTypeReference "Void"
 voidPtrType = LT.ptr $ LT.NamedTypeReference "Void"
 frameType   = LT.ptr $ LT.NamedTypeReference "Fr"
@@ -462,31 +479,41 @@ mkBranchTable scrut labels alts = mdo
     ars -> Just <$> phi ars
   pure $ LLVMOp phiOp
 
-cgType :: [TyHead] -> CGEnv s L.Type
+cgLLVMType t = cgType2LLVMType <$> cgType t
+cgType :: [TyHead] -> CGEnv s CGType
 cgType = \x -> case x of
   [t] -> cgTypeAtomic t
-  [THExt 1 , _] -> pure $ intType
-  [_ , THExt 1] -> pure $ intType
-  x   -> pure polyType
+--[_ , THMuBound{}] -> pure $ intType
+  x   -> pure $ LLVMType polyType
 --x   -> panic $ "lattice Type: " ++ show x
 
+cgTypeAtomic :: TyHead -> CGEnv s CGType
 cgTypeAtomic = \case --x -> case did_ x of
-  THExt i -> gets externs >>= (cgType . tyExpr . (`readPrimExtern` i))
-  THBound i -> (LT.ptr $ LT.NamedTypeReference $ fromString (T.unpack $ number2CapLetter i)) <$ modify (\x->x{typeVars = 1 + typeVars x})
-  THMuBound i -> pure (LT.NamedTypeReference $ fromString (T.unpack $ number2xyz i)) -- <$ modify (\x->x{typeVars = 1 + typeVars x})
-  THTyCon t -> case t of
-    THArrow   tys t -> (\ars retTy -> L.FunctionType retTy ars False) <$> (cgType `mapM` tys) <*> cgType t
-    THProduct tyMap -> mkStruct_t <$> (cgType `mapM` IM.elems tyMap)
---  THSumTy   tyMap ->
+  THExt i     -> gets externs >>= (cgType . tyExpr . (`readPrimExtern` i))
+  THBound i   -> (LLVMType $ LT.ptr $ LT.NamedTypeReference $ fromString (T.unpack $ number2CapLetter i)) <$ modify (\x->x{typeVars = max (typeVars x) i})
+  THMu i t    -> cgType t
+  THMuBound i -> pure (LLVMType $ LT.NamedTypeReference $ fromString (T.unpack $ number2xyz i)) -- <$ modify (\x->x{typeVars = 1 + typeVars x})
+  THTyCon t   -> case t of
+    THArrow   tys t -> (\ars retTy -> FnType (V.fromList ars) retTy) <$> (cgType `mapM` tys) <*> cgType t
+    THProduct tyMap -> (\eTys -> StructType (V.fromList eTys) Nothing) <$> (cgType `mapM` IM.elems tyMap) -- !! TODO normalize fields
+    THSumTy   tyMap -> pure (SumType SKArray (LLVMType i32_t)) -- TODO !
 --  THArray t  -> _ -- LT.ArrayType $ cgType t
   t@THVar{} -> panic $ "thvar found in codegen: " <> show t -- pure voidPtrType
-  x -> pure $ case x of -- can be generated non monadically
+  x -> pure $ LLVMType $ case x of
     THTop     -> top_t
     THBot     -> bot_t
     THPrim p  -> primTy2llvm p
     THSet  0  -> tyLabel
     x -> error $ "cgType: not ready for ty: " ++ show x
 tyLabel = voidPtrType -- HACK
+
+cgType2LLVMType = \case
+  LLVMType l       -> l
+  FnType   as r    -> _
+  StructType vs nm -> case nm of
+    Just n       -> LT.NamedTypeReference n
+    Nothing      -> mkStruct_tV (cgType2LLVMType <$> vs)
+  SumType sk elT -> mkStruct_t [i64_t , LT.ptr (cgType2LLVMType elT)]
 
 ----------------
 -- Primitives --
@@ -540,7 +567,7 @@ mkExtDecl nm argTys retTy = L.GlobalDefinition functionDefaults
   , returnType = retTy
   }
 
-printf : snprintf : puts : strtol : atoi : abort : exit : system : rand : srand : llvm_stacksave : llvm_stackrestore : llvm_uadd_with_overflow_i32 : llvm_prefetch : llvm_abs : llvm_smax : llvm_smin : llvm_umax : llvm_umin : llvm_sqrt_f64 : llvm_powi_f64_i32 : llvm_pow_f64 : llvm_sin_f64 : llvm_cos_f64 : llvm_exp_f64 : llvm_exp2_f64 : llvm_log_f64 : llvm_log10_f64 : llvm_log2_f64 : llvm_floor_f64 : llvm_ceil_f64 : llvm_trunc_f64 : llvm_rint_f64 : llvm_memcpy_p0i8_p0i8_i64 : llvm_memmove_p0i8_p0i8_i64 : llvm_memset_p0i8_i64 : llvm_expect : llvm_load_relative_i32 : primDeclsLen : _ = [0..] :: [Int]
+printf : snprintf : malloc : free : puts : strtol : atoi : abort : exit : system : rand : srand : llvm_stacksave : llvm_stackrestore : llvm_uadd_with_overflow_i32 : llvm_prefetch : llvm_abs : llvm_smax : llvm_smin : llvm_umax : llvm_umin : llvm_sqrt_f64 : llvm_powi_f64_i32 : llvm_pow_f64 : llvm_sin_f64 : llvm_cos_f64 : llvm_exp_f64 : llvm_exp2_f64 : llvm_log_f64 : llvm_log10_f64 : llvm_log2_f64 : llvm_floor_f64 : llvm_ceil_f64 : llvm_trunc_f64 : llvm_rint_f64 : llvm_memcpy_p0i8_p0i8_i64 : llvm_memmove_p0i8_p0i8_i64 : llvm_memset_p0i8_i64 : llvm_expect : llvm_load_relative_i32 : primDeclsLen : _ = [0..] :: [Int]
 
 vecPrimDecls = V.fromList rawPrimDecls
 rawPrimDecls =
@@ -548,6 +575,8 @@ rawPrimDecls =
     { name=L.mkName "printf" , linkage=L.External , parameters=([Parameter charPtr_t "" []],True) , returnType=i32_t }
  , L.GlobalDefinition functionDefaults
     { name=L.mkName "snprintf",linkage=L.External , parameters=([],True) , returnType=i32_t }
+ , mkExtDecl "malloc" [size_t] charPtr_t
+ , mkExtDecl "free"   [charPtr_t] LT.VoidType
  , mkExtDecl "puts"   [charPtr_t] i32_t
  , mkExtDecl "strtol" [charPtr_t , LT.ptr charPtr_t , i32_t] i32_t
  , mkExtDecl "atoi"   [charPtr_t] i32_t
@@ -556,6 +585,8 @@ rawPrimDecls =
  , mkExtDecl "system" [charPtr_t] i32_t
  , mkExtDecl "rand"   [] i32_t
  , mkExtDecl "srand"  [i32_t] i32_t
+
+ -- llvm intrinsics
  , mkExtDecl "llvm.stacksave"    [] charPtr_t
  , mkExtDecl "llvm.stackrestore" [charPtr_t] LT.VoidType
  , mkExtDecl "llvm.uadd.with.overflow.i32" [i32_t] (mkStruct_t [i32_t , i1_t])

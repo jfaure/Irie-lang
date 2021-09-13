@@ -62,4 +62,48 @@ RecordArg =
 -- | LeafCast : [{i , castFn}] Record
 
 # Free heap record fields (gmp + recursive data)
- * auto generate a LensOver with free function
+ * auto generate a LensOver with free function for gmp/recursive data
+
+# SumData
+ * Polymorphic containers
+
+# Single-recursive (directly construct result)
+ * runlength-encoded array
+ * l | r consume
+ * sret =
+    | memPtr
+    | fn + state. Call init-state before constructor (state stack mem takes prec)
+
+printlist = let
+  fnNil       = const 0
+  fnCons i _  = next >>= \ll -> add i (printList ll)
+  in [fnNil , fnConst]
+
+## Eliminator (eg. PrintList)
+ * Strictly eat everything; call SRet to request recursive elements
+ * Free when done
+ 1. Multi arg splits
+ 2. Match | fn over Match
+ 3. Rfold = fn over rec (if doesn't depend on list (incl derivates eg. io); can reverse list)
+ 4. Lfold = rec over fn
+
+## Constructors (also folds) (eg. IncList)
+ * eliminator = write | consumer (with state)
+
+## SRet says what to do when have a result; package further recursion into the sret chain
+
+MemArray A = { n : i32 ; n x A }
+AltFn = freeVars:{} -> List -> arg1 -> arg2 -> ..
+Fold  = @ { @AltFns }
+
+elim  fold memList@(sz , ptr) = for 0..sz $ \i -> fold[alt] ptr[i]
+stream (fold : folds) memList@(sz , ptr) = for 0..sz $ \i -> fold[alt] ptr[i]
+
+printList l = { const 0   ; \i ll => add ? ? }
+incList   l = { const Nil ; \i ll => Cons ? ? }
+Stream = printList , IncList
+
+-- Transform
+printList l = let
+  printList' [i] stacked = printList' add (putNumber i) stacked
+  in printList' (rev ll) 0

@@ -12,25 +12,71 @@
 --import imports/printf
 --import imports/subtype
 --import imports/list
---import imports/prelude
+import imports/prelude
+
+--printList l = case l of
+--  | Nil => 0
+--  | Cons i ll => add (putNumber i) (printList ll)
+--
+--array = (Cons 9 Nil)
+
+-- (a -> b -> b) -> b -> t a -> b
+--0 -> 1 -> 7
+--(0,(2->5)) -> [ {2 , 3} ] -> [ { 5 , 6 } ]
+-- map f l = case l of
+--   | Cons x xs => Cons (f x) (map f xs)
+--  | Nil => Nil
+
+-- addL l = case l of
+--   | Cons x xs => add x (addL xs)
+
+foldr f s l = case l of
+  | Nil       => s
+  | Cons x xs => f x (foldr f s xs)
+
+-- foldl f s l = case l of
+--  | Cons x xs => foldr f (f s) xs
+
+--scanSum n l = if le n 0 then l else scanSum (sub n 1) (Cons n l)
+--z = scanSum 3 Nil
 
 --f a b = add a b
 
 --lam = add ((\x => add x 3) 6)
 
--- _>>=_ : Π A B -> { ret : A } & B -> (A -> B -> C) -> C
--- _>>=_ = \a f => f (a.ret) a
+-- _>>=_ : Π A B C -> A & { ret : B } -> (B -> A -> C) -> C
+--_>>=_ = \a f => f (a.ret) a
 
--- _>_ = \a f => f a
-_<_ = \f a => f a
-five = add 3 < 2
+--IO = | In : IO | Out : IO
+--
+--z = add 3 2 4
+--puts io = io.Out
+
+--xdd = ydd
+--ydd = xdd
+--main = putNumber x
+
+---- _>_ = \a f => f a
+-- topPAp = add 1
+-- _<_ = \f a => f a
+-- five = add 3 < 2
 -- _>>_ = \f x a => x (f a)
 
--- gmpMaths main = gmp-putNumber (gmp-add 9 (gmp-sub 3 -2))
--- main = putNumber (rectangle 3 . y . b)
--- rectangle a = { x = { y = 314 , g = 3 , x = 7 } , y = { a = 2 , b = 52 } }
--- rc r = gmp-putNumber (r . b)
--- main = rc (((rectangle 0) . y) . b . over inc)
+-- fail-loneMFWord    = <
+-- fail-loneMFWordApp = add 4 <
+
+--gmpMaths = gmp-putNumber (gmp-add 5 (gmp-sub 3 -2))
+-- raw = putNumber ({ x = 32 } . x)
+--rectangle = { x = { y = 314 , g = 3 , x = 7 } , y = { a = 32 , b = 52 } }
+--rc r = gmp-putNumber (r . b)
+--main = rc ((rectangle . y) . b . over (add 3))
+
+-- fib x = ifThenElse (le x 1) x (add (fib (sub x 1)) (fib (sub x 2)))
+-- fib x = ifThenElse (gmp-le x 2) x (gmp-add (fib (gmp-sub x 1)) (fib (gmp-sub x 2)))
+-- main = gmp-putNumber (fib 40)
+
+--f = g
+--g = f
 
 -- incprim a = add a 3
 -- inc a = gmp-add a 1111

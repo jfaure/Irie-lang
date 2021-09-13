@@ -56,8 +56,9 @@ etaReduce argNms args body = let
 
 type SimplifierEnv s = StateT (Simplifier s) (ST s)
 data Simplifier s = Simplifier {
-   cBinds :: MV.MVector s Bind
- , nApps  :: Int
+   cBinds   :: MV.MVector s Bind
+ , nApps    :: Int
+ , argTable :: MV.MVector s [Term] -- used for eta reduction
 }
 
 setNApps :: Int -> SimplifierEnv s ()
@@ -67,58 +68,92 @@ zeroNApps= gets nApps <* (modify $ \x->x{nApps = 0})
 incNApps :: SimplifierEnv s ()
 incNApps = modify $ \x->x{nApps = 1 + nApps x}
 
-simplifyBindings :: Int -> MV.MVector s Bind -> ST s (Simplifier s)
-simplifyBindings nBinds bindsV = execStateT (simpleBind `mapM` [nBinds-1 , nBinds-2 .. 0]) Simplifier {
-    cBinds = bindsV
-  , nApps  = 0
+simplifyBindings :: Int -> Int -> MV.MVector s Bind -> ST s (Simplifier s)
+simplifyBindings nArgs nBinds bindsV = do
+  argEtas <- MV.replicate nArgs []
+  execStateT (simpleBind `mapM` [0 .. nBinds-1]) Simplifier {
+    cBinds   = bindsV
+  , nApps    = 0 -- measure the size of the callgraph
+  , argTable = argEtas
   }
 
 simpleBind :: Int -> SimplifierEnv s Bind
 simpleBind n = gets cBinds >>= \cb -> MV.read cb n >>= \b -> do
+--traceM "\n"
   svN <- zeroNApps
+  MV.write cb n (BindOpt (0xFFFFFF) (Core (Var (VBind n)) [])) -- recursion guard
   new <- case b of
-    BindOK (Core t ty) -> simpleTerm True t <&> \case
+    BindOpt nApps body -> setNApps nApps *> pure body
+    BindOK (Core t ty) -> simpleTerm t <&> \case
       -- catch top level partial application (ie. extra implicit args)
       App (Instr (MkPAp n)) (f2 : args2) -> let
         (arTs , retT) = getArrowArgs ty
         diff = n - length args2
         in Core (PartialApp arTs f2 args2) retT
       newT -> Core newT ty
+    x -> pure $ PoisonExpr
   napps <- gets nApps <* setNApps svN
   let b = BindOpt napps new
   MV.write cb n (BindOpt napps new)
   pure b
 
-simpleTerm :: Bool -> Term -> SimplifierEnv s Term
-simpleTerm isTop t = case t of
+simpleTerm :: Term -> SimplifierEnv s Term
+simpleTerm t = let
+  foldAbs argDefs' free body ty args = let
+    (argDefs , trailingArgs , etaReducable) = partitionThese (align argDefs' args)
+    in gets argTable >>= \aT -> do
+      etaReducable `forM` \((i,ty) , arg) -> MV.modify aT (arg:) i
+      tRaw <- simpleTerm body
+      let t = case trailingArgs of { [] -> body ; ars -> App body ars }
+      etaReducable `forM` \((i,ty) , arg) -> MV.modify aT (drop 1) i -- TODO what if stacking insertions ?
+      pure $ case argDefs of
+        []      -> t
+  in case t of
   Var v -> case v of
-    VBind i -> (\(BindOpt napps (Core new t)) -> new) <$> simpleBind i
-  App (Instr i) args' -> (incNApps *> (simpleTerm False `mapM` args'))
-    <&> \args -> case i of
-    GMPInstr j -> simpleGMPInstr j args
-    Zext | [Lit (Int i)]   <- args -> Lit (Fin 64 i)
-         | [Lit (Fin n i)] <- args -> Lit (Fin 64 i)
-    i -> t
+    VBind i -> simpleBind i <&> \case
+      BindOpt napps (Core new t) -> if False && napps < 1 then new else Var (VBind i) -- directly inline small callgraphs
+    VArg  i -> gets argTable >>= \at -> MV.read at i <&> fromMaybe t . head
+    x -> pure (Var x)
+
+  Cast c a -> pure t
+
+  Abs argDefs' free body ty -> simpleTerm body <&> \b -> Abs argDefs' free b ty
+
+  App f args -> incNApps *> case f of
+    Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
+    Instr i -> (simpleTerm `mapM` args) <&> \args -> case i of
+      GMPInstr j -> simpleGMPInstr j args
+      Zext | [Lit (Int i)]   <- args -> Lit (Fin 64 i)
+           | [Lit (Fin n i)] <- args -> Lit (Fin 64 i)
+      i -> App f args
+    fn -> simpleTerm fn >>= \case
+      Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
+      fn -> App fn <$> (simpleTerm `mapM` args)
   _ -> pure t
 
 simpleGMPInstr :: NumInstrs -> [Term] -> Term
-simpleGMPInstr i args = case i of
+simpleGMPInstr i args = let
+  mkCmpInstr pred args = App (Instr (NumInstr (PredInstr pred))) args
+  in case i of
   IntInstr Add
-    | [Lit (Fin 64 i) , rarg] <- args -> App (Instr (GMPOther AddUI)) args
-    | [larg , Lit (Fin 64 i)] <- args -> App (Instr (GMPOther AddUI)) [Lit (Fin 64 i) , larg]
-    | _ -> App (Instr (GMPInstr i)) args
+    | [Cast (CastInstr (GMPZext n)) (Lit (Int i)) , rarg] <- args -> App (Instr (GMPOther AddUI)) [Lit (Fin 64 i) , rarg]
+    | [larg , Cast (CastInstr (GMPZext n)) (Lit (Int i))] <- args -> App (Instr (GMPOther AddUI)) [Lit (Fin 64 i) , larg]
+    | _ <- args -> App (Instr (GMPInstr i)) args
   IntInstr Sub
-    | [Lit (Fin 64 i) , rarg] <- args -> App (Instr (GMPOther UISub)) args
-    | [larg , Lit (Fin 64 i)] <- args -> App (Instr (GMPOther SubUI)) args
-    | _ -> App (Instr (GMPInstr i)) args
+    | [Cast (CastInstr (GMPZext n)) (Lit (Int i)) , rarg] <- args -> App (Instr (GMPOther UISub)) [Lit (Fin 64 i) , rarg]
+    | [larg , Cast (CastInstr (GMPZext n)) (Lit (Int i))] <- args -> App (Instr (GMPOther SubUI)) [larg , Lit (Fin 64 i)]
+    | _ <- args -> App (Instr (GMPInstr i)) args
   IntInstr Mul
     -- ? MulUI
     | [Lit (Fin 64 i) , rarg] <- args -> App (Instr (GMPOther MulSI)) args
     | [larg , Lit (Fin 64 i)] <- args -> App (Instr (GMPOther MulSI)) [Lit (Fin 64 i) , larg]
   PredInstr LECmp -- TODO other cmp types
     -- CMPAbsD CMPAbsUI
-    | [Lit (Fin 64 i) , rarg] <- args -> App (Instr (GMPOther CMPUI)) args
-    | [larg , Lit (Fin 64 i)] <- args -> App (Instr (GMPOther CMPUI)) args
+    -- TODO spawn the icmp instruction here
+    | [Cast (CastInstr (GMPZext n)) (Lit (Int i)) , rarg] <- args ->
+        mkCmpInstr GECmp [App (Instr (GMPOther CMPUI)) [rarg , Lit (Fin 64 i)] , Lit (Fin 32 0)] -- flip the icmp
+    | [larg , Cast (CastInstr (GMPZext n)) (Lit (Int i))] <- args ->
+        mkCmpInstr LECmp [App (Instr (GMPOther CMPUI)) [larg , Lit (Fin 64 i)] , Lit (Fin 32 0)]
   IntInstr IPow
     -- powmui ?
     | [Lit (Fin 64 _) , Lit (Fin 64 _)] <- args -> App (Instr (GMPOther UIPowUI)) args

@@ -1,3 +1,31 @@
+'it is not the case that Prop : Prop, that would be inconsistent. Rather quantifications over all propositions is again a proposition'
+
+Why not W
+https://jashug.github.io/papers/whynotw.pdf
+
+On Universes in type theory
+http://www2.math.uu.se/~palmgren/universe.pdf
+
+A Finite axiomatization of inductive-recursive definitions
+http://www.cse.chalmers.se/~peterd/papers/Finite_IR.pdf
+
+Mahlo universes
+https://www.researchgate.net/publication/238140584_Extending_Martin-Lf_Type_Theory_by_One_Mahlo-Universe
+
+Stream Fusion: From Lists to Streams to Nothing at All
+https://www.researchgate.net/profile/Don-Stewart-4/publication/221241130_Stream_Fusion_From_Lists_to_Streams_to_Nothing_at_All/links/00463526ccdd52306e000000/Stream-Fusion-From-Lists-to-Streams-to-Nothing-at-All.pdf
+
+file:///home/jamie/Downloads/LaunchburySheard95.pdf
+
+A Short cut to deforestation
+https://www.microsoft.com/en-us/research/wp-content/uploads/2016/07/deforestation-short-cut.pdf?ranMID=46131&ranEAID=je6NUbpObpQ&ranSiteID=je6NUbpObpQ-dRosY.RZaEOuM4I6fkKhbA&epi=je6NUbpObpQ-dRosY.RZaEOuM4I6fkKhbA&irgwc=1&OCID=AID2200057_aff_7806_1243925&tduid=%28ir__691mga0rk9kf6whl2qniaboutn2xrs6lidkp6skf00%29%287806%29%281243925%29%28je6NUbpObpQ-dRosY.RZaEOuM4I6fkKhbA%29%28%29&irclickid=_691mga0rk9kf6whl2qniaboutn2xrs6lidkp6skf00
+
+Examples of paradoxes using combinations of impredicative polymorphism + excluded middle + large elimination
+https://github.com/FStarLang/FStar/issues/360
+
+Impredicative encodings of (higher) inductive types
+https://arxiv.org/pdf/1802.02820.pdf
+
 Functional programming with bananas, lenses, envelopes and barbed wire
 https://maartenfokkinga.github.io/utwente/mmf91m.pdf
 

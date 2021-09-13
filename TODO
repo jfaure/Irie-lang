@@ -1,26 +1,41 @@
-# Compiler coding style
-  * Use semialign; in particular careful with zipwith / zip since lists can be diff lengths
 ## Top
   * language server
-  * precompiled modules ('binary' haskell package)
+  * fix precompiled name resolution; write global resolver to file?
   * Linker; invoke clang
+  * module import loops
   * Don't repeat not-in-scope errors
-  * Error messages: show exprs with the problematic types (add 3 2 1) cryptically says: %i32 /<: (%i32 -> t7)
+  * Error message interpretation: (add 3 2 1) cryptically says: %i32 /<: (%i32 -> t7)
 ## Parse
   * Use [n..] numbered args from Parser in a safer way
 ## Types
-  * generalise anon bindings using levels
-  * add bitwidth to NumInstr
-  * check let | rec
+  * propagate poisonexpr from matchAlts
+  * generalise anon bindings using levels (or float args up to top binding to read their type after gen)
+  * check let|rec + mark Binds as let|rec
   * handle field name collisions (THFieldCollision)
-  * fn Apps are Poison iff the function ret type depends on the poison arg
-  * Warn when something has a nonsense type join
+  * Warn nonsense type join
+  * lone mfWords that aren't ambig-binds should error (also things like f = 3 <)
   * Dependent normalisation & Staging
+## Simplifier
+  * Structural sumdata
+  * constructor specialisation
+  * case-of-case
+  * static argument transformation
 ## Codegen
-  * opportunistic instrs that read Terms also need a dumber version for Operands
   * do asmIdx resolution here
-  * promote single field records to field value (worthwhile if avoids pointer indirection)
+  * promote single field records to field value (esp. if avoids pointer indirection)
   * figure out how ffi handles passing [n x %i1] by value
 
 !!
 repl & linking & typecase in JIT to print results
+
+Why not W
+https://jashug.github.io/papers/whynotw.pdf
+
+On Universes in type theory
+http://www2.math.uu.se/~palmgren/universe.pdf
+
+A Finite axiomatization of inductive-recursive definitions
+http://www.cse.chalmers.se/~peterd/papers/Finite_IR.pdf
+
+Mahlo universes
+https://www.researchgate.net/publication/238140584_Extending_Martin-Lf_Type_Theory_by_One_Mahlo-Universe

@@ -26,9 +26,9 @@ type SrcOff      = Int  -- offset into the source file
 type Complexity  = Int  -- number of Apps in the Term
 
 data VName
- = VBind   IName -- bind   map
+ = VBind   IName
  | VQBind  ModuleIName IName
- | VArg    IName -- bisub  map
+ | VArg    IName
  | VExt    IName -- extern map (incl. prim instrs and mixfixwords)
 
 data Term -- β-reducable (possibly to a type) and type annotated
@@ -43,7 +43,8 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
  | Hole     -- argument hole (part of an implicit Abs)
  | App     Term [Term]    -- IName [Term]
- | PartialApp [Type] Term [Term] -- ie. a Abs (we cannot name the implicit arguments, since those are fixed at parser)
+ | PartialApp [Type] Term [Term] -- only built by the simplifier
+ -- Top level PAp => Abs (we can only produce new names during parse)
 
  | Cons    (IM.IntMap Term)
  | TTLens  Term [IField] LensOp
@@ -53,16 +54,14 @@ data Term -- β-reducable (possibly to a type) and type annotated
 
  | List    [Expr]
 
-
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs a lens for extracting field
 
--- TODO improve this
--- Typemerge should be very fast
+-- TODO improve this ; Typemerge should be very fast
 type Type     = TyPlus
 type Uni      = Int
 type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
 type TyPlus   = [TyHead] -- output types (lattice join)
-holeTy = []
+holeTy        = []
 
 data TyCon -- Type constructors
  = THArrow    [TyMinus] TyPlus -- degenerate case of THPi (bot -> top is the largest)
@@ -117,7 +116,7 @@ data Expr
  | Set      !Int Type
  | PoisonExpr
 
- -- Temporary exprs for solveMixfixes
+ -- Temporary exprs for solveMixfixes; TODO should make new data
  | QVar     (ModuleIName , IName)
  | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
  | ExprApp  Expr [Expr] -- output of solvemixfixes
@@ -153,7 +152,7 @@ data Mixfixy = Mixfixy
  , ambigMFWord :: [QMFWord] --[(ModuleIName , [QMFWord])]
  }
 
-type ASMIdx = IName -- Field|Label-> Idx in sorted list (ie. the direct index used in codegen)
+type ASMIdx = IName -- Field|Label-> Idx in sorted list (the actual index used at runtime)
 data BiCast
  = BiEQ
  | CastInstr PrimInstr
@@ -193,6 +192,7 @@ data Kind = KPrim | KArrow | KVar | KSum | KProd | KRec | KAny | KBound | KTuple
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 data JudgedModule = JudgedModule {
    modName     :: HName
+-- , fileDeps    :: [HName]
  , bindNames   :: V.Vector HName
  , fieldNames  :: M.Map HName IName
  , labelNames  :: M.Map HName IName
