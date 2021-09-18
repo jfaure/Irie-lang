@@ -10,3 +10,19 @@ f x = x + g x
 
 --fib x : Int -> Int = if x < 1 then x else fib (x-1) + fib (x-2)
 --fib x = if x < 1 then x else fib (x-1) + fib (x-2)
+
+--true = le 0 1
+--r a = r
+--join a b = if true then a else b
+--s = join r r
+
+-- TODO should simplify twice somehow
+-- (a & b -> a) -> b -> a
+-- (b & a -> c & b) -> a -> c
+-- (c & a -> c) -> a -> c
+-- (3 & 1 -> 4 & 3) -> 1 -> 4
+-- (4 & 1 -> 4) -> 1 -> 4
+-- twice f x = f (f x)
+-- self x = x x
+
+-- f x = f

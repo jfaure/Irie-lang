@@ -13,3 +13,4 @@
 
 :def z (\i -> pure (":r\n" ++ i))
 :def opt (\_->pure ":r\n opt\n")
+:def types (\_->pure ":r\n types\n")

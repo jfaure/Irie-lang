@@ -1,0 +1,2 @@
+--IO = | In : IO | Out : IO
+--puts io = io.Out

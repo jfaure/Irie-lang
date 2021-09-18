@@ -11,6 +11,7 @@ import PrettyCore
 import DesugarParse (matches2TT)
 import Externs
 import Mixfix
+import Substitute
 
 import Control.Lens
 import Data.List (unzip4, zipWith3, foldl1, span)
@@ -66,11 +67,14 @@ judgeModule pm hNames exts source = let
       , _bindWIP  = 0
       , _blen     = nArgs
       , _bis      = bis'
+      , _isRecBiSub = False
       , _deBruijn = deBruijn'
       , _level    = Dominion (-1,-1)
       , _quants   = 0
+      , _liftMu   = Nothing
       , _mus      = 0
       , _muEqui   = mempty
+      , _muNest   = mempty
       , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
       , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
@@ -135,20 +139,22 @@ generaliseBinds i ms = use wip >>= \wip' -> do
         done <- case naiveExpr of
           Core expr coreTy -> do
             ty <- case expr of -- inferrence produces ret type of Abs, ignoring arguments
-              Abs ars free x fnTy -> use bis >>= \v -> do
-                -- TODO how general is this ?
-                -- Idea is to ensure top level polyvars are marked (since won't pass bisub)
-                ars `forM` \(x,_ty) -> (_mSub <$> MV.read v x) >>= \case
-                  [] -> dupVar False x
-                  _  -> pure () -- typevar will be substituted, don't mark it
+              Abs ars free x fnTy -> do
+                -- Ensure top level polyvars occurences are marked (they won't have been bisubbed)
+                {-(\x -> x <$ dupp True x) $-}
+--              (dupVar False . fst) `mapM` ars
+--              use bis >>= \v -> ars `forM` \(x , _) -> MV.modify v
+--                (\bisub@(BiSub p m qp qm) -> (case m of { [] -> BiSub p m qp (qm+1) ; _ -> bisub })) x
                 pure $ prependArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
               _ -> pure coreTy
             -- check for recursive type
             use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
               [] -> BiEQ <$ MV.write v recTVar (BiSub ty [] 0 0)
-              t  -> biSub ty [THVar recTVar] -- ! recursive expression
+              t  -> (isRecBiSub .= True) *>
+                    biSub ty [THVar recTVar] -- ! recursive expression
+                    <* (isRecBiSub .= False) 
             traceVars
-            Core expr <$> substTVars recTVar -- TODO overwrite Abs tys ?
+            Core expr . nullLattice True <$> substTVars recTVar -- TODO overwrite Abs tys ?
           t -> pure t
         done <$ MV.write wip' m (BindOK done)
   mutuals <- (i : ms) `forM` getMutual -- Usually a singleton list
@@ -172,159 +178,6 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
       [THArrow d r] -> [THFam r d []]
       x -> s
     _ -> annTy
-
---substTVars2 recTVar = let
---  in do
---  1. collect all vars
---  2.
-
--- substTVars: recursively substitute type vars, insert foralls and μ binders, simplify types
--- Simplifications:
---  * remove polar variables `a&int -> int` => int->int ; `int -> a` => `int -> bot`
---  * unify inseparable variables (co-occurence `a&b -> a|b` and indistinguishables `a->b->a|b`)
---  * remove variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int`
---  * roll up recursive types
-substTVars recTVar = let
-  concatTypes = foldl mergeTypes []
-  nullLattice pos = \case
-    [] -> if pos then [THBot] else [THTop] -- [] -> incQuants >>= \q -> pure [THBound q]
-    t  -> t
-
-  -- non-polar variables that reference nothing (or themselves) become forall quantified
-  rmGuards = filter $ \case { THVarLoop v -> False; _->True }
-  shouldGeneralise pos bisub@(BiSub pty mty pq mq) = (if pos then mq else pq) > 0
-  generaliseVar pos vars v bisub@(BiSub pty mty pq mq) = let incQuants = quants <<%= (+1) in incQuants >>= \q -> do
-    when global_debug $ traceM $ show v <> " " <> show pos <> " =∀" <> show q <> " " <> show bisub
---  MV.modify vars (\(BiSub p m qp qm) -> BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) v
-    MV.modify vars (\(BiSub p m qp qm) -> BiSub (THBound q:p) (THBound q:m) qp qm) v
-    -- Co-occurence analysis ?
-    (if pos then _pSub else _mSub) <$> MV.read vars v
-
-  addPiBound pos vars v = MV.read vars v >>= \bisub ->
-    if shouldGeneralise pos bisub then generaliseVar pos vars v bisub
-    else pure [] --d_ (show v <> show pos <> show bisub :: Text) $ pure []
-
-  subst pos ty = nullLattice pos <$> let
-    addMu d r v = (MV.read d v <&> if pos then _pSub else _mSub) <&> \case
-      [THMuBound m] -> [THMu m r]
-      _ -> r
-    in use bis >>= \b -> do
-    svMu <- use mus
-    (vars , guardedTs) <- substVs pos ty
-
-    case guardedTs of
-      -- (Unguarded) loop: if any of these vars is generalised, they should all be generalised to the same THBound
-      [THVarLoop n] -> do
-        bs <- (\v -> (v,) <$> MV.read b v) `mapM` vars
-        case find (shouldGeneralise pos . snd) bs of
-          Nothing -> pure []
-          Just (first , bisub) -> do
-            q <- use quants
-            v <- generaliseVar pos b first bisub
---          vars `forM` \i -> MV.modify b (\(BiSub p m qp qm) ->
---            BiSub (THBound q:rmGuards p) (THBound q:rmGuards m) qp qm) i
---            BiSub (THBound q:p) (THBound q:m) qp qm) i
-            pure v
-      _  -> do
-        let insertGuard x [] = [THVarGuard x]
-            insertGuard x (r : rs) = case r of
-              THVarLoop a  | a == x -> THVarGuard x : rs
-              r -> r : insertGuard x rs
-            isVar = \case { THVar{}->True ; THVarLoop{}->True ; THVarGuard{}->True; _->False }
-        vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (\y -> d_ (show x <> "replacing: " <> show y :: Text) [THVarGuard x])) x
---      vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (\p -> THVarGuard x : filter (not . isVar) p)) x
---      vars  `forM` \x -> MV.modify b   (over (if pos then pSub else mSub) (insertGuard x)) x
-        t <- concatTypes <$> mapM (substTyHead pos) guardedTs
-        mus .= svMu
-        r <- foldM (addMu b) t vars -- TODO should only be one Mu !!
-        let insertVar x [] = [THVar x]
-            insertVar x (r : rs) = case r of
-              THVarGuard a | a == x -> THVar x : rs
-              r -> r : insertVar x rs
-
-        vars  `forM` \x -> MV.modify b (\(BiSub p m qp qm) -> if pos
-          then BiSub (insertVar x $ did_ p) m qp qm else BiSub p (insertVar x $ did_ m) qp qm) x
---        then BiSub (THVar x : p) m qp qm else BiSub p (THVar x : m) qp qm) x
---        then BiSub [THVar x] m qp qm else BiSub p [THVar x] qp qm) x
-         --over (if pos then pSub else mSub) (const [THVar x])) x
-        pure r
-
-  -- We need to distinguish unguarded type variable loops (recursive type | indistinguishable vars)
-  -- a,b,c,a var loops are the same var; so if one is generalised, need to gen all of them
-  substVs pos ty = let
-    fn (v,o) = \case
-      THVar x -> (x:v,o)
-      x       -> (v,x:o)
-    x@(vars , other) = foldl fn ([],[]) ty
--- d_ (show ty <> " : " <> show (vars , other) :: Text) $ 
-    in if null vars then pure ([],ty) else use bis >>= \b ->
-      substV pos vars <&> (\(v,t) -> (v , mergeTypes t other))
-
-  -- Check if type variables were already guarded (ie. we're in a recursive type)
-  substV pos vars = use bis >>= \b -> do
-    varTypes <- vars `forM` \x -> MV.read b x >>= \bisub -> let
-      t = if pos then _pSub bisub else _mSub bisub
-      in case d_ (show x <> show pos <> " @ " <> show t :: Text) t of
-      []             -> (Nothing,) <$> addPiBound pos b x
-      -- ?!
-      [THVar v] | v == x -> (Nothing , []) <$ MV.modify b (over (if not pos then pSub else mSub) (const [])) x--`f = f` nonsense
---    [THVar v] -> MV.read b v >>= \new -> new <$ MV.modify b (over (if pos then pSub else mSub) (const t)) x
-      [THVarGuard v] -> pure (Nothing , t)
-      subbedTy       -> case if pos then _mSub bisub else _pSub bisub of
-        -- Check the opposite polarity (if this variable's opposite would be generalised later, it can't be ignored now)
-        -- It will generalise if it is [] and it's opposite polarity (ours) has >0 presence
-        [] -> addPiBound pos b x <&> \thbound -> (Just x , thbound ++ subbedTy)
-        _  -> let insertLoop x [] = [THVarLoop x]
-                  insertLoop x (r : rs) = case r of
-                    THVar a     | a == x -> THVarLoop x : rs
-                    r -> r : insertLoop x rs
-          in (Just x,t) <$ MV.modify b (over (if pos then pSub else mSub) (insertLoop x)) x -- loop guard
-    let ts = snd <$> varTypes
-        v' = catMaybes $ fst <$> varTypes
-        varsTy = concatTypes ts
-
-    (v,t) <- substVs pos varsTy
-    pure (v'++v,t)
-
-  substTyHead pos ty = let
-    subst' = subst pos
-    getTy = if pos then _pSub else _mSub
-    in use bis >>= \b -> case ty of
-    -- TODO ! add all vars in the loop as the same pi-bound
-    THVarLoop x -> addPiBound pos b x
-
-    THVarGuard v -> mus <<%= (+1) >>= \m -> let mb = [THMuBound m] in
-      mb <$ MV.modify b (over (if pos then pSub else mSub) (const mb)) v
-    THTyCon t -> (\t -> [THTyCon t]) <$> case t of
-      THArrow ars ret -> do
-       -- THArrow changes polarity => dup result (in case args link to result vars)
-       -- Then inspect the args
-        ret `forM` \case
-          THVar x -> dupVar pos x
-          x -> pure ()
---      ars `forM` \x -> x `forM` \case { THVar x -> dupVar False x ; x -> pure () }
-        (\arsTy retTy -> THArrow arsTy retTy) <$> subst (not pos) `mapM` ars <*> subst' ret
-      THTuple   tys -> THTuple   <$> (subst' `traverse` tys)
-      THProduct tys -> THProduct <$> (subst' `traverse` tys)
-      THSumTy   tys -> THSumTy   <$> (subst' `traverse` tys)
-    THBi b ty -> (\t->[THBi b t]) <$> subst' ty
-    THMu b ty -> (\t->[THMu b t]) <$> subst' ty
-    t -> pure [t]
---  THPrim{}   -> pure [t]
---  THBound{}  -> pure [t]
---  THMuBound{}-> pure [t]
---  THTop{}    -> pure [t]
---  THBot{}    -> pure [t]
---  THExt{}    -> pure [t]
---  t -> error $ show t --pure [t]
-  in do --use bis >>= \b -> do
-  let ty = [THVar recTVar]
-  when global_debug $ traceM $ toS $ "Subst: " <> prettyTyRaw ty
-  rawGenTy <- subst True ty
-  q <- use quants
-  let genTy = if q > 0 then [THBi q rawGenTy] else rawGenTy
-  when global_debug $ traceM (toS $ prettyTyRaw genTy)
-  pure genTy
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
@@ -411,7 +264,7 @@ infer = let
   P.Cons construct -> do
     let (fields , rawTTs) = unzip construct
     exprs <- infer `mapM` rawTTs
-    let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) }) <$> exprs
+    let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) ; x -> error $ show x }) <$> exprs
         mkFieldCol = \a b -> [THFieldCollision a b]
     pure $ Core (Cons (IM.fromList $ zip fields tts)) [THTyCon $ THProduct (IM.fromListWith mkFieldCol $ zip fields tys)]
 

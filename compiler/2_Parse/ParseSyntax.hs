@@ -67,7 +67,8 @@ data TTName
 data LensOp a = LensGet | LensSet a | LensOver a deriving Show
 data TT -- Type|Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
- | WildCard -- "_"
+ | WildCard -- "_" implicit lambda argument
+ | Question -- "?" ask to infer
 
  -- lambda-calculus
  | Abs TopBind
@@ -86,7 +87,6 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
  -- term primitives
  | Lit     Literal
  | LitArray [Literal]
- | Poison Text -- for mixfix resolution
 
 -- patterns represent arguments of abstractions
 data Pattern

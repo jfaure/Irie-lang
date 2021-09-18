@@ -6,7 +6,7 @@ import qualified Data.Vector as V
 import qualified Data.Text as T
 import qualified Data.IntMap.Strict as IM
 import qualified Data.IntSet as IS
-import Text.Printf
+--import Text.Printf
 
 number2CapLetter i = let
   letter = (chr ((i `mod` 26) + ord 'A'))
@@ -51,7 +51,8 @@ prettyTerm bindSrc = let
   pTy = prettyTy (Just bindSrc)
   pT  = prettyTerm  bindSrc
   pE  = prettyExpr  False bindSrc
-  pE' = prettyExpr' False bindSrc
+  pET = prettyExpr  True bindSrc
+  pE' = prettyExpr' True bindSrc
   prettyFree x = if IS.null x then "" else "Γ(" <> show x <> ")"
   in \case
   Hole -> " _ "
@@ -70,11 +71,11 @@ prettyTerm bindSrc = let
     sr (field , val) = show field <> " " <> (toS $ srcFieldNames bindSrc V.! field) <> "@" <> pT val
     in "{ " <> (T.intercalate " ; " (sr <$> IM.toList ts)) <> " }"
 --Proj    t f -> pT t <> "." <> show f <> (toS $ srcFieldNames bindSrc V.! f)
-  Label   l t -> prettyLabel l <> "@" <> T.intercalate " " (parens . pE <$> t)
+  Label   l t -> prettyLabel l <> "@" <> T.intercalate " " (parens . pET <$> t)
   Match caseTy ts d -> let
-    showLabel l t = prettyLabel l <> " => " <> pE' "" t
+    showLabel l t = prettyLabel l <> " => " <> pE' "   " t
     in clMagenta "\\case " <> clGreen (" : " <> pTy caseTy) <> ")\n    | "
-      <> T.intercalate "\n    | " (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts) <> "\n    |_ " <> maybe "Nothing" pE d <> "\n"
+      <> T.intercalate "\n    | " (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts) <> "\n    |_ " <> maybe "Nothing" pET d <> "\n"
 --List    ts -> "[" <> (T.concatMap pE ts) <> "]"
 
   TTLens r target ammo -> pT r <> " . " <> T.intercalate "." (show <$> target) <> prettyLens bindSrc ammo
@@ -103,16 +104,12 @@ prettyTyHead bindSrc = let
  THTop        -> "⊤"
  THBot        -> "⊥"
  THPrim     p -> prettyPrimType p
--- THArg      i -> "λ" <> show i
  THVar      i -> "τ" <> show i
  THBound    i -> number2CapLetter i
--- THBound    i -> "∀" <> show i
  THMuBound  t -> {-"μ" <>-} number2xyz t
  THMu v     t -> "μ" <> number2xyz v <> "." <> pTy t
--- THImplicit i -> "∀" <> show i
--- THAlias    i -> "π" <> show i
  THExt      i -> "E" <> show i
--- THRec      t -> "Rec" <> show t
+-- THAlias    i -> "π" <> show i
 
  THTyCon t -> case t of
    THArrow    [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> pTy ret <> ")"

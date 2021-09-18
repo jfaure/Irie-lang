@@ -9,8 +9,8 @@ import qualified Data.Map as M
 import Control.Lens hiding (List)
 import MixfixSyn
 
---global_debug = False
-global_debug = True
+global_debug = False
+--global_debug = True
 d_ x   = let --if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
@@ -31,6 +31,8 @@ data VName
  | VArg    IName
  | VExt    IName -- extern map (incl. prim instrs and mixfixwords)
 
+ | VBruijn IName -- debruijn arg (only built by the simplifier)
+
 data Term -- β-reducable (possibly to a type) and type annotated
  = Var     !VName
  | Lit     !Literal
@@ -43,25 +45,31 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
  | Hole     -- argument hole (part of an implicit Abs)
  | App     Term [Term]    -- IName [Term]
- | PartialApp [Type] Term [Term] -- only built by the simplifier
- -- Top level PAp => Abs (we can only produce new names during parse)
 
  | Cons    (IM.IntMap Term)
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Expr]
- | Match   Type (IM.IntMap Expr) (Maybe Expr) -- type is the return type of this expression
+ | Match   Type (IM.IntMap Expr) (Maybe Expr) -- Type is the return type
 
- | List    [Expr]
+ -- only built by the simplifier
+ | PartialApp [Type] Term [Term] -- Top level PAp => Abs (no fresh argnames after parse)
+ | BruijnAbs  Int Term -- debruijn abstraction
+ | StreamCons (IM.IntMap Term) -- difference with Cons is that absent labels produce Nothing
+-- | HList Int [Term] -- E|One a|Two a b .. (Including Maybe!)
+
+-- hList using negative labels
+nothing : one : two : _ = [-1,-2..] :: [Int]
+-- can use negative Cons values for case nests
 
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs a lens for extracting field
 
 -- TODO improve this ; Typemerge should be very fast
-type Type     = TyPlus
-type Uni      = Int
-type TyMinus  = [TyHead] -- input  types (lattice meet) eg. args
-type TyPlus   = [TyHead] -- output types (lattice join)
-holeTy        = []
+type Type    = TyPlus
+type Uni     = Int
+type TyMinus = [TyHead] -- input  types (lattice meet) eg. args
+type TyPlus  = [TyHead] -- output types (lattice join)
+holeTy       = []
 
 data TyCon -- Type constructors
  = THArrow    [TyMinus] TyPlus -- degenerate case of THPi (bot -> top is the largest)

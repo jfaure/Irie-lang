@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-module Prelude ( module Protolude , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap)
+module Prelude ( module Protolude , module Data.Align , module Data.These , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap)
 where
 import Protolude hiding (check , Type , Fixity(..) , moduleName , option
  , try , some , many -- conflict with megaparsec
@@ -10,6 +10,8 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Map as M
+import Data.Align
+import Data.These
 
 type String = [Char]
 type IName  = Int

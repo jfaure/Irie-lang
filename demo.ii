@@ -12,86 +12,126 @@
 --import imports/printf
 --import imports/subtype
 --import imports/list
-import imports/prelude
+--import imports/prelude
+
+f x = f
+_>_ = \f a => f a
+_<_ = \a f => f a
+
+-- _>>=_ : Π A B C -> A & { ret : B } -> (B -> A -> C) -> C
+_>>=_ = \a f => f (a.ret) a
 
 --printList l = case l of
 --  | Nil => 0
 --  | Cons i ll => add (putNumber i) (printList ll)
---
 --array = (Cons 9 Nil)
 
--- (a -> b -> b) -> b -> t a -> b
---0 -> 1 -> 7
---(0,(2->5)) -> [ {2 , 3} ] -> [ { 5 , 6 } ]
--- map f l = case l of
---   | Cons x xs => Cons (f x) (map f xs)
---  | Nil => Nil
+--addL l = case l of
+--  | Cons x xs => add x (addL xs)
 
--- addL l = case l of
---   | Cons x xs => add x (addL xs)
+--map f l = case l of
+--  | Cons x xs => Cons (f x) (map f xs)
+--  | Nil       => Nil
+--sumTo ls = foldr add 0 (map (add 8) ls)
 
+--foldr = cata f [Nil , {A , x}]
 foldr f s l = case l of
-  | Nil       => s
   | Cons x xs => f x (foldr f s xs)
+  | Nil       => s
 
+-- -- foldl = stream > foldls
+-- -- foldls f z (Stream next s0) = go s0 where
+-- --   go s = case next s of
+-- -- S.Nil       -> z
+-- -- S.Skip s'   -> go s';
+-- -- S.Cons x s' -> f x (go s')
 -- foldl f s l = case l of
---  | Cons x xs => foldr f (f s) xs
+--   | Cons x xs => foldl f (f s x) xs
+--   | Nil => s
+
+-- foldl f a bs = foldr (\b g x => g (f x b)) identity bs a
+-- mapF f = foldr (\x xs => f x : xs) []
+--foldr f z (Stream next s0) = go s0 where go s = case next s of
+--  Done       -> z
+--  Skip s'    -> go s'
+--  Yield x s' -> f x (go s')
+
+-- multi-arg builder foldr => stream
+zip A B = case A of
+ | Nil       => Nil
+ | Cons a as => case B of
+   | Nil => Nil
+   | Cons b bs => Cons { l = a , r = b } (zip as bs)
+
+--zipS (Stream an a0) (Stream bn b0) = let
+--  next {A1=a , A2=b , l' , r'} = case l' of
+--    Nothing => case an a of
+--      Nil        => Nil
+--      Skip as'   => Skip {A1=as', A2=b ,  l' = Nothing , r' = Nothing}
+--      Cons lv as'=> Skip {A1=as', A2=b ,  l' = Just lv , r' = Nothing}
+--    Just  lv =>
+--      Nil        => Nil
+--      Skip as'   => Skip {A1=a , A2=as' , l' = Just l,r' =Nothing})
+--      Cons rv bs'=> Cons {l = lv , r = rv} {A1=a , A2=bs'}
+--  in Stream next {A1=a0 , A2=b0 , l'=Nothing , r'=Nothing}
+
+--zipS (Stream an a0) (Stream bn b0) = let
+--  next as bs Empty = case an a of
+--    Done       -> Done
+--    Skip as'   -> Skip (as' , bs , Empty)
+--    Yield a as'-> Skip (as' , bs , One a)
+--  next as' bs (One a) = case bn bs of
+--    Done       -> Done
+--    Skip bs'   -> Skip  (as' , bs' , One a)
+--    Yield a bs'-> Yield (a , b) (as' , bs' , Empty)
+--  in Stream next (a0 , b0 , Empty)
+c a b = Cons a b
+append front back = foldr c back front
+concat = foldr (append) Nil
+--concatMap f xs = build \c n => foldr (\x b => foldr c b (f x)) n xs
+-- concatMap :: (a -> [b]) -> [a] -> [b]
+--concatMap f xs = foldr (\x b => foldr c b (f x)) Nil xs
+go f x b = foldr c b (f x)
+concatMap2 f xs = foldr (go f) Nil xs
+--reverse = foldl (flip (:)) []
+
+--foldlS f z (Stream next s0) = let
+--  go z s = case next s of
+--     Done       -> z
+--     Skip s'    -> go z s'
+--     Yield x s' -> go (x : z) s'
+--  in go s0
+
+-- produceL arg = Cons arg (produceL (add 1 arg))
+
+--produce arg = { head = arg , tail = produce (add 1 arg) }
+--consume strm = add strm.head (consume strm.tail)
+--res = consume (produce 3)
+
+--filter f l = case l of
+--  | Cons x xs => if f x then Cons x (filter xs) else filter xs
+--filterF p = foldr (\x xs => if p x then x : xs else xs)
+
+--sum = foldr add 0
+--consF f x xs = Cons (f x) xs
+--mapFold f l = foldr (consF f) Nil l
+
+--concat = foldr append Nil
+
+--f x = ifThenElse (le x 3) x (f (sub x 1))
+-- foldl f s l = case l of
+--   | Cons x xs => foldl f (f s x) xs
+--   | Nil => s
 
 --scanSum n l = if le n 0 then l else scanSum (sub n 1) (Cons n l)
 --z = scanSum 3 Nil
 
---f a b = add a b
-
---lam = add ((\x => add x 3) 6)
-
--- _>>=_ : Π A B C -> A & { ret : B } -> (B -> A -> C) -> C
---_>>=_ = \a f => f (a.ret) a
-
---IO = | In : IO | Out : IO
---
---z = add 3 2 4
---puts io = io.Out
-
---xdd = ydd
---ydd = xdd
---main = putNumber x
-
----- _>_ = \a f => f a
--- topPAp = add 1
--- _<_ = \f a => f a
--- five = add 3 < 2
--- _>>_ = \f x a => x (f a)
+-- constructor trans: a <: F a and F b <: b implies 'a <: 'b
+-- (({t : µd.{t : d} & a} & a -> {t : µc.{t : c}} -> {t : µb.{t:b} | a} | a
+-- µa.{t : a} -> a -> µd.{t : d}
+-- A & {t : A}) → μx.{t : x} → (A & {t : A})
+--true = le 0 1
+--conTrans x y = if true then x else { t = conTrans x.t y.t }
 
 -- fail-loneMFWord    = <
 -- fail-loneMFWordApp = add 4 <
-
---gmpMaths = gmp-putNumber (gmp-add 5 (gmp-sub 3 -2))
--- raw = putNumber ({ x = 32 } . x)
---rectangle = { x = { y = 314 , g = 3 , x = 7 } , y = { a = 32 , b = 52 } }
---rc r = gmp-putNumber (r . b)
---main = rc ((rectangle . y) . b . over (add 3))
-
--- fib x = ifThenElse (le x 1) x (add (fib (sub x 1)) (fib (sub x 2)))
--- fib x = ifThenElse (gmp-le x 2) x (gmp-add (fib (gmp-sub x 1)) (fib (gmp-sub x 2)))
--- main = gmp-putNumber (fib 40)
-
---f = g
---g = f
-
--- incprim a = add a 3
--- inc a = gmp-add a 1111
--- square = { x = 325 , y = gmp-add 1 9235 }
--- leaf = square . x . over incprim
--- main = putNumber leaf . x
--- x = leaf . y
--- extractCast  = gmp-add 1 (square . x)
--- copy = gmp-putNumber (leaf . y)
--- xInc = ({ x = 325 , y = gmp-add 111 101} . x . over inc)
--- main = gmp-putNumber (({ x = 325 , y = gmp-add 32 3252352} . x . over inc) . y)
--- fCollision = { z = 3 , z = 2 }
-
---join a b = ifE 1 a b
---five x = ifE x 5 3
---g z = ifE (eq z 10) z z
---f x = plus (g x) x
---iff x y z = ifE (ifE x y z)

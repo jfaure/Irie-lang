@@ -45,24 +45,22 @@ biSub a b = let
 -- merge types and attempt to eliminate the THVar
 --solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
 --solveTVar _ newTy [] = [newTy] -- TODO dangerous ?
-solveTVar varI newTy (ty:tys) = if eqTyHead newTy ty
-  then mergeTyHead newTy ty `mergeTypes` tys
-  else ty : solveTVar varI newTy tys
+solveTVar varI newTy (ty:tys) = -- if eqTyHead newTy ty then mergeTyHead newTy ty `mergeTypes` tys else
+  ty : solveTVar varI newTy tys
 
 atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
-atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRaw [p] <> " <==> " <> prettyTyRaw [m]) go else go) $
+atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> prettyTyRaw [p] <> " <==> " <> prettyTyRaw [m]) go else go) $
  case (p , m) of
   (_ , THTop) -> pure (CastInstr MkTop)
   (THBot , _) -> pure (CastInstr MkBot)
   (THPrim p1 , THPrim p2) -> primBiSub p1 p2
---(h@(THSet uni) , (THArrow x ret)) -> biSub [h] ret
   (THExt a , THExt b) | a == b -> pure BiEQ
   (p , THExt i) -> biSub [p]     =<< tyExpr . (`readPrimExtern` i)<$>use externs
   (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readPrimExtern` i)<$>use externs
 
   -- Bound vars (removed at THBi, so should never be encountered during biunification)
-  (THBound i , x) -> panic $ "unexpected THBound: " <> show i
-  (x , THBound i) -> panic $ "unexpected THBound: " <> show i
+  (THBound i , x) -> error $ "unexpected THBound: " <> show i
+  (x , THBound i) -> error $ "unexpected THBound: " <> show i
   (THBi nb x , y) -> do
     -- make new THVars for the debruijn bound vars here
     level %= (\(Dominion (f,x)) -> Dominion (f,x+nb))
@@ -87,19 +85,12 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
   (THPi (Pi p ty) , y) -> biSub ty [y]
   (x , THPi (Pi p ty)) -> biSub [x] ty
 
-  -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
   -- Recursive types are not deBruijn indexed ! this means we must note the equivalent mu types
-  (THMu a x , THMu b y) | a == b -> do --(muEqui %= IM.insert a b) *>  do
-    biSub x y
---  ret <$ (muEqui %= IM.delete a)
---(x , THMu i y) -> biSub [x] y -- TODO is it alright to drop mus ?
---(THMu i x , y) -> biSub x [y] -- TODO is it alright to drop mus ?
-  (THMuBound x, THMuBound y) -> use muEqui >>= \equi -> case (equi IM.!? x) of
-    Just found -> if found == y then pure BiEQ else error $ "mu types not equal: " <> show x <> " /= " <> show y
-    Nothing -> panic $ "Found Mu-bound variable without binder!" -- TODO can maybe be legit
-  -- TODO can unrolling recursive types loop ?
-  (x , THMuBound y) -> use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub -- unroll recursive types
-  (THMuBound x , y) -> use bis >>= \d -> MV.read d x >>= biSub [y] . _mSub -- unroll recursive types
+  (THMu a x , THMu b y) | a == b -> biSub x y
+  (THMuBound x, THMuBound y) -> if x == y then pure BiEQ else error $ "mu types not equal: " <> show x <> " /= " <> show y
+  -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
+  (x , THMuBound y) -> use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub
+  (THMuBound x , y) -> use bis >>= \d -> MV.read d x >>= biSub [y] . _mSub
 
   (THRecSi f1 a1, THRecSi f2 a2) -> if f1 == f2
     then if (length a1 == length a2) && all identity (zipWith termEq a1 a2)
@@ -110,26 +101,16 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
   (x , THSet u) -> pure BiEQ
   (THVar p , THVar m) -> use bis >>= \v -> BiEQ <$ do
     MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar p : a) b qa qb) m
-    MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) qa qb) p
---  dupVar True m
+--  MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) qa qb) p
+    -- We cannot allow vars to point back to each other, otherwise `bisub TVar{} _` will loop
+    let isVar v = (\case { THVar x -> x /= v ; _ -> True })
+    MV.modify v (\(BiSub a b qa qb) -> if any (isVar p) b then BiSub a b qa qb else BiSub a (THVar m : b) qa qb) p
   (THVar p , m) -> use bis >>= \v -> (_pSub <$> MV.read v p) >>= \t -> do
-    MV.modify v (\(BiSub a b qa qb) -> BiSub a (m : b) qa qb) p
---  MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar p : b) qa qb) p
-    -- need to duping guarded variables that are otherwise never bisubbed
---  (void $ dupp p True [m]) -- *> dupp p False [m] {- ? -})
---  void $ dupp p False [m]
-    -- bisub stops here; make sure we dup any remaining guarded variables in m
---  when (isTyCon m) (void $ dupp (-1) True [m])
-    case m of
-      THTyCon (THArrow ars r) -> void $ dupp (-1) True [m]
-      x -> pure ()
-
+    MV.modify v (\(BiSub a b qa qb) -> BiSub a (mergeTyHeadType m b) qa qb) p
     biSub t [m]
+
   (p , THVar m) -> use bis >>= \v -> (_mSub <$> MV.read v m) >>= \t    -> do
---  (void $ dupp m False [p] *> dupp m True [p]) -- ??
---  void $ dupp m True [p]
---  MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar m : a) b qa qb) m
-    MV.modify v (\(BiSub a b qa qb) -> BiSub (p : a) b qa qb) m
+    MV.modify v (\(BiSub a b qa qb) -> BiSub (mergeTyHeadType p a) b qa qb) m
     biSub [p] t
 
   (x , THTyCon THArrow{}) -> failBiSub "Too many arguments"        [p] [m]
@@ -140,7 +121,7 @@ atomicBiSub p m = (\go -> if global_debug then trace ("⚛bisub: " <> prettyTyRa
 data KeySubtype
   = LOnly Type         -- OK by record | sumtype subtyping
   | ROnly IField Type  -- KO field not present
-  | Both  Type Type    -- OK biunify the leaf types
+  | Both  Type Type    -- biunify the leaf types
 
 biSubTyCon p m = \case
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
@@ -164,8 +145,12 @@ biSubTyCon p m = \case
       Nothing -> failBiSub ("Sum type: label not present: " <> show label) [p] [m]
       Just superType -> biSub superType subType
     in BiEQ <$ (go `IM.traverseWithKey` x) -- TODO bicasts
---(THArrow ars ret, THTuple y) -> pure BiEQ -- labelBiSub-- TODO
---(THTuple y, THArrow ars ret) -> pure BiEQ -- labelBiSub-- TODO
+  (THSumTy s , THArrow args retT) | [(lName , tuple)] <- IM.toList s -> -- singleton sumtype => Partial application of Label
+    let t' = case tuple of
+               [THTyCon (THTuple x)] -> [THTyCon $ THTuple (x V.++ V.fromList args)]
+               x                     -> [THTyCon $ THTuple (V.fromList (x : args))]
+    in biSub [THTyCon (THSumTy $ IM.singleton lName t')] retT
+  (THSumTy s , THArrow{}) | [single] <- IM.toList s -> failBiSub "Labels must be fully applied"  [p] [m]
   (a , b)         -> failBiSub "Type constructors mismatch" [p] [m]
 
 arrowBiSub (argsp,argsm) (retp,retm) = let

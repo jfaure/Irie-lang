@@ -1,7 +1,7 @@
 module TypeCheck where
 import Prim
 import CoreSyn as C
-import CoreUtils
+--import CoreUtils
 import PrettyCore
 import Externs
 import qualified Data.Vector as V
@@ -19,10 +19,8 @@ check :: Externs -> V.Vector [TyHead] -> V.Vector (Maybe Type)
      -> [TyHead] -> [TyHead] -> Bool
 check e ars labTys inferred gotRaw = let
   go = check' e ars labTys inferred gotRaw
-  in if False {-debug getGlobalFlags-}
-  then trace ("check: " <> prettyTyRaw inferred <> "\n   <?: " <> prettyTyRaw gotRaw)
-    $ go
-  else go
+  in if global_debug -- True {-debug getGlobalFlags-}
+  then trace ("check: " <> prettyTyRaw inferred <> "\n   <?: " <> prettyTyRaw gotRaw) go else go
 
 --check' :: Externs -> V.Vector [TyHead]
 --       -> [TyHead] -> [TyHead] -> Bool
@@ -32,14 +30,17 @@ check' es ars labTys inferred gotTy = let
     c@Core{} -> error $ "type expected, got: " <> show c
     Ty t -> t
   checkAtomic :: TyHead -> TyHead -> Bool
-  checkAtomic inferred gotTy = case (inferred , gotTy) of
+  checkAtomic inferred gotTy = case {-trace (prettyTyRaw [inferred] <> " <?: " <> prettyTyRaw [gotTy])-} (inferred , gotTy) of
+    (THBound x , THBound y) -> x == y
+    (THMu x _, THMuBound y)  -> x == y -- recursive bound equal to its binding
     (THSet l1, THSet l2)  -> l1 <= l2
     (THSet 0 , x)         -> True --case x of { THArrow{} -> False ; _ -> True }
     (x , THSet 0)         -> True --case x of { THArrow{} -> False ; _ -> True }
---  (THArg x , gTy)       -> True -- check'' (ars V.! x) [gTy]
     (THVar x , gTy)       -> True -- check'' (bis V.! x) [gTy]
     (lTy , THVar x)       -> False
     (THPrim x , THPrim y) -> x `primSubtypeOf` y
+--  (THMu x [t1] , THTyCon t2) -> alignMu x t1 t1 gotTy
+    (THTyCon t2 , THMu x [t1]) -> alignMu x t1 t1 inferred
     (THTyCon t1 , THTyCon t2) -> case (t1,t2) of
       (THArrow a1 r1 , THArrow a2 r2) -> let -- handle differing arities (since currying is allowed)
         -- note. (a->(b->c)) is eq to (a->b->c) via currying
@@ -49,20 +50,31 @@ check' es ars labTys inferred gotTy = let
         go x []  = check'' [THTyCon $ THArrow x r1] r2
         in go a1 a2
       (THSumTy labels , t@THArrow{}) -> _
-      (THSumTy x , THSumTy y) -> _
+      (THSumTy x , THSumTy y)     -> all identity (alignWith (these (const False) (const False) check'') x y)
+      (THTuple x , THTuple y)     -> all identity (alignWith (these (const False) (const False) check'') x y)
+      (THProduct x , THProduct y) -> all identity (alignWith (these (const False) (const False) check'') x y)
+      _ -> False
 
 --  (t , THPi [] ty tyArgs) -> check'' [t] (tyAp ty tyArgs)
 --  (THPi [] ty tyArgs , t) -> check'' (tyAp ty tyArgs) [t]
---  (x , THArg y) -> True -- ?!
---  (THRec x , THRec y) -> x == y
---  (THRec m , x) -> True -- TODO read ty in the bindMap
-    (THRecSi f1 a1 , THRecSi f2 a2) -> _
-    (THRecSi f1 a1 , THFam{}) -> True -- TODO read from bindMap
-    (THFam f ars [] , x) -> checkAtomic (THTyCon $ THArrow ars f) x
-    (THFam f [] ixs , THRecSi f1 a1) -> True -- TODO
-    (THFam f1 a1 i1 , THFam f2 a2 i2) -> True -- TODO
---  (THFam f1 a1 i1 , x) -> True -- TODO
-    (a,b) -> error $ "checking: strange type heads:\n   " <> show a <> "\n   <? " <> show b
+    x -> False
   in case inferred of
     []   -> False
-    tys  -> all (\t -> any (checkAtomic t) gotTy) tys
+    tys  -> all (\t -> any (checkAtomic t) gotTy) $ tys
+
+alignMu :: Int -> TyHead -> TyHead -> TyHead -> Bool
+alignMu x target lty muBound = (if global_debug
+  then trace (prettyTyRaw [lty] <> " µ=? " <> prettyTyRaw [muBound] <> " (" <> prettyTyRaw [target] <> ")")
+  else identity) $ let
+  exactAlign :: Semialign f => f [TyHead] -> f [TyHead] -> f Bool
+  exactAlign = alignWith (these (const False) (const False) (\[a] [b] -> alignMu x target a b))
+  in case (lty , muBound) of
+  (THTyCon (THProduct lt) , THTyCon (THProduct rt)) -> all identity $ exactAlign lt rt
+  (THTyCon (THSumTy   lt) , THTyCon (THSumTy   rt)) -> all identity $ exactAlign lt rt
+  (THTyCon (THTuple   lt) , THTyCon (THTuple   rt)) -> all identity $ exactAlign lt rt
+--(THTyCon (THSumTy lt) , THTyCon (THSumTy rt)) -> exactAlign lt rt
+  (THPrim l , THPrim r) -> l == r -- must be exactly equal to roll up mus
+  (THMuBound x , THMu y _) -> x == y
+  (THMu y _ , THMuBound x) -> x == y
+  (THMu x _ , THMu y _) -> x == y
+  _ -> False

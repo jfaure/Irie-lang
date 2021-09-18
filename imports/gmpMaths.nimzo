@@ -1,0 +1,21 @@
+--gmpMaths = gmp-putNumber (gmp-add 5 (gmp-sub 3 -2))
+-- raw = putNumber ({ x = 32 } . x)
+--rectangle = { x = { y = 314 , g = 3 , x = 7 } , y = { a = 32 , b = 52 } }
+--rc r = gmp-putNumber (r . b)
+--main = rc ((rectangle . y) . b . over (add 3))
+
+-- fib x = ifThenElse (le x 1) x (add (fib (sub x 1)) (fib (sub x 2)))
+-- fib x = ifThenElse (gmp-le x 2) x (gmp-add (fib (gmp-sub x 1)) (fib (gmp-sub x 2)))
+-- main = gmp-putNumber (fib 40)
+
+-- incprim a = add a 3
+-- inc a = gmp-add a 1111
+-- square = { x = 325 , y = gmp-add 1 9235 }
+-- leaf = square . x . over incprim
+-- main = putNumber leaf . x
+-- x = leaf . y
+-- extractCast  = gmp-add 1 (square . x)
+-- copy = gmp-putNumber (leaf . y)
+-- xInc = ({ x = 325 , y = gmp-add 111 101} . x . over inc)
+-- main = gmp-putNumber (({ x = 325 , y = gmp-add 32 3252352} . x . over inc) . y)
+-- fCollision = { z = 3 , z = 2 }

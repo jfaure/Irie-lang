@@ -4,7 +4,6 @@ import Prim2LLVM hiding (gep)
 --import Externs
 import CoreSyn
 import CoreUtils
-import Eval
 import PrettyCore ({-number2xyz ,-} number2CapLetter)
 import qualified GMPBindings as GMP
 import qualified Data.Vector as V
@@ -238,7 +237,7 @@ cgTerm = let
           RetReg        -> FunctionOp fptr free argT retT
           RetRecord fts -> RecordFnOp fptr free fts
           RetBigint     -> GMPFnOp fptr
-        in pure $ maybe cgOp (Inlineable cgOp) inlineable
+        in pure cgOp -- pure $ maybe cgOp (Inlineable cgOp) inlineable
     -- Args: 1. regular args 2. dataArgs 3. splits from Match
     VArg  i -> getSF >>= \cg -> case (regArgs cg IM.!? i) of
       Just reg -> pure reg
@@ -257,7 +256,7 @@ cgTerm = let
 --Abs args free t ty -> lift $ freshTopName "lam" >>= \nm ->
 --  dataFunction nm args [] t ty []
 --MultiIf -> mkMultiIf ifsE elseE
-  List  args       -> _
+--List  args       -> _
   Label i tts      -> genLabel i tts
   m@(Match ty labels d) -> panic $ "floating match" -- cgTerm (Abs .. )
 
@@ -313,7 +312,7 @@ cgApp f args = case f of
     _ -> cgInstrApp Nothing i args
   Var{} -> cgTerm f >>= \case
 --  LLVMOp fnOp -> cgOpaqueApp fnOp args <&> LLVMOp
-    Inlineable cgOp (argNms , termFn) -> cgTerm (etaReduce argNms args termFn) -- TODO align args into PAp
+--  Inlineable cgOp (argNms , termFn) -> cgTerm (etaReduce argNms args termFn) -- TODO align args into PAp
     FunctionOp fptr free aTs rT -> cgOpaqueApp fptr args <&> LLVMOp
     GMPFnOp fptr -> cgTerm `mapM` args >>= \ars -> getGMPRetPtr True >>= \rl -> LLVMOp rl <$ callCGOp (LLVMOp fptr) (LLVMOp rl : ars)
     x -> error $ "cgapp of non-function:" <> show x
@@ -339,8 +338,8 @@ recordApp recordFn retLoc prodCast args = let
     r <- callRecordFn retLoc fTys fptr args -- (productCast2dropMarkers drops leaves) sretTy fTys fptr args
     evalCast r
 
-  Inlineable cgOp (argNms , termFn) -> cgTerm (etaReduce argNms args termFn) >>= -- TODO align args into PAp
-    \r -> evalCast r
+--Inlineable cgOp (argNms , termFn) -> cgTerm (etaReduce argNms args termFn) >>= -- TODO align args into PAp
+--  \r -> evalCast r
   fn -> error $ "recordApp expected RecordFnOp or Inlineable: " <> show fn
 
 -- TODO inspect arguments

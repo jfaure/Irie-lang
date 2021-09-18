@@ -25,11 +25,16 @@ data TCEnvState s = TCEnvState {
  , _bindWIP    :: IName
  , _level      :: Dominion
  , _deBruijn   :: MV.MVector s Int
- , _quants     :: Int
- , _mus        :: Int
+ , _quants     :: Int -- fresh names for generalised typevars [A..Z,A1..Z1..]
  , _blen       :: Int
  , _bis        :: MV.MVector s BiSub -- typeVars
- , _muEqui     :: IntMap IName -- equivalence classes for mu types, + -> -
+ , _isRecBiSub :: Bool
+
+ , _mus        :: Int -- fresh names for recursive types [x,y,z,x1,y1...]
+ , _muNest     :: IntMap (IName , Type)  -- mu bound types deeper in the type that could be merged with
+ , _muEqui     :: IntMap IName -- THVars converted to THMuBound (recursive type marker)
+ , _liftMu     :: Maybe Type   -- mus constructed inside tycons can often be rolled up to contain the outer tycon
+
  , _normFields :: VU.Vector IName
  , _normLabels :: VU.Vector IName
 }
@@ -39,12 +44,10 @@ makeLenses ''TCEnvState
 --tcFail e = error $ e -- Poison e _ --(errors %= (e:)) *> pure (Fail e)
 
 dupVar pos x = use bis >>= \v -> MV.modify v
-    (\(BiSub p m qp qm) -> if pos then BiSub p m (qp+1) qm else BiSub p m qp (qm+1)) x
+  (\(BiSub p m qp qm) -> if pos then BiSub p m (qp+1) qm else BiSub p m qp (qm+1)) x
 
-dupp p pos ty = let dup = dupp p in ty `forM` \case
-  THVar x | x /= p -> dupVar pos x
---THVar x -> dupVar pos x
---THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
+dupp pos ty = let dup = dupp in ty `forM` \case
+  THVar x -> dupVar pos x
   THTyCon t -> case t of
     THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
     THTuple   tys -> dup pos `traverse_` tys

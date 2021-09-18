@@ -17,6 +17,7 @@ description:         Please see the README on GitHub at <https://github.com/jfau
 dependencies:
 - base-noprelude
 - protolude
+- prettyprinter
 - deepseq
 - binary
 - primitive

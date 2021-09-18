@@ -31,6 +31,14 @@ Inc l = case l of
 
 scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
 
+-- go sep l = case l of
+--   | Nil => Nil
+--   | Cons x xs => Cons sep (Cons x xs)
+-- 
+-- intersperse sep l = case l of
+--   | Nil => Nil
+--   | Cons x xs => Cons x (go sep xs)
+
 --level a = let px x = plus a x in plus 3
 
 --bad = (scanSum 5 Nil) >> printList

@@ -333,18 +333,18 @@ tyAnn :: Parser (Maybe ([ImplicitArg] , TT)) = let
     Nothing        -> fmap ([],)        <$> optional (reservedChar ':' *> tt)
 
 -- TODO sadly will have to generalise this using levels anyway
-lambda = reservedChar '\\' *> (Var . VBind <$> addAnonBindName) <* do
-  newArgNest $ mdo
-    addBind $ FunBind $ FnDef "lambda" Let Nothing [] free eqns Nothing
-    eqns <- (:[]) <$> fnMatch (many pattern) (reserved "=>")
-    free <- getFreeVars
-    pure ()
-
---lambda = reservedChar '\\' *> do
---  newArgNest $ do
---    eqns <- (:[]) <$> fnMatch (many singlePattern) (reserved "=>")
+--lambda = reservedChar '\\' *> (Var . VBind <$> addAnonBindName) <* do
+--  newArgNest $ mdo
+--    addBind $ FunBind $ FnDef "lambda" Let Nothing [] free eqns Nothing
+--    eqns <- (:[]) <$> fnMatch (many pattern) (reserved "=>")
 --    free <- getFreeVars
---    pure $ Abs $ FunBind $ FnDef "lambda" LetOrRec Nothing [] free eqns Nothing
+--    pure ()
+
+lambda = reservedChar '\\' *> do
+  newArgNest $ do
+    eqns <- (:[]) <$> fnMatch (many singlePattern) (reserved "=>")
+    free <- getFreeVars
+    pure $ Abs $ FunBind $ FnDef "lambda" LetOrRec Nothing [] free eqns Nothing
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ?

@@ -2,13 +2,17 @@ module CoreUtils where
 ----------------------------------------------------
 -- Various utility functions operating on CoreSyn --
 ----------------------------------------------------
+-- Any function that could be given in CoreSyn directly is found here
 import CoreSyn
 import ShowCore()
 import PrettyCore
 import Prim
 import qualified Data.IntMap as IM
-import qualified Data.Vector as V (zipWith)
 --import qualified Data.IntSet as IS
+
+nullLattice pos = \case
+  [] -> if pos then [THBot] else [THTop] -- [] -> incQuants >>= \q -> pure [THBound q]
+  t  -> t
 
 mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (singleton <$> args) (singleton retTy)
 mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
@@ -25,8 +29,8 @@ substFreshTVars tvarStart = Prelude.map $ let
   THTyCon t -> THTyCon $ case t of
     THArrow as ret -> THArrow (r <$> as) (r ret)
     THProduct as   -> THProduct $ r <$> as
-    THTuple as     -> THTuple $ r <$> as
-    THSumTy as     -> THSumTy $ r <$> as
+    THTuple as     -> THTuple   $ r <$> as
+    THSumTy as     -> THSumTy   $ r <$> as
   t -> t
 
 getArrowArgs = \case
@@ -120,12 +124,6 @@ getTypeIndexes = \case
   [THBi i ty] -> getTypeIndexes ty
   x -> []
 
---zipWithPad :: a -> b -> (a->b->c) -> [a] -> [b] -> [c]
---zipWithPad a b f = go where
---  go [] y = zipWith f (repeat a) y
---  go x [] = zipWith f x (repeat b)
---  go (x:xs) (y:ys) = f x y : go xs ys
-
 mergeIndex :: Expr -> Expr -> Expr
 mergeIndex = _
 
@@ -145,18 +143,27 @@ kindOf = \case
     THTuple{}   -> KTuple
     THArray{}   -> KArray
   THBound{} -> KBound
+  THMuBound{} -> KRec
+  THMu{} -> KRec
   _ -> KAny
 
 mergeTypes :: [TyHead] -> [TyHead] -> [TyHead]
 --mergeTypes l1 l2 = concat $ foldr doSub [] <$> (groupBy eqTyHead (l1 ++ l2))
 mergeTypes l1 l2 = foldr doSub [] (sortBy (\a b -> (kindOf a) `compare` (kindOf b)) $ l2 ++ l1)
 
+mergeTyHeadType = doSub
 -- add head constructors, transitions and flow edges
 doSub :: TyHead -> [TyHead] -> [TyHead]
+doSub (THMu x (t:ts)) [] = [THMu x (doSub t ts)]
 doSub newTy [] = [newTy]
-doSub newTy (ty:tys) = if eqTyHead newTy ty
-  then mergeTyHead newTy ty ++ tys
-  else (ty : doSub newTy tys)
+doSub newTy (ty:tys) = mergeTyHead newTy ty ++ tys
+--if eqTyHead newTy ty
+--then mergeTyHead newTy ty ++ tys
+--else (ty : doSub newTy tys)
+
+rollRecursive join mVar rolled unrolled = case unrolled of
+  THMuBound m -> join
+  x -> error $ show mVar <> "\n" <> show rolled <> "\n" <> show unrolled
 
 -- generally mergeing depends on polarities. We only merge equal types (typevars mostly) here
 -- Note output(+) (%i1 | %i32) is (%i1) by subtyping, but codegen needs to know the 'biggest' type
@@ -164,9 +171,16 @@ doSub newTy (ty:tys) = if eqTyHead newTy ty
 mergeTyHead :: TyHead -> TyHead -> [TyHead]
 mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   let join = [t1 , t2]
-      zM = zipWith mergeTypes
+      zM  :: Semialign f => f [TyHead] -> f [TyHead] -> f [TyHead]
+      zM  = alignWith (these identity identity mergeTypes)
   in case join of
-  [THMu a t1, THMu b t2] | a == b -> [THMu a (t1 `mergeTypes` t2)]
+  [THMu a t1 , THMu b t2] | a == b -> [THMu a (t1 `mergeTypes` t2)]
+  [THMu x t1 , THMuBound y] | x == y -> [THMu x t1]
+  [THMuBound y , THMu x t1] | x == y -> [THMu x t1]
+  [THMu x t1 , t2] -> [THMu x (doSub t2 t1)]
+  [t2 , THMu x t1] -> [THMu x (doSub t2 t1)]
+--[THMu a t , unrolled] -> rollRecursive join a t unrolled
+--[unrolled , THMu a t] -> rollRecursive join a t unrolled
   [THTop , THTop] -> [THTop]
   [THBot , THBot] -> [THBot]
   [THSet a , THSet b] -> [THSet $ max a b]
@@ -182,7 +196,7 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of -- TODO depends on polarity (!)
     [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ IM.unionWith mergeTypes a b]
     [THProduct a , THProduct b] -> [THTyCon $ THProduct $ IM.unionWith mergeTypes a b]
-    [THTuple a , THTuple b]     -> [THTyCon $ THTuple   $ V.zipWith    mergeTypes a b]
+    [THTuple a , THTuple b]     -> [THTyCon $ THTuple   $ zM a b]
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM d1 d2) (mergeTypes r1 r2)]
     x -> join
   [THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!

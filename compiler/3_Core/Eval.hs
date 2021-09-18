@@ -2,16 +2,8 @@ module Eval where
 import Prim
 import CoreSyn
 import CoreUtils
-import Data.Align
-import Data.These
 import ShowCore()
-import qualified Data.IntMap as IM
 import qualified Data.Vector.Mutable as MV
-
-simplifyBinds e jbs = (\(BindOK c) -> BindOK (simplifyExpr e jbs c)) <$> jbs
-simplifyExpr exts jbs = \case
-  Core e t -> Core (simplifyTT exts jbs e) t
-  x -> x
 
 -- Always inline simple functions
 -- Constant fold casts and up to scrutinees as much as possible (can have huge impact)
@@ -22,43 +14,63 @@ simplifyExpr exts jbs = \case
 -- exitification (float exit paths out of recursive functions)
 -- liberate-case (unroll recursive fns once to avoid repeated case on free vars)
 -- Pow app
-simplifyTT externs jbs = \case
-  App (Var (VBind i)) args -> _
-  x -> x
 
-etaReduce :: [IName] -> [Term] -> Term -> Term
-etaReduce argNms args body = let
-  argList = alignWith (\case { These a b -> (a,b) ; x -> error $ "unaligned args: " <> show (argNms , args) }) argNms args
-  argMap  = IM.fromList argList
-  etaReduce' argMap tt = let etaReduce'' = etaReduce' argMap
-    in case tt of
-    Var (VArg i) | Just sub <- argMap IM.!? i -> sub
-    Var{}      -> tt
-    Instr{}    -> tt
-    Cast BiEQ t-> etaReduce'' t
-    Cast c    t-> Cast c (etaReduce'' t)
-    Lit{}      -> tt
-    App f1 args1 -> case (etaReduce'' f1) of
-      App (Instr (MkPAp n)) (f2 : args2) -> let diff = n - length args in case compare 0 diff of
-        LT -> let (ok , rest) = splitAt diff (etaReduce'' <$> args2)
-              in App (App (Instr (MkPAp diff)) ok) rest
-        _  -> App f2 (etaReduce'' <$> (args1 ++ args2))
---      EQ -> App f2 (args1 ++ args2)
---      GT -> _ -- return function
-      f -> App f (etaReduce'' <$> args1)
-    TTLens term fields lensOp -> TTLens (etaReduce'' term) fields lensOp
-    Abs{}      -> error $ "eta reduce: " <> show tt
-    Cons c     -> Cons (etaReduce'' <$> c)
-    Label{}    -> error $ "eta reduce: " <> show tt
-    Match{}    -> error $ "eta reduce: " <> show tt
-    _          -> error $ "eta reduce: " <> show tt
-  in etaReduce' argMap body
+-- Maths
+-- * recognize series; esp sum and product
+
+-- Deriving build-catas
+-- * Ec = (∀α1..αn) ∀β -- constructor equation where B is the type parameter for recursion
+-- 1. extract wrapper-worker functions, substitute wrapper freely in the worker
+-- 2. worker has an outer case over an argument; attempt to fuse with the copy function
+--  2.1 distrubute the id cata accross the case, then make a single cata
+--  2.2 immediately make a cata, then fuse the outer cata (higher-order fusion); iff the recursive invocation needs an inherited attribute
+
+-- ! Prefer stream forms when possible
+-- Swaps (fold-build <> stream-unstream): stream foldl over a label accumulator
+
+-- Fusion
+-- * cata = same shape as recursive types: (nested recursion) (eg. fn a1 (recurse))
+-- * simplify (cata - build) by replacing all constructors with the cata function
+-- * Make stream (~unfoldr) versions for non cata functions
+-- # Stream Build
+--   if stream is required at some point (zip | foldl)
+--   try to invert the foldr part of the stream
+--   At worst have to reify a list (choose the smallest one) then stream it
+-- # foldr Stream (also reverse = foldl (flip (:)) [])
+--   Convert foldr to stream version. if foldr produces data, it can be fold-builded
+-- # builder foldrs are streams and build-foldrs
+-- # builder foldls are builds
+-- # Streams writeable as foldr if the state has no accumulator (or reversible one like +)
+
+-- foldr f s (build g) => g f s
+-- stream (unstream s) => s
+--
+-- Try to rewrite function as a foldr (iff recurses in same way as a recursive data)
+-- Fallback to (unstream . fn' . stream) iff left-fold and|or multiple list args
+-- Stream a = ∃s. Stream (s → Step a s) s
+-- Step a s =
+--   | Done
+--   | Skip  s
+--   | Yield s a
+--
+-- Cannot fuse when the stream producer is not known;
+-- but can push this dynamic choice inside the stream
+--
+-- Tree a b = Leaf a | Fork b (Tree a b) (Tree a b)
+-- Stream a b = ∃s. Stream (s -> Step a b s) s
+-- Step a b s = SLeaf a | SFork b s s | Skip s
+
+
+conNothing : conJust : _ = [-1,-2..]
 
 type SimplifierEnv s = StateT (Simplifier s) (ST s)
 data Simplifier s = Simplifier {
    cBinds   :: MV.MVector s Bind
  , nApps    :: Int
  , argTable :: MV.MVector s [Term] -- used for eta reduction
+ , mu       :: Int -- the bind we're simplifying (is probably recursive)
+ , cataMorphism :: Bool -- function recurses in same pattern as a mu-bound type
+ , stream   :: Term
 }
 
 setNApps :: Int -> SimplifierEnv s ()
@@ -75,6 +87,9 @@ simplifyBindings nArgs nBinds bindsV = do
     cBinds   = bindsV
   , nApps    = 0 -- measure the size of the callgraph
   , argTable = argEtas
+  , mu       = -1
+  , cataMorphism = True
+  , stream   = _
   }
 
 simpleBind :: Int -> SimplifierEnv s Bind
@@ -111,7 +126,8 @@ simpleTerm t = let
   in case t of
   Var v -> case v of
     VBind i -> simpleBind i <&> \case
-      BindOpt napps (Core new t) -> if False && napps < 1 then new else Var (VBind i) -- directly inline small callgraphs
+      BindOpt napps (Core new t) -> if False && napps < 1
+        then new else Var (VBind i) -- directly inline small callgraphs
     VArg  i -> gets argTable >>= \at -> MV.read at i <&> fromMaybe t . head
     x -> pure (Var x)
 
@@ -129,6 +145,19 @@ simpleTerm t = let
     fn -> simpleTerm fn >>= \case
       Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
       fn -> App fn <$> (simpleTerm `mapM` args)
+
+--App (Match retT branches d) [arg] -> use argTable >>= MV.length >>= \argCount -> let
+--  isStream arg = True
+--  in if not (isStream arg) then pure t else do
+--  -- look for recursive invocations of fn
+--  let mkBranch (Core t ty) =
+--  streamBranches <- mkBranch `IM.traverse` branches
+--  let nextFn   = BruijnAbs 1 $ App (Match _ streamBranches Nothing)
+
+  -- remove explicit recursion in favor of Yield style generator
+  -- If any of the branches splits a recursive type; switch to stream
+--Match _t branches d -> _
+
   _ -> pure t
 
 simpleGMPInstr :: NumInstrs -> [Term] -> Term
