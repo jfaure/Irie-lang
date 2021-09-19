@@ -161,10 +161,6 @@ doSub newTy (ty:tys) = mergeTyHead newTy ty ++ tys
 --then mergeTyHead newTy ty ++ tys
 --else (ty : doSub newTy tys)
 
-rollRecursive join mVar rolled unrolled = case unrolled of
-  THMuBound m -> join
-  x -> error $ show mVar <> "\n" <> show rolled <> "\n" <> show unrolled
-
 -- generally mergeing depends on polarities. We only merge equal types (typevars mostly) here
 -- Note output(+) (%i1 | %i32) is (%i1) by subtyping, but codegen needs to know the 'biggest' type
 -- Also, The 'biggest' type is not always the negative merge
@@ -175,12 +171,12 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
       zM  = alignWith (these identity identity mergeTypes)
   in case join of
   [THMu a t1 , THMu b t2] | a == b -> [THMu a (t1 `mergeTypes` t2)]
-  [THMu x t1 , THMuBound y] | x == y -> [THMu x t1]
-  [THMuBound y , THMu x t1] | x == y -> [THMu x t1]
+--[THMu x t1 , THMuBound y] | x == y -> [THMu x t1]
+--[THMuBound y , THMu x t1] | x == y -> [THMu x t1]
+  [THMu x t1 , THMuBound y] -> {-[THMu x t1] -} [THMuBound y]
+  [THMuBound y , THMu x t1] -> {-[THMu x t1] -} [THMuBound y]
   [THMu x t1 , t2] -> [THMu x (doSub t2 t1)]
   [t2 , THMu x t1] -> [THMu x (doSub t2 t1)]
---[THMu a t , unrolled] -> rollRecursive join a t unrolled
---[unrolled , THMu a t] -> rollRecursive join a t unrolled
   [THTop , THTop] -> [THTop]
   [THBot , THBot] -> [THBot]
   [THSet a , THSet b] -> [THSet $ max a b]

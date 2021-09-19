@@ -32,14 +32,14 @@ check' es ars labTys inferred gotTy = let
   checkAtomic :: TyHead -> TyHead -> Bool
   checkAtomic inferred gotTy = case {-trace (prettyTyRaw [inferred] <> " <?: " <> prettyTyRaw [gotTy])-} (inferred , gotTy) of
     (THBound x , THBound y) -> x == y
-    (THMu x _, THMuBound y)  -> x == y -- recursive bound equal to its binding
+    (THMu x _, THMuBound y) -> x == y -- recursive bound equal to its binding
     (THSet l1, THSet l2)  -> l1 <= l2
     (THSet 0 , x)         -> True --case x of { THArrow{} -> False ; _ -> True }
     (x , THSet 0)         -> True --case x of { THArrow{} -> False ; _ -> True }
     (THVar x , gTy)       -> True -- check'' (bis V.! x) [gTy]
     (lTy , THVar x)       -> False
     (THPrim x , THPrim y) -> x `primSubtypeOf` y
---  (THMu x [t1] , THTyCon t2) -> alignMu x t1 t1 gotTy
+    (THMu x [t1] , THTyCon t2) -> alignMu x t1 t1 gotTy
     (THTyCon t2 , THMu x [t1]) -> alignMu x t1 t1 inferred
     (THTyCon t1 , THTyCon t2) -> case (t1,t2) of
       (THArrow a1 r1 , THArrow a2 r2) -> let -- handle differing arities (since currying is allowed)
@@ -49,7 +49,7 @@ check' es ars labTys inferred gotTy = let
         go [] y  = check'' r1 [THTyCon $ THArrow y r2]
         go x []  = check'' [THTyCon $ THArrow x r1] r2
         in go a1 a2
-      (THSumTy labels , t@THArrow{}) -> _
+      (THSumTy labels , t@THArrow{}) -> False
       (THSumTy x , THSumTy y)     -> all identity (alignWith (these (const False) (const False) check'') x y)
       (THTuple x , THTuple y)     -> all identity (alignWith (these (const False) (const False) check'') x y)
       (THProduct x , THProduct y) -> all identity (alignWith (these (const False) (const False) check'') x y)
@@ -68,13 +68,15 @@ alignMu x target lty muBound = (if global_debug
   else identity) $ let
   exactAlign :: Semialign f => f [TyHead] -> f [TyHead] -> f Bool
   exactAlign = alignWith (these (const False) (const False) (\[a] [b] -> alignMu x target a b))
+--alignL     = alignWith (these (const True) (const False) (\[a] [b] -> alignMu x target a b))
   in case (lty , muBound) of
   (THTyCon (THProduct lt) , THTyCon (THProduct rt)) -> all identity $ exactAlign lt rt
-  (THTyCon (THSumTy   lt) , THTyCon (THSumTy   rt)) -> all identity $ exactAlign lt rt
+  (THTyCon (THSumTy   lt) , THTyCon (THSumTy   rt)) -> all identity $ exactAlign lt rt -- alignL rt lt
   (THTyCon (THTuple   lt) , THTyCon (THTuple   rt)) -> all identity $ exactAlign lt rt
 --(THTyCon (THSumTy lt) , THTyCon (THSumTy rt)) -> exactAlign lt rt
   (THPrim l , THPrim r) -> l == r -- must be exactly equal to roll up mus
   (THMuBound x , THMu y _) -> x == y
   (THMu y _ , THMuBound x) -> x == y
   (THMu x _ , THMu y _) -> x == y
+  (a , b) -> check _ mempty mempty [a] [b]
   _ -> False

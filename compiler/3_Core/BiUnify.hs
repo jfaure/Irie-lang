@@ -101,10 +101,10 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
   (x , THSet u) -> pure BiEQ
   (THVar p , THVar m) -> use bis >>= \v -> BiEQ <$ do
     MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar p : a) b qa qb) m
---  MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) qa qb) p
+    MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) qa qb) p
     -- We cannot allow vars to point back to each other, otherwise `bisub TVar{} _` will loop
-    let isVar v = (\case { THVar x -> x /= v ; _ -> True })
-    MV.modify v (\(BiSub a b qa qb) -> if any (isVar p) b then BiSub a b qa qb else BiSub a (THVar m : b) qa qb) p
+--  let isVar v = (\case { THVar x -> x /= v ; _ -> True })
+--  MV.modify v (\(BiSub a b qa qb) -> if any (isVar p) b then BiSub a b qa qb else BiSub a (THVar m : b) qa qb) p
   (THVar p , m) -> use bis >>= \v -> (_pSub <$> MV.read v p) >>= \t -> do
     MV.modify v (\(BiSub a b qa qb) -> BiSub a (mergeTyHeadType m b) qa qb) p
     biSub t [m]

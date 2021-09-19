@@ -26,13 +26,64 @@ substTVars :: IName -> TCEnv s Type
 substTVars recTVar = do
   when global_debug (traceM $ "Subst: " <> show recTVar)
   liftMu .= Nothing
+  markOccurs True recTVar
+--simplifyVars True recTVar
   raw <- substTypeVar True recTVar IS.empty IS.empty
   use quants <&> \q -> if q > 0 then [THBi q raw] else raw
 
-shouldGeneralise pos bisub@(BiSub pty mty pq mq) = True -- (if pos then mq else pq) > 0
---  || case if pos then (mty,pq) else (pty,mq) of { ([],n) -> n > 0 ; _ -> False }
+markOccurs pos v = use bis >>= \b -> let
+  markType   pos = mapM_ (markTyHead pos)
+  markTyHead pos = \case
+    THVar v   -> markOccurs pos v -- dupVar pos v
+    THBi b ty -> markType pos ty
+    THMu x ty -> markType pos ty
+    THTyCon t -> case t of
+      THArrow ars r -> traverse_ (markType (not pos)) ars *> markType pos r
+      THProduct   r -> traverse_ (markType pos) r
+      THSumTy     r -> traverse_ (markType pos) r
+      THTuple     r -> traverse_ (markType pos) r
+    x -> pure ()
+--substVar pos v (BiSub pty mty pq mq) = use bis >>= \b -> case if pos then pty else mty of
+--  [THVar y] | y /= v && (pos && pq == 0 || mq == 0) -> MV.modify b (over (if pos then pQ else mQ) (\x->x-1)) v *> MV.read b y >>= substVar pos y
+--  x -> pure x -- <$ dupVar pos v
+  in MV.read b v >>= \bisub@(BiSub pty mty pq mq) -> do
+--  t <- substVar pos v bisub
+    let t = if pos then pty else mty
+--  MV.modify b (over (if pos then pSub else mSub) (const t)) v
+    dupVar pos v
+    when ((if pos then pq else mq) == 0) (markType pos t)
 
-getVars = map (\(THVar i) -> i) . filter (\case { THVar{}->True; _->False} )
+--simplifyVars pos v = use bis >>= \b -> let
+--  markType   pos = mapM_ (markTyHead pos)
+--  markTyHead pos = \case
+--    THVar v   -> simplifyVars pos v -- dupVar pos v
+--    THBi b ty -> markType pos ty
+--    THMu x ty -> markType pos ty
+--    THTyCon t -> case t of
+--      THArrow ars r -> traverse_ (markType (not pos)) ars *> markType pos r
+--      THProduct   r -> traverse_ (markType pos) r
+--      THSumTy     r -> traverse_ (markType pos) r
+--      THTuple     r -> traverse_ (markType pos) r
+--    x -> pure ()
+--  in MV.read b v >>= \(BiSub pty mty pq mq) -> do
+--    t <- if pos
+--    then case pty of
+--      [] ->                 pure []
+--      [THVar y] | y == v -> pure []
+--      [THVar y] -> MV.read b y <&> _pSub >>= \t -> t <$ MV.write b v (BiSub t mty pq mq)
+--      x -> pure x
+--    else case mty of
+--      [] ->                 pure []
+--      [THVar y] | y == v -> pure []
+--      [THVar y] -> MV.read b y <&> _mSub >>= \t -> t <$ MV.write b v (BiSub pty t pq mq)
+--      x -> pure x
+--    dupVar pos v
+--    when ((if pos then pq else mq) == 0) (markType pos t)
+
+shouldGeneralise pos bisub@(BiSub pty mty pq mq) = (if pos then mq else pq) > 0
+-- && case if pos then (mty,pq) else (pty,mq) of { ([],n) -> n > 0 ; _ -> False }
+
+getVars = map (\(THVar i) -> i) . filter (\case { THVar{}->True; _->False})
 
 -- commit to generalising a type variable
 generaliseVar pos vars v bisub@(BiSub pty mty pq mq) = quants <<%= (+1) >>= \q -> do
@@ -42,7 +93,10 @@ generaliseVar pos vars v bisub@(BiSub pty mty pq mq) = quants <<%= (+1) >>= \q -
   pure [THBound q] --(if pos then _pSub else _mSub) <$> MV.read vars v
 
 addPiBound pos vars v = MV.read vars v >>= \bisub -> --d_ (show v <> show pos <> show bisub :: Text) $ pure []
-  if shouldGeneralise pos bisub then generaliseVar pos vars v bisub else pure []
+--if shouldGeneralise pos bisub then generaliseVar pos vars v bisub else pure []
+  case _pSub bisub of
+    t@[THBound q] -> pure t
+    x -> if shouldGeneralise pos bisub then generaliseVar pos vars v bisub else pure []
 
 genVarLoop :: Bool -> [IName] -> TCEnv s Type
 genVarLoop pos vars = use bis >>= \b -> ((\v -> (v,) <$> MV.read b v) `mapM` vars)
@@ -50,17 +104,17 @@ genVarLoop pos vars = use bis >>= \b -> ((\v -> (v,) <$> MV.read b v) `mapM` var
   Nothing -> pure []
   Just (first , bisub) -> do
     let varsIS = IS.fromList vars
-    q <- use quants
-    v <- generaliseVar pos b first bisub
+    v <- addPiBound pos b first
 
     -- Co-occurence analysis; find and remove generalisables that polar co-occur with this 'v'
     -- eg. foldr : (A → (C & B) → B) → C → μx.[Cons : {A , x} | Nil : {}] → (B & C)
     --     foldr : (A → B → B) → B → μx.[Cons : {A , x} | Nil : {}] → B
-    let go (l , r) v = MV.read b v >>= \(BiSub p m qp qm) -> MV.write b v (BiSub (THBound q : p) (THBound q : m) qp qm) $>
+    let go (l , r) v = MV.read b v >>= \(BiSub p m qp qm) -> pure $ --MV.write b v (BiSub (THBound q : p) (THBound q : m) qp qm) $>
           ((IS.fromList (getVars p) IS.\\ varsIS) `IS.union` l , (IS.fromList (getVars m) IS.\\ varsIS) `IS.union` r)
     (cooccurL , cooccurR) <- foldM go (IS.empty,IS.empty) vars
     IS.toList (cooccurL `IS.difference` cooccurR) `forM` \i ->
-      MV.modify b (\(BiSub p m qp qm) -> BiSub [THBound q] [THBound q] qp qm) i
+--    MV.modify b (\(BiSub p m qp qm) -> BiSub [THBound q] [THBound q] qp qm) i
+      MV.modify b (\(BiSub p m qp qm) -> BiSub p m 0 0) i -- zero out occurences
     pure v
 
 substTypeVar pos v loops guarded = use bis >>= \b -> let
@@ -84,11 +138,15 @@ substTypeVar pos v loops guarded = use bis >>= \b -> let
         musCur <- muEqui <<%= (\m -> foldr IM.delete m (IS.toList loops'))
         mergeTypes [] <$> foldM addMu rawT ((musCur IM.!?) <$> IS.toList loops')
 
-insertMu x t' = let
-  t = rmMuBound x t'
-  rmMuBound x = filter (\case { THMuBound y -> y /= x ; _ -> True })
-  findMuBound x = any (\case { {-THMuBound y -> y == x ;-} THMu y _ -> y == x ; _ -> False })
-  in if findMuBound x t then t else [THMu x t]
+insertMu x t = let
+  -- Note. [y & µx._] means y and x are the same recursive type
+  -- µx.µy. = µx. ; y and x are the same
+  rmMuBound x = filter (\case { THMuBound y -> False ; _ -> True })
+  rmOuterMus x t = case t of
+    THMu y t -> let (xs , ts) = unzip $ rmOuterMus x <$> t in (min y (minimum xs) , concat ts)
+    t        -> (x , [t])
+  (x' , t') = unzip $ rmOuterMus x <$> rmMuBound x t
+  in [THMu (minimum x') (concat t')]
 
 addMuBind rawT guarded x = do
   let (mTypes , other) = partition (\case { THMuBound i->True ; _->False }) rawT
@@ -110,7 +168,6 @@ substTypeMerge pos loops guarded ty = fmap ({-nullLattice pos .-} foldr mergeTyp
   in  \case
   THVar x   -> substTypeVar pos x loops guarded
   THBi b ty -> (\t->[THBi b t]) <$> substGuarded pos ty
---THMu b ty -> (\t->[THMu b $ rmMuBound b t]) <$> substGuarded pos ty
   THMu x ty -> (\t->insertMu x t) <$> substGuarded pos ty
   THTyCon t -> hashCons =<< case t of
     THArrow ars r -> THArrow   <$> traverse (substGuarded (not pos)) ars <*> substGuarded pos r
