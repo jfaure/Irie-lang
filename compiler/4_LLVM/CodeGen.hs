@@ -627,21 +627,21 @@ emitMatchApp rl scrut ty alts d = case scrut of
            , (kNext  , Core (Abs [(argI,_) , (nextI,_)] freeE bodyNext tyNext) tE)
            ] = IM.toList alts
       mdo
-      hasNext <- icmp IP.NE len (constI64 0)
-      condBr hasNext next end
+        hasNext <- icmp IP.NE len (constI64 0)
+        condBr hasNext next end
 
-      next    <- block
-      arg1    <- load' =<< gepTy llvmElTy arrPtr [len]
-      let splitArgs = IM.fromList [(argI , LLVMOp arg1) , (nextI , LLVMOp sOpNext)]
-      modifySF $ \x->x{ regArgs = IM.union (regArgs x) splitArgs }
-      nextRet <- cgTerm bodyNext <* br phiB
+        next    <- block
+        arg1    <- load' =<< gepTy llvmElTy arrPtr [len]
+        let splitArgs = IM.fromList [(argI , LLVMOp arg1) , (nextI , LLVMOp sOpNext)]
+        modifySF $ \x->x{ regArgs = IM.union (regArgs x) splitArgs }
+        nextRet <- cgTerm bodyNext <* br phiB
 
-      end    <- block
-      endRet <- cgTerm bodyEnd   <* br phiB
+        end    <- block
+        endRet <- cgTerm bodyEnd   <* br phiB
 
-      phiB <- block
-      -- TODO re-add (merge) cgop annotations after phi
-      LLVMOp <$> phi [(op nextRet , next) , (op endRet , end)]
+        phiB <- block
+        -- TODO re-add (merge) cgop annotations after phi
+        LLVMOp <$> phi [(op nextRet , next) , (op endRet , end)]
   _ -> error $ show scrut
 
 genericSum_t = mkStruct_t [i64_t , voidPtrType]

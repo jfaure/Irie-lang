@@ -140,11 +140,6 @@ generaliseBinds i ms = use wip >>= \wip' -> do
           Core expr coreTy -> do
             ty <- case expr of -- inferrence produces ret type of Abs, ignoring arguments
               Abs ars free x fnTy -> do
-                -- Ensure top level polyvars occurences are marked (they won't have been bisubbed)
-                {-(\x -> x <$ dupp True x) $-}
---              (dupVar False . fst) `mapM` ars
---              use bis >>= \v -> ars `forM` \(x , _) -> MV.modify v
---                (\bisub@(BiSub p m qp qm) -> (case m of { [] -> BiSub p m qp (qm+1) ; _ -> bisub })) x
                 pure $ prependArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
               _ -> pure coreTy
             -- check for recursive type

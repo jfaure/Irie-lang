@@ -53,37 +53,8 @@ markOccurs pos v = use bis >>= \b -> let
     dupVar pos v
     when ((if pos then pq else mq) == 0) (markType pos t)
 
---simplifyVars pos v = use bis >>= \b -> let
---  markType   pos = mapM_ (markTyHead pos)
---  markTyHead pos = \case
---    THVar v   -> simplifyVars pos v -- dupVar pos v
---    THBi b ty -> markType pos ty
---    THMu x ty -> markType pos ty
---    THTyCon t -> case t of
---      THArrow ars r -> traverse_ (markType (not pos)) ars *> markType pos r
---      THProduct   r -> traverse_ (markType pos) r
---      THSumTy     r -> traverse_ (markType pos) r
---      THTuple     r -> traverse_ (markType pos) r
---    x -> pure ()
---  in MV.read b v >>= \(BiSub pty mty pq mq) -> do
---    t <- if pos
---    then case pty of
---      [] ->                 pure []
---      [THVar y] | y == v -> pure []
---      [THVar y] -> MV.read b y <&> _pSub >>= \t -> t <$ MV.write b v (BiSub t mty pq mq)
---      x -> pure x
---    else case mty of
---      [] ->                 pure []
---      [THVar y] | y == v -> pure []
---      [THVar y] -> MV.read b y <&> _mSub >>= \t -> t <$ MV.write b v (BiSub pty t pq mq)
---      x -> pure x
---    dupVar pos v
---    when ((if pos then pq else mq) == 0) (markType pos t)
-
 shouldGeneralise pos bisub@(BiSub pty mty pq mq) = (if pos then mq else pq) > 0
 -- && case if pos then (mty,pq) else (pty,mq) of { ([],n) -> n > 0 ; _ -> False }
-
-getVars = map (\(THVar i) -> i) . filter (\case { THVar{}->True; _->False})
 
 -- commit to generalising a type variable
 generaliseVar pos vars v bisub@(BiSub pty mty pq mq) = quants <<%= (+1) >>= \q -> do
@@ -92,10 +63,11 @@ generaliseVar pos vars v bisub@(BiSub pty mty pq mq) = quants <<%= (+1) >>= \q -
   MV.modify vars (\(BiSub p m qp qm) -> BiSub [THBound q] [THBound q] qp qm) v
   pure [THBound q] --(if pos then _pSub else _mSub) <$> MV.read vars v
 
-addPiBound pos vars v = MV.read vars v >>= \bisub -> --d_ (show v <> show pos <> show bisub :: Text) $ pure []
+addPiBound pos vars v = MV.read vars v >>= \bisub@(BiSub pty mty pq mq) -> --d_ (show v <> show pos <> show bisub :: Text) $ pure []
 --if shouldGeneralise pos bisub then generaliseVar pos vars v bisub else pure []
-  case _pSub bisub of
-    t@[THBound q] -> pure t
+  case if pos then mty else pty of
+    t@[THBound q] -> pure t -- $ if pos then pty else mty
+    [THVar v] | [THVar y] <- if pos then pty else mty , y == v -> pure []
     x -> if shouldGeneralise pos bisub then generaliseVar pos vars v bisub else pure []
 
 genVarLoop :: Bool -> [IName] -> TCEnv s Type
@@ -109,6 +81,7 @@ genVarLoop pos vars = use bis >>= \b -> ((\v -> (v,) <$> MV.read b v) `mapM` var
     -- Co-occurence analysis; find and remove generalisables that polar co-occur with this 'v'
     -- eg. foldr : (A → (C & B) → B) → C → μx.[Cons : {A , x} | Nil : {}] → (B & C)
     --     foldr : (A → B → B) → B → μx.[Cons : {A , x} | Nil : {}] → B
+    let getVars = map (\(THVar i) -> i) . filter (\case { THVar{}->True; _->False})
     let go (l , r) v = MV.read b v >>= \(BiSub p m qp qm) -> pure $ --MV.write b v (BiSub (THBound q : p) (THBound q : m) qp qm) $>
           ((IS.fromList (getVars p) IS.\\ varsIS) `IS.union` l , (IS.fromList (getVars m) IS.\\ varsIS) `IS.union` r)
     (cooccurL , cooccurR) <- foldM go (IS.empty,IS.empty) vars

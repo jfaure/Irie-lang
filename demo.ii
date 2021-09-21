@@ -14,6 +14,10 @@
 --import imports/list
 --import imports/prelude
 
+fromMaybe a l = case l of 
+  | Maybe b => b
+  | Nothing => a
+
 f x = f
 _>_ = \f a => f a
 _<_ = \a f => f a
@@ -48,7 +52,7 @@ foldr f s l = case l of
 foldl f s l = case l of
   | Cons x xs => foldl f (f s x) xs
   | Nil => s
--- 
+
 -- -- foldl f a bs = foldr (\b g x => g (f x b)) identity bs a
 -- -- mapF f = foldr (\x xs => f x : xs) []
 -- --foldr f z (Stream next s0) = go s0 where go s = case next s of
