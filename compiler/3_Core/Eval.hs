@@ -23,10 +23,14 @@ import qualified Data.Vector.Mutable as MV
 -- 1. extract wrapper-worker functions, substitute wrapper freely in the worker
 -- 2. worker has an outer case over an argument; attempt to fuse with the copy function
 --  2.1 distrubute the id cata accross the case, then make a single cata
---  2.2 immediately make a cata, then fuse the outer cata (higher-order fusion); iff the recursive invocation needs an inherited attribute
+--  2.2 immediately make a cata, then fuse the outer cata (higher-order fusion);
+-- * iff the recursive invocation needs an inherited attribute
 
--- ! Prefer stream forms when possible
--- Swaps (fold-build <> stream-unstream): stream foldl over a label accumulator
+-- 4 Cases
+-- Stream -> Stream
+-- fold   -> build
+-- Stream -> Build  `foldl Cons` `zip`
+-- fold   -> Stream `foldr Cons` (iff fold-build no fuse); inline builds and derive a stream
 
 -- Fusion
 -- * cata = same shape as recursive types: (nested recursion) (eg. fn a1 (recurse))
@@ -60,15 +64,27 @@ import qualified Data.Vector.Mutable as MV
 -- Stream a b = ∃s. Stream (s -> Step a b s) s
 -- Step a b s = SLeaf a | SFork b s s | Skip s
 
-
 conNothing : conJust : _ = [-1,-2..]
 
+type2ArgKind :: Type -> ArgKind
+type2ArgKind = _
+
 type SimplifierEnv s = StateT (Simplifier s) (ST s)
+data ArgKind
+  = APrim PrimType
+  | AFunction [ArgKind] ArgKind
+  | ARecord   (IntMap ArgKind)
+  | ASum      (IntMap SumRep)
+  | APoly
+  | ARec -- only in Array or Tree (also fn return | any covariant position?)
+data SumRep = Enum | Peano | Wrap | Array [ArgKind] | Tree [ArgKind]
+
 data Simplifier s = Simplifier {
    cBinds   :: MV.MVector s Bind
  , nApps    :: Int
+-- , argTable :: MV.MVector s [(ArgKind , Term)] -- used for eta reduction
  , argTable :: MV.MVector s [Term] -- used for eta reduction
- , mu       :: Int -- the bind we're simplifying (is probably recursive)
+ , self     :: Int -- the bind we're simplifying (is probably recursive)
  , cataMorphism :: Bool -- function recurses in same pattern as a mu-bound type
  , stream   :: Term
 }
@@ -87,7 +103,7 @@ simplifyBindings nArgs nBinds bindsV = do
     cBinds   = bindsV
   , nApps    = 0 -- measure the size of the callgraph
   , argTable = argEtas
-  , mu       = -1
+  , self     = -1
   , cataMorphism = True
   , stream   = _
   }
@@ -96,6 +112,7 @@ simpleBind :: Int -> SimplifierEnv s Bind
 simpleBind n = gets cBinds >>= \cb -> MV.read cb n >>= \b -> do
 --traceM "\n"
   svN <- zeroNApps
+  modify $ \x->x{self = n}
   MV.write cb n (BindOpt (0xFFFFFF) (Core (Var (VBind n)) [])) -- recursion guard
   new <- case b of
     BindOpt nApps body -> setNApps nApps *> pure body
@@ -137,11 +154,7 @@ simpleTerm t = let
 
   App f args -> incNApps *> case f of
     Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
-    Instr i -> (simpleTerm `mapM` args) <&> \args -> case i of
-      GMPInstr j -> simpleGMPInstr j args
-      Zext | [Lit (Int i)]   <- args -> Lit (Fin 64 i)
-           | [Lit (Fin n i)] <- args -> Lit (Fin 64 i)
-      i -> App f args
+    Instr i -> (simpleTerm `mapM` args) <&> \args -> simpleInstr i args
     fn -> simpleTerm fn >>= \case
       Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
       fn -> App fn <$> (simpleTerm `mapM` args)
@@ -159,6 +172,12 @@ simpleTerm t = let
 --Match _t branches d -> _
 
   _ -> pure t
+
+simpleInstr i args = case i of
+  GMPInstr j -> simpleGMPInstr j args
+  Zext | [Lit (Int i)]   <- args -> Lit (Fin 64 i)
+       | [Lit (Fin n i)] <- args -> Lit (Fin 64 i)
+  i -> App (Instr i) args
 
 simpleGMPInstr :: NumInstrs -> [Term] -> Term
 simpleGMPInstr i args = let

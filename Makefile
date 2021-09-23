@@ -17,4 +17,5 @@ prof:
 $(NAME): $(SRC)
 	stack -j9 build --fast --ghc-options="-dynamic" &&\
 	ln -sf $(EXE) ./$(NAME)
+#|| echo "If you don't have nixos, set enable: false in the stack.yaml:15 (and make sure you have llvm installed)"
 	@touch $(NAME) # since stack does nothing if you modify a file without changing code

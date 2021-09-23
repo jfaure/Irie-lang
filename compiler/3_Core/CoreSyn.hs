@@ -56,6 +56,7 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | PartialApp [Type] Term [Term] -- Top level PAp => Abs (no fresh argnames after parse)
  | BruijnAbs  Int Term -- debruijn abstraction
  | StreamCons (IM.IntMap Term) -- difference with Cons is that absent labels produce Nothing
+ | RecLabel ILabel [Expr]
 -- | HList Int [Term] -- E|One a|Two a b .. (Including Maybe!)
 
 -- hList using negative labels
@@ -100,7 +101,7 @@ data TyHead
  | THVar       BiSubName -- generalizes to THBound if survives biunification and simplification
  | THVarGuard  IName     -- mark vars when substituting a guarded type (mu.bound if seen again)
  | THVarLoop   IName     -- unguarded variable loops
- | THBound     IName     -- pi-bound debruijn index, (replace with fresh THVar when biunify pi binders)
+ | THBound     IName     -- pi-bound debruijn index, (replace with fresh THVar at THBi to biunify)
  | THMuBound   IName     -- mu-bound debruijn index (must be guarded and covariant) 
 
  -- type Families | indexed types
