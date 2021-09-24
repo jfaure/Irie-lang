@@ -6,6 +6,7 @@
 -- * linking and producing executables
 module LlvmDriver
 where
+{-
 
 import qualified Data.ByteString.Short as BS
 
@@ -167,3 +168,4 @@ testJIT = withJITMachine $ \jit -> do
   runINJIT jit (LLVM.AST.defaultModule , "test" , \f -> (mkMainFun f))
   runINJIT jit (LLVM.AST.defaultModule , "xd" , \f -> print $ (mkDoubleFun f) 3.3)
 --  >>= \js -> incrementalJIT (Just js) (LLVM.AST.defaultModule , "test" , \f -> pure ())
+-}

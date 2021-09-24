@@ -8,7 +8,7 @@ import CoreUtils
 import TypeCheck
 import TCState
 import PrettyCore
-import DesugarParse (matches2TT)
+import DesugarParse -- (matches2TT)
 import Externs
 import Mixfix
 import Substitute
@@ -324,33 +324,48 @@ infer = let
     pure $ Ty sumTy
 
   P.Match alts -> let
-      (altLabels , freeVars , patterns , rawTTs) = unzip4 alts
+--    (altLabels , freeVars , patterns , rawTTs) = unzip4 alts
     -- * find the type of the sum type being deconstructed
     -- * find the type of it's alts (~ lambda abstractions)
     -- * type of Match is (sumTy -> Join altTys)
-      mkFnTy vals = [THTyCon $ THTuple $ V.fromList vals] -- \case { [] -> [THSet 0] ; x -> [THArrow (drop 1 x) [THSet 0]] }
-      pattern2Ty = mkFnTy . \case
-        [] -> []
-        P.PArg _ : xs -> [THSet 0] : [pattern2Ty xs]
-        x -> error $ "unknown pattern: " <> show x
-      tys = pattern2Ty <$> patterns
+--    mkFnTy vals = [THTyCon $ THTuple $ V.fromList vals] -- \case { [] -> [THSet 0] ; x -> [THArrow (drop 1 x) [THSet 0]] }
+--    pattern2Ty = mkFnTy . \case
+--      [] -> []
+--      P.PArg _ : xs -> [THSet 0] : [pattern2Ty xs]
+--      x -> error $ "unknown pattern: " <> show x
+--    tys = pattern2Ty <$> patterns
+    desugarFns = \(lname , free , pats , tt) -> let
+      (args , _ , e) = patterns2TT pats tt
+      in (lname , args , _ , e)
+    (labels , args , _ , exprs) = unzip4 $ (desugarFns <$> alts)
     in do
-    altExprs <- infer `mapM` rawTTs
-    let altTys = tyOfExpr <$> altExprs
-    retTy <- foldl mergeTypes [] <$> pure altTys -- (tyOfExpr <$> altExprs)
-    let unpat = \case { P.PArg i -> i ; x -> error $ "not implemented: pattern: " <> show x }
-        mkFn pat free PoisonExpr = (PoisonExpr , [])
-        mkFn pat free (Core t tyAltRet) = let
-          argNames = unpat <$> pat
-          argTys   = (\i -> [THVar i]) <$> argNames -- TODO !! withbisubs get new thvars !
-          args     = zip argNames argTys
-          in (Core (Abs args free t tyAltRet) tyAltRet
-             , [THTyCon $ THTuple $ V.fromList argTys])
-        (alts , altTys) = unzip $ zipWith3 mkFn patterns freeVars altExprs
-        altLabelsMap = IM.fromList $ zip altLabels alts
-        scrutTy = [THTyCon $ THSumTy $ IM.fromList $ zip altLabels altTys] -- [THSplit altLabels]
+    alts <- infer `mapM` exprs
+    let altTys = tyOfExpr <$> alts
+    retTy <- foldl mergeTypes [] <$> pure altTys
+    let altTys' = map (\altArgs -> [THTyCon $ THTuple $ V.fromList (arg2ty <$> altArgs)]) args
+        scrutTy = [THTyCon $ THSumTy $ IM.fromList $ zip labels altTys'] -- [THSplit altLabels]
         matchTy = mkTyArrow [scrutTy] retTy
-    pure $ Core (Match retTy altLabelsMap Nothing) matchTy
+        arg2ty i= [THVar i]
+        altsMap = IM.fromList $ zip labels $ zipWith (\ty (Core t _) -> Core t ty) altTys alts
+    pure $ Core (Match retTy altsMap Nothing) matchTy
+
+--  altExprs <- infer `mapM` rawTTs
+--  let altTys = tyOfExpr <$> altExprs
+--  retTy <- foldl mergeTypes [] <$> pure altTys -- (tyOfExpr <$> altExprs)
+--    let unpat = \case { P.PArg i -> i ; x -> error $ "not implemented: pattern: " <> show x }
+--        mkFn pat free PoisonExpr = (PoisonExpr , [])
+--        mkFn pat free (Core t tyAltRet) = let
+--          (argNames , _argTys , expr) = patterns2TT pat t
+--          argNames = unpat <$> pat
+--          argTys   = (\i -> [THVar i]) <$> argNames -- TODO !! withbisubs get new thvars !
+--          args     = zip argNames argTys
+--          in (Core (Abs args free t tyAltRet) tyAltRet
+--             , [THTyCon $ THTuple $ V.fromList argTys])
+--        (alts , altTys) = unzip $ zipWith3 mkFn patterns freeVars altExprs
+--        altLabelsMap = IM.fromList $ zip altLabels alts
+--        scrutTy = [THTyCon $ THSumTy $ IM.fromList $ zip altLabels altTys] -- [THSplit altLabels]
+--        matchTy = mkTyArrow [scrutTy] retTy
+--    pure $ Core (Match retTy altLabelsMap Nothing) matchTy
 
   -- desugar --
   P.LitArray literals -> let

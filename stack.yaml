@@ -2,6 +2,7 @@
 # resolver: https://example.com/snapshots/2018-01-01.yaml
 #resolver: lts-14.20
 resolver: lts-17.7
+#resolver: lts-18.10
 compiler: ghc-8.10.4
 
 allow-newer: true

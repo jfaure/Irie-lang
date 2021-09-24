@@ -1,4 +1,6 @@
 module CodeGen (mkStg) where
+mkStg = _
+{-
 import Prim
 import Prim2LLVM hiding (gep)
 --import Externs
@@ -707,3 +709,4 @@ genLabel i tts = let
 --   retBlockPairs <- genAlt endBlock `mapM` branches
 --   endBlock <- block `named` "switchEnd"
 --   phi $ (dSsa, dBlock) : retBlockPairs
+-}

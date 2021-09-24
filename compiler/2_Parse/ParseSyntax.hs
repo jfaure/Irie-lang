@@ -90,14 +90,18 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
 
 -- patterns represent arguments of abstractions
 data Pattern
- = PArg  IName -- introduce VLocal arguments
- | PTT   TT
- | PApp  Pattern [Pattern]
--- | PLit  Literal
--- | PWildCard
+ = PArg   IName -- introduce VLocal arguments
+ | PComp  IName CompositePattern
+
+data CompositePattern
+ = PLabel LName [Pattern]
+ | PCons  [(FName , Pattern)]
+ | PWildCard
+ | PLit   Literal
+
+-- | PTT    TT
 -- | PTyped Pattern TT
 -- | PAs   IName Pattern
--- | match sum-of-product ?
 
 data ParseState = ParseState {
    _indent          :: Pos -- start of line indentation (need to save it for subparsers)
@@ -138,5 +142,6 @@ deriving instance Show ImportDecl
 deriving instance Show TTName
 deriving instance Show FnMatch 
 deriving instance Show TT
+deriving instance Show CompositePattern
 deriving instance Show Pattern
 deriving instance Show LetRecT

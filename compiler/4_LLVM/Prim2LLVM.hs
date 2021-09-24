@@ -1,5 +1,6 @@
 {-# Language TypeFamilies #-}
 module Prim2LLVM where
+{-
 import Prim
 import CoreSyn
 import CoreUtils
@@ -639,3 +640,4 @@ getPrimDecl iname = let
       modify $ \x->x{ primDecls = Just v }
       getDecl iname v
     Just  v -> getDecl iname v
+    -}

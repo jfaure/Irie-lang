@@ -250,7 +250,7 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
        _indent      = mkPos 1
      , _moduleWIP   = startModule
      , _tmpReserved = []
-     , _piBound = []
+     , _piBound     = []
      }
 
 -- group declarations as they are parsed
@@ -363,15 +363,15 @@ ttArg , tt :: Parser TT
     , appOrArg
     ] <?> "tt"
   argOrLens = arg >>= \larg -> option larg (lens larg) -- lens bind tighter than App
-  appOrArg = getOffset >>= \o -> argOrLens >>= \larg -> option larg (choice
-    [ case larg of
-        Lit l -> LitArray . (l:) <$> some (lexeme literalP)
-        P.Label l [] -> P.Label l <$> some arg
-        fn -> choice
-          [ Juxt o . (fn:) <$> some (linefold argOrLens)
-          , pure fn
-          ]
-    ])--  >>= \tt -> option tt (lens tt)
+  appOrArg = getOffset >>= \o -> argOrLens >>= \larg -> option larg
+    ( case larg of
+       Lit l -> LitArray . (l:) <$> some (lexeme literalP)
+       P.Label l [] -> P.Label l <$> some arg
+       fn -> choice
+         [ Juxt o . (fn:) <$> some (linefold argOrLens)
+         , pure fn
+         ]
+    )--  >>= \tt -> option tt (lens tt)
   lens :: TT -> Parser TT
   lens record = let
     lensNext path = getOffset >>= \o -> reservedChar '.' *> choice [
@@ -415,7 +415,8 @@ ttArg , tt :: Parser TT
     in Cons <$> (conHash <|> conBraces)
 
   caseSplits = Match <$> let
-    split = newArgNest $ mdo
+    split = newArgNest $ do
+      svIndent
       lName <- iden >>= newSLabel
       optional (reservedChar '@')
       pats <- many singlePattern
@@ -423,7 +424,12 @@ ttArg , tt :: Parser TT
       splitFn <- tt
       free <- getFreeVars
       pure (lName , free , pats , splitFn)
-    in choice [some $ try (scn *> reservedChar '|' *> split) , pure <$> split]
+--  in choice [some $ try (scn *> reservedChar '|' *> split) , pure <$> split]
+    in do
+      ref <- use indent <* scn
+      L.indentLevel >>= \i -> case compare i ref of
+        LT -> fail "new case should not be less indented than reference indent"
+        _  -> indentedItems ref scn split (fail "")
   match = reserved "case" *> do
     scrut  <- tt
     reserved "of"
@@ -453,13 +459,30 @@ ttArg , tt :: Parser TT
 
 -- TODO parse patterns as TT's to handle pi-bound arguments
 pattern = choice
- [ try (singlePattern >>= \x -> option x (PApp x <$> some singlePattern))
- , PTT <$> ttArg]
+  [ try iden >>= \i -> addArgName i >>= \a -> choice
+     [ some singlePattern >>= \args -> lookupSLabel i >>=
+         maybe (newSLabel i) pure <&> \f -> PComp a (PLabel f args)
+     , loneIden a i
+     ]
+  , singlePattern
+  ]
+
+loneIden a i = lookupSLabel i <&> \case
+  Nothing -> PArg a
+  Just  l -> PComp a (PLabel l [])
+
 singlePattern = choice
- [ iden >>= \i -> lookupSLabel i >>= \case
-     Nothing -> PArg <$> addArgName i
-     Just  x -> PApp (PArg x) <$> many singlePattern
+ [ try iden >>= \i -> addArgName i >>= \a -> loneIden a i
  , parens pattern
+ , addArgName "" >>= \a -> PComp a <$> choice
+   [ let fieldPattern = iden >>= \iStr -> newFLabel iStr >>= \i -> (i,) <$> choice
+           [ reservedOp "=" *> pattern
+           , PArg <$> addArgName iStr -- { A } pattern is same as { A=A }
+           ]
+     in PCons <$> braces (fieldPattern `sepBy` reservedChar ',')
+   , PWildCard <$ reserved "_"
+   , PLit <$> literalP
+   ]
  ]
 
 ---------------------

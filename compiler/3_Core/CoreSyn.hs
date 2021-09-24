@@ -56,7 +56,8 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | PartialApp [Type] Term [Term] -- Top level PAp => Abs (no fresh argnames after parse)
  | BruijnAbs  Int Term -- debruijn abstraction
  | StreamCons (IM.IntMap Term) -- difference with Cons is that absent labels produce Nothing
- | RecLabel ILabel [Expr]
+ | Stream   Term
+ | UnStream Term
 -- | HList Int [Term] -- E|One a|Two a b .. (Including Maybe!)
 
 -- hList using negative labels

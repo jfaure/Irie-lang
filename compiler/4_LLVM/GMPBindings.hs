@@ -1,4 +1,5 @@
 module GMPBindings where
+{-
 import Prim2LLVM
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -158,3 +159,4 @@ putNbr i = let base10 = constI32 10 in do
   toStr `call'` [buf , base10 , i]
   puts  <- lift (getPrimDecl puts)
   puts `call'` [buf]
+  -}

@@ -11,8 +11,8 @@ import PrettyCore
 import Infer
 import Eval
 import CodeGen
-import LLVM.Pretty
-import qualified LlvmDriver as LD
+--import LLVM.Pretty
+--import qualified LlvmDriver as LD
 
 import Text.Megaparsec hiding (many)
 import qualified Data.Text.IO as T.IO
@@ -132,21 +132,17 @@ text2Core flags resolver fName progText = do
 ---------------------------------
 --codegen flags input@((resolver , Import bindNames judged) , exts , judgedModule) = let
 codegen flags input@(resolver , exts , jm@(JudgedModule modNm bindNms a b judgedBinds)) = let
-  llvmMod      = mkStg exts (JudgedModule modNm bindNms a b judgedBinds)
-  putPass :: Text -> IO () = \case
-    "llvm-hs"    -> let
-      text = ppllvm llvmMod
-      in TL.IO.putStrLn text *> TL.IO.writeFile "/tmp/aryaOut.ll" text
-    "llvm-cpp"   -> LD.dumpModule llvmMod
-    _            -> pure ()
-  in input <$ do
-    putPass `mapM_` printPass flags
-    when (jit flags) $ LD.runJIT (optlevel flags) [] llvmMod
-
---pipe2vimcat txt = do
---  (Just vimcatIn,_, _, _) <- createProcess (proc "vimcat" ["--cmd", "syntax on\n --color=always"]) { std_in = CreatePipe }
---  TL.IO.hPutStrLn vimcatIn txt
---  hClose vimcatIn
+  in pure input
+--llvmMod      = mkStg exts (JudgedModule modNm bindNms a b judgedBinds)
+--putPass :: Text -> IO () = \case
+--  "llvm-hs"    -> let
+--    text = ppllvm llvmMod
+--    in TL.IO.putStrLn text *> TL.IO.writeFile "/tmp/aryaOut.ll" text
+--  "llvm-cpp"   -> LD.dumpModule llvmMod
+--  _            -> pure ()
+--in input <$ do
+--  putPass `mapM_` printPass flags
+--  when (jit flags) $ LD.runJIT (optlevel flags) [] llvmMod
 
 ----------
 -- Repl --
@@ -177,4 +173,4 @@ repl2 = mapM T.IO.putStrLn =<< replWith [] (\st line -> pure $! line : st)
 
 testrepl = replCore defaultCmdLine
 
-testjit = LD.testJIT
+--testjit = LD.testJIT
