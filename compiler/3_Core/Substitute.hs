@@ -13,6 +13,7 @@ import qualified Data.Vector.Mutable as MV
 
 -- substTVars: recursively substitute type vars, insert foralls and μ binders, simplify types
 -- Simplifications:
+--  * ? A -> A & Int =? Int -> Int
 --  * remove polar variables `a&int -> int` => int->int ; `int -> a` => `int -> bot`
 --  * unify inseparable variables (co-occurence `a&b -> a|b` and indistinguishables `a->b->a|b`)
 --  * remove variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int`

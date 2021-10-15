@@ -61,6 +61,7 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
   -- Bound vars (removed at THBi, so should never be encountered during biunification)
   (THBound i , x) -> error $ "unexpected THBound: " <> show i
   (x , THBound i) -> error $ "unexpected THBound: " <> show i
+  (x , THBi nb y) -> error $ "unexpected THBi: "    <> show (p,m)
   (THBi nb x , y) -> do
     -- make new THVars for the debruijn bound vars here
     level %= (\(Dominion (f,x)) -> Dominion (f,x+nb))
@@ -81,6 +82,8 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
     pure r
 
   (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)
+  (THTyCon (THSumTy x) , THMu m y) -> biSub [p] y -- [Nil : {}] <: μx.[Nil : {} | Cons : {%i32 , x}]
+
 --(THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
   (THPi (Pi p ty) , y) -> biSub ty [y]
   (x , THPi (Pi p ty)) -> biSub [x] ty
@@ -89,6 +92,8 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
   (THMu a x , THMu b y) | a == b -> biSub x y
   (THMuBound x, THMuBound y) -> if x == y then pure BiEQ else error $ "mu types not equal: " <> show x <> " /= " <> show y
   -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
+  -- TODO prevent loop on `[0 : {}] <==> τ3 ;; [0 : {}] <==> x`
+  (x , THMuBound y) -> pure BiEQ -- use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub
   (x , THMuBound y) -> use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub
   (THMuBound x , y) -> use bis >>= \d -> MV.read d x >>= biSub [y] . _mSub
 
@@ -102,7 +107,7 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
   (THVar p , THVar m) -> use bis >>= \v -> BiEQ <$ do
     MV.modify v (\(BiSub a b qa qb) -> BiSub (THVar p : a) b qa qb) m
 --  MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) qa qb) p
-    -- We cannot allow vars to point back to each other, otherwise `bisub TVar{} _` will loop
+    -- don't allow vars to form cycles
     let isVar v = (\case { THVar x -> x /= v ; _ -> True })
     MV.modify v (\(BiSub a b qa qb) -> if any (isVar p) b then BiSub a b qa qb else BiSub a (THVar m : b) qa qb) p
   (THVar p , m) -> use bis >>= \v -> (_pSub <$> MV.read v p) >>= \t -> do
@@ -143,7 +148,7 @@ biSubTyCon p m = \case
   (THSumTy x , THSumTy y) -> let
     go label subType = case y IM.!? label of -- y must contain supertypes of all x labels
       Nothing -> failBiSub ("Sum type: label not present: " <> show label) [p] [m]
-      Just superType -> biSub superType subType
+      Just superType -> biSub subType superType
     in BiEQ <$ (go `IM.traverseWithKey` x) -- TODO bicasts
   (THSumTy s , THArrow args retT) | [(lName , tuple)] <- IM.toList s -> -- singleton sumtype => Partial application of Label
     let t' = case tuple of

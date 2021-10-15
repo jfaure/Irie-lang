@@ -3,14 +3,13 @@
 :set -ferror-spans
 :set -fbreak-on-error
 :def go (\_->pure ":set args demo.ii -p core \n:r\n main\n")
-:def llvm (\_->pure ":set args demo.ii -p core,llvm-hs\n:r\n main\n")
-:def cpp (\_->pure ":set args demo.ii -p llvm-cpp\n:r\n main\n")
-:def CP  (\_->pure ":set args demo.ii -p llvm-cpp\n:r\n main\n:continue\n")
-:def jit (\_->pure ":set args demo.ii -p llvm-hs --jit\n:r\n main\n")
-:def jit2 (\_->pure ":set args imports/records.nimzo -p llvm-cpp --jit\n:r\n main\n")
+:def llvm (\_->pure ":set args demo.ii -p core,ssa\n:r\n main\n")
+:def jit (\_->pure ":set args demo.ii -p ssa --jit\n:r\n main\n")
 :def mf (\_->pure ":set args imports/mixfix.nimzo -p parse \n:r\n main\n")
 :def n (\_->pure ":set args parser.nimzo -p core \n:r\n main\n")
 
 :def z (\i -> pure (":r\n" ++ i))
 :def opt (\_->pure ":r\n opt\n")
 :def types (\_->pure ":r\n types\n")
+:def emitC (\_->pure ":r\n emitC\n")
+

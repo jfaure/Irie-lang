@@ -11,20 +11,65 @@
 --import imports/fin
 --import imports/printf
 --import imports/subtype
+import imports/prelude
 --import imports/list
---import imports/prelude
 
-fromMaybe a l = case l of 
-  | Maybe b => b
-  | Nothing => a
+--IO = | In : IO | Out : IO
 
-f x = f
-_>_ = \f a => f a
-_<_ = \a f => f a
--- 
--- -- _>>=_ : Π A B C -> A & { ret : B } -> (B -> A -> C) -> C
-_>>=_ = \a f => f (a.ret) a
--- 
+--fromMaybe l = case l of 
+--  Maybe b => b
+--  Nothing => 0
+printList l = case l of
+  Nil => 0
+  Cons i ll => add (putNumber i) (printList ll)
+
+scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
+
+main = printList (scanSum 10 Nil)
+
+-- f (Just n) = n
+-- g {a , b} = add a b
+
+-- multi-arg builder foldr => stream
+--zip A B = case A of
+--  Nil       => Nil
+--  Cons a as => case B of
+--    Nil => Nil
+--    Cons b bs => Cons { l = a , r = b } (zip as bs)
+
+{-
+-- State is fn params + save state indicating which case and what free args
+-- recursive step resets to starting save state
+
+--zipS (Stream an a0) (Stream bn b0) = let
+--  next {A1 = a , A2 = b , st} = case st of
+--    CASE0    => case an a of
+--      Nil         => Nil
+--      Skip as'    => Skip {A1 = as', A2 = b , CASE0}
+--      Cons lv as' => Skip {A1 = as', A2 = b , CASE1 lv}
+--    CASE1 lv => case bn b of
+--      Nil         => Nil
+--      Skip as'    => Skip {A1 = a , A2 = as' , CASE1 lv}
+--      Cons rv bs' => Cons {l = lv , r = rv} {A1 = a , A2 = bs' , CASE0}
+--  in Stream next {A1 = a0 , A2 = b0 , lM = Nothing , rM = Nothing}
+
+--f x = f
+--_>_ = \f a => f a
+--_<_ = \a f => f a
+---- -- _>>=_ : Π A B C -> A & { ret : B } -> (B -> A -> C) -> C
+--_>>=_ = \a f => f (a.ret) a
+
+foldr f s l = case l of
+  Cons x xs => f x (foldr f s xs)
+  Nil       => s
+--foldl f s l = case l of
+--  Cons x xs => foldl f (f s x) xs
+--  Nil => s
+
+-- go f x b = foldr c b (f x)
+-- concatMap2 f xs = foldr (go f) Nil xs
+--reverse = foldl (flip (:)) []
+
 -- --printList l = case l of
 -- --  | Nil => 0
 -- --  | Cons i ll => add (putNumber i) (printList ll)
@@ -39,20 +84,13 @@ _>>=_ = \a f => f (a.ret) a
 -- --sumTo ls = foldr add 0 (map (add 8) ls)
 -- 
 -- --foldr = cata f [Nil , {A , x}]
-foldr f s l = case l of
-  | Cons x xs => f x (foldr f s xs)
-  | Nil       => s
 -- 
--- -- -- foldl = stream > foldls
--- -- -- foldls f z (Stream next s0) = go s0 where
--- -- --   go s = case next s of
--- -- -- S.Nil       -> z
--- -- -- S.Skip s'   -> go s';
--- -- -- S.Cons x s' -> f x (go s')
-foldl f s l = case l of
-  | Cons x xs => foldl f (f s x) xs
-  | Nil => s
-
+-- foldl = stream > foldls
+-- foldls f z (Stream next s0) = go s0 where
+--   go s = case next s of
+-- S.Nil       -> z
+-- S.Skip s'   -> go s';
+-- S.Cons x s' -> f x (go s')
 -- -- foldl f a bs = foldr (\b g x => g (f x b)) identity bs a
 -- -- mapF f = foldr (\x xs => f x : xs) []
 -- --foldr f z (Stream next s0) = go s0 where go s = case next s of
@@ -60,24 +98,6 @@ foldl f s l = case l of
 -- --  Skip s'    -> go s'
 -- --  Yield x s' -> f x (go s')
 -- 
--- -- multi-arg builder foldr => stream
--- zip A B = case A of
---  | Nil       => Nil
---  | Cons a as => case B of
---    | Nil => Nil
---    | Cons b bs => Cons { l = a , r = b } (zip as bs)
--- 
--- --zipS (Stream an a0) (Stream bn b0) = let
--- --  next {A1=a , A2=b , l' , r'} = case l' of
--- --    Nothing => case an a of
--- --      Nil        => Nil
--- --      Skip as'   => Skip {A1=as', A2=b ,  l' = Nothing , r' = Nothing}
--- --      Cons lv as'=> Skip {A1=as', A2=b ,  l' = Just lv , r' = Nothing}
--- --    Just  lv =>
--- --      Nil        => Nil
--- --      Skip as'   => Skip {A1=a , A2=as' , l' = Just l,r' =Nothing})
--- --      Cons rv bs'=> Cons {l = lv , r = rv} {A1=a , A2=bs'}
--- --  in Stream next {A1=a0 , A2=b0 , l'=Nothing , r'=Nothing}
 -- 
 -- --zipS (Stream an a0) (Stream bn b0) = let
 -- --  next as bs Empty = case an a of
@@ -89,16 +109,6 @@ foldl f s l = case l of
 -- --    Skip bs'   -> Skip  (as' , bs' , One a)
 -- --    Yield a bs'-> Yield (a , b) (as' , bs' , Empty)
 -- --  in Stream next (a0 , b0 , Empty)
-c a b = Cons a b
-append front back = foldr c back front
-concat = foldr (append) Nil
--- --concatMap f xs = build \c n => foldr (\x b => foldr c b (f x)) n xs
--- -- concatMap :: (a -> [b]) -> [a] -> [b]
--- --concatMap f xs = foldr (\x b => foldr c b (f x)) Nil xs
--- go f x b = foldr c b (f x)
--- concatMap2 f xs = foldr (go f) Nil xs
---reverse = foldl (flip (:)) []
-
 --foldlS f z (Stream next s0) = let
 --  go z s = case next s of
 --     Done       -> z
@@ -117,9 +127,6 @@ concat = foldr (append) Nil
 --filterF p = foldr (\x xs => if p x then x : xs else xs)
 
 --sum = foldr add 0
---consF f x xs = Cons (f x) xs
---mapFold f l = foldr (consF f) Nil l
-
 --concat = foldr append Nil
 
 --f x = ifThenElse (le x 3) x (f (sub x 1))
@@ -139,3 +146,4 @@ concat = foldr (append) Nil
 
 -- fail-loneMFWord    = <
 -- fail-loneMFWordApp = add 4 <
+-}

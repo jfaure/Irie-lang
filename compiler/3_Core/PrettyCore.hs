@@ -55,7 +55,8 @@ prettyTerm bindSrc = let
   pE' = prettyExpr' True bindSrc
   prettyFree x = if IS.null x then "" else "Γ(" <> show x <> ")"
   in \case
-  Hole -> " _ "
+--Hole -> " _ "
+  Question -> " ? "
   Var     v -> clCyan $ prettyVName bindSrc v
   Lit     l -> clMagenta $ show l
   Abs ars free term ty -> let
@@ -72,10 +73,16 @@ prettyTerm bindSrc = let
     in "{ " <> (T.intercalate " ; " (sr <$> IM.toList ts)) <> " }"
 --Proj    t f -> pT t <> "." <> show f <> (toS $ srcFieldNames bindSrc V.! f)
   Label   l t -> prettyLabel l <> "@" <> T.intercalate " " (parens . pET <$> t)
+  RecLabel l i t -> prettyLabel l <> "(" <> show i <> ")@" <> T.intercalate " " (parens . pET <$> t)
   Match caseTy ts d -> let
     showLabel l t = prettyLabel l <> " => " <> pE' "   " t
     in clMagenta "\\case " <> clGreen (" : " <> pTy caseTy) <> ")\n    | "
       <> T.intercalate "\n    | " (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts) <> "\n    |_ " <> maybe "Nothing" pET d <> "\n"
+  RecMatch ts d -> let
+    showLabel l (i,t) = prettyLabel l <> "(" <> show i<> ") => " <> pE' "   " t
+    in clMagenta "\\recCase " <> "\n      "
+      <> T.intercalate "\n      " (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts) <> "\n     _ " <> maybe "Nothing" pET d <> "\n"
+
 --List    ts -> "[" <> (T.concatMap pE ts) <> "]"
 
   TTLens r target ammo -> pT r <> " . " <> T.intercalate "." (show <$> target) <> prettyLens bindSrc ammo

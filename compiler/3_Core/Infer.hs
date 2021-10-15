@@ -14,7 +14,7 @@ import Mixfix
 import Substitute
 
 import Control.Lens
-import Data.List (unzip4, zipWith3, foldl1, span)
+import Data.List (unzip4, foldl1, span , zipWith3)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Mutable as MV
@@ -41,7 +41,7 @@ formatScopeError = \case
   ScopeError h -> clRed "Not in scope: "      <> h
   AmbigBind  h -> clRed "Ambiguous binding: " <> h
 
-judgeModule pm hNames exts source = let
+judgeModule pm nArgs hNames exts source = let
   modName = pm ^. P.moduleName
   nBinds  = length $ pm ^. P.bindings
   nArgs   = pm ^. P.parseDetails . P.nArgs
@@ -82,7 +82,7 @@ judgeModule pm hNames exts source = let
     bis''    <- V.unsafeFreeze (st ^. bis)
     wip''    <- V.unsafeFreeze (st ^. wip)
     let domain'' = V.take nArgs bis''
-    pure $ (JudgedModule modName hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
+    pure $ (JudgedModule modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , TCErrors (st ^. scopeFails) (st ^. biFails))
 
 -- inference >> generalisation >> type checking of annotations
@@ -221,8 +221,7 @@ infer = let
      Core e ty -> Core (Var $ VBind b) ty -- don't inline the body ! (
      t -> t
  in \case
-  P.WildCard -> pure $ Core Hole holeTy
-
+--P.Wildcard -> _
   P.Var v -> case v of -- vars : lookup in appropriate environment
     P.VBind b   -> judgeLocalBind b -- polytype env
     P.VLocal l  -> pure $ Core (Var (VArg l)) [THVar l]
@@ -302,6 +301,7 @@ infer = let
     labTy = [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
     in Core (Label l exprs) [THTyCon $ THSumTy $ IM.singleton l labTy]
 
+  -- Sumtype declaration
   P.TySum alts -> do -- alts are function types
     -- 1. Check against ann (retTypes must all subsume the signature)
     -- 2. Create sigma type from the arguments
@@ -324,56 +324,34 @@ infer = let
     pure $ Ty sumTy
 
   P.Match alts -> let
---    (altLabels , freeVars , patterns , rawTTs) = unzip4 alts
-    -- * find the type of the sum type being deconstructed
-    -- * find the type of it's alts (~ lambda abstractions)
-    -- * type of Match is (sumTy -> Join altTys)
---    mkFnTy vals = [THTyCon $ THTuple $ V.fromList vals] -- \case { [] -> [THSet 0] ; x -> [THArrow (drop 1 x) [THSet 0]] }
---    pattern2Ty = mkFnTy . \case
---      [] -> []
---      P.PArg _ : xs -> [THSet 0] : [pattern2Ty xs]
---      x -> error $ "unknown pattern: " <> show x
---    tys = pattern2Ty <$> patterns
+    -- * desugar all patterns in the alt fns
+    -- * mk tuples out of those abstractions to represent the sum type
+    -- * ret type is a join of all the abs ret tys
     desugarFns = \(lname , free , pats , tt) -> let
       (args , _ , e) = patterns2TT pats tt
       in (lname , args , _ , e)
     (labels , args , _ , exprs) = unzip4 $ (desugarFns <$> alts)
     in do
     alts <- infer `mapM` exprs
-    let altTys = tyOfExpr <$> alts
-    retTy <- foldl mergeTypes [] <$> pure altTys
-    let altTys' = map (\altArgs -> [THTyCon $ THTuple $ V.fromList (arg2ty <$> altArgs)]) args
-        scrutTy = [THTyCon $ THSumTy $ IM.fromList $ zip labels altTys'] -- [THSplit altLabels]
+    let altTys  = tyOfExpr <$> alts
+        retTy   = foldl mergeTypes [] altTys
+        altTys' = map (\altArgs -> [THTyCon$ THTuple $ V.fromList (arg2ty <$> altArgs)]) args
+        scrutTy = [THTyCon $ THSumTy $ IM.fromList $ zip labels altTys']
         matchTy = mkTyArrow [scrutTy] retTy
         arg2ty i= [THVar i]
-        altsMap = IM.fromList $ zip labels $ zipWith (\ty (Core t _) -> Core t ty) altTys alts
+        argAndTys  = map (map (\x -> (x , arg2ty x))) args
+        altsMap = let
+          addAbs ty (Core t _) args = Core (Abs args mempty t []) ty
+          addAbs ty PoisonExpr _ = PoisonExpr
+          in IM.fromList $ zip labels (zipWith3 addAbs altTys alts argAndTys)
     pure $ Core (Match retTy altsMap Nothing) matchTy
 
---  altExprs <- infer `mapM` rawTTs
---  let altTys = tyOfExpr <$> altExprs
---  retTy <- foldl mergeTypes [] <$> pure altTys -- (tyOfExpr <$> altExprs)
---    let unpat = \case { P.PArg i -> i ; x -> error $ "not implemented: pattern: " <> show x }
---        mkFn pat free PoisonExpr = (PoisonExpr , [])
---        mkFn pat free (Core t tyAltRet) = let
---          (argNames , _argTys , expr) = patterns2TT pat t
---          argNames = unpat <$> pat
---          argTys   = (\i -> [THVar i]) <$> argNames -- TODO !! withbisubs get new thvars !
---          args     = zip argNames argTys
---          in (Core (Abs args free t tyAltRet) tyAltRet
---             , [THTyCon $ THTuple $ V.fromList argTys])
---        (alts , altTys) = unzip $ zipWith3 mkFn patterns freeVars altExprs
---        altLabelsMap = IM.fromList $ zip altLabels alts
---        scrutTy = [THTyCon $ THSumTy $ IM.fromList $ zip altLabels altTys] -- [THSplit altLabels]
---        matchTy = mkTyArrow [scrutTy] retTy
---    pure $ Core (Match retTy altLabelsMap Nothing) matchTy
-
-  -- desugar --
   P.LitArray literals -> let
     ty = typeOfLit (fromJust $ head literals) -- TODO merge (join) all tys ?
     in pure $ Core (Lit . Array $ literals) [THTyCon $ THArray [ty]]
 
   P.Lit l  -> pure $ Core (Lit l) [typeOfLit l]
---  P.InfixTrain lArg train -> infer $ resolveInfixes (\_->const True) lArg train -- TODO
+
   x -> error $ "not implemented: inference of: " <> show x
 
 -----------------

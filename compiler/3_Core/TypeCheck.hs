@@ -79,4 +79,4 @@ alignMu x target lty muBound = (if global_debug
   (THMu y _ , THMuBound x) -> x == y
   (THMu x _ , THMu y _) -> x == y
   (a , b) -> check _ mempty mempty [a] [b]
-  _ -> False
+--_ -> False

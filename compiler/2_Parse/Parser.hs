@@ -177,10 +177,10 @@ reserved = reservedName
 isIdenChar x = not (isSpace x) && not (T.any (==x) reservedChars)
 idenChars = takeWhile1P Nothing isIdenChar
 checkReserved x = if x `S.member` reservedNames
-  then fail $ "keyword " <> toS x <> " cannot be an identifier"
+  then fail $ "keyword '" <> toS x <> "' cannot be an identifier"
   else pure x
 checkLiteral x = if isDigit `T.all` x -- TODO not good enough (1e3 , 2.0 etc..)
-  then fail $ "literal: " <> toS x <> " cannot be an identifier"
+  then fail $ "literal: '" <> toS x <> "' cannot be an identifier"
   else pure x
 checkIden = checkReserved <=< checkLiteral
 
@@ -206,19 +206,23 @@ indentedItems prev scn p finished = let
   [] <$ lookAhead (eof <|> finished) <|> if
      | pos <= prev -> pure []
      | pos == lvl  -> (:) <$> p <*> go lvl
-     | otherwise   -> L.incorrectIndent EQ lvl pos
+     | otherwise   -> fail $ "incorrect indentation, got " <> show pos <> ", expected <= " <> show prev <> " or == " <> show lvl
+     -- L.incorrectIndent EQ lvl pos
  in L.indentLevel >>= go
 
+ -- tells linefold and let-ins not to eat our indentedItems
 svIndent = L.indentLevel >>= (indent .=)
 
 linefold p = let
   doLinefold = endLine *> scn *> do
     prev <- use indent
     cur  <- L.indentLevel
-    -- TODO actually expecting GEQ (alas not defined in Ordering)
-    when (prev >= cur) (L.incorrectIndent GT prev cur)
+    when (prev >= cur)
+      (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
+--    (L.incorrectIndent GT prev cur) (alas GEQ is not an Ordering)
     indent .= cur
     p -- <* (indent .= prev)
+    <* lookAhead endLine -- make sure this was a linefold to not corrupt error messages
   in try doLinefold <|> p
 
 ------------
@@ -254,7 +258,7 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
      }
 
 -- group declarations as they are parsed
-doParse = void $ decl `sepEndBy` (endLine *> scn) :: Parser ()
+doParse = void $ decl `sepEndBy` (optional endLine *> scn) :: Parser ()
 decl = svIndent *> choice
    [ reserved "import" *> (iden >>= addImport)
    , extern
@@ -320,7 +324,8 @@ funBind' letRecT nm mfDef pMFArgs = newArgNest $ mdo
     , case (ars , ann) of
         ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
         (x  , Just{})  -> fail "TODO no parser for: fn args followed by type signature"
-        (x  , Nothing) -> do fail $ "Expected top level binding"
+--      (x  , Nothing) -> fail $ "found pattern with no binding: " <> show x
+        (x  , Nothing) -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
     ]
   free <- getFreeVars
   pure iNm
@@ -356,16 +361,12 @@ fnMatch pMFArgs sep = -- sep is "=" or "=>"
 ttArg , tt :: Parser TT
 (ttArg , tt) = (arg , anyTT)
   where
-  anyTT = typedTT =<< choice
-    [ letIn      -- "let"
-    , match      -- "case"
-    , tySum      -- "|"
-    , appOrArg
-    ] <?> "tt"
+  anyTT = (match <|> appOrArg) >>= typedTT <?> "tt"
   argOrLens = arg >>= \larg -> option larg (lens larg) -- lens bind tighter than App
   appOrArg = getOffset >>= \o -> argOrLens >>= \larg -> option larg
     ( case larg of
-       Lit l -> LitArray . (l:) <$> some (lexeme literalP)
+--     Lit l -> LitArray . (l:) <$> some (lexeme $ try (literalP <* notFollowedBy iden))
+--     -- Breaks `5 + 5`
        P.Label l [] -> P.Label l <$> some arg
        fn -> choice
          [ Juxt o . (fn:) <$> some (linefold argOrLens)
@@ -384,11 +385,13 @@ ttArg , tt :: Parser TT
    [ reserved "_" $> WildCard
    , lambdaCase -- "\\case"
    , lambda     -- "\"
+   , letIn
+-- , match      -- "case"
+-- , tySum      -- "|"
    , con
-   , Lit <$> try (lexeme (literalP <* notFollowedBy iden))
-   , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x]-- varName -- incl. label
+   , Lit <$> (lexeme $ try (literalP <* notFollowedBy iden))
+   , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x] -- varName -- incl. label
    , try $ iden >>= lookupBindName -- holey names used as defined
--- , some literalP <&> \case { [l] -> Lit l ; ls -> LitArray ls }
    , TyListOf <$> brackets tt
    , parens $ choice [try piBinder , (tt >>= typedTT) , scn $> Cons []]
    , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
@@ -399,9 +402,10 @@ ttArg , tt :: Parser TT
 
   tySum = TySum <$> let
     labeledTTs = do
-      label <- iden >>= newSLabel
+      hLabel <- iden
+      label  <- newSLabel hLabel
       getPiBounds tyAnn >>= \case
-        (pis , Nothing) -> fail "sum type annotation missing"
+        (pis , Nothing) -> fail $ "sumtype constructor '" <> T.unpack hLabel <> "' needs a type annotation"
         (pis , Just (impls , ty)) -> pure (label , pis ++ impls , ty)
     in some $ try (scn *> (reservedChar '|' *> lexeme labeledTTs))
 
@@ -438,11 +442,18 @@ ttArg , tt :: Parser TT
   lambdaCase = reserved "\\case" *> caseSplits
 
   letIn = let
-    pletBinds (letRecT :: LetRecT) = (\p -> incLetNest *> p <* decLetNest) $ do
-      ref <- use indent <* scn
+    pletBinds letStart (letRecT :: LetRecT) = (\p -> incLetNest *> p <* decLetNest) $ do
+      scn -- go to first indented binding
+      ref <- use indent
+      svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
+      traceShowM ref
       indentedItems ref scn (funBind letRecT) (reserved "in") <* reserved "in"
       tt
-    in (reserved "let" *> pletBinds Let) <|> (reserved "rec" *> pletBinds Rec)
+    in do
+      letStart <- use indent -- <* scn
+      inExpr <- (reserved "let" *> pletBinds letStart Let)
+            <|> (reserved "rec" *> pletBinds letStart Rec)
+      pure inExpr
 
   typedTT exp = tyAnn >>= \case --optional type annotation is parsed as anonymous let-binding
     Nothing -> pure exp
@@ -481,7 +492,7 @@ singlePattern = choice
            ]
      in PCons <$> braces (fieldPattern `sepBy` reservedChar ',')
    , PWildCard <$ reserved "_"
-   , PLit <$> literalP
+   , PLit <$> try literalP
    ]
  ]
 
@@ -490,7 +501,7 @@ singlePattern = choice
 ---------------------
 literalP = let
   signed p = let
-    sign :: Bool -> Parser Bool = \i -> (single '+' *> sign i) <|> (single '-' *> sign (not i)) <|> pure i
+    sign :: Bool -> Parser Bool = \i -> option i $ (single '+' *> sign i) <|> (single '-' *> sign (not i))
     in sign False >>= \s -> p <&> \n -> if s then negate n else n
   -- L.charLiteral handles escaped chars (eg. \n)
   char :: Parser Char = between (single '\'') (single '\'') L.charLiteral
@@ -500,7 +511,7 @@ literalP = let
     , (string "''")     *> manyTill L.charLiteral (string "''")
     , (string "$")      *> manyTill L.charLiteral endLine]
   intLiteral = choice
-    [ signed L.decimal
+    [ try (signed L.decimal)
     , string "0b" *> L.binary
     , string "0x" *> L.hexadecimal
     , string "0o" *> L.octal
@@ -510,7 +521,7 @@ literalP = let
    , String <$> stringLiteral
    , Int    <$> intLiteral
    , numP
-   ]
+   ] <?> "literal"
 
 decimal_ , dotDecimal_ , exponent_ :: Parser Text
 decimal_    = takeWhile1P (Just "digit") isDigit

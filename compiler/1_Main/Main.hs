@@ -10,13 +10,13 @@ import CoreUtils (bind2Expr)
 import PrettyCore
 import Infer
 import Eval
-import CodeGen
---import LLVM.Pretty
---import qualified LlvmDriver as LD
+import MkSSA
+import C
 
 import Text.Megaparsec hiding (many)
 import qualified Data.Text.IO as T.IO
-import qualified Data.Text.Lazy.IO as TL.IO
+--import qualified Data.Text.Lazy.IO as TL.IO
+import qualified Data.ByteString.Lazy as BSL.IO
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Binary as DB
@@ -27,7 +27,7 @@ import Data.List (words)
 
 searchPath   = ["./" , "Library/"]
 objPath      = ["./"]
-objDir       = ".irie-obj/@"
+objDir       = ".irie-obj/@" -- prefix '@' to files in there
 getCachePath fName = objDir <> map (\case { '/' -> '%' ; x -> x} ) fName
 doCacheCore  = True
 
@@ -37,14 +37,15 @@ instance DB.Binary GlobalResolver
 instance DB.Binary Externs
 
 -- for use in ghci
-demoFile = "demo.ii"
-sh    = main' . Data.List.words
-shL   = main' . (["-p" , "llvm-hs"] ++ ) . Data.List.words
+demoFile   = "demo.ii"
+sh         = main' . Data.List.words
+shL        = main' . (["-p" , "llvm-hs"] ++ ) . Data.List.words
 parseTree  = sh $ demoFile <> " -p parse"
-demo  = sh $ demoFile <> " -p llvm-hs"
-core  = sh $ demoFile <> " -p core"
-types = sh $ demoFile <> " -p types"
-opt   = sh $ demoFile <> " -p simple"
+ssa        = sh $ demoFile <> " -p ssa"
+core       = sh $ demoFile <> " -p core"
+types      = sh $ demoFile <> " -p types"
+opt        = sh $ demoFile <> " -p simple"
+emitC      = sh $ demoFile <> " -p C"
 
 main = getArgs >>= main'
 main' args = parseCmdLine args >>= \cmdLine ->
@@ -103,9 +104,9 @@ text2Core flags resolver fName progText = do
       nArgs        = parsed ^. P.parseDetails . P.nArgs
       srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
 
-      (judgedModule , errors) = judgeModule parsed hNames exts srcInfo
+      (judgedModule , errors) = judgeModule parsed nArgs hNames exts srcInfo
       TCErrors scopeErrors biunifyErrors = errors
-      JudgedModule modNm bindNames a b judgedBinds = judgedModule
+      JudgedModule modNm nArgs' bindNames a b judgedBinds = judgedModule
 
       newResolver = addModule2Resolver tmpResolver (bind2Expr <$> judgedBinds)
 
@@ -119,7 +120,7 @@ text2Core flags resolver fName progText = do
   let simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
           simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
       coreOK = null biunifyErrors && null scopeErrors
-      judgedFinal = JudgedModule modNm bindNames a b simpleBinds
+      judgedFinal = JudgedModule modNm nArgs bindNames a b simpleBinds
   when ("simple" `elem` printPass flags)
     (void $ T.IO.putStrLn `mapM` namedBinds True  (V.zip bindNames simpleBinds))
   (T.IO.putStrLn . formatError bindSrc srcInfo)      `mapM` biunifyErrors
@@ -131,8 +132,13 @@ text2Core flags resolver fName progText = do
 -- Phase 2: codegen, linking, jit
 ---------------------------------
 --codegen flags input@((resolver , Import bindNames judged) , exts , judgedModule) = let
-codegen flags input@(resolver , exts , jm@(JudgedModule modNm bindNms a b judgedBinds)) = let
-  in pure input
+codegen flags input@(resolver , exts , jm@(JudgedModule modNm nArgs bindNms a b judgedBinds)) = let
+  ssaMod = mkSSAModule exts (JudgedModule modNm nArgs bindNms a b judgedBinds)
+  in do
+    when ("ssa" `elem` printPass flags) $ T.IO.putStrLn (show ssaMod)
+    when ("C"   `elem` printPass flags) $ let str = (mkC ssaMod)
+      in BSL.IO.putStrLn str *> BSL.IO.writeFile "/tmp/aryaOut.c" str
+    pure input
 --llvmMod      = mkStg exts (JudgedModule modNm bindNms a b judgedBinds)
 --putPass :: Text -> IO () = \case
 --  "llvm-hs"    -> let

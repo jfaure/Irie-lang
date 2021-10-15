@@ -199,7 +199,7 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("srem"  , (NumInstr (IntInstr SRem) , ([i, i] , i) ))
   , ("bitXOR", (NumInstr (BitInstr Xor ) , ([i, i] , i) ))
   , ("bitAND", (NumInstr (BitInstr And ) , ([i, i] , i) ))
-  , ("bitOR" , (NumInstr (BitInstr Xor ) , ([i, i] , i) ))
+  , ("bitOR" , (NumInstr (BitInstr Or  ) , ([i, i] , i) ))
   , ("bitNOT", (NumInstr (BitInstr Not ) , ([i, i] , i) ))
   , ("bitSHL", (NumInstr (BitInstr ShL ) , ([i, i] , i) ))
   , ("bitSHR", (NumInstr (BitInstr ShR ) , ([i, i] , i) ))

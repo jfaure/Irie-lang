@@ -4,6 +4,8 @@ import CoreSyn
 import CoreUtils
 import ShowCore()
 import qualified Data.Vector.Mutable as MV
+import qualified Data.IntMap as IM
+import qualified Data.Vector as V
 
 -- Always inline simple functions
 -- Constant fold casts and up to scrutinees as much as possible (can have huge impact)
@@ -80,13 +82,15 @@ data ArgKind
 data SumRep = Enum | Peano | Wrap | Array [ArgKind] | Tree [ArgKind]
 
 data Simplifier s = Simplifier {
-   cBinds   :: MV.MVector s Bind
- , nApps    :: Int
+   cBinds      :: MV.MVector s Bind
+ , nApps       :: Int
 -- , argTable :: MV.MVector s [(ArgKind , Term)] -- used for eta reduction
- , argTable :: MV.MVector s [Term] -- used for eta reduction
- , self     :: Int -- the bind we're simplifying (is probably recursive)
- , cataMorphism :: Bool -- function recurses in same pattern as a mu-bound type
- , stream   :: Term
+ , argTable    :: MV.MVector s [Term] -- used for eta reduction
+ , self        :: Int -- the bind we're simplifying (is probably recursive)
+ , caseCount   :: Int -- unique ident for every case in the function
+ , streamCases :: [Term]
+ , streamOK    :: Bool -- indicate if suitable for stream transformation
+ , recLabels   :: IM.IntMap (V.Vector Int)
 }
 
 setNApps :: Int -> SimplifierEnv s ()
@@ -95,18 +99,42 @@ zeroNApps :: SimplifierEnv s Int
 zeroNApps= gets nApps <* (modify $ \x->x{nApps = 0})
 incNApps :: SimplifierEnv s ()
 incNApps = modify $ \x->x{nApps = 1 + nApps x}
+getNewCaseNumber :: SimplifierEnv s Int
+getNewCaseNumber = gets caseCount <* modify (\x->x{caseCount = caseCount x - 1})
+addStreamCase :: Term -> SimplifierEnv s ()
+addStreamCase c = modify $ \x->x{streamCases = c : streamCases x}
 
 simplifyBindings :: Int -> Int -> MV.MVector s Bind -> ST s (Simplifier s)
 simplifyBindings nArgs nBinds bindsV = do
   argEtas <- MV.replicate nArgs []
   execStateT (simpleBind `mapM` [0 .. nBinds-1]) Simplifier {
-    cBinds   = bindsV
-  , nApps    = 0 -- measure the size of the callgraph
-  , argTable = argEtas
-  , self     = -1
-  , cataMorphism = True
-  , stream   = _
+    cBinds      = bindsV
+  , nApps       = 0 -- measure the size of the callgraph
+  , argTable    = argEtas
+  , self        = -1
+  , caseCount   = -1 -- counts negative labels
+  , streamCases = []
+  , streamOK    = True
+  , recLabels   = IM.empty
   }
+
+identifyLabels :: Type -> SimplifierEnv s ()
+identifyLabels ty = let
+  isMuBound = \case { THMuBound x -> True ; _ -> False}
+  goL [THTyCon (THTuple t)] = (fst <$> V.filter (\(_,t) -> any isMuBound t) (V.imap (,) t))
+  go = mapM_ goTH
+  goTH = \case
+    THBi b ty   -> go ty
+    THMu x ty   -> go ty
+    THTyCon s -> case s of
+      THSumTy ls -> do
+        let is = goL <$> ls
+        modify $ \x->x{recLabels = IM.union (recLabels x) $ is}
+      THTuple t   -> go `mapM_` t
+      THProduct t -> go `mapM_` t
+      THArrow t r -> (go `mapM_` t) *> go r
+    x -> pure ()
+  in go ty
 
 simpleBind :: Int -> SimplifierEnv s Bind
 simpleBind n = gets cBinds >>= \cb -> MV.read cb n >>= \b -> do
@@ -116,7 +144,7 @@ simpleBind n = gets cBinds >>= \cb -> MV.read cb n >>= \b -> do
   MV.write cb n (BindOpt (0xFFFFFF) (Core (Var (VBind n)) [])) -- recursion guard
   new <- case b of
     BindOpt nApps body -> setNApps nApps *> pure body
-    BindOK (Core t ty) -> simpleTerm t <&> \case
+    BindOK (Core t ty) -> (identifyLabels ty *> {-(gets recLabels) *>-} simpleTerm t) <&> \case
       -- catch top level partial application (ie. extra implicit args)
       App (Instr (MkPAp n)) (f2 : args2) -> let
         (arTs , retT) = getArrowArgs ty
@@ -155,23 +183,56 @@ simpleTerm t = let
   App f args -> incNApps *> case f of
     Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
     Instr i -> (simpleTerm `mapM` args) <&> \args -> simpleInstr i args
+--  Match retT branches d | [arg] <- args -> _-- mkSvState retT branches d arg
     fn -> simpleTerm fn >>= \case
       Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
       fn -> App fn <$> (simpleTerm `mapM` args)
 
---App (Match retT branches d) [arg] -> use argTable >>= MV.length >>= \argCount -> let
---  isStream arg = True
---  in if not (isStream arg) then pure t else do
---  -- look for recursive invocations of fn
---  let mkBranch (Core t ty) =
---  streamBranches <- mkBranch `IM.traverse` branches
---  let nextFn   = BruijnAbs 1 $ App (Match _ streamBranches Nothing)
+  Label l a -> do
+    ars <- a `forM` \(Core f t) -> (`Core` t) <$> simpleTerm f
+    gets recLabels <&> (IM.!? l) <&> \case
+      Nothing -> Label l      ars
+      Just  i -> RecLabel l i ars
 
-  -- remove explicit recursion in favor of Yield style generator
-  -- If any of the branches splits a recursive type; switch to stream
---Match _t branches d -> _
+  Match t branches d -> let
+    -- add recLabel information
+    go l (Core f t) = gets recLabels <&> (fromMaybe mempty . (IM.!? l)) >>= \is -> (\e' -> (is,Core e' t)) <$> simpleTerm f
+    in IM.traverseWithKey go branches <&> \branches' -> RecMatch branches' d
 
   _ -> pure t
+
+{-
+-- a Case on one of the arguments
+mkSvState retT branches d arg = mdo
+  newCase <- getNewCaseNumber
+--addStreamCase c
+
+  bs <- branches `forM` \b -> simpleTerm b >>= \(Abs ars is t ty) -> do
+    -- pack all needed state
+    this <- gets self
+    vars <- gets caseState
+    resetCaseState
+    let new = case t of
+          -- Match over labels is perfect for stream fusion
+          -- If any of the args are a self recursive call, save a CASE0 in their place
+          Label i ars  -> let
+            case0 = Label (-1)
+            in
+            checkRec <$> ars
+          App (Var (VBind i)) ars | i == this -> _
+
+          -- Sv free vars into CASEN marker
+          App (Match _retT subBranches d) [ars] -> _
+
+--        App f ars ->
+
+          -- Cannot stream this; foldl over a builder accumulator must switch to build-cata
+          x         -> x
+    use streamOK <&> \case
+      True  -> new
+      False -> Abs ars is t ty
+  pure bs
+-}
 
 simpleInstr i args = case i of
   GMPInstr j -> simpleGMPInstr j args

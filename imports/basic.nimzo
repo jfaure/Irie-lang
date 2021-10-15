@@ -2,6 +2,14 @@
 _+_ = plus
 g y = y + 2
 f x = x + g x
+
+self x = x x
+--r a = r (add a 1)
+--g x = g
+ifE2 = ifThenElse
+join a b = ifThenElse 1 a b
+--s = join g g
+
 --choose x = if x.p then x.q else x.q -- (puBool n {q:A} n {q:B}) -> (AnB) == {p:Bool;q:A} -> A
 --chooseF t a b = if t then a else b
 --r g = r (g 1) -- recursive principal type

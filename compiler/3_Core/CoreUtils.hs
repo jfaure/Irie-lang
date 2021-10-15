@@ -31,7 +31,12 @@ substFreshTVars tvarStart = Prelude.map $ let
     THProduct as   -> THProduct $ r <$> as
     THTuple as     -> THTuple   $ r <$> as
     THSumTy as     -> THSumTy   $ r <$> as
+--THMuBound m -> THMuBound m
+--THTop -> THTop
+--THBot -> THBot
+--THExt i -> THExt i
   t -> t
+--t -> error $ show t
 
 getArrowArgs = \case
   [THTyCon (THArrow as r)] -> (as , r)

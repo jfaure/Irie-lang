@@ -43,7 +43,6 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
  | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
- | Hole     -- argument hole (part of an implicit Abs)
  | App     Term [Term]    -- IName [Term]
 
  | Cons    (IM.IntMap Term)
@@ -52,17 +51,17 @@ data Term -- β-reducable (possibly to a type) and type annotated
  | Label   ILabel [Expr]
  | Match   Type (IM.IntMap Expr) (Maybe Expr) -- Type is the return type
 
- -- only built by the simplifier
+ -- Extra info built by the simplifier
+ | RecLabel ILabel (V.Vector Int) [Expr] -- annotate where fixpoints are
+ | RecMatch (IM.IntMap (V.Vector Int , Expr)) (Maybe Expr)
+
  | PartialApp [Type] Term [Term] -- Top level PAp => Abs (no fresh argnames after parse)
  | BruijnAbs  Int Term -- debruijn abstraction
  | StreamCons (IM.IntMap Term) -- difference with Cons is that absent labels produce Nothing
- | Stream   Term
+ | Stream   Term -- Term is an abs with recursion removed
  | UnStream Term
--- | HList Int [Term] -- E|One a|Two a b .. (Including Maybe!)
 
--- hList using negative labels
-nothing : one : two : _ = [-1,-2..] :: [Int]
--- can use negative Cons values for case nests
+--data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs a lens for extracting field
 
@@ -98,12 +97,9 @@ data TyHead
  | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
 
  -- Type variables
- | THVars      IntSet
- | THVar       BiSubName -- generalizes to THBound if survives biunification and simplification
- | THVarGuard  IName     -- mark vars when substituting a guarded type (mu.bound if seen again)
- | THVarLoop   IName     -- unguarded variable loops
- | THBound     IName     -- pi-bound debruijn index, (replace with fresh THVar at THBi to biunify)
- | THMuBound   IName     -- mu-bound debruijn index (must be guarded and covariant) 
+ | THVar     BiSubName-- generalizes to THBound if survives biunification and simplification
+ | THBound   IName  -- pi-bound debruijn index; replace with fresh THVar at THBi to biunify
+ | THMuBound IName  -- mu-bound debruijn index (must be guarded and covariant) 
 
  -- type Families | indexed types
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
@@ -203,6 +199,7 @@ data SrcInfo = SrcInfo Text (VU.Vector Int)
 data JudgedModule = JudgedModule {
    modName     :: HName
 -- , fileDeps    :: [HName]
+ , nArgs       :: Int
  , bindNames   :: V.Vector HName
  , fieldNames  :: M.Map HName IName
  , labelNames  :: M.Map HName IName

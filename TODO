@@ -8,6 +8,7 @@
 ## Parse
   * Use [n..] numbered args from Parser in a safer way
 ## Types
+  * Char newtype + encoding subtyping vs bitwidths
   * propagate poisonexpr from matchAlts
   * generalise anon bindings using levels (or float args up to top binding to read their type after gen)
   * check let|rec + mark Binds as let|rec
@@ -18,6 +19,7 @@
   * typevars with bounds (a->b) & (c->d) need to be flattened and merged for co-occurence analysis (a&c -> b&d)
   * simplify type; imports.basic.twice f x = f (f x)
   * Careful mergeing mu types; µx. may contain other µx.!
+  * need to generalise polymorphic subexpressions correctly
 ## Simplifier
   * constructor specialisation
   * case-of-case
@@ -25,4 +27,3 @@
 ## Codegen
   * do asmIdx resolution here
   * promote single field records to field value (esp. if avoids pointer indirection)
-  * use bitops on %i8s, llvm tends to promote %i1 to %i8

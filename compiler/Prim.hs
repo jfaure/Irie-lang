@@ -7,6 +7,7 @@ import GHC.Show (Show(..))
 
 data Literal
  = Char Char
+ | I32 Int
  | Int Integer -- convenience
  | Fin Int Integer
 -- | Frac Rational
@@ -92,7 +93,7 @@ data IntInstrs   = Add | Sub | Mul | SDiv | SRem | Neg | AbsVal | IPow
 data NatInstrs   = UDiv | URem
 data BitInstrs   = And | Or | Not | Xor | ShL | ShR | BitRev | ByteSwap | CtPop | CtLZ | CtTZ | FShL | FShR | RotL | RotR
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
-data ArrayInstrs = ExtractVal | InsertVal | Gep
+data ArrayInstrs = ExtractVal  -- | InsertVal | Gep
 
 primInstr2Nm = \case
   NumInstr i -> show i
