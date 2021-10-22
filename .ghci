@@ -6,7 +6,7 @@
 :def llvm (\_->pure ":set args demo.ii -p core,ssa\n:r\n main\n")
 :def jit (\_->pure ":set args demo.ii -p ssa --jit\n:r\n main\n")
 :def mf (\_->pure ":set args imports/mixfix.nimzo -p parse \n:r\n main\n")
-:def n (\_->pure ":set args parser.nimzo -p core \n:r\n main\n")
+:def n (\_->pure ":set args imports/parser.nimzo -p types \n:r\n main\n")
 
 :def z (\i -> pure (":r\n" ++ i))
 :def opt (\_->pure ":r\n opt\n")

@@ -20,6 +20,7 @@ data TCEnvState s = TCEnvState {
  , _scopeFails :: [ScopeError]
 
  -- state
+ , _lvl        :: Int
  , _srcRefs    :: Maybe SrcInfo
  , _tmpFails   :: [TmpBiSubError] -- App local bisub failures
  , _bindWIP    :: IName
@@ -29,6 +30,7 @@ data TCEnvState s = TCEnvState {
  , _blen       :: Int
  , _bis        :: MV.MVector s BiSub -- typeVars
  , _isRecBiSub :: Bool
+ , _deadVars   :: Integer
 
  , _mus        :: Int -- fresh names for recursive types [x,y,z,x1,y1...]
  , _muNest     :: IntMap (IName , Type)  -- mu bound types deeper in the type that could be merged with

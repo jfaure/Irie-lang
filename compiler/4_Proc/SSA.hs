@@ -24,6 +24,7 @@ data Type
 -- | TypeDef Type Int -- typeDefs vector
  | TGMPInt
  | TGMPFloat
+ | TVoid -- no ty
 
 data FunctionDecl = FunctionDecl {
    name :: Text
@@ -33,6 +34,7 @@ data FunctionDecl = FunctionDecl {
 
 data Function = Function {
    fnDecl :: FunctionDecl
+ , a0     :: Int
  , body   :: Expr
 }
 
@@ -54,9 +56,14 @@ data Expr
  | RawFields Type (V Expr) -- maybe rm
  | Struct Type (V Expr)
  | SumData (V Type) Expr Expr -- tag and value
+ | Boxed Type Expr    -- malloced node
 
  | Ret   Expr          -- indicate top-level expr
  | BitCast Type Expr
+
+ | FromPoly Type Expr
+ | ToPoly   Type Expr
+
  | UnUnion Int Type Expr
  | Load  Type Expr
  | Gep   Type Int Expr   -- &(->) Only TStruct and TSum

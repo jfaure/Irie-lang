@@ -173,6 +173,7 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("Arrow" , (TyInstr Arrow  , ([set,set] , set)))
   , ("puts"  , (Puts , ([str] , i)))
   , ("putNumber" , (PutNbr , ([i] , i)))
+  , ("putChar"   , (PutChar , ([c] , c)))
   , ("IntN"  , (TyInstr MkIntN , ([i] , set)))
   , ("primLen" , (Len , ([ia] , i)))
   , ("add64" , (NumInstr (IntInstr Add    ) , ([i64, i64] , i64) ))
@@ -215,10 +216,10 @@ typeOfLit = \case
   String{}  -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   Array{}   -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   PolyInt{} -> THPrim PrimBigInt
-  Int{}     -> THPrim (PrimInt 32)
 --PolyInt{} -> THPrim (PrimInt 32)
---Int 0     -> THPrim (PrimInt 1)
---Int 1     -> THPrim (PrimInt 1)
+  Int 0     -> THPrim (PrimInt 1)
+  Int 1     -> THPrim (PrimInt 1)
+  Int{}     -> THPrim (PrimInt 32)
 --Int{}     -> THPrim (PrimInt 32)
   Char{}    -> THPrim (PrimInt 8) --THExt 3
   x -> error $ "don't know type of literal: " <> show x

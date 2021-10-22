@@ -11,21 +11,24 @@
 --import imports/fin
 --import imports/printf
 --import imports/subtype
-import imports/prelude
+--import imports/prelude
+--import imports/parser
 --import imports/list
+
+fmap f x = x . ret . over f
+<*> fs as  = as . ret . over (fs . ret) -- ? need to merge the records
+liftA2 f x = <*> (fmap f x)
+probe x = let y = x in y
+--liftA2 f x = let g = (fmap f x) in <*> g
+--lA2 f x y = y . ret . over (f (x . ret))
 
 --IO = | In : IO | Out : IO
 
---fromMaybe l = case l of 
---  Maybe b => b
---  Nothing => 0
-printList l = case l of
-  Nil => 0
-  Cons i ll => add (putNumber i) (printList ll)
-
-scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
-
-main = printList (scanSum 10 Nil)
+--printList l = case l of
+--  Nil => 0
+--  Cons i ll => add (putNumber i) (printList ll)
+--scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
+--main = printList (scanSum 10 Nil)
 
 -- f (Just n) = n
 -- g {a , b} = add a b

@@ -100,8 +100,7 @@ data TyHead
  | THVar     BiSubName-- generalizes to THBound if survives biunification and simplification
  | THBound   IName  -- pi-bound debruijn index; replace with fresh THVar at THBi to biunify
  | THMuBound IName  -- mu-bound debruijn index (must be guarded and covariant) 
-
- -- type Families | indexed types
+-- type Families | indexed types
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
  | THFam Type [Type] [Expr] -- type of indexables, and things indexing it (both can be [])
 
@@ -149,7 +148,7 @@ data ExternVar
  | Imported   Expr
 
  | NotInScope       HName
- | AmbiguousBinding HName -- bindings overlap not allowed
+ | AmbiguousBinding HName -- same level binding overlap / overwrite
 
  | Importable ModuleIName IName -- read allBinds
  | MixfixyVar Mixfixy -- for solvemixfixes

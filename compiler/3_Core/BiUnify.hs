@@ -12,6 +12,9 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
 import Control.Lens
 
+-- Generalization (Gen G t) quantifies over only free tvars of t that do not occur in G
+-- Thus we must make sure generalizables do not occur in the type environment
+
 -- First class polymorphism:
 -- \i => if (i i) true then true else true
 -- i used as:
@@ -65,20 +68,11 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
   (THBi nb x , y) -> do
     -- make new THVars for the debruijn bound vars here
     level %= (\(Dominion (f,x)) -> Dominion (f,x+nb))
---  bisubs <- (`MV.grow` nb) =<< use bis
---  let blen = MV.length bisubs
---      tvars = [blen - nb .. blen - 1] 
-    (r , _) <- withBiSubs nb $ \tvars -> do
-      bisubs <- use bis
-      [tvars..tvars+nb-1] `forM_` \i -> MV.write bisubs i (BiSub [] [] 0 0)
---    bis .= bisubs
---    r <- biSub (substFreshTVars (blen - nb) x) [y]
-      r <- biSub (substFreshTVars tvars x) [y]
-      pure r
-    -- todo is it ok that substitution of debruijns doesn't distinguish between + and - types
---  insts <- tvars `forM` \i -> MV.read bisubs i
---  traceM $ "Instantiate: " <> show tvars <> "----" <> show insts <> "---" <> show r
---  pure . did_ $ BiInst insts r
+    (r , _) <- withBiSubs nb $ \tvars ->
+      biSub (substFreshTVars tvars x) [y]
+      -- now void out the tvars so we don't later leak polymorphism through them
+      -- set the bit at each tvar index in the deadVars bitmask
+      <* (deadVars %= (.|. (((1 `shiftL` nb) - 1) `shiftL` tvars) )) -- note. nb must be >= 1 !
     pure r
 
   (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)
@@ -110,13 +104,15 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
     -- don't allow vars to form cycles
     let isVar v = (\case { THVar x -> x /= v ; _ -> True })
     MV.modify v (\(BiSub a b qa qb) -> if any (isVar p) b then BiSub a b qa qb else BiSub a (THVar m : b) qa qb) p
-  (THVar p , m) -> use bis >>= \v -> (_pSub <$> MV.read v p) >>= \t -> do
+  (THVar p , m) -> use bis >>= \v -> MV.read v p >>= \(BiSub p' m' pq mq) -> do
     MV.modify v (\(BiSub a b qa qb) -> BiSub a (mergeTyHeadType m b) qa qb) p
-    biSub t [m]
+    use deadVars >>= \d -> unless (testBit d p) (void (biSub p' [m]))
+    pure BiEQ
 
-  (p , THVar m) -> use bis >>= \v -> (_mSub <$> MV.read v m) >>= \t    -> do
+  (p , THVar m) -> use bis >>= \v -> MV.read v m >>= \(BiSub p' m' pq mq) -> do
     MV.modify v (\(BiSub a b qa qb) -> BiSub (mergeTyHeadType p a) b qa qb) m
-    biSub [p] t
+    use deadVars >>= \d -> unless (testBit d m) (void (biSub [p] m'))
+    pure BiEQ
 
   (x , THTyCon THArrow{}) -> failBiSub "Too many arguments"        [p] [m]
   (THTyCon THArrow{} , x) -> failBiSub "Not enough arguments"      [p] [m]

@@ -361,7 +361,7 @@ fnMatch pMFArgs sep = -- sep is "=" or "=>"
 ttArg , tt :: Parser TT
 (ttArg , tt) = (arg , anyTT)
   where
-  anyTT = (match <|> appOrArg) >>= typedTT <?> "tt"
+  anyTT = (match <|> tySum <|> appOrArg) >>= typedTT <?> "tt"
   argOrLens = arg >>= \larg -> option larg (lens larg) -- lens bind tighter than App
   appOrArg = getOffset >>= \o -> argOrLens >>= \larg -> option larg
     ( case larg of

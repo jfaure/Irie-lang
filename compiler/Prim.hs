@@ -52,7 +52,7 @@ data PrimInstr
  | Zext | Sext
  | GMPZext Int | GMPSext Int -- take an i<64 to a gmp integer
 
- | Puts | PutNbr | GMPPutNbr
+ | Puts | PutChar | PutNbr | GMPPutNbr
 
  | PowApp Int -- pow application of function
  | MkTuple

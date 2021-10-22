@@ -62,6 +62,7 @@ judgeModule pm nArgs hNames exts source = let
       , _biFails  = []
       , _scopeFails = []
 
+      , _lvl      = 0
       , _srcRefs  = source
       , _tmpFails = []
       , _bindWIP  = 0
@@ -75,6 +76,7 @@ judgeModule pm nArgs hNames exts source = let
       , _mus      = 0
       , _muEqui   = mempty
       , _muNest   = mempty
+      , _deadVars = 0
       , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
       , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
@@ -206,7 +208,7 @@ infer = let
      (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
      use tmpFails >>= \case
        [] -> setRetTy retTy biret castArgs <$> ttApp judgeBind f args
-       x  -> PoisonExpr <$ (tmpFails .= []) <* (biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++))
+       x  -> trace ("problem fn: " <> show f :: Text) $ PoisonExpr <$ (tmpFails .= []) <* (biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++))
 
  -- TODO don't allow `bind = lonemixfixword`
  handleExtern = let mfwOK = True in \case
@@ -267,32 +269,34 @@ infer = let
       mkExpected :: Type -> Type
       mkExpected dest = foldr (\fName ty -> [THTyCon $ THProduct (IM.singleton fName ty)]) dest fields
     in (>>= checkFails o) $ case record of
-    e@(Core f _) -> case maybeSet of
+    e@(Core f gotTy) -> case maybeSet of
       P.LensGet    -> withBiSubs 1 (\ix -> biSub recordTy (mkExpected [THVar ix]))
         <&> \(cast , [retTy]) -> Core (TTLens (Cast cast f) fields LensGet) [THVar retTy]
 
-      P.LensSet x  -> error "todo set"
+      P.LensSet x  -> infer x <&> \case -- LeafTy -> Record -> Record & { path : LeafTy }
+        new@(Core newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (gotTy ++ mkExpected newLeafTy)
+        _ -> PoisonExpr
 
       P.LensOver x -> infer x >>= \fn -> do
          let [singleField] = fields
-         ((ac , rc , outT) , [tyOld, tyNew, output]) <- withBiSubs 3 $ \ ix -> do
-           argCast <- biSub [THTyCon $ THArrow [[THVar ix]] [THVar (ix+1)]] (tyOfExpr fn) <&> \case
+         ((ac , rc , outT , rT) , {-[tyOld, tyNew, output]-} _) <- withBiSubs 3 $ \ ix -> let
+           inT = [THVar ix] ; outT = [THVar (ix+1)] ; rT  = THVar (ix + 2)
+           in do -- need 3 fresh TVars since we cannot assume anything about the "fn" or the "record" type
+           argCast <- biSub (tyOfExpr fn) [THTyCon $ THArrow [inT] outT] <&> \case
              CastApp [argCast] pap BiEQ  -> argCast -- pap ?
              BiEQ                        -> BiEQ
-           -- bisub the over fn with 2 fresh typevars;
-           -- note. we cannot assume anything about fn's type (could be a single typevar or otherwise not a function)
-           --       neither can we assume anything about the record's type (it's allowed to not be a THProduct)
-           -- note. the typesystem does not (probably will not) support quantifying over field presences
-           (inT , outT) <- use bis >>= \v -> (,) <$> fmap _pSub (MV.read v ix) <*> fmap _mSub (MV.read v (ix+1))
-           rCast <- biSub recordTy (THVar (ix+2) : mkExpected inT) -- over produces the same type as input record
-           pure (argCast , rCast , outT)
-         traceShowM (ac , rc)
+           -- note. the typesystem does not atm support quantifying over field presences
+           rCast <- biSub recordTy (rT : mkExpected inT)
+           pure (argCast , rCast , outT , rT)
+         traceShowM (ac , rc , outT , rT)
 
          let lensOverCast = case rc of
                CastProduct drops [(asmIdx,cast)] -> Cast (CastOver asmIdx ac fn outT) f
+               BiEQ -> f
                x -> error $ "expected CastProduct: " <> show rc
 
-         pure $ Core lensOverCast [THVar output]
+--       pure $ Core lensOverCast (THVar output : mkExpected outT)
+         pure $ Core lensOverCast (rT : mkExpected outT)
 
     PoisonExpr -> pure PoisonExpr
     t -> error $ "record type must be a term: " <> show t

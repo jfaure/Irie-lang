@@ -11,7 +11,7 @@ import qualified Data.IntMap as IM
 --import qualified Data.IntSet as IS
 
 nullLattice pos = \case
-  [] -> if pos then [THBot] else [THTop] -- [] -> incQuants >>= \q -> pure [THBound q]
+  [] -> if pos then [THBot] else [THTop]
   t  -> t
 
 mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (singleton <$> args) (singleton retTy)
@@ -154,7 +154,11 @@ kindOf = \case
 
 mergeTypes :: [TyHead] -> [TyHead] -> [TyHead]
 --mergeTypes l1 l2 = concat $ foldr doSub [] <$> (groupBy eqTyHead (l1 ++ l2))
-mergeTypes l1 l2 = foldr doSub [] (sortBy (\a b -> (kindOf a) `compare` (kindOf b)) $ l2 ++ l1)
+mergeTypes l1 l2 = let
+  cmp a b = case (a,b) of
+    (THBound a' , THBound b') -> compare a' b'
+    _ -> (kindOf a) `compare` (kindOf b)
+  in foldr doSub [] (sortBy cmp $ l2 ++ l1)
 
 mergeTyHeadType = doSub
 -- add head constructors, transitions and flow edges

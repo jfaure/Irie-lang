@@ -24,6 +24,10 @@
 --  
 --  scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
 
+fromMaybe l = case l of 
+  Maybe b => b
+  Nothing => 0
+
 null l = case l of
   Cons x xs => 0
   Nil       => 1

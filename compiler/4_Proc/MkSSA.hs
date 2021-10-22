@@ -18,6 +18,7 @@ data CGState s = CGState {
  , locCount    :: Int
  , argTable    :: MV.MVector s (Expr , Type)
  , muDefs      :: IntMap Int
+ , expectedTy  :: Type
  }
 addLocal :: CGEnv s Int
 addLocal = do
@@ -28,6 +29,7 @@ newTypeDef :: CGEnv s Int
 newTypeDef = gets typeDef >>= \td -> td <$ modify (\x->x{typeDef = td + 1})
 addTypeDef :: Type -> CGEnv s Type
 addTypeDef td = td <$ modify (\x -> x { wipTypeDefs = td : wipTypeDefs x })
+setRetTy ty = modify (\x->x{expectedTy = ty})
 
 data CGWIP
   = WIPCore  (HName , Bind)
@@ -59,9 +61,36 @@ mkSSAModule coreExts' coreMod@(JudgedModule modName nArgs bindNames pFields pLab
     , argTable = at
     , locCount = 0
     , muDefs   = mempty
+    , expectedTy = TVoid
     }
     fns <- V.unsafeFreeze (wipBinds st)
     pure $ Module modName (V.reverse $ V.fromList $ wipTypeDefs st) mempty (wip2Fn <$> fns)
+
+typeOfInstr i = TPrim (PrimInt 32)
+
+isPolyT = \case { TPoly->True;_->False }
+isPolyFnT (TFunction arTs retT) = isPolyT retT || any isPolyT arTs
+isFnT = \case { TFunction{}->True ; _ -> False }
+
+getExprType :: Expr -> CGEnv s Type
+getExprType = \case
+  Arg i -> gets argTable >>= \at -> snd <$> MV.read at i
+  Ret e -> getExprType e
+  Call (LocalFn i) _ -> do
+    decl <- cgBind i <&> \case
+      WIPFn   f -> fnDecl f
+      WIPDecl d -> d
+    pure (TFunction (V.fromList (SSA.args decl)) (retTy decl))
+
+  x -> pure $ case x of
+    Call (Prim i) _ -> typeOfInstr i
+    Load t _     -> t
+    BitCast t _  -> t
+    FromPoly t _ -> t
+    ToPoly   t _ -> t
+    Struct t _   -> t
+    LitE l       -> TPrim (PrimInt 32)
+    y -> error $ show x
 
 ssaTy :: [TyHead] -> CGEnv s Type
 ssaTy = let
@@ -115,8 +144,9 @@ emitFunction nm i args t ty = gets wipBinds >>= \wip ->
     at <- gets argTable
     ars `forM` \(i , t) -> MV.write at i (Arg i , t)
     MV.write wip i (WIPDecl fd)
+    setRetTy retTy
     e <- addRet <$> cgExpr t
-    let w = WIPFn (Function fd e)
+    let w = WIPFn (Function fd (maybe 0 fst (head args)) e)
     w <$ MV.write wip i w
 
 cgCore wip i nm b = let
@@ -146,27 +176,46 @@ cgExpr t = let
   App f args -> setTop False *> cgApp f args
 
   RecLabel label fixPoints exprs -> mdo
-    et <- exprs `forM` \(Core t ty) -> (,) <$> cgExpr t <*> ssaTy ty
+    et  <- exprs `forM` \(Core t ty) -> (,) <$> cgExpr t <*> ssaTy ty
+    exp <- gets expectedTy
     let (es , ts) = unzip et
-        tagE = Fin 32 (fromIntegral label)
-    pure $ SumData mempty (LitE tagE) (Struct (TTuple (V.fromList ts)) (V.fromList es))
+        tagE   = Fin 32 (fromIntegral label)
+        datas  = let
+          boxTy = exp -- V.fromList ts V.! fp
+          boxElem vals fp =
+            V.modify (\v -> MV.modify v (Boxed boxTy) fp) vals
+          in V.foldl boxElem (V.fromList es) fixPoints
+        dataT  = TTuple (V.fromList ts)
+        sumVal = Struct dataT datas
+--               BitCast dataT (Struct dataT datas)
+        ret = SumData mempty (LitE tagE) sumVal
+    pure $ case exp of
+      TPoly -> ToPoly exp ret
+      _     -> BitCast exp ret
   Label i tts            -> _
   Match ty labels d      -> _
   Cons  fields           -> _
   TTLens tt _fields lens -> cgExpr tt
   x -> error $ "MkSSA: not ready for term: " <> show x
 
-cgApp f args = case f of
---Match ty alts d | [a] <- args -> cgExpr a >>= \scrut ->
+cgApp f ars = case f of
+--Match ty alts d | [a] <- ars -> cgExpr a >>= \scrut ->
 --  emitMatchApp scrut ty alts d
-  RecMatch alts d | [a] <- args -> cgExpr a >>= \scrut ->
+  RecMatch alts d | [a] <- ars -> cgExpr a >>= \scrut ->
     emitMatchApp scrut alts d
-  Instr i -> Call (Prim i) <$> (cgExpr `mapM` args)
+  Instr i -> Call (Prim i) <$> (cgExpr `mapM` ars)
   Var (VBind i) -> do
---  decl <- cgBind i >>= \case
---    WIPFunction f -> fnDecl f
---    WIPDecl     d -> d
-    Call (LocalFn i) <$> (cgExpr `mapM` args)
+    decl <- cgBind i <&> \case
+      WIPFn   f -> fnDecl f
+      WIPDecl d -> d
+    exp <- gets expectedTy
+    r <- Call (LocalFn i) <$>
+      zipWithM (\ty e -> setRetTy ty *> cgExpr e) (SSA.args decl) ars
+    pure $ case (exp , retTy decl) of
+      (TPoly , TPoly) -> r
+      (TPoly , rT)    -> ToPoly rT r
+      (eT    , TPoly) -> FromPoly eT r
+      (a     , b    ) -> r
   Var{}   -> cgExpr f >>= \case
     x -> error $ show x
 
