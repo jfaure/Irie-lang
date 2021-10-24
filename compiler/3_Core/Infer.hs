@@ -68,7 +68,6 @@ judgeModule pm nArgs hNames exts source = let
       , _bindWIP  = 0
       , _blen     = nArgs
       , _bis      = bis'
-      , _isRecBiSub = False
       , _deBruijn = deBruijn'
       , _level    = Dominion (-1,-1)
       , _quants   = 0
@@ -103,18 +102,23 @@ judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
 
   WIP -> use wip >>= \wip' -> do
     svwip <- bindWIP <<.= bindINm
-    let getTT (P.FunBind (P.FnDef hNm letRecT mf implicits freeVars matches tyAnn)) = let
+    let getTT (P.FunBind (P.FnDef hNm isTop letRecT mf implicits freeVars matches tyAnn)) = let
           (mainArgs , mainArgTys , tt) = matches2TT matches
           args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
-          in (tt , args)
-    (tt , args) <- getTT . (V.! bindINm) <$> use pBinds
+          in (tt , args , isTop)
+    (tt , args , isTop) <- getTT . (V.! bindINm) <$> use pBinds
     -- TODO guarantee that args are always consecutive !!
 
     ((tvarIdx , jb , ms) , resultTy) <- withBiSubs 1 $ \idx -> do
       MV.write wip' bindINm (Guard [] args idx)
-      svLvl <- use level
-      level .= Dominion (snd (tVarRange svLvl) + 1, snd (tVarRange svLvl))
+
+      -- deadVars .= repeat bl 1 (1111..)
+      -- we're entering a deeper let-nest; all existing tvars must be ignored while that is inferred
+      sv <- use deadVars
+      use blen >>= \bl -> (deadVars .= setNBits (bl-1))
       expr <- infer tt
+      deadVars .= (if isTop then sv else setBit sv idx) -- also void the expression var if it was part of a let
+
       let jb = case expr of
             Core x ty -> case args of
               []  -> Core x ty
@@ -135,23 +139,20 @@ generaliseBinds i ms = use wip >>= \wip' -> do
         Mutual cd naiveExpr isRec recTVar <- MV.read wip' m
         pure (m , recTVar , cd , naiveExpr)
       substVars = \(m , recTVar , cd , naiveExpr) -> let
-        Dominion (bStart , bEnd) = cd -- current dominion
-        traceVars = when global_debug $ use bis >>= \b -> [0..MV.length b -1] `forM_` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
+--      Dominion (bStart , bEnd) = cd -- current dominion
+        traceVars= when global_debug $ use bis >>= \b -> [0..MV.length b -1] `forM_` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
         in do
         done <- case naiveExpr of
           Core expr coreTy -> do
             ty <- case expr of -- inferrence produces ret type of Abs, ignoring arguments
-              Abs ars free x fnTy -> do
-                pure $ prependArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
+              Abs ars free x fnTy -> pure $ prependArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
               _ -> pure coreTy
             -- check for recursive type
             use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
               [] -> BiEQ <$ MV.write v recTVar (BiSub ty [] 0 0)
-              t  -> (isRecBiSub .= True) *>
-                    biSub ty [THVar recTVar] -- ! recursive expression
-                    <* (isRecBiSub .= False) 
+              t  -> biSub ty [THVar recTVar] -- ! recursive expression
             traceVars
-            Core expr . nullLattice True <$> substTVars recTVar -- TODO overwrite Abs tys ?
+            Core expr {-. nullLattice True-} <$> substTVars recTVar -- TODO overwrite Abs tys ?
           t -> pure t
         done <$ MV.write wip' m (BindOK done)
   mutuals <- (i : ms) `forM` getMutual -- Usually a singleton list
@@ -231,7 +232,7 @@ infer = let
 
   P.Abs top -> let
     -- unlike topBind, don't bother generalising the type
-      getTT (P.FunBind (P.FnDef hNm letRecT mf implicits freeVars matches tyAnn)) = let
+      getTT (P.FunBind (P.FnDef hNm False letRecT mf implicits freeVars matches tyAnn)) = let
         (mainArgs , mainArgTys , tt) = matches2TT matches
         args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
         in (tt , args)
@@ -255,7 +256,7 @@ infer = let
       QVar (m,i) -> use externs >>= \e -> handleExtern (readQParseExtern e m i)
       MFExpr{}   -> PoisonExpr <$ (scopeFails %= (AmbigBind "mixfix word":))
       core -> pure core
-    in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
+    in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff . did_
 
   P.Cons construct -> do
     let (fields , rawTTs) = unzip construct

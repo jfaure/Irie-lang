@@ -14,6 +14,12 @@ import Control.Lens
 
 -- Generalization (Gen G t) quantifies over only free tvars of t that do not occur in G
 -- Thus we must make sure generalizables do not occur in the type environment
+-- Let => generalize everything of >= level
+-- Instantiate => replace tvars >= level with freshvars
+
+-- generalized var
+-- dead var
+-- lvl of var
 
 -- First class polymorphism:
 -- \i => if (i i) true then true else true
@@ -70,7 +76,7 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
     level %= (\(Dominion (f,x)) -> Dominion (f,x+nb))
     (r , _) <- withBiSubs nb $ \tvars ->
       biSub (substFreshTVars tvars x) [y]
-      -- now void out the tvars so we don't later leak polymorphism through them
+      -- now void out the tvars so we don't later leak bounds to shallower let nests
       -- set the bit at each tvar index in the deadVars bitmask
       <* (deadVars %= (.|. (((1 `shiftL` nb) - 1) `shiftL` tvars) )) -- note. nb must be >= 1 !
     pure r

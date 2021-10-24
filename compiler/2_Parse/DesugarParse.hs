@@ -13,7 +13,7 @@ patterns2TT pats e = let
   e'' = foldl (\b -> maybe b ($ b)) e e'
   in (args , argTys , e'')
 
-convPat :: P.Pattern -> (IName , _ , Maybe (P.TT -> P.TT))
+convPat :: P.Pattern -> (IName , [a] , Maybe (P.TT -> P.TT))
 convPat = \case
   P.PArg  i     -> (i , [] , Nothing)
   P.PComp i pat -> (i , [] ,) . Just $ let thisArg = P.Var (P.VLocal i) in case pat of
@@ -23,7 +23,7 @@ convPat = \case
       mkProj p = error $ "not ready for patterns within records" <> show p
       (fieldArgs , projs) = unzip $ mkProj <$> fields
       fArgs = P.PArg <$> fieldArgs
-      abs  = P.Abs (P.FunBind (P.FnDef "patProj" P.Let Nothing [] mempty [P.FnMatch [] fArgs t] Nothing))
+      abs  = P.Abs (P.FunBind (P.FnDef "patProj" False P.Let Nothing [] mempty [P.FnMatch [] fArgs t] Nothing))
       in P.App abs projs
     x -> error $ "not ready for pattern: " <> show x
 --    P.Literal l    -> _

@@ -77,7 +77,6 @@ data Expr
 
 sumTag_t = TPrim (PrimInt 32)
 
-printf : _ = ([0..] :: [Int])
 builtins = V.fromList [
  ]
 

@@ -76,7 +76,7 @@ addBindName   h = do
   n <- use (moduleWIP . parseDetails . hNameBinds . _1)
   r <- use (moduleWIP . parseDetails . hNameLocals) >>= \case
     [] -> pd . hNameBinds  %%= insertOrRetrieveSZ h
-    _  -> pd . hNameLocals %%= insertOrRetrieveArg h n
+    _  -> (pd . hNameLocals %%= insertOrRetrieveArg h n) <* addAnonBindName -- inc the sz counter
   case r of
     Right r -> fail $ toS $ "Binding overwrites existing binding: '" <> h <> "'"
     Left  r -> pure r
@@ -262,12 +262,12 @@ doParse = void $ decl `sepEndBy` (optional endLine *> scn) :: Parser ()
 decl = svIndent *> choice
    [ reserved "import" *> (iden >>= addImport)
    , extern
-   , void (funBind LetOrRec) <?> "binding"
+   , void (funBind True LetOrRec) <?> "binding"
    , bareTT <?> "repl expression"
    ]
 
 -- for the repl
-bareTT = addAnonBindName *> ((\tt -> addBind (FunBind $ FnDef "replExpr" LetOrRec Nothing [] IS.empty [FnMatch [] [] tt] Nothing)) =<< tt)
+bareTT = addAnonBindName *> ((\tt -> addBind (FunBind $ FnDef "replExpr" True LetOrRec Nothing [] IS.empty [FnMatch [] [] tt] Nothing)) =<< tt)
 
 extern =
  let _typed = reservedOp ":" *> tt
@@ -297,8 +297,8 @@ addMixfixWords m mfBind mfdef = let
     Nothing : Just hNm : mfp -> addMFWord hNm (StartPostfix mfdef)
       >>= \w -> (Nothing :) . (Just w :) <$> addMFParts mfp
 
-funBind letRecT = lexeme pMixfixWords >>= \case
-  [Just nm] -> VBind <$> funBind' letRecT nm Nothing (symbol nm *> many (lexeme singlePattern))
+funBind isTop letRecT = lexeme pMixfixWords >>= \case
+  [Just nm] -> VBind <$> funBind' isTop letRecT nm Nothing (symbol nm *> many (lexeme singlePattern))
   mfdefHNames -> let
     pMixFixArgs = \case
       []            -> pure []
@@ -309,13 +309,13 @@ funBind letRecT = lexeme pMixfixWords >>= \case
     let hNm = mixFix2Nm mfdefHNames
     mfdefINames <- addMixfixWords mfdefHNames iNm mfdef
     let mfdef = MixfixDef iNm mfdefINames prec
-    iNm <- funBind' letRecT (mixFix2Nm mfdefHNames) (Just mfdef) (pMixFixArgs mfdefHNames)
+    iNm <- funBind' isTop letRecT (mixFix2Nm mfdefHNames) (Just mfdef) (pMixFixArgs mfdefHNames)
     pure (VBind iNm)
 
-funBind' :: LetRecT -> Text -> Maybe MixfixDef -> Parser [Pattern] -> Parser IName
-funBind' letRecT nm mfDef pMFArgs = newArgNest $ mdo
+funBind' :: Bool -> LetRecT -> Text -> Maybe MixfixDef -> Parser [Pattern] -> Parser IName
+funBind' isTop letRecT nm mfDef pMFArgs = newArgNest $ mdo
   iNm <- addBindName nm -- handle recursive references
-    <* addBind (FunBind $ FnDef nm letRecT mfDef (implicits ++ pi) free eqns ty)
+    <* addBind (FunBind $ FnDef nm isTop letRecT mfDef (implicits ++ pi) free eqns ty)
   ars <- many singlePattern
   ann <- tyAnn
   let (implicits , ty) = case ann of { Just (i,t) -> (i,Just t) ; _ -> ([],Nothing) }
@@ -349,7 +349,7 @@ lambda = reservedChar '\\' *> do
   newArgNest $ do
     eqns <- (:[]) <$> fnMatch (many singlePattern) (reserved "=>")
     free <- getFreeVars
-    pure $ Abs $ FunBind $ FnDef "lambda" LetOrRec Nothing [] free eqns Nothing
+    pure $ Abs $ FunBind $ FnDef "lambda" False LetOrRec Nothing [] free eqns Nothing
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ?
@@ -447,7 +447,7 @@ ttArg , tt :: Parser TT
       ref <- use indent
       svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
       traceShowM ref
-      indentedItems ref scn (funBind letRecT) (reserved "in") <* reserved "in"
+      indentedItems ref scn (funBind False letRecT) (reserved "in") <* reserved "in"
       tt
     in do
       letStart <- use indent -- <* scn
@@ -461,7 +461,7 @@ ttArg , tt :: Parser TT
     Just (implicits , ty) -> case exp of
       Var (VLocal l) -> addPiBound (l , Just ty) *> pure exp
       x -> (Var . VBind <$> addAnonBindName)
-        <* addBind (FunBind $ FnDef "_:" LetOrRec Nothing [] IS.empty [FnMatch [] [] exp] (Just ty))
+        <* addBind (FunBind $ FnDef "_:" False LetOrRec Nothing [] IS.empty [FnMatch [] [] exp] (Just ty))
 
   piBinder = do
     i <- iden

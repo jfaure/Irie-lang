@@ -29,7 +29,6 @@ data TCEnvState s = TCEnvState {
  , _quants     :: Int -- fresh names for generalised typevars [A..Z,A1..Z1..]
  , _blen       :: Int
  , _bis        :: MV.MVector s BiSub -- typeVars
- , _isRecBiSub :: Bool
  , _deadVars   :: Integer
 
  , _mus        :: Int -- fresh names for recursive types [x,y,z,x1,y1...]

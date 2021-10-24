@@ -10,6 +10,8 @@ import Prim
 import qualified Data.IntMap as IM
 --import qualified Data.IntSet as IS
 
+setNBits n = (2 `shiftL` n) - 1
+
 nullLattice pos = \case
   [] -> if pos then [THBot] else [THTop]
   t  -> t

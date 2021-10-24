@@ -1,6 +1,6 @@
 -- Biunfication only records type bounds
 -- At|during generalisation substitute all type variables
-module Substitute (substTVars) where
+module Substitute (substTVars , markOccurs) where
 import CoreSyn
 import CoreUtils
 import TypeCheck
@@ -91,7 +91,8 @@ genVarLoop pos vars = use bis >>= \b -> ((\v -> (v,) <$> MV.read b v) `mapM` var
       MV.modify b (\(BiSub p m qp qm) -> BiSub p m 0 0) i -- zero out occurences
     pure v
 
-substTypeVar pos v loops guarded = use bis >>= \b -> let
+substTypeVar pos v loops guarded = use bis >>= \b -> use deadVars >>= \d ->
+  if testBit d v then pure [THVar v] else let -- need to ignore vars of lower level
 --dbgUpdate x = d_ (show x <> " => " <> show t :: Text) t))
   updateVar t = t <$ MV.modify b (over (if pos then pSub else mSub) (const t)) v -- dbgUpdate
   in updateVar =<< if IS.member v loops -- varloop

@@ -50,6 +50,7 @@ data LetRecT = Let | Rec | LetOrRec
 
 data FnDef = FnDef {
    fnNm         :: HName
+ , top          :: Bool
  , fnRecType    :: !LetRecT
  , fnMixfixName :: Maybe MixfixDef
  , implicitArgs :: [ImplicitArg]
