@@ -157,8 +157,8 @@ biSubTyCon p m = \case
                [THTyCon (THTuple x)] -> [THTyCon $ THTuple (x V.++ V.fromList args)]
                x                     -> [THTyCon $ THTuple (V.fromList (x : args))]
     in biSub [THTyCon (THSumTy $ IM.singleton lName t')] retT
-  (THSumTy s , THArrow{}) | [single] <- IM.toList s -> failBiSub "Labels must be fully applied"  [p] [m]
-  (a , b)         -> failBiSub "Type constructors mismatch" [p] [m]
+  (THSumTy s , THArrow{}) | [single] <- IM.toList s -> failBiSub "Note. Labels must be fully applied to avoid ambiguity" [p] [m]
+  (a , b)         -> failBiSub "Type constructor mismatch" [p] [m]
 
 arrowBiSub (argsp,argsm) (retp,retm) = let
   bsArgs [] [] = ([] , Nothing , ) <$> biSub retp retm

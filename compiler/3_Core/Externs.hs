@@ -50,7 +50,7 @@ data Externs = Externs {
 } deriving Show
 
 -- exported functions to resolve ParseSyn.VExterns
-readQParseExtern = \(Externs nms binds) modNm iNm -> if modNm >= V.length binds
+readQParseExtern = \(Externs nms binds) modNm iNm -> if modNm == V.length binds
   then ForwardRef iNm -- ie. not available yet , must typecheck as forwardRef | mutual binding
   else Imported $ (binds V.! modNm) V.! iNm
 readParseExtern  = \e@(Externs nms binds) i -> case nms V.! i of
@@ -107,7 +107,7 @@ resolveImports (GlobalResolver n curResolver prevBinds curMFWords) localNames mi
      , Externs { extNames = names unknownNames , extBinds = prevBinds })
 
 addModule2Resolver (GlobalResolver modCount nameMaps binds mfResolver) newBinds = let
-  in GlobalResolver modCount nameMaps (binds `V.snoc` newBinds) mfResolver
+  in GlobalResolver (1+modCount) nameMaps (binds `V.snoc` newBinds) mfResolver
 
 mkExtTy x = [THExt x]
 

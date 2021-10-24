@@ -15,7 +15,7 @@ d_ x   = let --if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
 did_ x = d_ x x
-dv_ f = traceShowM =<< (V.freeze f)
+dv_ f = traceShowM =<< V.freeze f
 
 -- INames are indexes into the main bindings vector
 type ExtIName    = Int  -- VExterns
@@ -125,7 +125,14 @@ data Expr
  | QVar     (ModuleIName , IName)
  | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
  | ExprApp  Expr [Expr] -- output of solvemixfixes
+
  | Fail     Text -- TCError
+
+--data MixfixSolved
+-- = QVar     (ModuleIName , IName)
+-- | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
+-- | ExprApp  Expr [Expr] -- output of solvemixfixes
+-- | MFId     Expr
 
 data Bind -- indexes in the bindmap
  = WIP

@@ -91,7 +91,7 @@ judgeModule pm nArgs hNames exts source = let
 judgeBind :: IName -> TCEnv s Expr
 judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
   BindOK e -> pure e
-  Mutual d e isRec tvar -> pure e
+  Mutual d e isRec tvar -> pure (Core (Var (VBind bindINm)) [THVar tvar]) -- pure e
 
   Guard mutuals ars tvar -> do
     this <- use bindWIP
@@ -104,25 +104,27 @@ judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
     svwip <- bindWIP <<.= bindINm
     let getTT (P.FunBind (P.FnDef hNm isTop letRecT mf implicits freeVars matches tyAnn)) = let
           (mainArgs , mainArgTys , tt) = matches2TT matches
-          args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
+          args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort ; parser should always give sorted argnames
           in (tt , args , isTop)
     (tt , args , isTop) <- getTT . (V.! bindINm) <$> use pBinds
-    -- TODO guarantee that args are always consecutive !!
 
     ((tvarIdx , jb , ms) , resultTy) <- withBiSubs 1 $ \idx -> do
+--    traceM $ "recIdx: " <> show idx
       MV.write wip' bindINm (Guard [] args idx)
 
       -- deadVars .= repeat bl 1 (1111..)
       -- we're entering a deeper let-nest; all existing tvars must be ignored while that is inferred
+      -- TODO deeper tvars leaking upwards in biunify?
       sv <- use deadVars
       use blen >>= \bl -> (deadVars .= setNBits (bl-1))
       expr <- infer tt
       deadVars .= (if isTop then sv else setBit sv idx) -- also void the expression var if it was part of a let
 
-      let jb = case expr of
-            Core x ty -> case args of
+      let arTys = (\x->[THVar x]) <$> args
+          jb = case expr of
+            Core x ty -> let fnTy = prependArrowArgs arTys ty in case args of
               []  -> Core x ty
-              ars -> Core (Abs (zip ars ((\x->[THVar x]) <$> args)) mempty x ty) ty
+              ars -> Core (Abs (zip ars arTys) mempty x fnTy) fnTy
             t -> t
       bindWIP .= svwip
       Guard ms _ars tVar <- MV.read wip' bindINm
@@ -144,8 +146,8 @@ generaliseBinds i ms = use wip >>= \wip' -> do
         in do
         done <- case naiveExpr of
           Core expr coreTy -> do
-            ty <- case expr of -- inferrence produces ret type of Abs, ignoring arguments
-              Abs ars free x fnTy -> pure $ prependArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
+            ty <- case expr of
+              Abs ars free x fnTy -> pure $ coreTy --prependArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
               _ -> pure coreTy
             -- check for recursive type
             use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
@@ -170,7 +172,7 @@ checkAnnotation ann inferredTy mainArgTys argTys = do
     $ error (show inferredTy <> "\n!<:\n" <> show ann)
   -- ? Prefer user's type annotation over the inferred one
   -- ! we may have inferred some missing information
-  -- type families are special: we need to insert the list of labels as retTy
+  -- type families (gadts) are special: we need to insert the list of labels as retTy
   pure $ case getRetTy inferredTy of
     s@[THFam{}] -> case flattenArrowTy annTy of
       [THArrow d r] -> [THFam r d []]
@@ -183,7 +185,7 @@ infer = let
   -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
  biUnifyApp fTy argTys = do
    (biret , [retV]) <- withBiSubs 1 (\idx -> biSub_ fTy (prependArrowArgs argTys [THVar idx]))
-   pure $ (biret , [THVar retV])
+   pure $ (biret , [THVar $ retV])
  retCast rc tt = case rc of { BiEQ -> tt ; c -> case tt of { Core f ty -> Core (Cast c f) ty } }
 
  checkFails srcOff x = use tmpFails >>= \case
@@ -234,7 +236,7 @@ infer = let
     -- unlike topBind, don't bother generalising the type
       getTT (P.FunBind (P.FnDef hNm False letRecT mf implicits freeVars matches tyAnn)) = let
         (mainArgs , mainArgTys , tt) = matches2TT matches
-        args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort !
+        args = {-sort $-} (map fst implicits) ++ mainArgs -- TODO don't sort !
         in (tt , args)
       (tt , args) = getTT top
     in do
@@ -256,7 +258,7 @@ infer = let
       QVar (m,i) -> use externs >>= \e -> handleExtern (readQParseExtern e m i)
       MFExpr{}   -> PoisonExpr <$ (scopeFails %= (AmbigBind "mixfix word":))
       core -> pure core
-    in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff . did_
+    in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
 
   P.Cons construct -> do
     let (fields , rawTTs) = unzip construct

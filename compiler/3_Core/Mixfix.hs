@@ -112,6 +112,6 @@ solveMixfixes :: [Expr] -> Expr = let
     in choice (try . mkPrefixParser <$> mfWords) 
         <|> maybe (fail "not a bindName") (\qvar -> mkApp . (QVar qvar :) <$> many arg) maybeBind
   expr = arg >>= \a -> option a (try $ startPostfix a Nothing)
-  in \s -> case runParser expr "<mixfix resolver>" (JuxtStream s) of
+  in \s -> case runParser expr "<mixfix resolver>" (JuxtStream $ s) of
     Right r -> r
     Left e  -> error $ errorBundlePretty e

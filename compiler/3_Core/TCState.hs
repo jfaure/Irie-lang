@@ -29,7 +29,7 @@ data TCEnvState s = TCEnvState {
  , _quants     :: Int -- fresh names for generalised typevars [A..Z,A1..Z1..]
  , _blen       :: Int
  , _bis        :: MV.MVector s BiSub -- typeVars
- , _deadVars   :: Integer
+ , _deadVars   :: Integer -- bitmask for TVars of shallower let-nests that we mustn't generalize
 
  , _mus        :: Int -- fresh names for recursive types [x,y,z,x1,y1...]
  , _muNest     :: IntMap (IName , Type)  -- mu bound types deeper in the type that could be merged with

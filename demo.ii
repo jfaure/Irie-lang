@@ -11,26 +11,23 @@
 --import imports/fin
 --import imports/printf
 --import imports/subtype
---import imports/prelude
 --import imports/parser
 --import imports/list
+--import imports/prelude
 
-fmap f x = x . ret . over f
-<*> fs as  = as . ret . over (fs . ret) -- ? need to merge the records
-liftA2 f x = <*> (fmap f x)
--- ----p2    x = let y z = x z in y
--- ----liftA2 f x = let g = (fmap f x) in <*> g
--- ----lA2 f x y = y . ret . over (f (x . ret))
--- --
--- ----f x = add (g 3) x
--- ----g y = add (f y) (f y)
--- --
--- ---- let generalization
+f x = g x
+g y = add (f y) (f y) --(f y)
 
-probe x = let b = x in b
--- TODO fix parser, seems to not increment anonymous bindings counter properly
-
-ff x = let y z = x z in y
+-- fmap f x = x . ret . over f
+-- <*> fs as  = as . ret . over (fs . ret) -- ? need to merge the records
+-- liftA2 f x = <*> (fmap f x)
+-- -- ----p2    x = let y z = x z in y
+-- -- ----liftA2 f x = let g = (fmap f x) in <*> g
+-- -- ----lA2 f x y = y . ret . over (f (x . ret))
+-- 
+-- -- let generalization
+-- probe x = let b = x in b
+-- ff x = let y z = x z in y
 
 --IO = | In : IO | Out : IO
 

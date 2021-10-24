@@ -114,7 +114,6 @@ text2Core flags resolver fName progText = do
       bindSrc                = BindSource _ bindNames _ labelNames fieldNames
       namedBinds showBind bs = (\(nm,j)->clYellow nm <> toS (prettyBind showBind bindSrc j)) <$> bs
 
-
   when ("types"  `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds False judged')
   when ("core"   `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds True  judged')
   let simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->

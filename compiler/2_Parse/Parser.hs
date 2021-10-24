@@ -64,12 +64,13 @@ insertOrRetrieveArg h sz argMaps = case argMaps of
       (_, mp')    -> (Left sz , mp':xs)
 
 pd = moduleWIP . parseDetails
+addAnonArgName = moduleWIP . parseDetails . nArgs <<%= (1+)
 addArgName , addBindName , addUnknownName:: Text -> Parser IName
 addArgName    h = do
   n <- use (moduleWIP . parseDetails . nArgs)
   pd . hNameArgs %%= insertOrRetrieveArg h n >>= \case
     Left _sz -> moduleWIP . parseDetails . nArgs <<%= (1+)
-    Right  x -> pure x
+    Right  x -> pure $ x
 
 -- search (local let bindings) first, then the main bindMap
 addBindName   h = do
@@ -485,7 +486,7 @@ loneIden a i = lookupSLabel i <&> \case
 singlePattern = choice
  [ try iden >>= \i -> addArgName i >>= \a -> loneIden a i
  , parens pattern
- , addArgName "" >>= \a -> PComp a <$> choice
+ , choice
    [ let fieldPattern = iden >>= \iStr -> newFLabel iStr >>= \i -> (i,) <$> choice
            [ reservedOp "=" *> pattern
            , PArg <$> addArgName iStr -- { A } pattern is same as { A=A }
@@ -493,7 +494,7 @@ singlePattern = choice
      in PCons <$> braces (fieldPattern `sepBy` reservedChar ',')
    , PWildCard <$ reserved "_"
    , PLit <$> try literalP
-   ]
+   ] >>= \compositePattern -> addAnonArgName <&> \a -> PComp a compositePattern
  ]
 
 ---------------------
