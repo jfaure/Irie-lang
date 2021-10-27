@@ -4,7 +4,6 @@
 -- * primitives: (note. prim bindings are CoreSyn)
 -- * imported modules
 -- * extern functions (esp. C)
-
 module Externs (GlobalResolver(..) , addModule2Resolver , primResolver , primBinds , Import(..) , Externs(..)
   , readParseExtern , readQParseExtern , readPrimExtern , resolveImports , typeOfLit)
 where
@@ -32,13 +31,16 @@ data Import = Import {
 data GlobalResolver = GlobalResolver {
    modCount      :: Int
  , globalNameMap :: M.Map HName (IM.IntMap IName) -- HName -> IName -> ModuleIName
- , allBinds      :: V.Vector (V.Vector Expr)
+ , allBinds      :: V.Vector (V.Vector (HName , Expr))
+ , lnames        :: V.Vector (V.Vector HName)
+ , fnames        :: V.Vector (V.Vector HName)
 
   -- HName -> (MFIName -> ModuleIName)
  , globalMixfixWords :: M.Map HName (IM.IntMap [QMFWord])
 } deriving Show
 
-primResolver :: GlobalResolver = GlobalResolver 1 (IM.singleton 0 <$> primMap) (V.singleton primBinds) M.empty
+primResolver :: GlobalResolver = GlobalResolver -- has no field/label names, so give an empty entry in its module slot
+  1 (IM.singleton 0 <$> primMap) (V.singleton primBinds) (V.singleton mempty) (V.singleton mempty) M.empty
 
 -------------
 -- Externs --
@@ -46,13 +48,15 @@ primResolver :: GlobalResolver = GlobalResolver 1 (IM.singleton 0 <$> primMap) (
 -- data Externsfor substituting P.VExtern during mixfix resolution
 data Externs = Externs {
    extNames   :: V.Vector ExternVar
- , extBinds   :: V.Vector (V.Vector Expr)   -- all loaded bindings
+ , extBinds   :: V.Vector (V.Vector (HName , Expr))   -- all loaded bindings
 } deriving Show
 
 -- exported functions to resolve ParseSyn.VExterns
 readQParseExtern = \(Externs nms binds) modNm iNm -> if modNm == V.length binds
-  then ForwardRef iNm -- ie. not available yet , must typecheck as forwardRef | mutual binding
-  else Imported $ (binds V.! modNm) V.! iNm
+  then ForwardRef iNm -- ie. not actually an extern
+  else Imported $ case snd ((binds V.! modNm) V.! iNm) of
+    Core f t -> Core (Var $ VQBind $ mkQName modNm iNm) t
+
 readParseExtern  = \e@(Externs nms binds) i -> case nms V.! i of
   Importable modNm iNm -> readQParseExtern e modNm iNm
   x -> x
@@ -61,7 +65,7 @@ readParseExtern  = \e@(Externs nms binds) i -> case nms V.! i of
 --  in if modNm >= V.length binds
 --  then ForwardRef iNm
 --  else Imported $ (binds V.! modNm) V.! iNm
-readPrimExtern e i   = (extBinds e V.! 0) V.! i
+readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
 --readMixfixExtern e (m,i) = (\(MFBind mfdef e) -> mfdef) $ (extBinds e V.! m) V.! i
 
 -- First resolve names for a module, then that module can be added to the resolver
@@ -70,7 +74,7 @@ readPrimExtern e i   = (extBinds e V.! 0) V.! i
 -- which is indexed by the permuation described in the extNames vector.
 -- * primitives must always be present in GlobalResolver
 resolveImports :: GlobalResolver -> M.Map HName IName -> M.Map HName [MFWord] -> M.Map HName IName -> (GlobalResolver , Externs)
-resolveImports (GlobalResolver n curResolver prevBinds curMFWords) localNames mixfixHNames unknownNames = let
+resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords) localNames mixfixHNames unknownNames = let
 --allBinds = prevAllBinds V.++ V.fromList (fmap (bind2Expr . snd) . importBinds <$> imports)
 --allBinds = prevAllBinds `V.snoc` imported ---- V.++ V.fromList (fmap (bind2Expr . snd) . importBinds <$> imports)
 
@@ -90,10 +94,10 @@ resolveImports (GlobalResolver n curResolver prevBinds curMFWords) localNames mi
     flattenMFMap = concat . map snd
     in case (binds , mfWords) of
     (Just [] , _)  -> error $ "impossible: empty imap ?!"
-    (Just [(0     , iNm)] , Nothing)-> Imported $ (prevBinds V.! 0) V.! iNm -- resolve primitives directly
+    (Just [(0     , iNm)] , Nothing)-> Imported $ snd ((prevBinds V.! 0) V.! iNm) -- resolve primitives directly
     (Just [(modNm , iNm)] , Nothing)-> Importable modNm iNm
     (Just [oneBind] , Just mfWords) -> MixfixyVar $ Mixfixy (Just oneBind) (flattenMFMap mfWords)
-    (Nothing        , Just mfWords) -> MixfixyVar $ Mixfixy Nothing (flattenMFMap mfWords)
+    (Nothing        , Just mfWords) -> MixfixyVar $ Mixfixy Nothing        (flattenMFMap mfWords)
     (Nothing        , Nothing)      -> NotInScope hNm
     (Just many , _)                 -> AmbiguousBinding hNm
 
@@ -103,11 +107,11 @@ resolveImports (GlobalResolver n curResolver prevBinds curMFWords) localNames mi
     (\nm idx -> MV.write v idx $ resolveName nm) `M.traverseWithKey` noScopeNames
     pure v
 
-  in (GlobalResolver n resolver prevBinds mfResolver
+  in (GlobalResolver n resolver prevBinds l f mfResolver
      , Externs { extNames = names unknownNames , extBinds = prevBinds })
 
-addModule2Resolver (GlobalResolver modCount nameMaps binds mfResolver) newBinds = let
-  in GlobalResolver (1+modCount) nameMaps (binds `V.snoc` newBinds) mfResolver
+addModule2Resolver (GlobalResolver modCount nameMaps binds l f mfResolver) newBinds = let
+  in GlobalResolver (1+modCount) nameMaps (binds `V.snoc` newBinds) l f mfResolver
 
 mkExtTy x = [THExt x]
 
@@ -123,7 +127,8 @@ getPrimTy nm = case getPrimIdx nm of -- case M.lookup nm primTyMap of
   Just i  -> i
 
 primMap = M.fromList $ zipWith (\(nm,_val) i -> (nm,i)) primTable [0..]
-primBinds :: V.Vector Expr = V.fromList $ snd <$> primTable
+--primBinds :: V.Vector Expr = V.fromList $ snd <$> primTable
+primBinds :: V.Vector (HName , Expr) = V.fromList primTable
 
 primTable = concat
   [ (\(nm , x)         -> (nm , Ty [THPrim x]) )                  <$> primTys

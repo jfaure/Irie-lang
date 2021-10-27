@@ -179,7 +179,7 @@ cgExpr t = let
     et  <- exprs `forM` \(Core t ty) -> (,) <$> cgExpr t <*> ssaTy ty
     exp <- gets expectedTy
     let (es , ts) = unzip et
-        tagE   = Fin 32 (fromIntegral label)
+        tagE   = Fin 32 (fromIntegral $ qName2Key label)
         datas  = let
           boxTy = exp -- V.fromList ts V.! fp
           boxElem vals fp =

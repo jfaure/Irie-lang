@@ -12,11 +12,20 @@
 --import imports/printf
 --import imports/subtype
 --import imports/parser
---import imports/list
---import imports/prelude
+import imports/list
+import imports/prelude
 
-f x = g x
-g y = add (f y) (f y) --(f y)
+f = foldr
+g = 3 + 2 - 7
+s = unlines
+
+--f = J
+--x y = case y of
+--  J => 0
+
+--f l = fromMaybe l
+--extern puts : CString -> Int
+--main = puts "hello"
 
 -- fmap f x = x . ret . over f
 -- <*> fs as  = as . ret . over (fs . ret) -- ? need to merge the records

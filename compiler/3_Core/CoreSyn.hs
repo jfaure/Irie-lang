@@ -18,20 +18,31 @@ did_ x = d_ x x
 dv_ f = traceShowM =<< V.freeze f
 
 -- INames are indexes into the main bindings vector
-type ExtIName    = Int  -- VExterns
-type BiSubName   = Int  -- index into bisubs
-type IField      = Int  -- product-type fields
-type ILabel      = Int  -- sum-type labels
-type SrcOff      = Int  -- offset into the source file
-type Complexity  = Int  -- number of Apps in the Term
+type ExtIName    = Int -- VExterns
+type BiSubName   = Int -- index into bisubs
+type SrcOff      = Int -- offset into the source file
+type Complexity  = Int -- number of Apps in the Term
+
+-- the lower `moduleBits` of labels/fields are reserved as module identifiers.
+-- The point is to always deal with native Ints, particularly for use as IntMap keys
+-- Note. Ints are signed, div truncates, so this is skewed by 2 bits, and thus there are 4x more available names than module names
+newtype QName = QName Int -- 'qualified name'; modulename+name
+qName2Key (QName q) = q -- very annoying but Intmap insists
+moduleBits :: Int = floor (logBase 2 (fromIntegral (maxBound :: Int))) `div` 2
+mkQName m i       = QName ((i `shiftL` moduleBits) .|. m)
+unQName (QName q) = q `shiftR` moduleBits
+modName (QName q) = q .&. complement (complement 0 `shiftL` moduleBits)
+type IField = QName
+type ILabel = QName
 
 data VName
- = VBind   IName
- | VQBind  ModuleIName IName
- | VArg    IName
- | VExt    IName -- extern map (incl. prim instrs and mixfixwords)
+ = VBind    IName
+ | VQBind   QName
+ | VArg     IName
+ | VExt     IName -- extern map (incl. prim instrs and mixfixwords)
+ | VForeign HName
 
- | VBruijn IName -- debruijn arg (only built by the simplifier)
+ | VBruijn  IName -- debruijn arg (only built by the simplifier)
 
 data Term -- β-reducable (possibly to a type) and type annotated
  = Var     !VName
@@ -63,7 +74,7 @@ data Term -- β-reducable (possibly to a type) and type annotated
 
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
-data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs a lens for extracting field
+data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs idx for extracting field
 
 -- TODO improve this ; Typemerge should be very fast
 type Type    = TyPlus
@@ -137,10 +148,10 @@ data Expr
 data Bind -- indexes in the bindmap
  = WIP
  | Guard     { mutuals :: [IName] , args :: [IName] , tvar :: IName }
- | Mutual    { tvars :: Dominion , naiveExpr :: Expr , recursive :: Bool , tvar :: IName }
+ | Mutual    { naiveExpr :: Expr , recursive :: Bool , tvar :: IName }
 
  | Checking  { mutuals :: [IName] 
-             , monoMorphic :: Maybe (Dominion , Expr) -- if set, shouldn't generalise itself (ask (the first seen) mutual bind do it)
+             , monoMorphic :: Maybe Expr -- if set, shouldn't generalise itself (ask (the first seen) mutual bind do it)
              , doGen :: Bool
              , recTy :: Type
              }
@@ -182,11 +193,6 @@ data BiCast
 -- | CastSequence [BiCast]
 -- | BiCast Term
 
--- generalisation needs to know which THVars and THArgs are dominated in a particular context
-data Dominion = Dominion {
-   tVarRange :: (Int , Int) -- stack of tvars
-} deriving Show
-
 data BiSub = BiSub {
    _pSub :: [TyHead]
  , _mSub :: [TyHead]
@@ -203,7 +209,7 @@ data Kind = KPrim | KArrow | KVar | KSum | KProd | KRec | KAny | KBound | KTuple
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 data JudgedModule = JudgedModule {
-   modName     :: HName
+   modHName    :: HName
 -- , fileDeps    :: [HName]
  , nArgs       :: Int
  , bindNames   :: V.Vector HName
@@ -212,10 +218,13 @@ data JudgedModule = JudgedModule {
  , judgedBinds :: V.Vector Bind
 }
 
+-- only used by prettyCore functions
 data BindSource = BindSource {
-   srcArgNames   :: V.Vector HName
- , srcBindNames  :: V.Vector HName
- , srcExtNames   :: V.Vector HName
- , srcLabelNames :: V.Vector HName
- , srcFieldNames :: V.Vector HName
+   srcArgNames     :: V.Vector HName
+ , srcBindNames    :: V.Vector HName
+ , srcExtNames     :: V.Vector HName
+ , srcLabelNames   :: V.Vector (V.Vector HName)
+ , srcFieldNames   :: V.Vector (V.Vector HName)
+ , allNames        :: V.Vector (V.Vector (HName , Expr))
+-- , resolveExtField :: QName -> HName
 }

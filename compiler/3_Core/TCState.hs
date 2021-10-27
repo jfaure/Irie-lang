@@ -13,6 +13,7 @@ data TCEnvState s = TCEnvState {
  -- in
    _pBinds  :: V.Vector P.TopBind -- parsed module
  , _externs :: Externs
+ , _thisMod :: ModuleIName -- annotate local labels / types etc
 
  -- out
  , _wip        :: MV.MVector s Bind
@@ -24,7 +25,6 @@ data TCEnvState s = TCEnvState {
  , _srcRefs    :: Maybe SrcInfo
  , _tmpFails   :: [TmpBiSubError] -- App local bisub failures
  , _bindWIP    :: IName
- , _level      :: Dominion
  , _deBruijn   :: MV.MVector s Int
  , _quants     :: Int -- fresh names for generalised typevars [A..Z,A1..Z1..]
  , _blen       :: Int
@@ -68,7 +68,6 @@ withBiSubs n action = do
   bisubs <- MV.grow bisubs n
   bis .= bisubs
   tyVars `forM` \i -> MV.write bisubs i (BiSub [] [] 0 0)
-  level %= (\(Dominion (f,x)) -> Dominion (f,x+n))
   ret <- action biLen
 --tyVars `forM` \i -> MV.write bisubs i (BiSub [] [] 0 0)
   pure (ret , tyVars)

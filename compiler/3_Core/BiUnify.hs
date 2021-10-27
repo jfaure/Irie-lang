@@ -72,9 +72,7 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
   (x , THBound i) -> error $ "unexpected THBound: " <> show i
   (x , THBi nb y) -> error $ "unexpected THBi: "    <> show (p,m)
   (THBi nb x , y) -> do
-    -- make new THVars for the debruijn bound vars here
-    level %= (\(Dominion (f,x)) -> Dominion (f,x+nb))
-    (r , _) <- withBiSubs nb $ \tvars ->
+    (r , _) <- withBiSubs nb $ \tvars -> -- make new THVars for the debruijn bound vars here
       biSub (substFreshTVars tvars x) [y]
       -- now void out the tvars so we don't later leak bounds to shallower let nests
       -- set the bit at each tvar index in the deadVars bitmask
@@ -120,14 +118,14 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
     use deadVars >>= \d -> unless (testBit d m) (void (biSub [p] m'))
     pure BiEQ
 
-  (x , THTyCon THArrow{}) -> failBiSub "Too many arguments"        [p] [m]
-  (THTyCon THArrow{} , x) -> failBiSub "Not enough arguments"      [p] [m]
+  (x , THTyCon THArrow{}) -> failBiSub "Excess arguments"      [p] [m]
+--(THTyCon THArrow{} , x) -> failBiSub "Insufficient arguments"  [p] [m]
   (a , b) -> failBiSub "" [a] [b]
 
 -- used for computing both differences between 2 IntMaps (sadly alignWith won't give us the ROnly map key)
 data KeySubtype
   = LOnly Type         -- OK by record | sumtype subtyping
-  | ROnly IField Type  -- KO field not present
+  | ROnly IName {-IField-} Type  -- KO field not present
   | Both  Type Type    -- biunify the leaf types
 
 biSubTyCon p m = \case

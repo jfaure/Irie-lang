@@ -30,7 +30,6 @@ type Parser = ParsecT Void Text (Prelude.State ParseState)
 --------------------------
 addBind b     = moduleWIP . bindings   %= (b:)
 addImport i   = moduleWIP . imports    %= (i:)
-addExtern e   = moduleWIP . externFns  %= (e:)
 addPiBound  p = piBound %= \(x:xs)->(p:x):xs
 getPiBounds f = do
   piBound %= ([]:)
@@ -234,7 +233,6 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
   let startModule = Module {
           _moduleName  = T.pack nm
         , _imports     = []
-        , _externFns   = []
         , _bindings    = []
         , _parseDetails = ParseDetails {
              _hNameBinds    = (0 , M.empty)
@@ -270,13 +268,12 @@ decl = svIndent *> choice
 -- for the repl
 bareTT = addAnonBindName *> ((\tt -> addBind (FunBind $ FnDef "replExpr" True LetOrRec Nothing [] IS.empty [FnMatch [] [] tt] Nothing)) =<< tt)
 
-extern =
- let _typed = reservedOp ":" *> tt
-     doName = iden >>= \hNm -> addBindName hNm *> pure hNm
- in addExtern =<< choice
- [ Extern   <$ reserved "extern"      <*> doName <*> _typed
- , ExternVA <$ reserved "externVarArg"<*> doName <*> _typed
- ]
+extern = do
+  fn <- ((Foreign <$ reserved "extern") <|> (ForeignVA <$ reserved "externVA"))
+  hNm <- iden
+  addBindName hNm
+  ty <- reservedOp ":" *> tt
+  addBind (FunBind $ FnDef hNm True Let Nothing mempty mempty [FnMatch [] [] (Foreign hNm ty)] (Just ty))
 
 -------------------
 -- Function defs --

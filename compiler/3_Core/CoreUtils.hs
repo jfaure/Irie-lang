@@ -10,8 +10,6 @@ import Prim
 import qualified Data.IntMap as IM
 --import qualified Data.IntSet as IS
 
-setNBits n = (2 `shiftL` n) - 1
-
 nullLattice pos = \case
   [] -> if pos then [THBot] else [THTop]
   t  -> t
@@ -121,6 +119,7 @@ expr2Ty judgeBind e = case e of
    Var (VArg x)  -> pure [THVar x] -- TODO ?!
    App (Var (VBind fName)) args -> pure [THRecSi fName args]
    x -> error $ "raw term cannot be a type: " ++ show e
+ PoisonExpr -> pure [THPoison]
  x -> error $ "raw term cannot be a type: " ++ show x
 
 getTypeIndexes = \case

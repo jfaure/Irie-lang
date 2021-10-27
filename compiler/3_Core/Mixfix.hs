@@ -9,7 +9,6 @@ import Text.Megaparsec
 import Control.Monad (fail)
 
 -- megaparsec on custom stream : [Expr]
--- No idea why megaparsec requires tokens to instance Eq and Ord
 instance Eq Expr where (==) a b  = False
 instance Ord Expr where (<=) a b = False
 data JuxtStream = JuxtStream { unJuxtStream :: [Expr] }
@@ -48,8 +47,11 @@ instance TraversableStream JuxtStream where
       tokensConsumed = tokensConsumed
 pxy = Proxy :: Proxy JuxtStream
 
-type Parser = Parsec Void JuxtStream
 
+-------------------
+-- Mixfix Parser --
+-------------------
+type Parser = Parsec Void JuxtStream
 prependArg a f = case f of { ExprApp f args -> ExprApp f (a:args) ; f -> ExprApp f [a] }
 -- Also need to flip the arguments (since precedence swaps reverse apps)
 appendArg  f a = case f of { ExprApp f args -> ExprApp f (a : reverse args) ; f -> ExprApp f [a] }
@@ -59,8 +61,10 @@ patchMFBind m = \case
   QVar (mod , _) -> QVar (mod , m)
   ExprApp (QVar (mod , _)) args -> ExprApp (QVar (mod , m)) args
 
--- juxtappositions are ExprApps unless they contain mixfixes (extract and precedence solve)
+-- juxtappositions are ExprApps unless they contain mixfixes to extract and precedence solve
 -- prec and assoc only matters for mf chains that both want the centre argument `m1_` `_m2`
+-- general strategy is to parse postfix chains `startPostfix`; the only exception is if a juxt starts with a mixfixword
+-- Complications arise when a name is both a mixfixword and a bindname by itself
 solveMixfixes :: [Expr] -> Expr = let
   mfExpr = try anySingle >>= \case
     MFExpr mixfixy -> pure mixfixy
@@ -71,7 +75,7 @@ solveMixfixes :: [Expr] -> Expr = let
   rawExpr = mkApp <$> takeWhile1P Nothing (\case {MFExpr{}->False ; _->True})
   arg = rawExpr <|> startPrefix
 
-  -- parse expected mfwords
+  -- parse expected mfwords (mfWs :: [Maybe IName])
   mfParts :: IName -> Maybe Expr -> (ModIName , IName) -> Prec -> [Maybe IName] -> Parser Expr
   mfParts mb larg qNm fixity mfWs = let
     mkMFParser = \case -- figure out if the mixfix ends with a hole
@@ -94,7 +98,7 @@ solveMixfixes :: [Expr] -> Expr = let
       Just (qNml , fixityL) ->
         if qNml == qNmr && assoc fixityL == AssocNone
         then fail $ "operator not associative: " <> show qNml
-        else if (qNml == qNmr && assoc fixityL /= AssocRight) || prec fixityL > prec fixityR
+        else if (qNml == qNmr && assoc fixityL /= AssocRight) || prec fixityL >= prec fixityR
         then (\x -> appendArg x larg) <$> mfParts mb Nothing qNmr fixityR contMFWs
         else case larg of -- `l_ _r` => r gets l's last arg, l gets all of r instead
           ExprApp f ars -> (\r -> ExprApp f (DL.init ars ++ [r]))
@@ -103,14 +107,14 @@ solveMixfixes :: [Expr] -> Expr = let
       Nothing -> mfParts mb (Just larg) qNmr fixityR contMFWs
     mkPostfixParser _ = fail $ "not a postfix: " <> show mfWords
     in choice (try . mkPostfixParser <$> mfWords)
-        <|> maybe (fail ("not a bindName: " <> show mfWords)) (\qvar -> mkApp . ([larg , QVar qvar ] ++ ) <$> many arg) maybeBind
+      <|> maybe (fail ("not a bindName: " <> show mfWords)) (\qvar -> mkApp . ([larg , QVar qvar ] ++) <$> many arg) maybeBind
 
   startPrefix = mfExpr >>= \(Mixfixy maybeBind mfWords) -> let
     mkPrefixParser (QStartPrefix (MixfixDef mb mfWs fixity) qNm) =
       mfParts mb Nothing qNm fixity (drop 1 mfWs)
     mkPrefixParser _ = fail "not a prefix"
     in choice (try . mkPrefixParser <$> mfWords) 
-        <|> maybe (fail "not a bindName") (\qvar -> mkApp . (QVar qvar :) <$> many arg) maybeBind
+      <|> maybe (fail "not a bindName") (\qvar -> mkApp . (QVar qvar :) <$> many arg) maybeBind
   expr = arg >>= \a -> option a (try $ startPostfix a Nothing)
   in \s -> case runParser expr "<mixfix resolver>" (JuxtStream $ s) of
     Right r -> r

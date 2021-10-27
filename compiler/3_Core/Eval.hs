@@ -190,7 +190,7 @@ simpleTerm t = let
 
   Label l a -> do
     ars <- a `forM` \(Core f t) -> (`Core` t) <$> simpleTerm f
-    gets recLabels <&> (IM.!? l) <&> \case
+    gets recLabels <&> (IM.!? qName2Key l) <&> \case
       Nothing -> Label l      ars
       Just  i -> RecLabel l i ars
 

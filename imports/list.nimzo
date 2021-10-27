@@ -54,6 +54,7 @@ consF f x xs = Cons (f x) xs
 mapFold f l = foldr (consF f) Nil l
 concatMap f xs = foldr (\x b => foldr c b (f x)) Nil xs
 unlines ls = concat (mapFold (\l => append l (c '\n' Nil)) ls)
+
 -- unlines2 = concatMap (\l => append l (Cons '\n' Nil))
 
 -- --concatMap f xs = build \c n => foldr (\x b => foldr c b (f x)) n xs

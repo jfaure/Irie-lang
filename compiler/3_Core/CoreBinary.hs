@@ -6,6 +6,7 @@ import Data.Binary
 import Data.Vector.Binary()
 
 deriving instance Generic VName
+deriving instance Generic QName
 deriving instance Generic Term
 deriving instance Generic LensOp
 deriving instance Generic TyCon
@@ -23,7 +24,6 @@ deriving instance Generic Mixfixy
 deriving instance Generic MixfixDef
 deriving instance Generic Prec
 deriving instance Generic Assoc
-deriving instance Generic Dominion
 
 -- Prim
 deriving instance Generic Literal
@@ -41,6 +41,7 @@ deriving instance Generic NumInstrs
 deriving instance Generic GMPSpecial
 
 instance Binary VName
+instance Binary QName
 instance Binary Term
 instance Binary LensOp
 instance Binary TyCon
@@ -58,7 +59,6 @@ instance Binary Mixfixy
 instance Binary Prec
 instance Binary MixfixDef
 instance Binary Assoc
-instance Binary Dominion
 
 -- primitives
 instance Binary Literal

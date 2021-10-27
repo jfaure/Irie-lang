@@ -41,7 +41,7 @@ formatScopeError = \case
   ScopeError h -> clRed "Not in scope: "      <> h
   AmbigBind  h -> clRed "Ambiguous binding: " <> h
 
-judgeModule pm nArgs hNames exts source = let
+judgeModule pm modIName nArgs hNames exts source = let
   modName = pm ^. P.moduleName
   nBinds  = length $ pm ^. P.bindings
   nArgs   = pm ^. P.parseDetails . P.nArgs
@@ -57,6 +57,7 @@ judgeModule pm nArgs hNames exts source = let
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
       { _pBinds   = pBinds'
       , _externs  = exts
+      , _thisMod  = modIName
 
       , _wip      = wip'
       , _biFails  = []
@@ -69,7 +70,6 @@ judgeModule pm nArgs hNames exts source = let
       , _blen     = nArgs
       , _bis      = bis'
       , _deBruijn = deBruijn'
-      , _level    = Dominion (-1,-1)
       , _quants   = 0
       , _liftMu   = Nothing
       , _mus      = 0
@@ -89,16 +89,16 @@ judgeModule pm nArgs hNames exts source = let
 -- inference >> generalisation >> type checking of annotations
 -- Warning. this handles mutual binds and stacks inference of forward references
 judgeBind :: IName -> TCEnv s Expr
-judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
+judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
   BindOK e -> pure e
-  Mutual d e isRec tvar -> pure (Core (Var (VBind bindINm)) [THVar tvar]) -- pure e
+  Mutual e isRec tvar -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) [THVar tvar]) -- pure e
 
   Guard mutuals ars tvar -> do
     this <- use bindWIP
     when (this /= bindINm) $ do
       MV.write wip' bindINm (Guard (this:mutuals) ars tvar)
       MV.modify wip' (\(Guard ms ars tv) -> Guard (bindINm:ms) ars tv) this
-    pure $ Core (Var (VBind bindINm)) [THVar tvar]
+    pure $ Core (Var (VQBind $ mkQName modINm bindINm)) [THVar tvar]
 
   WIP -> use wip >>= \wip' -> do
     svwip <- bindWIP <<.= bindINm
@@ -130,18 +130,16 @@ judgeBind bindINm = use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
       Guard ms _ars tVar <- MV.read wip' bindINm
       pure (idx , jb , ms)
 
-    cd <- use level
-    MV.write wip' bindINm (Mutual cd jb False tvarIdx)
+    MV.write wip' bindINm (Mutual jb False tvarIdx)
     if minimum (bindINm:ms) == bindINm then fromJust . head <$> generaliseBinds bindINm ms else pure jb
 -- Check annotation if given
 --bindTy <- maybe (pure genTy) (\ann -> checkAnnotation ann genTy mainArgTys (V.fromList argTys)) tyAnn
 
 generaliseBinds i ms = use wip >>= \wip' -> do
   let getMutual m = do
-        Mutual cd naiveExpr isRec recTVar <- MV.read wip' m
-        pure (m , recTVar , cd , naiveExpr)
-      substVars = \(m , recTVar , cd , naiveExpr) -> let
---      Dominion (bStart , bEnd) = cd -- current dominion
+        Mutual naiveExpr isRec recTVar <- MV.read wip' m
+        pure (m , recTVar , naiveExpr)
+      substVars = \(m , recTVar , naiveExpr) -> let
         traceVars= when global_debug $ use bis >>= \b -> [0..MV.length b -1] `forM_` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
         in do
         done <- case naiveExpr of
@@ -216,21 +214,24 @@ infer = let
  -- TODO don't allow `bind = lonemixfixword`
  handleExtern = let mfwOK = True in \case
    ForwardRef b       -> judgeLocalBind b -- was a forward reference not an extern
-   Imported e         -> pure e
+   Imported e         -> pure $ e
    NotInScope  h      -> PoisonExpr <$ (scopeFails %= (ScopeError h:))
    AmbiguousBinding h -> PoisonExpr <$ (scopeFails %= (AmbigBind h :))
    MixfixyVar m       -> if mfwOK then pure $ MFExpr m
      else PoisonExpr <$ (scopeFails %= (AmbigBind "mfword cannot be a binding" :))
 
- judgeLocalBind b = judgeBind b <&> \case
-     Core e ty -> Core (Var $ VBind b) ty -- don't inline the body ! (
+ judgeLocalBind b = use thisMod >>= \modINm -> judgeBind b <&> \case
+     Core e ty -> Core (Var $ VQBind $ mkQName modINm b) ty -- don't inline the body ! (
      t -> t
  in \case
 --P.Wildcard -> _
   P.Var v -> case v of -- vars : lookup in appropriate environment
-    P.VBind b   -> judgeLocalBind b -- polytype env
-    P.VLocal l  -> pure $ Core (Var (VArg l)) [THVar l]
-    P.VExtern i -> use externs >>= \e -> handleExtern (readParseExtern e i)
+    P.VLocal l     -> pure $ Core (Var (VArg l)) [THVar l]
+    P.VBind b      -> judgeLocalBind b -- polytype env
+    P.VExtern i    -> use externs >>= \e -> handleExtern (readParseExtern e i)
+
+  P.Foreign i tt   -> infer tt <&> \case { PoisonExpr -> PoisonExpr ; ty -> Core (Var (VForeign i)) (tyExpr ty) }
+  P.ForeignVA i tt -> infer tt <&> \case { PoisonExpr -> PoisonExpr ; ty -> Core (Var (VForeign i)) (tyExpr ty) }
 
   P.Abs top -> let
     -- unlike topBind, don't bother generalising the type
@@ -256,21 +257,24 @@ infer = let
       ExprApp fE [] -> panic "impossible: empty expr App"
       ExprApp fE argsE -> inferExprApp srcOff fE >>= \f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
       QVar (m,i) -> use externs >>= \e -> handleExtern (readQParseExtern e m i)
+--      <&> \case { Core f t -> Core (Var $ VQBind $ mkQName m i) t }
       MFExpr{}   -> PoisonExpr <$ (scopeFails %= (AmbigBind "mixfix word":))
       core -> pure core
     in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
 
-  P.Cons construct -> do
-    let (fields , rawTTs) = unzip construct
+  P.Cons construct -> use thisMod >>= \modINm -> do
+    let (fieldsLocal , rawTTs) = unzip construct
+        fields = qName2Key . mkQName modINm <$> fieldsLocal
     exprs <- infer `mapM` rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) ; x -> error $ show x }) <$> exprs
         mkFieldCol = \a b -> [THFieldCollision a b]
     pure $ Core (Cons (IM.fromList $ zip fields tts)) [THTyCon $ THProduct (IM.fromListWith mkFieldCol $ zip fields tys)]
 
-  P.TTLens o tt fields maybeSet -> infer tt >>= \record -> let
+  P.TTLens o tt fieldsLocal maybeSet -> use thisMod >>= \modINm -> infer tt >>= \record -> let
+      fields = mkQName modINm <$> fieldsLocal
       recordTy = tyOfExpr record
       mkExpected :: Type -> Type
-      mkExpected dest = foldr (\fName ty -> [THTyCon $ THProduct (IM.singleton fName ty)]) dest fields
+      mkExpected dest = foldr (\fName ty -> [THTyCon $ THProduct (IM.singleton (qName2Key fName) ty)]) dest fields
     in (>>= checkFails o) $ case record of
     e@(Core f gotTy) -> case maybeSet of
       P.LensGet    -> withBiSubs 1 (\ix -> biSub recordTy (mkExpected [THVar ix]))
@@ -304,16 +308,17 @@ infer = let
     PoisonExpr -> pure PoisonExpr
     t -> error $ "record type must be a term: " <> show t
 
-  P.Label l tts -> infer `mapM` tts <&> \exprs -> let
+  P.Label localL tts -> use thisMod >>= \modINm -> infer `mapM` tts <&> \exprs -> let
+    l     = mkQName modINm localL
     labTy = [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
-    in Core (Label l exprs) [THTyCon $ THSumTy $ IM.singleton l labTy]
+    in Core (Label l exprs) [THTyCon $ THSumTy $ IM.singleton (qName2Key l) labTy]
 
   -- Sumtype declaration
-  P.TySum alts -> do -- alts are function types
+  P.TySum alts -> use thisMod >>= \modINm -> do -- alts are function types
     -- 1. Check against ann (retTypes must all subsume the signature)
     -- 2. Create sigma type from the arguments
     -- 3. Create proof terms from the return types
-    let go (l,impls,ty) = (l,) <$> (mkSigma (map fst impls) =<< infer ty)
+    let go (l,impls,ty) = (qName2Key (mkQName modINm l),) <$> (mkSigma (map fst impls) =<< infer ty)
         mkSigma impls ty = do
           ty' <- expr2Ty judgeBind ty
           pure $ case impls of
@@ -330,13 +335,13 @@ infer = let
         dataTy = foldl1 mergeTypes $ returnTypes
     pure $ Ty sumTy
 
-  P.Match alts -> let
+  P.Match alts -> use thisMod >>= \modINm -> let
     -- * desugar all patterns in the alt fns
     -- * mk tuples out of those abstractions to represent the sum type
     -- * ret type is a join of all the abs ret tys
     desugarFns = \(lname , free , pats , tt) -> let
       (args , _ , e) = patterns2TT pats tt
-      in (lname , args , _ , e)
+      in (qName2Key (mkQName modINm lname) , args , _ , e)
     (labels , args , _ , exprs) = unzip4 $ (desugarFns <$> alts)
     in do
     alts <- infer `mapM` exprs

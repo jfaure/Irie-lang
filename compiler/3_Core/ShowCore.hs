@@ -6,6 +6,7 @@ import CoreSyn
 -- instance Show Term where show = prettyTerm
 -- instance Show TyHead where show = prettyTyHead
 -- instance Show Bind where show = prettyBind
+deriving instance Show QName
 deriving instance Show VName
 deriving instance Show Term
 deriving instance Show LensOp

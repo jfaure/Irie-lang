@@ -29,6 +29,7 @@ searchPath   = ["./" , "Library/"]
 objPath      = ["./"]
 objDir       = ".irie-obj/@" -- prefix '@' to files in there
 getCachePath fName = objDir <> map (\case { '/' -> '%' ; x -> x} ) fName
+resolverCacheFName = getCachePath "resolver"
 doCacheCore  = True
 
 deriving instance Generic GlobalResolver
@@ -52,7 +53,12 @@ main' args = parseCmdLine args >>= \cmdLine ->
   when ("args" `elem` printPass cmdLine) (print cmdLine)
   *> case files cmdLine of
     []  -> replCore cmdLine
-    av  -> doFile cmdLine primResolver `mapM_` av
+    av  -> do
+      exists   <- doesFileExist resolverCacheFName
+      resolver <- if doCacheCore && exists
+        then DB.decodeFile resolverCacheFName :: IO GlobalResolver
+        else pure primResolver
+      doFile cmdLine resolver `mapM_` av
 
 doFile cmdLine r f     = T.IO.readFile f >>= doProgText cmdLine r f
 doProgText flags r f t = text2Core flags r f t >>= codegen flags
@@ -70,12 +76,12 @@ doFileCached flags resolver fName = let
   in isCachedFileOK >>= \case
   -- Warning ! this will almost certainly not work when varying the import order across caches
   False -> T.IO.readFile fName >>= text2Core flags resolver fName
-  True  -> decodeCoreFile cached >>= \(newResolver , exts , judged) -> do
+  True  -> decodeCoreFile cached >>= \(_newResolver , exts , judged) -> do
 --  modResolver <- evalImports modResolver localNames mixfixNames unknownNames
     -- TODO modResolver + recompile dependencies ?
 --  let (tmpResolver , exts) = resolveImports tmpResolver mempty mempty mempty -- localName smixfixNames unknownNames
 --      newResolver = addModule2Resolver tmpResolver (bind2Expr <$> (judgedBinds judged))
-    pure (newResolver , exts , judged)
+    pure (resolver , exts , judged)
 
 evalImports flags resolver fileNames = do
   importPaths <- (findModule searchPath . toS) `mapM` fileNames
@@ -93,6 +99,7 @@ text2Core flags resolver fName progText = do
   modResolver <- evalImports flags resolver (parsed ^. P.imports)
 
   let (tmpResolver , exts) = resolveImports modResolver localNames mixfixNames unknownNames
+      modIName     = modCount tmpResolver
 
       modNameMap = parsed ^. P.parseDetails . P.hNameBinds . _2
       hNames = let getNm (P.FunBind fnDef) = P.fnNm fnDef in getNm <$> V.fromList (parsed ^. P.bindings)
@@ -104,18 +111,20 @@ text2Core flags resolver fName progText = do
       nArgs        = parsed ^. P.parseDetails . P.nArgs
       srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
 
-      (judgedModule , errors) = judgeModule parsed nArgs hNames exts srcInfo
+      (judgedModule , errors) = judgeModule parsed modIName nArgs hNames exts srcInfo
       TCErrors scopeErrors biunifyErrors = errors
       JudgedModule modNm nArgs' bindNames a b judgedBinds = judgedModule
 
-      newResolver = addModule2Resolver tmpResolver (bind2Expr <$> judgedBinds)
+      newResolver' = addModule2Resolver tmpResolver (V.zip bindNames (bind2Expr <$> judgedBinds))
+      newResolver = newResolver' { lnames = lnames newResolver' `V.snoc` labelNames 
+                                 , fnames = fnames newResolver' `V.snoc` fieldNames }
 
-      judged'                = V.zip bindNames judgedBinds
-      bindSrc                = BindSource _ bindNames _ labelNames fieldNames
+      bindNamePairs = V.zip bindNames judgedBinds
+      bindSrc = BindSource _ bindNames _ (lnames newResolver) (fnames newResolver) (allBinds newResolver)
       namedBinds showBind bs = (\(nm,j)->clYellow nm <> toS (prettyBind showBind bindSrc j)) <$> bs
 
-  when ("types"  `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds False judged')
-  when ("core"   `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds True  judged')
+  when ("types"  `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds False bindNamePairs)
+  when ("core"   `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds True  bindNamePairs)
   let simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
           simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
       coreOK = null biunifyErrors && null scopeErrors
@@ -124,7 +133,9 @@ text2Core flags resolver fName progText = do
     (void $ T.IO.putStrLn `mapM` namedBinds True  (V.zip bindNames simpleBinds))
   (T.IO.putStrLn . formatError bindSrc srcInfo)      `mapM` biunifyErrors
   (T.IO.putStrLn . formatScopeError) `mapM` scopeErrors
-  when (doCacheCore && coreOK) (cacheFile fName (newResolver , exts , judgedFinal))
+  when (doCacheCore && coreOK) $ do
+    DB.encodeFile resolverCacheFName newResolver
+    cacheFile fName (newResolver , exts , judgedFinal)
   pure (newResolver , exts , judgedFinal)
 
 ---------------------------------
@@ -135,7 +146,7 @@ codegen flags input@(resolver , exts , jm@(JudgedModule modNm nArgs bindNms a b 
   ssaMod = mkSSAModule exts (JudgedModule modNm nArgs bindNms a b judgedBinds)
   in do
     when ("ssa" `elem` printPass flags) $ T.IO.putStrLn (show ssaMod)
-    when ("C"   `elem` printPass flags) $ let str = (mkC ssaMod)
+    when ("C"   `elem` printPass flags) $ let str = mkC ssaMod
       in BSL.IO.putStrLn str *> BSL.IO.writeFile "/tmp/aryaOut.c" str
     pure input
 --llvmMod      = mkStg exts (JudgedModule modNm bindNms a b judgedBinds)

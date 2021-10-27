@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-module Prelude ( module Protolude , module Data.Align , module Data.These , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap)
+module Prelude ( module Protolude , module Data.Align , module Data.These , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , setNBits)
 where
 import Protolude hiding (check , Type , Fixity(..) , moduleName , option
  , try , some , many -- conflict with megaparsec
@@ -20,6 +20,8 @@ type HName  = Text
 
 --error (s :: String) = panic $ toS s
 fromJust = fromMaybe (panic "fromJust")
+
+setNBits n = (2 `shiftL` n) - 1
 
 argSort :: Int -> M.Map HName IName -> VU.Vector IName
 argSort n hmap = let v = VU.fromList (M.elems hmap) in VU.unsafeBackpermute v v

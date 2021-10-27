@@ -67,7 +67,10 @@ alignMu x target lty muBound = (if global_debug
   then trace (prettyTyRaw [lty] <> " µ=? " <> prettyTyRaw [muBound] <> " (" <> prettyTyRaw [target] <> ")")
   else identity) $ let
   exactAlign :: Semialign f => f [TyHead] -> f [TyHead] -> f Bool
-  exactAlign = alignWith (these (const False) (const False) (\[a] [b] -> alignMu x target a b))
+  exactAlign = let
+    aligner [a] [b] = alignMu x target a b
+    aligner a   b   = trace ("typejoin in mu: " <> prettyTyRaw a <> " µ<? " <> prettyTyRaw b) False
+    in alignWith (these (const False) (const False) (aligner))
 --alignL     = alignWith (these (const True) (const False) (\[a] [b] -> alignMu x target a b))
   in case (lty , muBound) of
   (THTyCon (THProduct lt) , THTyCon (THProduct rt)) -> all identity $ exactAlign lt rt

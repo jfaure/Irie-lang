@@ -20,6 +20,7 @@
   * simplify type; imports.basic.twice f x = f (f x)
   * Careful mergeing mu types; µx. may contain other µx.!
   * need to generalise polymorphic subexpressions correctly
+  * ReadQParseExtern; inline external functions and extrusion.. (probably should qualify every name)
 ## Simplifier
   * constructor specialisation
   * case-of-case

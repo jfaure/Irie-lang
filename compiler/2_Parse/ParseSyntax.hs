@@ -16,15 +16,10 @@ type ImplicitArg  = (IName , Maybe TT) -- implicit (? no) arg with optional type
 type NameMap      = M.Map HName IName
 type SourceOffset = Int
 
-data ImportDecl -- extern types can't be checked (eg. syscalls / C apis etc..)
- = Extern   { externName :: HName , externType :: TT }
- | ExternVA { externName :: HName , externType :: TT }
-
 data Module = Module {
    _moduleName :: HName
 
  , _imports     :: [HName]
- , _externFns   :: [ImportDecl]
  , _bindings    :: [TopBind] -- hNameBinds
 
  , _parseDetails :: ParseDetails
@@ -70,6 +65,8 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
  = Var !TTName
  | WildCard -- "_" implicit lambda argument
  | Question -- "?" ask to infer
+ | Foreign   HName TT -- no definition, and we have to trust the user given type
+ | ForeignVA HName TT -- var-args for c compat
 
  -- lambda-calculus
  | Abs TopBind
@@ -139,7 +136,6 @@ prettyTTName :: TTName -> Text = \case
 deriving instance Show ParseDetails
 deriving instance Show FnDef
 deriving instance Show TopBind
-deriving instance Show ImportDecl
 deriving instance Show TTName
 deriving instance Show FnMatch 
 deriving instance Show TT
