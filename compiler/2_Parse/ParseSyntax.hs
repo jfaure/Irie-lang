@@ -61,6 +61,7 @@ data TTName
  | VLocal  IName
  | VExtern IName
 data LensOp a = LensGet | LensSet a | LensOver a deriving Show
+data DoStmt  = Sequence TT | Bind IName TT -- VLocal name
 data TT -- Type|Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
  | WildCard -- "_" implicit lambda argument
@@ -77,14 +78,17 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
  | Cons   [(FName , TT)] -- can be used to type itself
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
- | Match  [(LName , FreeVars , [Pattern] , TT)]
+ | Match  [(LName , FreeVars , [Pattern] , TT)] (Maybe (Pattern , TT))
  | List   [TT]
  | TySum [(LName , [ImplicitArg] , TT)] -- function signature
  | TyListOf TT
 
  -- term primitives
- | Lit     Literal
+ | Lit      Literal
  | LitArray [Literal]
+
+ -- Sugar
+ | DoStmts [DoStmt]
 
 -- patterns represent arguments of abstractions
 data Pattern
@@ -139,6 +143,7 @@ deriving instance Show TopBind
 deriving instance Show TTName
 deriving instance Show FnMatch 
 deriving instance Show TT
+deriving instance Show DoStmt
 deriving instance Show CompositePattern
 deriving instance Show Pattern
 deriving instance Show LetRecT

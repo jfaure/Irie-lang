@@ -17,7 +17,7 @@ convPat :: P.Pattern -> (IName , [a] , Maybe (P.TT -> P.TT))
 convPat = \case
   P.PArg  i     -> (i , [] , Nothing)
   P.PComp i pat -> (i , [] ,) . Just $ let thisArg = P.Var (P.VLocal i) in case pat of
-    P.PLabel l pats -> \t -> P.App (P.Match [(l , mempty , pats , t)]) [thisArg]
+    P.PLabel l pats -> \t -> P.App (P.Match [(l , mempty , pats , t)] Nothing) [thisArg]
     P.PCons  fields -> \t -> let
       mkProj (l , P.PArg i) = (i , P.TTLens 0 thisArg [l] P.LensGet)
       mkProj p = error $ "not ready for patterns within records" <> show p

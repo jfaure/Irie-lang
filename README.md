@@ -3,10 +3,10 @@ Subtyping calculus of inductive constructions for high-performance distributed s
 
 ![logo](https://cdn.discordapp.com/attachments/631043990879338496/756673093497520138/logo.png)
 ## Origin
-Irie was created because there exists no pure functional language with first-class subtyping and an extreme emphasis on performance. The philosophy is to focus on a simple but powerful core language capable of naturally expressing additional desirable features. That language is the subtyping calculus of constructions.
+Irie was created because there exists no pure functional language with first-class subtyping and an extreme emphasis on performance. The philosophy is to focus on a simple but powerful core language capable of naturally expressing additional desirable features: The subtyping calculus of constructions.
 
 ## Subtyping
-Subtyping describes data flow explicitly and allows more accurate types. Formally, it is enough that a function of type `A -> B` exists for a subtyping relation `A <: B` to be permissible, in which case the compiler will automatically call the function where needed. Subtyping can cleanly (as opposed to an adhoc approach that won't scale) represent many desirable features (listed below). Subtyping in practice is both convenient and additionally a mechanism to give types some control over terms, so they can guide a program to its optimal implementation (which in the presence of GPUs or distributed systems may be very complicated), without requiring programmers to pollute their algorithms with such details. The question of what (if any) custom subtyping relations libraries should add is still wide open. In any event, "excessive" subtyping relations cannot violate type safety.
+Subtyping describes data flow explicitly and allows more accurate types. Formally, it is enough that a function of type `A -> B` exists for a subtyping relation `A <: B` to be permissible, in which case the compiler will automatically call the function where needed. Subtyping can cleanly (as opposed to an adhoc approach that won't scale) represent many desirable features (listed below). In practice it is both convenient and additionally a mechanism to give types some control over terms so they can guide a program to its optimal implementation (which in the presence of GPUs or distributed systems may be very complicated), without requiring programmers to pollute their algorithms with such details. The question of what (if any) custom subtyping relations libraries should add is still wide open. In any event, "excessive" subtyping relations cannot violate type safety.
 
 Subtyping examples:
 * Integer bitwidths `int32 <: int64` (C has this)
@@ -49,7 +49,7 @@ Available options:
   -o ARG                   Write llvm output to file
 ```
 
-# Compiler overview
+# Status
 ## Source size: ~5000 lines of Haskell
 
 ## Roadmap
@@ -67,7 +67,7 @@ Available options:
     - [x] Dependent Types
     - [ ] Normalization by evaluation
     - [x] Subtyping coercions
-- LLVM Codegen:
+- Procedural IR (esp. C backend):
     - [x] Lambda Calculus
     - [x] Algebraic data
     - [x] GMP bindings (only linked if used)
@@ -75,6 +75,8 @@ Available options:
     - [ ] Memory management
     - [ ] GPU offloading
     - [ ] Distributed systems
+
+## [References](references)
 
 # Discord server
 https://discord.gg/3hYKngW

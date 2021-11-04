@@ -37,13 +37,16 @@ formatError srcNames srcInfo (BiSubError o (TmpBiSubError msg got exp)) = let
   <> "\n      " <> clGreen (prettyTy bindSrc got)
   <> "\n  <:? " <> clGreen (prettyTy bindSrc exp)
 
+formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annotation: "
+  <>  "\n  inferred: " <> clGreen (prettyTy (Just bindSrc) inferredTy)
+  <>  "\n  expected: " <> clGreen (prettyTy (Just bindSrc) annTy)
+
 formatScopeError = \case
   ScopeError h -> clRed "Not in scope: "      <> h
   AmbigBind  h -> clRed "Ambiguous binding: " <> h
 
-judgeModule pm modIName nArgs hNames exts source = let
+judgeModule nBinds pm modIName nArgs hNames exts source = let
   modName = pm ^. P.moduleName
-  nBinds  = length $ pm ^. P.bindings
   nArgs   = pm ^. P.parseDetails . P.nArgs
   nFields = M.size (pm ^. P.parseDetails . P.fields)
   nLabels = M.size (pm ^. P.parseDetails . P.labels)
@@ -62,6 +65,7 @@ judgeModule pm modIName nArgs hNames exts source = let
       , _wip      = wip'
       , _biFails  = []
       , _scopeFails = []
+      , _checkFails = []
 
       , _lvl      = 0
       , _srcRefs  = source
@@ -83,15 +87,15 @@ judgeModule pm modIName nArgs hNames exts source = let
     bis''    <- V.unsafeFreeze (st ^. bis)
     wip''    <- V.unsafeFreeze (st ^. wip)
     let domain'' = V.take nArgs bis''
-    pure $ (JudgedModule modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
-          , TCErrors (st ^. scopeFails) (st ^. biFails))
+    pure $ (JudgedModule modName nArgs (hNames {-V.++ labelHNames-}) (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
+          , TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
 -- inference >> generalisation >> type checking of annotations
 -- Warning. this handles mutual binds and stacks inference of forward references
 judgeBind :: IName -> TCEnv s Expr
 judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
   BindOK e -> pure e
-  Mutual e isRec tvar -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) [THVar tvar]) -- pure e
+  Mutual e isRec tvar tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) [THVar tvar]) -- pure e
 
   Guard mutuals ars tvar -> do
     this <- use bindWIP
@@ -105,8 +109,8 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
     let getTT (P.FunBind (P.FnDef hNm isTop letRecT mf implicits freeVars matches tyAnn)) = let
           (mainArgs , mainArgTys , tt) = matches2TT matches
           args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort ; parser should always give sorted argnames
-          in (tt , args , isTop)
-    (tt , args , isTop) <- getTT . (V.! bindINm) <$> use pBinds
+          in (tt , args , isTop , tyAnn)
+    (tt , args , isTop , tyAnn) <- getTT . (V.! bindINm) <$> use pBinds
 
     ((tvarIdx , jb , ms) , resultTy) <- withBiSubs 1 $ \idx -> do
 --    traceM $ "recIdx: " <> show idx
@@ -130,19 +134,26 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
       Guard ms _ars tVar <- MV.read wip' bindINm
       pure (idx , jb , ms)
 
-    MV.write wip' bindINm (Mutual jb False tvarIdx)
+    -- get the type annotation if possible
+    typeAnn <- case tyAnn of
+      Nothing -> pure Nothing
+      Just t  -> (tyExpr <$> infer t) >>= \t -> case t of
+        Nothing -> pure Nothing --error $ "not a type: " <> show t
+        t       -> pure t
+
+    MV.write wip' bindINm (Mutual jb False tvarIdx typeAnn)
     if minimum (bindINm:ms) == bindINm then fromJust . head <$> generaliseBinds bindINm ms else pure jb
 -- Check annotation if given
 --bindTy <- maybe (pure genTy) (\ann -> checkAnnotation ann genTy mainArgTys (V.fromList argTys)) tyAnn
 
 generaliseBinds i ms = use wip >>= \wip' -> do
   let getMutual m = do
-        Mutual naiveExpr isRec recTVar <- MV.read wip' m
-        pure (m , recTVar , naiveExpr)
-      substVars = \(m , recTVar , naiveExpr) -> let
+        Mutual naiveExpr isRec recTVar tyAnn <- MV.read wip' m
+        pure (m , recTVar , naiveExpr , tyAnn)
+      substVars = \(m , recTVar , naiveExpr , annotation) -> let
         traceVars= when global_debug $ use bis >>= \b -> [0..MV.length b -1] `forM_` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
         in do
-        done <- case naiveExpr of
+        inferred <- case naiveExpr of
           Core expr coreTy -> do
             ty <- case expr of
               Abs ars free x fnTy -> pure $ coreTy --prependArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
@@ -154,20 +165,19 @@ generaliseBinds i ms = use wip >>= \wip' -> do
             traceVars
             Core expr {-. nullLattice True-} <$> substTVars recTVar -- TODO overwrite Abs tys ?
           t -> pure t
+        done <- case (annotation , inferred) of
+          (Just t , Core e inferredTy) -> Core e <$> checkAnnotation t inferredTy
+          _                            -> pure inferred
         done <$ MV.write wip' m (BindOK done)
   mutuals <- (i : ms) `forM` getMutual -- Usually a singleton list
   (mutuals `forM` substVars) <* (quants .= 0) <* (mus .= 0)
 
-checkAnnotation :: P.TT -> Type -> [[P.TT]] -> V.Vector Type -> TCEnv s Type
-checkAnnotation ann inferredTy mainArgTys argTys = do
-  ann <- tyExpr <$> infer ann
-  let inferArg = \case { [x] -> tyExpr <$> infer x ; [] -> pure [THSet 0] }
-  argAnns  <- inferArg `mapM` mainArgTys
-  let annTy = case mainArgTys of { [] -> ann ; x  -> mkTyArrow argAnns ann }
+checkAnnotation :: Type -> Type {--> [[P.TT]] -> V.Vector Type-} -> TCEnv s Type
+checkAnnotation annTy inferredTy {-mainArgTys argTys-} = do
   exts <- use externs
---labelsV <- V.freeze =<< use labels
-  unless (check exts argTys mempty inferredTy annTy)
-    $ error (show inferredTy <> "\n!<:\n" <> show ann)
+  unless (check exts mempty mempty inferredTy annTy)
+        (checkFails %= (CheckError inferredTy annTy:))
+
   -- ? Prefer user's type annotation over the inferred one
   -- ! we may have inferred some missing information
   -- type families (gadts) are special: we need to insert the list of labels as retTy
@@ -230,8 +240,12 @@ infer = let
     P.VBind b      -> judgeLocalBind b -- polytype env
     P.VExtern i    -> use externs >>= \e -> handleExtern (readParseExtern e i)
 
-  P.Foreign i tt   -> infer tt <&> \case { PoisonExpr -> PoisonExpr ; ty -> Core (Var (VForeign i)) (tyExpr ty) }
-  P.ForeignVA i tt -> infer tt <&> \case { PoisonExpr -> PoisonExpr ; ty -> Core (Var (VForeign i)) (tyExpr ty) }
+  P.Foreign i tt   -> infer tt <&> \case
+    PoisonExpr -> PoisonExpr
+    ty         -> Core (Var (VForeign i)) (fromMaybe (error $ "not a type: " <> show ty) (tyExpr ty))
+  P.ForeignVA i tt -> infer tt <&> \case
+    PoisonExpr -> PoisonExpr
+    ty         -> Core (Var (VForeign i)) (fromMaybe (error $ "not a type: " <> show ty) (tyExpr ty))
 
   P.Abs top -> let
     -- unlike topBind, don't bother generalising the type
@@ -256,7 +270,7 @@ infer = let
     inferExprApp srcOff = \case
       ExprApp fE [] -> panic "impossible: empty expr App"
       ExprApp fE argsE -> inferExprApp srcOff fE >>= \f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
-      QVar (m,i) -> use externs >>= \e -> handleExtern (readQParseExtern e m i)
+      QVar q -> use externs >>= \e -> handleExtern (readQParseExtern e (modName q) (unQName q))
 --      <&> \case { Core f t -> Core (Var $ VQBind $ mkQName m i) t }
       MFExpr{}   -> PoisonExpr <$ (scopeFails %= (AmbigBind "mixfix word":))
       core -> pure core
@@ -335,7 +349,7 @@ infer = let
         dataTy = foldl1 mergeTypes $ returnTypes
     pure $ Ty sumTy
 
-  P.Match alts -> use thisMod >>= \modINm -> let
+  P.Match alts catchAll -> use thisMod >>= \modINm -> let
     -- * desugar all patterns in the alt fns
     -- * mk tuples out of those abstractions to represent the sum type
     -- * ret type is a join of all the abs ret tys

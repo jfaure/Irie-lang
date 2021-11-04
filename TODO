@@ -1,16 +1,21 @@
+## Top Priority
+  * User declared type, more complex type annotations
+  * Bug with unlines (probably concatenation of mu types since ok if you seperate the concat)
+
 ## Top
   * repl typecase to print JIT results
   * language server
-  * fix precompiled name resolution; write global resolver to file?
-  * Linker; invoke clang
+  * optimize cached modules
   * module import loops
   * Don't repeat not-in-scope errors
 ## Parse
   * Use [n..] numbered args from Parser in a safer way
+  * Pattern guards
+  * List comp
+  * sh syntax `ls -lr` => `ls { l=True , r=True }`
 ## Types
   * Char newtype + encoding subtyping vs bitwidths
   * propagate poisonexpr from matchAlts
-  * generalise anon bindings using levels (or float args up to top binding to read their type after gen)
   * check let|rec + mark Binds as let|rec
   * handle field name collisions (THFieldCollision)
   * Warn nonsense type join
@@ -19,8 +24,7 @@
   * typevars with bounds (a->b) & (c->d) need to be flattened and merged for co-occurence analysis (a&c -> b&d)
   * simplify type; imports.basic.twice f x = f (f x)
   * Careful mergeing mu types; µx. may contain other µx.!
-  * need to generalise polymorphic subexpressions correctly
-  * ReadQParseExtern; inline external functions and extrusion.. (probably should qualify every name)
+  * need to generalise (place the forall.) in polymorphic subexpressions correctly
 ## Simplifier
   * constructor specialisation
   * case-of-case

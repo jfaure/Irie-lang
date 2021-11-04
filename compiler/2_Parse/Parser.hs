@@ -23,6 +23,8 @@ import Control.Lens
 --import qualified Text.Megaparsec.Debug as DBG
 dbg i = identity -- DBG.dbg i
 
+showN n = try ((takeP Nothing n >>= traceShowM) *> fail "debug parser") <|> pure () :: Parser ()
+
 type Parser = ParsecT Void Text (Prelude.State ParseState)
 
 --------------------------
@@ -166,7 +168,7 @@ p `sepBy2` sep = (:) <$> p <*> (some (sep *> p))
 -- Names --
 -----------
 reservedChars = ".'@(){};,\\\""
-reservedNames = S.fromList $ words "set over type data record class extern externVarArg let rec in where case \\case of _ import require \\ : :: = ? | λ =>"
+reservedNames = S.fromList $ words "as set over type data record class extern externVarArg let rec in where case \\case of _ import require \\ : :: = ? | λ =>"
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c
@@ -203,10 +205,12 @@ parseMixFixDef :: Text -> Either (ParseErrorBundle Text Void) [Maybe Text]
 indentedItems prev scn p finished = let
  go lvl = scn *> do
   pos <- L.indentLevel
+--traceShowM (prev , lvl , pos)
   [] <$ lookAhead (eof <|> finished) <|> if
-     | pos <= prev -> pure []
-     | pos == lvl  -> (:) <$> p <*> go lvl
-     | otherwise   -> fail $ "incorrect indentation, got " <> show pos <> ", expected <= " <> show prev <> " or == " <> show lvl
+ -- 'fail' here in to backtrack the whitespace/newlines. Otherwise the App parser sees and eats the f in `f = 3`
+    | pos <= prev -> fail "end of indent" -- pure []
+    | pos == lvl  -> p >>= \ok -> option [ok] ((ok :) <$> try (go lvl))
+    | otherwise   -> fail ("incorrect indentation, got " <> show pos <> ", expected <= " <> show prev <> " or == " <> show lvl)
      -- L.incorrectIndent EQ lvl pos
  in L.indentLevel >>= go
 
@@ -220,7 +224,7 @@ linefold p = let
     when (prev >= cur)
       (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
 --    (L.incorrectIndent GT prev cur) (alas GEQ is not an Ordering)
-    indent .= cur
+--  indent .= cur
     p -- <* (indent .= prev)
     <* lookAhead endLine -- make sure this was a linefold to not corrupt error messages
   in try doLinefold <|> p
@@ -263,7 +267,7 @@ decl = svIndent *> choice
    , extern
    , void (funBind True LetOrRec) <?> "binding"
    , bareTT <?> "repl expression"
-   ]
+   ] <?> "import , extern or local binding"
 
 -- for the repl
 bareTT = addAnonBindName *> ((\tt -> addBind (FunBind $ FnDef "replExpr" True LetOrRec Nothing [] IS.empty [FnMatch [] [] tt] Nothing)) =<< tt)
@@ -298,20 +302,20 @@ addMixfixWords m mfBind mfdef = let
 funBind isTop letRecT = lexeme pMixfixWords >>= \case
   [Just nm] -> VBind <$> funBind' isTop letRecT nm Nothing (symbol nm *> many (lexeme singlePattern))
   mfdefHNames -> let
+    hNm = mixFix2Nm mfdefHNames
     pMixFixArgs = \case
       []            -> pure []
       Just  nm : x -> symbol nm *> pMixFixArgs x
       Nothing  : x -> (:) <$> lexeme singlePattern <*> pMixFixArgs x
     in mdo
     prec <- fromMaybe (defaultPrec) <$> optional (braces parsePrec)
-    let hNm = mixFix2Nm mfdefHNames
     mfdefINames <- addMixfixWords mfdefHNames iNm mfdef
     let mfdef = MixfixDef iNm mfdefINames prec
     iNm <- funBind' isTop letRecT (mixFix2Nm mfdefHNames) (Just mfdef) (pMixFixArgs mfdefHNames)
     pure (VBind iNm)
 
 funBind' :: Bool -> LetRecT -> Text -> Maybe MixfixDef -> Parser [Pattern] -> Parser IName
-funBind' isTop letRecT nm mfDef pMFArgs = newArgNest $ mdo
+funBind' isTop letRecT nm mfDef pMFArgs = (<?> "assignment") $ newArgNest $ mdo
   iNm <- addBindName nm -- handle recursive references
     <* addBind (FunBind $ FnDef nm isTop letRecT mfDef (implicits ++ pi) free eqns ty)
   ars <- many singlePattern
@@ -322,7 +326,6 @@ funBind' isTop letRecT nm mfDef pMFArgs = newArgNest $ mdo
     , case (ars , ann) of
         ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
         (x  , Just{})  -> fail "TODO no parser for: fn args followed by type signature"
---      (x  , Nothing) -> fail $ "found pattern with no binding: " <> show x
         (x  , Nothing) -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
     ]
   free <- getFreeVars
@@ -353,24 +356,22 @@ fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ?
   let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case") *> newArgNest (fnMatch (many singlePattern) (reserved "=>"))
       normalFnMatch = FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
-  in choice [ hoistLambda , normalFnMatch ]
+  in hoistLambda <|> normalFnMatch
 
 -- TT parser
 ttArg , tt :: Parser TT
 (ttArg , tt) = (arg , anyTT)
   where
-  anyTT = (match <|> tySum <|> appOrArg) >>= typedTT <?> "tt"
-  argOrLens = arg >>= \larg -> option larg (lens larg) -- lens bind tighter than App
-  appOrArg = getOffset >>= \o -> argOrLens >>= \larg -> option larg
+  anyTT = (tySum <|> appOrArg) >>= typedTT <?> "tt"
+  argOrLens = arg       >>=                     \larg -> option larg (lens larg) -- lens bind tighter than App
+  appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg
     ( case larg of
 --     Lit l -> LitArray . (l:) <$> some (lexeme $ try (literalP <* notFollowedBy iden))
 --     -- Breaks `5 + 5`
-       P.Label l [] -> P.Label l <$> some arg
-       fn -> choice
-         [ Juxt o . (fn:) <$> some (linefold argOrLens)
-         , pure fn
-         ]
+       P.Label l [] -> P.Label l <$> some (linefold argOrLens) --arg
+       fn -> (Juxt o . (fn:) <$> some (linefold argOrLens))
     )--  >>= \tt -> option tt (lens tt)
+--  >>= \tt -> option tt (App tt . pure <$> (reserved "\\case" *> caseSplits))
   lens :: TT -> Parser TT
   lens record = let
     lensNext path = getOffset >>= \o -> reservedChar '.' *> choice [
@@ -379,15 +380,17 @@ ttArg , tt :: Parser TT
       , idenNo_ >>= newFLabel >>= \p -> choice [lensNext (p : path) , pure (TTLens o record (reverse (p:path)) LensGet)]
       ]
     in lensNext []
-  arg = choice
+  arg = use indent >>= \sv -> choice
    [ reserved "_" $> WildCard
-   , lambdaCase -- "\\case"
-   , lambda     -- "\"
    , letIn
--- , match      -- "case"
+   -- Note. indentation in arguments fails atm , so `fn \case` is handled at the top
+   , reserved "\\case" *> caseSplits
+   , lambda -- "\"
+   , reserved "do" *> doExpr
+   , match      -- "case"
 -- , tySum      -- "|"
    , con
-   , Lit <$> (lexeme $ try (literalP <* notFollowedBy iden))
+   , Lit <$> lexeme (try (literalP <* notFollowedBy iden)) -- must be before Iden parsers
    , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x] -- varName -- incl. label
    , try $ iden >>= lookupBindName -- holey names used as defined
    , TyListOf <$> brackets tt
@@ -416,35 +419,52 @@ ttArg , tt :: Parser TT
     conBraces = braces (fieldAssign `sepBy` reservedChar ',')
     in Cons <$> (conHash <|> conBraces)
 
-  caseSplits = Match <$> let
+  doExpr = DoStmts <$> let
+    doStmt = idenNo_ >>= \hNm -> choice
+      [ reservedName "->" *> addArgName hNm >>= \i -> tt <&> Bind i
+      , lookupBindName hNm >>= \i -> tt <&> Sequence . \case
+          App f ars -> App i (f : ars)
+          expr      -> App i [expr]
+      ]
+    in do
+    ref <- use indent <* scn
+    L.indentLevel >>= \i -> case compare i ref of
+      LT -> fail $ "new do statement is less indented than the reference indent: "
+                   <> show i <> " < " <> show ref
+      _  -> indentedItems ref scn doStmt (void (char ')'))
+
+  caseSplits = let
     split = newArgNest $ do
       svIndent
-      lName <- iden >>= newSLabel
-      optional (reservedChar '@')
-      pats <- many singlePattern
+      lName <- idenNo_ >>= newSLabel
+      pats  <- many singlePattern
       reserved "=>"
       splitFn <- tt
-      free <- getFreeVars
+      free    <- getFreeVars
       pure (lName , free , pats , splitFn)
---  in choice [some $ try (scn *> reservedChar '|' *> split) , pure <$> split]
     in do
       ref <- use indent <* scn
       L.indentLevel >>= \i -> case compare i ref of
-        LT -> fail "new case should not be less indented than reference indent"
-        _  -> indentedItems ref scn split (fail "")
+        LT -> fail $ "new case statement is less indented than the reference indent: "
+                     <> show i <> " < " <> show ref
+        _  -> do  -- ')' and final match-all '_' can terminate indent
+        let finishEarly = void $ char ')' <|> lookAhead (reservedChar '_')
+        alts     <- indentedItems ref scn split finishEarly
+        catchAll <- optional $ reservedChar '_' *> choice
+          [ reservedName "=" *> lexeme idenNo_ >>= addArgName <&> PArg
+          , addAnonArgName <&> \a -> PComp a PWildCard
+          ] >>= \pat -> (pat , ) <$> (reserved "=>" *> tt)
+        pure (Match alts catchAll)
   match = reserved "case" *> do
     scrut  <- tt
     reserved "of"
     (`App` [scrut]) <$> caseSplits
-
-  lambdaCase = reserved "\\case" *> caseSplits
 
   letIn = let
     pletBinds letStart (letRecT :: LetRecT) = (\p -> incLetNest *> p <* decLetNest) $ do
       scn -- go to first indented binding
       ref <- use indent
       svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
-      traceShowM ref
       indentedItems ref scn (funBind False letRecT) (reserved "in") <* reserved "in"
       tt
     in do
@@ -468,7 +488,7 @@ ttArg , tt :: Parser TT
 
 -- TODO parse patterns as TT's to handle pi-bound arguments
 pattern = choice
-  [ try iden >>= \i -> addArgName i >>= \a -> choice
+  [ try idenNo_ >>= \i -> addArgName i >>= \a -> choice
      [ some singlePattern >>= \args -> lookupSLabel i >>=
          maybe (newSLabel i) pure <&> \f -> PComp a (PLabel f args)
      , loneIden a i
@@ -476,38 +496,43 @@ pattern = choice
   , singlePattern
   ]
 
+--loneIden a i = pure (PArg a)
 loneIden a i = lookupSLabel i <&> \case
   Nothing -> PArg a
   Just  l -> PComp a (PLabel l [])
 
 singlePattern = choice
- [ try iden >>= \i -> addArgName i >>= \a -> loneIden a i
+ [ reservedChar '_' *> choice
+   [ reservedName "as" *> lexeme idenNo_ >>= addArgName <&> PArg
+   , addAnonArgName <&> \a -> PComp a PWildCard
+   ]
+ , try idenNo_ >>= \i -> addArgName i >>= \a -> loneIden a i
  , parens pattern
  , choice
-   [ let fieldPattern = iden >>= \iStr -> newFLabel iStr >>= \i -> (i,) <$> choice
-           [ reservedOp "=" *> pattern
+   [ let fieldPattern = lexeme idenNo_ >>= \iStr -> newFLabel iStr >>= \i -> (i,) <$> choice
+           [ reservedOp "@" *> pattern
            , PArg <$> addArgName iStr -- { A } pattern is same as { A=A }
            ]
      in PCons <$> braces (fieldPattern `sepBy` reservedChar ',')
-   , PWildCard <$ reserved "_"
    , PLit <$> try literalP
    ] >>= \compositePattern -> addAnonArgName <&> \a -> PComp a compositePattern
- ]
+ ] <?> "pattern"
 
 ---------------------
 -- literal parsers --
 ---------------------
 literalP = let
   signed p = let
-    sign :: Bool -> Parser Bool = \i -> option i $ (single '+' *> sign i) <|> (single '-' *> sign (not i))
+    sign :: Bool -> Parser Bool =
+      \i -> option i $ (single '+' *> sign i) <|> (single '-' *> sign (not i))
     in sign False >>= \s -> p <&> \n -> if s then negate n else n
   -- L.charLiteral handles escaped chars (eg. \n)
   char :: Parser Char = between (single '\'') (single '\'') L.charLiteral
   stringLiteral :: Parser [Char] = choice
-    [ single '\"'       *> manyTill L.charLiteral (single '\"')
-    , (string "\"\"\"") *> manyTill L.charLiteral (string "\"\"\"")
-    , (string "''")     *> manyTill L.charLiteral (string "''")
-    , (string "$")      *> manyTill L.charLiteral endLine]
+    [ single '"'       *> manyTill L.charLiteral (single '"')
+    , string "\"\"\"" *> manyTill L.charLiteral (string "\"\"\"")
+    , string "''"     *> manyTill L.charLiteral (string "''")
+    , string "$"      *> manyTill L.charLiteral endLine]
   intLiteral = choice
     [ try (signed L.decimal)
     , string "0b" *> L.binary

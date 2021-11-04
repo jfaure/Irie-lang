@@ -1,13 +1,14 @@
 -- Core Language (compiler pipeline = Text >> Parse >> Core >> STG >> LLVM)
 {-# LANGUAGE TemplateHaskell #-}
-module CoreSyn where
+module CoreSyn (module CoreSyn , module QName) where
 import Prim
+import QName
+import MixfixSyn
+import Control.Lens hiding (List)
 import qualified Data.Vector         as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.Map as M
-import Control.Lens hiding (List)
-import MixfixSyn
 
 global_debug = False
 --global_debug = True
@@ -23,28 +24,19 @@ type BiSubName   = Int -- index into bisubs
 type SrcOff      = Int -- offset into the source file
 type Complexity  = Int -- number of Apps in the Term
 
--- the lower `moduleBits` of labels/fields are reserved as module identifiers.
--- The point is to always deal with native Ints, particularly for use as IntMap keys
--- Note. Ints are signed, div truncates, so this is skewed by 2 bits, and thus there are 4x more available names than module names
-newtype QName = QName Int -- 'qualified name'; modulename+name
-qName2Key (QName q) = q -- very annoying but Intmap insists
-moduleBits :: Int = floor (logBase 2 (fromIntegral (maxBound :: Int))) `div` 2
-mkQName m i       = QName ((i `shiftL` moduleBits) .|. m)
-unQName (QName q) = q `shiftR` moduleBits
-modName (QName q) = q .&. complement (complement 0 `shiftL` moduleBits)
 type IField = QName
 type ILabel = QName
 
 data VName
- = VBind    IName
- | VQBind   QName
- | VArg     IName
- | VExt     IName -- extern map (incl. prim instrs and mixfixwords)
- | VForeign HName
+ = VBind    IName -- name defined within this module (probably deprecate this)
+ | VQBind   QName -- qualified name (modulename << moduleBits | Iname)
+ | VArg     IName -- introduced by lambda abstractions
+ | VExt     IName -- externs; primitives, mixfixwords and imported names
+ | VForeign HName -- opaque name resolved at linktime
 
  | VBruijn  IName -- debruijn arg (only built by the simplifier)
 
-data Term -- β-reducable (possibly to a type) and type annotated
+data Term -- β-reducable (possibly to a type)
  = Var     !VName
  | Lit     !Literal
  | Question      -- attempt to infer this TT
@@ -84,18 +76,20 @@ type TyPlus  = [TyHead] -- output types (lattice join)
 holeTy       = []
 
 data TyCon -- Type constructors
- = THArrow    [TyMinus] TyPlus -- degenerate case of THPi (bot -> top is the largest)
+ = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot -> top is the largest)
  | THTuple    (V.Vector  TyPlus) -- ordered form of THproduct
  | THProduct  (IntMap TyPlus)
  | THSumTy    (IntMap TyPlus)
  | THArray    TyPlus
+
+data Pi = Pi [(IName , Type)] Type
 
 -- Head constructors in the profinite distributive lattice of types
 data TyHead
  = THPrim     PrimType
  | THExt      IName -- tyOf ix to externs
  | THSet      Uni   -- Type of types
- | THPoison   -- marker for inconsistencies found during inference
+ | THPoison         -- marker for inconsistencies found during inference
  | THTop | THBot
 
  | THFieldCollision Type Type
@@ -115,16 +109,13 @@ data TyHead
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
  | THFam Type [Type] [Expr] -- type of indexables, and things indexing it (both can be [])
 
-data Pi = Pi [(IName , Type)] Type
-
--- TODO handle recursion
---data QTT = QTT { _qttReads :: Int , _qttBuilds :: Int } deriving Show
 data TmpBiSubError = TmpBiSubError { msg :: Text , got :: Type , expected :: Type }
 data BiSubError = BiSubError SrcOff TmpBiSubError
+data CheckError = CheckError { inferredType :: Type , annotationType :: Type }
 data ScopeError
   = ScopeError Text
   | AmbigBind  Text
-data TCErrors = TCErrors [ScopeError] [BiSubError]
+data TCErrors = TCErrors [ScopeError] [BiSubError] [CheckError]
 
 data Expr
  = Core     Term Type
@@ -132,12 +123,10 @@ data Expr
  | Set      !Int Type
  | PoisonExpr
 
- -- Temporary exprs for solveMixfixes; TODO should make new data
- | QVar     (ModuleIName , IName)
+ -- Temporary exprs for solveMixfixes; TODO should extract to new data
+ | QVar     QName --(ModuleIName , IName)
  | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
  | ExprApp  Expr [Expr] -- output of solvemixfixes
-
- | Fail     Text -- TCError
 
 --data MixfixSolved
 -- = QVar     (ModuleIName , IName)
@@ -148,7 +137,7 @@ data Expr
 data Bind -- indexes in the bindmap
  = WIP
  | Guard     { mutuals :: [IName] , args :: [IName] , tvar :: IName }
- | Mutual    { naiveExpr :: Expr , recursive :: Bool , tvar :: IName }
+ | Mutual    { naiveExpr :: Expr , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
 
  | Checking  { mutuals :: [IName] 
              , monoMorphic :: Maybe Expr -- if set, shouldn't generalise itself (ask (the first seen) mutual bind do it)
@@ -159,8 +148,6 @@ data Bind -- indexes in the bindmap
  | BindOK    Expr
  | BindOpt   Complexity Expr -- optimized binding
 
--- mixfixWords :: [MFWord]
--- hNameMFWords :: M.Map HName [MFIName]
 data ExternVar
  = ForwardRef IName -- not extern
  | Imported   Expr
@@ -171,8 +158,8 @@ data ExternVar
  | Importable ModuleIName IName -- read allBinds
  | MixfixyVar Mixfixy -- for solvemixfixes
 data Mixfixy = Mixfixy
- { ambigBind   :: Maybe (ModuleIName , IName)
- , ambigMFWord :: [QMFWord] --[(ModuleIName , [QMFWord])]
+ { ambigBind   :: Maybe QName
+ , ambigMFWord :: [QMFWord]
  }
 
 type ASMIdx = IName -- Field|Label-> Idx in sorted list (the actual index used at runtime)
@@ -217,6 +204,13 @@ data JudgedModule = JudgedModule {
  , labelNames  :: M.Map HName IName
  , judgedBinds :: V.Vector Bind
 }
+
+-- old modules still have to be partially reused;
+-- esp. to remove deleted names from the global resolver
+data OldCachedModule = OldCachedModule {
+   oldModuleIName :: ModuleIName
+ , oldBindNames   :: V.Vector HName
+} deriving Show
 
 -- only used by prettyCore functions
 data BindSource = BindSource {

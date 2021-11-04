@@ -23,7 +23,7 @@ unParens x = if T.head x == '(' then T.drop 1 (T.dropEnd 1 x) else x
 prettyBind showExpr bindSrc = \case
   Checking m e g ty     -> "CHECKING: " <> show m <> show e <> show g <> " : " <> show ty
   Guard m ars tvar      -> "GUARD : " <> show m <> show ars <> show tvar
-  Mutual m isRec tvar -> "MUTUAL: " <> show m <> show isRec <> show tvar
+  Mutual m isRec tvar tyAnn -> "MUTUAL: " <> show m <> show isRec <> show tvar <> show tyAnn
   WIP -> "WIP"
   BindOK expr -> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
   BindOpt complex expr -> " (" <> show complex <> ")" <> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
@@ -105,7 +105,7 @@ prettyTy bindSrc = let
   [x] -> pTH x
   x   -> "(" <> (T.intercalate " & " $ pTH <$> x) <> ")"
 
-prettyQName :: _ -> QName -> Text
+prettyQName :: Maybe (V.Vector (V.Vector HName)) -> QName -> Text
 prettyQName names q = maybe (show (modName q) <> "." <> show (unQName q)) (\names -> toS $ (names V.! modName q) V.! unQName q) names
 
 prettyTyHead bindSrc = let
@@ -126,17 +126,19 @@ prettyTyHead bindSrc = let
    THArrow    [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> pTy ret <> ")"
    THArrow    args ret -> parens $ T.intercalate " → " (pTy <$> (args <> [ret]))
    THSumTy   l -> let
-     prettyLabel (l,ty) = maybe (show l) (\bindSrc -> toS $ ((srcLabelNames bindSrc V.! modName (QName l)) V.! unQName (QName l))) bindSrc <> " : " <> pTy ty
+--   prettyLabel (l,ty) = maybe (show l) (\bindSrc -> toS $ ((srcLabelNames bindSrc V.! modName (QName l)) V.! unQName (QName l))) bindSrc <> " : " <> pTy ty
+     prettyLabel (l,ty) = prettyQName (srcLabelNames <$> bindSrc) (QName l) <> " : " <> pTy ty
      in "[" <> T.intercalate " | " (prettyLabel <$> IM.toList l) <> "]"
    THProduct l -> let
-     prettyField (f,ty) = maybe (show f) (\bindSrc -> toS $ ((srcFieldNames bindSrc V.! modName (QName f)) V.! unQName (QName f))) bindSrc <> " : " <> pTy ty
+--   prettyField (f,ty) = maybe (show f) (\bindSrc -> toS $ ((srcFieldNames bindSrc V.! modName (QName f)) V.! unQName (QName f))) bindSrc <> " : " <> pTy ty
+     prettyField (f,ty) = prettyQName (srcFieldNames <$> bindSrc) (QName f) <> " : " <> pTy ty
      in "{" <> T.intercalate " , " (prettyField <$> IM.toList l) <> "}"
    THTuple  l  -> "{" <> T.intercalate " , " (pTy <$> V.toList l) <> "}"
 
    THArray    t -> "Array " <> show t
 
 -- THBi i t -> "∏(#" <> show i  <> ")" <> pTy t
- THBi i t -> "∏ " <> (T.intercalate " " $ number2CapLetter <$> [0..i-1]) <> " → " <> pTy t
+ THBi i t -> "∏ " <> (T.intercalate " " $ number2CapLetter <$> [0..i-1]) <> " → " <> unParens (pTy t)
  THPi pi  -> "∏(" <> show pi <> ")"
  THSi pi arsMap -> "Σ(" <> show pi <> ") where (" <> show arsMap <> ")"
 -- THCore t ty -> "↑(" <> show t <> " : " <> show ty <> ")" -- term in type context

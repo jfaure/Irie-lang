@@ -19,6 +19,7 @@ data TCEnvState s = TCEnvState {
  , _wip        :: MV.MVector s Bind
  , _biFails    :: [BiSubError]
  , _scopeFails :: [ScopeError]
+ , _checkFails :: [CheckError]
 
  -- state
  , _lvl        :: Int

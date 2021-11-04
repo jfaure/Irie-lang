@@ -8,6 +8,13 @@ import qualified Data.List as DL
 import Text.Megaparsec
 import Control.Monad (fail)
 
+-- Temporary exprs for solveMixfixes
+--data TMPExpr
+-- = QVar     QName --(ModuleIName , IName)
+-- | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
+-- | ExprApp  Expr [Expr] -- output of solvemixfixes
+-- | TMPExpr  Expr
+
 -- megaparsec on custom stream : [Expr]
 instance Eq Expr where (==) a b  = False
 instance Ord Expr where (<=) a b = False
@@ -47,7 +54,6 @@ instance TraversableStream JuxtStream where
       tokensConsumed = tokensConsumed
 pxy = Proxy :: Proxy JuxtStream
 
-
 -------------------
 -- Mixfix Parser --
 -------------------
@@ -57,9 +63,11 @@ prependArg a f = case f of { ExprApp f args -> ExprApp f (a:args) ; f -> ExprApp
 appendArg  f a = case f of { ExprApp f args -> ExprApp f (a : reverse args) ; f -> ExprApp f [a] }
 --mkApp :: [Expr] -> Expr
 mkApp = \case { [a] -> a ; f:args -> ExprApp f args }
-patchMFBind m = \case
-  QVar (mod , _) -> QVar (mod , m)
-  ExprApp (QVar (mod , _)) args -> ExprApp (QVar (mod , m)) args
+patchMFBind b = let
+  patchQVar q = mkQName (modName q) b
+  in \case
+  QVar q -> QVar (patchQVar q)
+  ExprApp (QVar q) args -> ExprApp (QVar (patchQVar q)) args
 
 -- juxtappositions are ExprApps unless they contain mixfixes to extract and precedence solve
 -- prec and assoc only matters for mf chains that both want the centre argument `m1_` `_m2`
@@ -76,7 +84,7 @@ solveMixfixes :: [Expr] -> Expr = let
   arg = rawExpr <|> startPrefix
 
   -- parse expected mfwords (mfWs :: [Maybe IName])
-  mfParts :: IName -> Maybe Expr -> (ModIName , IName) -> Prec -> [Maybe IName] -> Parser Expr
+  mfParts :: IName -> Maybe Expr -> QName -> Prec -> [Maybe IName] -> Parser Expr
   mfParts mb larg qNm fixity mfWs = let
     mkMFParser = \case -- figure out if the mixfix ends with a hole
       []           -> pure (False , [])
@@ -84,13 +92,15 @@ solveMixfixes :: [Expr] -> Expr = let
       Nothing : xs -> (\p (lastArg , l) -> (lastArg , p : l)) <$> expr <*> mkMFParser xs
       Just q  : xs -> (pMFWord q <|> fail ("expected mfword: " <> show q)) *> mkMFParser xs
 
-    in mkMFParser (fmap (fst qNm ,) <$> mfWs)
+--  in mkMFParser (fmap (fst qNm ,) <$> mfWs)
+    in mkMFParser (fmap (mkQName (modName qNm)) <$> mfWs)
       <&> (\(pf,args) -> (pf , maybe (QVar qNm : args) (\la -> QVar qNm : la : args) larg))
-      >>= \case
-       (False , p) -> pure (patchMFBind mb (mkApp p))
-       (True  , p) -> option (patchMFBind mb $ mkApp p) (try $ startPostfix (patchMFBind mb $ mkApp p) (Just (qNm , fixity)))
+      >>= \case -- did the mf end with _
+       (False , p) -> pure   (patchMFBind mb (mkApp p)) -- end of mf train
+       (True  , p) -> option (patchMFBind mb (mkApp p)) -- ends with '_' => parse more mfs
+                      (try $ startPostfix (patchMFBind mb (mkApp p)) (Just (qNm , fixity)))
 
-  startPostfix :: Expr -> (Maybe ((IName,IName),Prec)) -> Parser Expr
+  startPostfix :: Expr -> (Maybe (QName , Prec)) -> Parser Expr
   startPostfix larg fixity = mfExpr >>= \(Mixfixy maybeBind mfWords) -> let
     mkPostfixParser (QStartPostfix (MixfixDef mb mfWs fixityR) qNmr) =
       let contMFWs = drop 2 mfWs -- _iden[...] (already parsed first hole and first iden)

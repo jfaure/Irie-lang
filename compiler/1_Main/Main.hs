@@ -15,7 +15,6 @@ import C
 
 import Text.Megaparsec hiding (many)
 import qualified Data.Text.IO as T.IO
---import qualified Data.Text.Lazy.IO as TL.IO
 import qualified Data.ByteString.Lazy as BSL.IO
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
@@ -58,84 +57,105 @@ main' args = parseCmdLine args >>= \cmdLine ->
       resolver <- if doCacheCore && exists
         then DB.decodeFile resolverCacheFName :: IO GlobalResolver
         else pure primResolver
-      doFile cmdLine resolver `mapM_` av
+      av `forM_` doFileCached cmdLine True resolver
 
-doFile cmdLine r f     = T.IO.readFile f >>= doProgText cmdLine r f
-doProgText flags r f t = text2Core flags r f t >>= codegen flags
+--doFile cmdLine r f     = T.IO.readFile f >>= doProgText cmdLine r f
+doProgText flags r f t = text2Core flags Nothing r f t >>= codegen flags
 
-type CachedData = (GlobalResolver , Externs , JudgedModule)
+type CachedData = (ModuleIName , Externs , JudgedModule)
 decodeCoreFile :: FilePath -> IO CachedData       = DB.decodeFile
 encodeCoreFile :: FilePath -> CachedData -> IO () = DB.encodeFile
 cacheFile fp jb = createDirectoryIfMissing False objDir *> encodeCoreFile (getCachePath fp) jb
 
-doFileCached :: CmdLine -> GlobalResolver -> FilePath -> IO (GlobalResolver , Externs , JudgedModule)
-doFileCached flags resolver fName = let
+doFileCached :: CmdLine -> Bool -> GlobalResolver -> FilePath -> IO (GlobalResolver , Externs , JudgedModule)
+doFileCached flags isMain resolver fName = let
   cached            = getCachePath fName
   isCachedFileFresh = (<) <$> getModificationTime fName <*> getModificationTime cached
-  isCachedFileOK    = doesFileExist cached >>= \exists -> if doCacheCore && exists then isCachedFileFresh else pure False
-  in isCachedFileOK >>= \case
-  -- Warning ! this will almost certainly not work when varying the import order across caches
-  False -> T.IO.readFile fName >>= text2Core flags resolver fName
-  True  -> decodeCoreFile cached >>= \(_newResolver , exts , judged) -> do
---  modResolver <- evalImports modResolver localNames mixfixNames unknownNames
-    -- TODO modResolver + recompile dependencies ?
---  let (tmpResolver , exts) = resolveImports tmpResolver mempty mempty mempty -- localName smixfixNames unknownNames
---      newResolver = addModule2Resolver tmpResolver (bind2Expr <$> (judgedBinds judged))
-    pure (resolver , exts , judged)
+  go resolver modNm = T.IO.readFile fName >>= text2Core flags modNm resolver fName
+  go' resolver = go resolver Nothing
+  in
+  if not doCacheCore then go' resolver else doesFileExist cached >>= \exists ->
+  if not exists      then go' resolver else do
+    fresh <- isCachedFileFresh
+    -- TODO don't read everything if wasn't fresh
+    last@(modINm , exts , judged) <- decodeCoreFile cached :: IO CachedData
+    -- need to clear all cached bindings in case some were removed since
+    if fresh && not (recompile flags) && not isMain then pure (resolver , exts , judged)
+      --else go (rmModule modINm (bindNames judged) resolver) (Just modINm)
+      else go resolver (Just $ OldCachedModule modINm (bindNames judged))
 
 evalImports flags resolver fileNames = do
   importPaths <- (findModule searchPath . toS) `mapM` fileNames
-  foldM (\res path -> (\(a,b,c)->a) <$> doFileCached flags res path) resolver importPaths
+  -- import loop?
+  foldM (\res path -> (\(a,b,c)->a) <$> doFileCached flags False res path) resolver importPaths
 
-text2Core :: CmdLine -> GlobalResolver -> FilePath -> Text
+-- Just moduleIName indicates this module was already cached, so don't allocate a new iname for it
+text2Core :: CmdLine -> Maybe OldCachedModule -> GlobalResolver -> FilePath -> Text
   -> IO (GlobalResolver , Externs , JudgedModule)
-text2Core flags resolver fName progText = do
+text2Core flags maybeOldModule resolver fName progText = do
   when ("source" `elem` printPass flags) (putStr =<< readFile fName)
   parsed <- case parseModule fName progText of
     Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
     Right r -> pure r
-  when ("parseTree" `elem` printPass flags) (putStrLn $ P.prettyModule parsed)
+  when ("parseTree" `elem` printPass flags) (putStrLn (P.prettyModule parsed) <* die "")
 
   modResolver <- evalImports flags resolver (parsed ^. P.imports)
 
-  let (tmpResolver , exts) = resolveImports modResolver localNames mixfixNames unknownNames
-      modIName     = modCount tmpResolver
-
-      modNameMap = parsed ^. P.parseDetails . P.hNameBinds . _2
-      hNames = let getNm (P.FunBind fnDef) = P.fnNm fnDef in getNm <$> V.fromList (parsed ^. P.bindings)
-      localNames   = parsed ^. P.parseDetails . P.hNameBinds . _2
+  let modNameMap = parsed ^. P.parseDetails . P.hNameBinds . _2
+      hNames = let getNm (P.FunBind fnDef) = P.fnNm fnDef
+        in getNm <$> V.fromList (parsed ^. P.bindings)
+      nBinds       = length $ parsed ^. P.bindings
+      localNames   = parsed ^. P.parseDetails . P.hNameBinds   . _2
       mixfixNames  = parsed ^. P.parseDetails . P.hNameMFWords . _2
       unknownNames = parsed ^. P.parseDetails . P.hNamesNoScope
+      labelMap     = parsed ^. P.parseDetails . P.labels
       labelNames   = iMap2Vector $ parsed ^. P.parseDetails . P.labels
       fieldNames   = iMap2Vector $ parsed ^. P.parseDetails . P.fields
       nArgs        = parsed ^. P.parseDetails . P.nArgs
       srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
 
-      (judgedModule , errors) = judgeModule parsed modIName nArgs hNames exts srcInfo
-      TCErrors scopeErrors biunifyErrors = errors
+      (modIName , isNewModule) = maybe (modCount modResolver , True)
+                                       ((,False) . oldModuleIName) maybeOldModule
+
+      (tmpResolver  , exts) = resolveImports modResolver localNames labelMap mixfixNames unknownNames maybeOldModule
+
+      (judgedModule , errors) = judgeModule nBinds parsed modIName nArgs hNames exts srcInfo
+      TCErrors scopeErrors biunifyErrors checkErrors = errors
       JudgedModule modNm nArgs' bindNames a b judgedBinds = judgedModule
 
-      newResolver' = addModule2Resolver tmpResolver (V.zip bindNames (bind2Expr <$> judgedBinds))
-      newResolver = newResolver' { lnames = lnames newResolver' `V.snoc` labelNames 
-                                 , fnames = fnames newResolver' `V.snoc` fieldNames }
+      newResolver = let
+        labelExprs  = let
+          mkLabelExpr iName = Core (CoreSyn.Label (mkQName modIName iName) []) []
+          in V.fromList (mkLabelExpr <$> [nBinds .. nBinds + V.length labelNames - 1])
+
+        -- add labelNames and dummy bindings so they can be imported by other modules
+        -- necessary to disambiguate (Cons a b) (label or not-in-scope?)
+        -- case on labels and all uses of fields are unambiguous
+        r = addModule2Resolver tmpResolver (V.zip (bindNames V.++ labelNames) ((bind2Expr <$> judgedBinds) V.++ labelExprs))
+        in r { lnames   = lnames r `V.snoc` labelNames 
+             , fnames   = fnames r `V.snoc` fieldNames 
+             , modCount = modCount r + (if isNewModule then 1 else 0) }
 
       bindNamePairs = V.zip bindNames judgedBinds
       bindSrc = BindSource _ bindNames _ (lnames newResolver) (fnames newResolver) (allBinds newResolver)
       namedBinds showBind bs = (\(nm,j)->clYellow nm <> toS (prettyBind showBind bindSrc j)) <$> bs
+--traceShowM (fName , maybeOldModule , modIName)
 
   when ("types"  `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds False bindNamePairs)
   when ("core"   `elem` printPass flags) (void $ T.IO.putStrLn `mapM` namedBinds True  bindNamePairs)
   let simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
           simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
-      coreOK = null biunifyErrors && null scopeErrors
+      coreOK = null biunifyErrors && null scopeErrors && null checkErrors
       judgedFinal = JudgedModule modNm nArgs bindNames a b simpleBinds
   when ("simple" `elem` printPass flags)
     (void $ T.IO.putStrLn `mapM` namedBinds True  (V.zip bindNames simpleBinds))
-  (T.IO.putStrLn . formatError bindSrc srcInfo)      `mapM` biunifyErrors
-  (T.IO.putStrLn . formatScopeError) `mapM` scopeErrors
-  when (doCacheCore && coreOK) $ do
+  (T.IO.putStrLn . formatError bindSrc srcInfo) `mapM` biunifyErrors
+  (T.IO.putStrLn . formatScopeError)            `mapM` scopeErrors
+  (T.IO.putStrLn . formatCheckError bindSrc)    `mapM` checkErrors
+  when (doCacheCore && coreOK && not (noCache flags)) $ do
     DB.encodeFile resolverCacheFName newResolver
-    cacheFile fName (newResolver , exts , judgedFinal)
+    cacheFile fName (modIName , exts , judgedFinal)
+  traceM $ show fName <> " " <> (if coreOK then clGreen "OK" else clRed "KO")
   pure (newResolver , exts , judgedFinal)
 
 ---------------------------------

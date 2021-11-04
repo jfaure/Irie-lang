@@ -4,7 +4,7 @@
 resolver: lts-18.14
 ghc-build: standard
 #resolver: lts-18.10
-system-ghc: true
+#system-ghc: true
 #compiler: ghc-8.10.4
 
 allow-newer: true

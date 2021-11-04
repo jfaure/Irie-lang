@@ -64,8 +64,8 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
   (THBot , _) -> pure (CastInstr MkBot)
   (THPrim p1 , THPrim p2) -> primBiSub p1 p2
   (THExt a , THExt b) | a == b -> pure BiEQ
-  (p , THExt i) -> biSub [p]     =<< tyExpr . (`readPrimExtern` i)<$>use externs
-  (THExt i , m) -> (`biSub` [m]) =<< tyExpr . (`readPrimExtern` i)<$>use externs
+  (p , THExt i) -> biSub [p]     =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
+  (THExt i , m) -> (`biSub` [m]) =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
 
   -- Bound vars (removed at THBi, so should never be encountered during biunification)
   (THBound i , x) -> error $ "unexpected THBound: " <> show i
@@ -92,7 +92,7 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
   -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
   -- TODO prevent loop on `[0 : {}] <==> τ3 ;; [0 : {}] <==> x`
   (x , THMuBound y) -> pure BiEQ -- use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub
-  (x , THMuBound y) -> use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub
+--(x , THMuBound y) -> use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub
   (THMuBound x , y) -> use bis >>= \d -> MV.read d x >>= biSub [y] . _mSub
 
   (THRecSi f1 a1, THRecSi f2 a2) -> if f1 == f2

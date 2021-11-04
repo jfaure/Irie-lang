@@ -101,13 +101,12 @@ tyOfTy t = case t of
   t  -> panic $ "multiple types: " <> show t
 
 tyExpr = \case -- expr found as type, (note. raw exprs cannot be types however)
-  Ty t -> t
-  expr -> error $ "expected type, got: " ++ show expr
+  Ty t -> Just t
+  expr -> Nothing --error $ "expected type, got: " ++ show expr
 
 tyOfExpr  = \case
   Core x ty -> ty
   Ty t      -> tyOfTy t
-  Fail e    -> []
   PoisonExpr-> []
 
 -- expr2Ty :: _ -> Expr -> TCEnv s Type
@@ -133,7 +132,8 @@ getTypeIndexes = \case
 mergeIndex :: Expr -> Expr -> Expr
 mergeIndex = _
 
-bind2Expr = \case { BindOK e -> e }
+bind2Expr = \case
+  BindOK e    -> e
 
 ------------------------
 -- Type Manipulations --

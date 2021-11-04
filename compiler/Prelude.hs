@@ -1,5 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude ( module Protolude , module Data.Align , module Data.These , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , setNBits)
+
+--  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
 import Protolude hiding (check , Type , Fixity(..) , moduleName , option
  , try , some , many -- conflict with megaparsec

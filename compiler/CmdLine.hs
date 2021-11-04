@@ -10,11 +10,13 @@ data CmdLine = CmdLine
   , debug          :: Bool
   , optlevel       :: Word
   , noPrelude      :: Bool
+  , noCache        :: Bool
+  , recompile      :: Bool -- recompile even if cached
   , outFile        :: Maybe FilePath
   , files          :: [FilePath]
   } deriving (Show)
 
-defaultCmdLine = CmdLine [] False False 0 False Nothing []
+defaultCmdLine = CmdLine [] False False 0 False False False Nothing []
 
 printPasses = T.words "args source parseTree types core simple ssa C" :: [Text]
 
@@ -46,6 +48,12 @@ cmdLineDecls = CmdLine
   <*> switch
       (short 'n' <> long "no-prelude"
       <> help "don't import prelude implicitly")
+  <*> switch
+      (             long "no-cache"
+      <> help "don't save compiled files")
+  <*> switch
+      (             long "recompile"
+      <> help "recompile even if cached file looks good")
   <*> (optional . strOption) (
       (short 'o')
       <> help "Write llvm output to file")

@@ -5,7 +5,7 @@
 -- * imported modules
 -- * extern functions (esp. C)
 module Externs (GlobalResolver(..) , addModule2Resolver , primResolver , primBinds , Import(..) , Externs(..)
-  , readParseExtern , readQParseExtern , readPrimExtern , resolveImports , typeOfLit)
+  , readParseExtern , readQParseExtern , readPrimExtern , resolveImports , typeOfLit)-- , rmModule)
 where
 import Prim
 import qualified ParseSyntax as P
@@ -30,7 +30,7 @@ data Import = Import {
 
 data GlobalResolver = GlobalResolver {
    modCount      :: Int
- , globalNameMap :: M.Map HName (IM.IntMap IName) -- HName -> IName -> ModuleIName
+ , globalNameMap :: M.Map HName (IM.IntMap IName) -- HName -> ModuleIName -> IName
  , allBinds      :: V.Vector (V.Vector (HName , Expr))
  , lnames        :: V.Vector (V.Vector HName)
  , fnames        :: V.Vector (V.Vector HName)
@@ -38,6 +38,13 @@ data GlobalResolver = GlobalResolver {
   -- HName -> (MFIName -> ModuleIName)
  , globalMixfixWords :: M.Map HName (IM.IntMap [QMFWord])
 } deriving Show
+
+-- clear a module from the global resolver; need to call whenever re-checking a module, in case bindings were removed
+-- expensive
+--rmModule :: ModuleIName -> V.Vector HName -> GlobalResolver -> GlobalResolver
+--rmModule modNm names resolver = let voidOut mp = if IM.null mp then Nothing else Just mp
+--  in resolver { globalNameMap
+--  = V.foldl (\mp hNm -> M.update (voidOut . IM.filterWithKey (\k i -> k /= modNm)) hNm mp) (globalNameMap resolver) names }
 
 primResolver :: GlobalResolver = GlobalResolver -- has no field/label names, so give an empty entry in its module slot
   1 (IM.singleton 0 <$> primMap) (V.singleton primBinds) (V.singleton mempty) (V.singleton mempty) M.empty
@@ -73,14 +80,18 @@ readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
 -- Externs are a vector of CoreExprs, generated as: builtins ++ concat imports;
 -- which is indexed by the permuation described in the extNames vector.
 -- * primitives must always be present in GlobalResolver
-resolveImports :: GlobalResolver -> M.Map HName IName -> M.Map HName [MFWord] -> M.Map HName IName -> (GlobalResolver , Externs)
-resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords) localNames mixfixHNames unknownNames = let
---allBinds = prevAllBinds V.++ V.fromList (fmap (bind2Expr . snd) . importBinds <$> imports)
---allBinds = prevAllBinds `V.snoc` imported ---- V.++ V.fromList (fmap (bind2Expr . snd) . importBinds <$> imports)
+resolveImports :: GlobalResolver -> M.Map HName IName -> M.Map HName IName
+  -> M.Map HName [MFWord] -> M.Map HName IName -> Maybe OldCachedModule
+  -> (GlobalResolver , Externs)
+resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords)
+  localNames labelNames mixfixHNames unknownNames maybeOld = let
 
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
-  resolver = M.unionWith IM.union curResolver $ M.unionsWith IM.union $
-    zipWith (\modNm map -> (\iNm -> IM.singleton modNm iNm) <$> map) [n..] [localNames]
+  resolver = let 
+    modIName = maybe n oldModuleIName maybeOld
+    localsAndLabels = localNames `M.union` ((M.size localNames +) <$> labelNames)
+--  in M.unionWith (IM.unionWith const) ((\iNm -> IM.singleton modIName iNm) <$> localNames) curResolver
+    in M.unionWith (IM.unionWith const) ((\iNm -> IM.singleton modIName iNm) <$> localsAndLabels) curResolver
 
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [n..] [map (mfw2qmfw n) <$> mixfixHNames]
@@ -89,19 +100,27 @@ resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords) localName
   -- TODO expand lambda-mixfixes with explicit holes
   resolveName :: HName -> ExternVar -- (ModuleIName , IName)
   resolveName hNm = let
-    binds   = IM.toList <$> resolver M.!? hNm
-    mfWords = IM.toList <$> mfResolver M.!? hNm
+    binds   = resolver   M.!? hNm
+    mfWords = mfResolver M.!? hNm
     flattenMFMap = concat . map snd
-    in case (binds , mfWords) of
+    in case (IM.toList <$> binds , IM.toList <$> mfWords) of
     (Just [] , _)  -> error $ "impossible: empty imap ?!"
     (Just [(0     , iNm)] , Nothing)-> Imported $ snd ((prevBinds V.! 0) V.! iNm) -- resolve primitives directly
     (Just [(modNm , iNm)] , Nothing)-> Importable modNm iNm
-    (Just [oneBind] , Just mfWords) -> MixfixyVar $ Mixfixy (Just oneBind) (flattenMFMap mfWords)
+    (Just [(m,i)] , Just mfWords) -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
     (Nothing        , Just mfWords) -> MixfixyVar $ Mixfixy Nothing        (flattenMFMap mfWords)
     (Nothing        , Nothing)      -> NotInScope hNm
+
+    -- 2 names found: maybe the name was deleted from the module in question but not removed from the global resolver
+    -- leaving stale names in the resolver is likely far cheaper than pessimistically removing all a module's names on recompile
+    (Just [(am,ai) , (bm,bi)] , _) | Just old <- maybeOld -> -- perhaps make a hmap of oldbindnames?
+      if      am == oldModuleIName old && (hNm `elem` oldBindNames old) then Importable bm bi
+      else if bm == oldModuleIName old && (hNm `elem` oldBindNames old) then Importable am ai
+      else AmbiguousBinding hNm
     (Just many , _)                 -> AmbiguousBinding hNm
 
   -- convert noScopeNames map to a vector (Map HName IName -> Vector HName)
+  names :: Map HName Int -> V.Vector ExternVar
   names noScopeNames = V.create $ do
     v <- MV.unsafeNew (M.size noScopeNames)
     (\nm idx -> MV.write v idx $ resolveName nm) `M.traverseWithKey` noScopeNames
@@ -111,7 +130,7 @@ resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords) localName
      , Externs { extNames = names unknownNames , extBinds = prevBinds })
 
 addModule2Resolver (GlobalResolver modCount nameMaps binds l f mfResolver) newBinds = let
-  in GlobalResolver (1+modCount) nameMaps (binds `V.snoc` newBinds) l f mfResolver
+  in GlobalResolver modCount nameMaps (binds `V.snoc` newBinds) l f mfResolver
 
 mkExtTy x = [THExt x]
 
