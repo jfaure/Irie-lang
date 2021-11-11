@@ -8,10 +8,10 @@ import Control.Lens hiding (List)
 import qualified Data.Vector         as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 
-global_debug = False
---global_debug = True
+--global_debug = False
+global_debug = True
 d_ x   = let --if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
@@ -108,14 +108,6 @@ data TyHead
 -- type Families | indexed types
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
  | THFam Type [Type] [Expr] -- type of indexables, and things indexing it (both can be [])
-
-data TmpBiSubError = TmpBiSubError { msg :: Text , got :: Type , expected :: Type }
-data BiSubError = BiSubError SrcOff TmpBiSubError
-data CheckError = CheckError { inferredType :: Type , annotationType :: Type }
-data ScopeError
-  = ScopeError Text
-  | AmbigBind  Text
-data TCErrors = TCErrors [ScopeError] [BiSubError] [CheckError]
 
 data Expr
  = Core     Term Type

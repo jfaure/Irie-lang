@@ -1,5 +1,6 @@
 module Parser (parseModule , parseMixFixDef) where
 -- Parsing is responsible for converting all text names to int indexes into various vectors
+-- This pass is designed to work without knowledge of imported modules
 --   1. VBind:   top-level let bindings
 --   2. VLocal:  lambda-bound arguments
 --   3. VExtern: out-ofscope HNames inamed now and resolved later
@@ -7,6 +8,7 @@ module Parser (parseModule , parseMixFixDef) where
 -- * we cannot resolve externs (incl forward refs) or mixfixes yet.
 --
 -- Note: add corresponding bind immediately after adding an IName (can resort to recursiveDo)
+-- This module is split into 3 parts: 1.Module building and parser state 2.Lexing 3.Parsing
 
 import Prim
 import ParseSyntax as P
@@ -15,7 +17,7 @@ import Text.Megaparsec-- hiding (State)
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Text as T
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Data.IntSet as IS
 import qualified Data.Set as S
 import Control.Monad (fail)
@@ -44,12 +46,13 @@ addMFWord h mfw = do
   moduleWIP . parseDetails . hNameMFWords . _2 %= M.insertWith (++) h [mfw sz]
   pure sz
 
+-- The trickiness below can be blamed on insertLookup, but saving a log(n) operation is mandatory
 il = M.insertLookupWithKey (\k new old -> old)
 -- Data.Map's builtin size is good enough for labels/fields
 insertOrRetrieve h mp = let sz = M.size mp in case il h sz mp of
   (Just x, mp) -> (Right x  , mp)
   (_,mp)       -> (Left  sz , mp)
--- custom size variable (anonymous binds aren't named in the map)
+-- custom size variable (track anonymous binds which aren't found in the map)
 insertOrRetrieveSZ h (sz,mp) = case il h sz mp of
   (Just x, mp) -> (Right x , (sz,mp))
   (_,mp)       -> (Left sz , (sz+1,mp))
@@ -135,7 +138,7 @@ lookupImplicit h = do
 -----------
 -- A key convention: tokens consume trailing whitespace (using `symbol` or `lexeme`)
 -- so parsers can assume they start on a non-blank.
--- Space consumers: scn eats newlines, sc does not. Make sure to save newline offsets
+-- Space consumers: scn eats newlines, sc does not. Save newline offsets to track source locations
 addNewlineOffset :: Parser ()
 addNewlineOffset = getOffset >>= \o -> moduleWIP . parseDetails . newLines %= (o - 1 :)
 isHSpace x = isSpace x && x /= '\n' -- isHSpace , but handles all unicode spaces
@@ -168,7 +171,7 @@ p `sepBy2` sep = (:) <$> p <*> (some (sep *> p))
 -- Names --
 -----------
 reservedChars = ".'@(){};,\\\""
-reservedNames = S.fromList $ words "as set over type data record class extern externVarArg let rec in where case \\case of _ import require \\ : :: = ? | λ =>"
+reservedNames = S.fromList $ words "as set over type data record class foreign foreignVarArg let rec in where case \\case of _ import require \\ : :: = ? | λ =>"
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c
@@ -205,9 +208,8 @@ parseMixFixDef :: Text -> Either (ParseErrorBundle Text Void) [Maybe Text]
 indentedItems prev scn p finished = let
  go lvl = scn *> do
   pos <- L.indentLevel
---traceShowM (prev , lvl , pos)
   [] <$ lookAhead (eof <|> finished) <|> if
- -- 'fail' here in to backtrack the whitespace/newlines. Otherwise the App parser sees and eats the f in `f = 3`
+ -- 'fail' here to backtrack the whitespace/newlines. Otherwise the App parser sees and eats things from later lines
     | pos <= prev -> fail "end of indent" -- pure []
     | pos == lvl  -> p >>= \ok -> option [ok] ((ok :) <$> try (go lvl))
     | otherwise   -> fail ("incorrect indentation, got " <> show pos <> ", expected <= " <> show prev <> " or == " <> show lvl)
@@ -239,16 +241,16 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
         , _imports     = []
         , _bindings    = []
         , _parseDetails = ParseDetails {
-             _hNameBinds    = (0 , M.empty)
-           , _hNameMFWords  = (0 , M.empty)
-           , _hNameArgs     = [] -- stack of lambda-bounds
-           , _hNameLocals   = []
-           , _freeVars      = IS.empty
-           , _nArgs         = 0
-           , _hNamesNoScope = M.empty -- M.fromList [("->",0)]-- M.empty
-           , _fields        = M.empty
-           , _labels        = M.empty
-           , _newLines      = []
+            _hNameBinds    = (0 , M.empty)
+          , _hNameMFWords  = (0 , M.empty)
+          , _hNameArgs     = [] -- stack of lambda-bounds
+          , _hNameLocals   = []
+          , _freeVars      = IS.empty
+          , _nArgs         = 0
+          , _hNamesNoScope = M.empty -- track VExterns
+          , _fields        = M.empty -- field names
+          , _labels        = M.empty -- explicit label names; note. `L a` is ambiguous
+          , _newLines      = []
         }
       }
       end = (bindings %~ reverse)
@@ -264,7 +266,7 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
 doParse = void $ decl `sepEndBy` (optional endLine *> scn) :: Parser ()
 decl = svIndent *> choice
    [ reserved "import" *> (iden >>= addImport)
-   , extern
+   , pForeign 
    , void (funBind True LetOrRec) <?> "binding"
    , bareTT <?> "repl expression"
    ] <?> "import , extern or local binding"
@@ -272,8 +274,8 @@ decl = svIndent *> choice
 -- for the repl
 bareTT = addAnonBindName *> ((\tt -> addBind (FunBind $ FnDef "replExpr" True LetOrRec Nothing [] IS.empty [FnMatch [] [] tt] Nothing)) =<< tt)
 
-extern = do
-  fn <- ((Foreign <$ reserved "extern") <|> (ForeignVA <$ reserved "externVA"))
+pForeign = do -- external function defined outside of Irie and opaque until link-time
+  fn  <- ((Foreign <$ reserved "foreign") <|> (ForeignVA <$ reserved "foreignVA"))
   hNm <- iden
   addBindName hNm
   ty <- reservedOp ":" *> tt
@@ -314,8 +316,9 @@ funBind isTop letRecT = lexeme pMixfixWords >>= \case
     iNm <- funBind' isTop letRecT (mixFix2Nm mfdefHNames) (Just mfdef) (pMixFixArgs mfdefHNames)
     pure (VBind iNm)
 
+-- parse a function definition (given a possible mixfix pattern parsed in the type annotation)
 funBind' :: Bool -> LetRecT -> Text -> Maybe MixfixDef -> Parser [Pattern] -> Parser IName
-funBind' isTop letRecT nm mfDef pMFArgs = (<?> "assignment") $ newArgNest $ mdo
+funBind' isTop letRecT nm mfDef pMFArgs = (<?> "function body") $ newArgNest $ mdo
   iNm <- addBindName nm -- handle recursive references
     <* addBind (FunBind $ FnDef nm isTop letRecT mfDef (implicits ++ pi) free eqns ty)
   ars <- many singlePattern
@@ -370,8 +373,16 @@ ttArg , tt :: Parser TT
 --     -- Breaks `5 + 5`
        P.Label l [] -> P.Label l <$> some (linefold argOrLens) --arg
        fn -> (Juxt o . (fn:) <$> some (linefold argOrLens))
-    )--  >>= \tt -> option tt (lens tt)
---  >>= \tt -> option tt (App tt . pure <$> (reserved "\\case" *> caseSplits))
+    ) >>= \possibleForall -> option possibleForall $ reserved "=>" *> (do
+      actualTT <- anyTT
+      let getName = \case
+            Var (VExtern i) -> pure i
+            x -> fail $ "(TODO?) expected a quantified variable (VExtern), got : " <> show x
+      nms <- case possibleForall of 
+        Juxt s as -> getName `mapM` as
+        v         -> getName v <&> \x->[x]
+      pure (Quantified nms actualTT)
+      )
   lens :: TT -> Parser TT
   lens record = let
     lensNext path = getOffset >>= \o -> reservedChar '.' *> choice [
@@ -383,12 +394,10 @@ ttArg , tt :: Parser TT
   arg = use indent >>= \sv -> choice
    [ reserved "_" $> WildCard
    , letIn
-   -- Note. indentation in arguments fails atm , so `fn \case` is handled at the top
    , reserved "\\case" *> caseSplits
    , lambda -- "\"
    , reserved "do" *> doExpr
    , match      -- "case"
--- , tySum      -- "|"
    , con
    , Lit <$> lexeme (try (literalP <* notFollowedBy iden)) -- must be before Iden parsers
    , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x] -- varName -- incl. label
@@ -398,17 +407,30 @@ ttArg , tt :: Parser TT
    , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
    ] <?> "ttArg"
   label i = lookupSLabel i >>= \case
-    Nothing -> P.Label <$ reservedOp "@" <*> newSLabel i <*> (many arg)
+    Nothing -> P.Label <$ reserved "@" <*> newSLabel i <*> (many arg)
     Just l  -> pure $ P.Label l [] -- <$> many arg (converted in App)
 
   tySum = TySum <$> let
-    labeledTTs = do
+    adtAlts = do
       hLabel <- iden
       label  <- newSLabel hLabel
-      getPiBounds tyAnn >>= \case
-        (pis , Nothing) -> fail $ "sumtype constructor '" <> T.unpack hLabel <> "' needs a type annotation"
-        (pis , Just (impls , ty)) -> pure (label , pis ++ impls , ty)
-    in some $ try (scn *> (reservedChar '|' *> lexeme labeledTTs))
+      alt    <- tt
+      tyAnn >>= \case -- maybe type annotation
+        ann -> pure (label , alt , ann)
+--       getPiBounds tyAnn >>= \case
+-- --      (pis , Nothing)   -> fail $ "sumtype constructor '" <> T.unpack hLabel <> "' needs a type annotation"
+--         (pis , Just (impls , ty)) -> pure (label , pis ++ impls , Just ty)
+--         (pis , maybeGADT)         -> pure (label , pis , Nothing)
+--  adtAlts = do
+--    hLabel <- iden
+    adt = some $ try (scn *> (reservedChar '|' *> lexeme adtAlts))
+--  gadt = do
+--    reserved "type"
+--    decl <- tt
+--    reserved "where"
+--    ref <- use indent <* scn
+--    indentedItems ref scn gadtAlts
+    in adt
 
   con = let
     fieldAssign = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> tt
@@ -447,14 +469,14 @@ ttArg , tt :: Parser TT
       L.indentLevel >>= \i -> case compare i ref of
         LT -> fail $ "new case statement is less indented than the reference indent: "
                      <> show i <> " < " <> show ref
-        _  -> do  -- ')' and final match-all '_' can terminate indent
-        let finishEarly = void $ char ')' <|> lookAhead (reservedChar '_')
-        alts     <- indentedItems ref scn split finishEarly
-        catchAll <- optional $ reservedChar '_' *> choice
-          [ reservedName "=" *> lexeme idenNo_ >>= addArgName <&> PArg
-          , addAnonArgName <&> \a -> PComp a PWildCard
-          ] >>= \pat -> (pat , ) <$> (reserved "=>" *> tt)
-        pure (Match alts catchAll)
+        _  -> let finishEarly = void $ char ')' <|> lookAhead (reservedChar '_')
+          in do  -- ')' and final match-all '_' can terminate indent
+          alts     <- indentedItems ref scn split finishEarly
+          catchAll <- optional $ reservedChar '_' *> choice
+            [ reservedName "=" *> lexeme idenNo_ >>= addArgName <&> PArg
+            , addAnonArgName <&> \a -> PComp a PWildCard
+            ] >>= \pat -> (pat , ) <$> (reserved "=>" *> tt)
+          pure (Match alts catchAll)
   match = reserved "case" *> do
     scrut  <- tt
     reserved "of"
@@ -510,7 +532,7 @@ singlePattern = choice
  , parens pattern
  , choice
    [ let fieldPattern = lexeme idenNo_ >>= \iStr -> newFLabel iStr >>= \i -> (i,) <$> choice
-           [ reservedOp "@" *> pattern
+           [ reservedName "as" *> pattern
            , PArg <$> addArgName iStr -- { A } pattern is same as { A=A }
            ]
      in PCons <$> braces (fieldPattern `sepBy` reservedChar ',')

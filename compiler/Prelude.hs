@@ -11,7 +11,7 @@ import GHC.Err
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Unboxed as VU
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import Data.Align
 import Data.These
 

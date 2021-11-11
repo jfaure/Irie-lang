@@ -4,6 +4,7 @@ import Prim
 import BiUnify
 import qualified ParseSyntax as P
 import CoreSyn as C
+import Errors
 import CoreUtils
 import TypeCheck
 import TCState
@@ -18,7 +19,7 @@ import Data.List (unzip4, foldl1, span , zipWith3)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Mutable as MV
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Data.IntMap as IM
 import qualified Data.Text as T
 
@@ -87,7 +88,7 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
     bis''    <- V.unsafeFreeze (st ^. bis)
     wip''    <- V.unsafeFreeze (st ^. wip)
     let domain'' = V.take nArgs bis''
-    pure $ (JudgedModule modName nArgs (hNames {-V.++ labelHNames-}) (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
+    pure $ (JudgedModule modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
 -- inference >> generalisation >> type checking of annotations
@@ -309,7 +310,7 @@ infer = let
            -- note. the typesystem does not atm support quantifying over field presences
            rCast <- biSub recordTy (rT : mkExpected inT)
            pure (argCast , rCast , outT , rT)
-         traceShowM (ac , rc , outT , rT)
+--       traceShowM (ac , rc , outT , rT)
 
          let lensOverCast = case rc of
                CastProduct drops [(asmIdx,cast)] -> Cast (CastOver asmIdx ac fn outT) f
@@ -332,14 +333,14 @@ infer = let
     -- 1. Check against ann (retTypes must all subsume the signature)
     -- 2. Create sigma type from the arguments
     -- 3. Create proof terms from the return types
-    let go (l,impls,ty) = (qName2Key (mkQName modINm l),) <$> (mkSigma (map fst impls) =<< infer ty)
+    let go (l,ty,Nothing) = pure (qName2Key (mkQName modINm l) , [])
+        go (l,ty,Just (impls,gadt)) = (qName2Key (mkQName modINm l),) <$> (mkSigma (map fst impls) =<< infer ty)
         mkSigma impls ty = do
           ty' <- expr2Ty judgeBind ty
           pure $ case impls of
             [] -> ty'
             impls -> [THPi $ Pi (map (,[THSet 0]) impls) ty']
     sumArgsMap <- go `mapM` alts
---  use labels >>= \labelsV -> sumArgsMap `forM` \(l,t) -> MV.write labelsV l (Just t)
     let sumTy = [THTyCon $ THSumTy $ IM.fromListWith (\a b -> [THFieldCollision a b]) sumArgsMap]
         returnTypes = getFamilyTy . snd <$> sumArgsMap
         getFamilyTy x = case getRetTy x of -- TODO currying ?

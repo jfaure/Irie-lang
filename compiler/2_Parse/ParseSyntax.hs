@@ -3,7 +3,7 @@
 module ParseSyntax where -- import qualified as PSyn
 import Prim
 import MixfixSyn
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Control.Lens
 import Text.Megaparsec.Pos
@@ -27,11 +27,10 @@ data Module = Module {
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
-   _hNameBinds    :: (Int , NameMap) -- also count anonymous (lambda) (>= nameMap size)
+   _hNameBinds    :: (Int , NameMap) -- also count anonymous (lambdas) (>= nameMap size)
  , _hNameLocals   :: [NameMap] -- let-bound
  , _hNameArgs     :: [NameMap]
- -- keep a total count to deal with overloads
- , _hNameMFWords  :: (Int , M.Map HName [MFWord])
+ , _hNameMFWords  :: (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
  , _freeVars      :: FreeVars
  , _nArgs         :: Int
  , _hNamesNoScope :: NameMap
@@ -64,8 +63,8 @@ data LensOp a = LensGet | LensSet a | LensOver a deriving Show
 data DoStmt  = Sequence TT | Bind IName TT -- VLocal name
 data TT -- Type|Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
- | WildCard -- "_" implicit lambda argument
- | Question -- "?" ask to infer
+ | WildCard           -- "_" implicit lambda argument
+ | Question           -- "?" ask to infer
  | Foreign   HName TT -- no definition, and we have to trust the user given type
  | ForeignVA HName TT -- var-args for c compat
 
@@ -80,12 +79,15 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
  | Label  LName [TT]
  | Match  [(LName , FreeVars , [Pattern] , TT)] (Maybe (Pattern , TT))
  | List   [TT]
- | TySum [(LName , [ImplicitArg] , TT)] -- function signature
- | TyListOf TT
 
  -- term primitives
  | Lit      Literal
  | LitArray [Literal]
+
+ -- type primitives
+ | Quantified [IName] TT
+ | TyListOf TT
+ | TySum  [(LName , TT , Maybe ([ImplicitArg] , TT))] -- function signature , maybe gadt
 
  -- Sugar
  | DoStmts [DoStmt]

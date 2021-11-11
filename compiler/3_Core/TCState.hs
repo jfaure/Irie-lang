@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module TCState where
 import CoreSyn
+import Errors
 import Externs
 import qualified ParseSyntax as P
 import qualified Data.Vector as V

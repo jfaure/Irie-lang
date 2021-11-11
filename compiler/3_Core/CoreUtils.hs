@@ -108,6 +108,7 @@ tyOfExpr  = \case
   Core x ty -> ty
   Ty t      -> tyOfTy t
   PoisonExpr-> []
+  m@MFExpr{}-> error $ "unexpected mfexpr: " <> show m
 
 -- expr2Ty :: _ -> Expr -> TCEnv s Type
 -- Expression is a type (eg. untyped lambda calculus is both a valid term and type)
@@ -120,17 +121,6 @@ expr2Ty judgeBind e = case e of
    x -> error $ "raw term cannot be a type: " ++ show e
  PoisonExpr -> pure [THPoison]
  x -> error $ "raw term cannot be a type: " ++ show x
-
-getTypeIndexes = \case
-  [THFam t args ixs] -> ixs
-  [THRecSi m ixs] -> (`Core` []) <$> ixs
-  [THPi (Pi b ty)] -> getTypeIndexes ty
-  [THSi (Pi b ty) x] -> getTypeIndexes ty
-  [THBi i ty] -> getTypeIndexes ty
-  x -> []
-
-mergeIndex :: Expr -> Expr -> Expr
-mergeIndex = _
 
 bind2Expr = \case
   BindOK e    -> e

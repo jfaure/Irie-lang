@@ -9,7 +9,10 @@ all: $(NAME)
 fast: $(SRC)
 	stack -j9 ghci --system-ghc --no-build --ghc-options="-j -fbyte-code -dynamic +RTS -A128m -n2m -RTS"
 prof:
-	stack -j9 build --system-ghc --executable-profiling --ghc-options="-fprof-auto"
+	stack -j9 build --system-ghc --executable-profiling --ghc-options="-fprof-auto -fprof-cafs -with-rtsopts=-xc"
+
+xprof:
+	stack -j9 build --ghc-options='-prof -fprof-auto -fprof-cafs -with-rtsopts=-xc'
 # --library-profiling 
 
 #mk prof && .stack-work/dist/x86_64-linux-nix/Cabal-3.2.1.0/build/irie-exe/irie-exe demo.ii -p llvm-hs +RTS -p -xc

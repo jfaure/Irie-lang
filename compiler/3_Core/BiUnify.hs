@@ -2,6 +2,7 @@
 module BiUnify where
 import Prim
 import CoreSyn as C
+import Errors
 import CoreUtils
 import TCState
 import PrettyCore
@@ -76,7 +77,7 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
       biSub (substFreshTVars tvars x) [y]
       -- now void out the tvars so we don't later leak bounds to shallower let nests
       -- set the bit at each tvar index in the deadVars bitmask
-      <* (deadVars %= (.|. (((1 `shiftL` nb) - 1) `shiftL` tvars) )) -- note. nb must be >= 1 !
+--    <* (deadVars %= (.|. (setNBits nb `shiftL` tvars)))
     pure r
 
   (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)
@@ -134,7 +135,8 @@ biSubTyCon p m = \case
   (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSub x y
   (THProduct x , THProduct y) -> use normFields >>= \nf -> let -- record: fields in the second must all be in the first
     merged     = IM.mergeWithKey (\k a b -> Just (Both a b)) (fmap LOnly) (IM.mapWithKey ROnly) x y
-    normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
+--  normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
+    normalized = V.fromList $ IM.elems merged -- $ IM.mapKeys (nf VU.!) merged
     go leafCasts normIdx ty = case ty of
       LOnly a   {- drop     -} -> pure $ leafCasts --(field : drops , leafCasts)
       ROnly f a {- no subty -} -> leafCasts <$ failBiSub ("Record: absent field: "<>show f) [p] [m]

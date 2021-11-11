@@ -14,7 +14,7 @@ import MixfixSyn
 import CoreUtils
 import ShowCore()
 
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Data.IntMap as IM
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -87,9 +87,10 @@ resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords)
   localNames labelNames mixfixHNames unknownNames maybeOld = let
 
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
-  resolver = let 
+  resolver = let
     modIName = maybe n oldModuleIName maybeOld
-    localsAndLabels = localNames `M.union` ((M.size localNames +) <$> labelNames)
+--  localsAndLabels = localNames `M.union` ((M.size localNames +) <$> labelNames)
+    localsAndLabels = localNames `M.union` ((0 -) <$> labelNames)
 --  in M.unionWith (IM.unionWith const) ((\iNm -> IM.singleton modIName iNm) <$> localNames) curResolver
     in M.unionWith (IM.unionWith const) ((\iNm -> IM.singleton modIName iNm) <$> localsAndLabels) curResolver
 
@@ -107,7 +108,7 @@ resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords)
     (Just [] , _)  -> error $ "impossible: empty imap ?!"
     (Just [(0     , iNm)] , Nothing)-> Imported $ snd ((prevBinds V.! 0) V.! iNm) -- resolve primitives directly
     (Just [(modNm , iNm)] , Nothing)-> Importable modNm iNm
-    (Just [(m,i)] , Just mfWords) -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
+    (Just [(m,i)] , Just mfWords)   -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
     (Nothing        , Just mfWords) -> MixfixyVar $ Mixfixy Nothing        (flattenMFMap mfWords)
     (Nothing        , Nothing)      -> NotInScope hNm
 
@@ -129,8 +130,8 @@ resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords)
   in (GlobalResolver n resolver prevBinds l f mfResolver
      , Externs { extNames = names unknownNames , extBinds = prevBinds })
 
-addModule2Resolver (GlobalResolver modCount nameMaps binds l f mfResolver) newBinds = let
-  in GlobalResolver modCount nameMaps (binds `V.snoc` newBinds) l f mfResolver
+addModule2Resolver (GlobalResolver modCount nameMaps binds l f mfResolver) newBinds labelNames labelExprs = let
+  in GlobalResolver modCount nameMaps (binds `V.snoc` (newBinds V.++ V.zip labelNames labelExprs)) l f mfResolver
 
 mkExtTy x = [THExt x]
 

@@ -1,7 +1,10 @@
 # Irie
-Subtyping calculus of inductive constructions for high-performance distributed systems. [Basic language reference](languageDocumentation.md)
+Subtyping calculus of inductive constructions for high-performance (and in the future distributed systems).
 
 ![logo](https://cdn.discordapp.com/attachments/631043990879338496/756673093497520138/logo.png)
+## [Tutorial (TODO)](tutorial.md)
+## [Language documentation](languageDocumentation.md)
+
 ## Origin
 Irie was created because there exists no pure functional language with first-class subtyping and an extreme emphasis on performance. The philosophy is to focus on a simple but powerful core language capable of naturally expressing additional desirable features: The subtyping calculus of constructions.
 

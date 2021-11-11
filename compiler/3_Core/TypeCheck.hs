@@ -11,6 +11,12 @@ import qualified Data.Vector as V
 --------------
 -- biunification solves constraints `t+ <= t-` ,
 -- checking has the form `t- <= t+` (the inferred type must subsume the annotation)
+--
+-- given f : t, we require that f by polymorphic in a;
+-- we are not searching for a particular a, but making a statement true for all a
+-- need reduced form (unroll recursive types and merge records)
+-- {l:a} & {l:b , x:b} & mu g. a -> g => {l : a & b} & a -> (mu g. a -> g)
+--
 -- we have `t1<=t2 and t1<=t3 ==> t1 <= t2ut3`
 -- additionally, subsumption <===> equivalence of typing schemes
 -- ie. to decide [d1]t1 <= [d2]t2,

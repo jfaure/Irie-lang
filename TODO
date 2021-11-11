@@ -1,24 +1,25 @@
 ## Top Priority
+  * languageDocumentation.md
   * User declared type, more complex type annotations
-  * Bug with unlines (probably concatenation of mu types since ok if you seperate the concat)
-
+  * normalize fields/labels for codegen
 ## Top
   * repl typecase to print JIT results
   * language server
   * optimize cached modules
-  * module import loops
+  * check for (and allow?) module import loops
   * Don't repeat not-in-scope errors
+  * qualified imports / names / treat modules as records
 ## Parse
   * Use [n..] numbered args from Parser in a safer way
   * Pattern guards
-  * List comp
+  * List comprehensions
   * sh syntax `ls -lr` => `ls { l=True , r=True }`
 ## Types
   * Char newtype + encoding subtyping vs bitwidths
   * propagate poisonexpr from matchAlts
   * check let|rec + mark Binds as let|rec
   * handle field name collisions (THFieldCollision)
-  * Warn nonsense type join
+  * Warn nonsense type joins
   * lone mfWords that aren't ambig-binds should error (also things like f = 3 <)
   * Dependent normalisation & Staging
   * typevars with bounds (a->b) & (c->d) need to be flattened and merged for co-occurence analysis (a&c -> b&d)
