@@ -10,6 +10,7 @@
   * Don't repeat not-in-scope errors
   * qualified imports / names / treat modules as records
 ## Parse
+  * don't allow tabs and spaces in parser
   * Use [n..] numbered args from Parser in a safer way
   * Pattern guards
   * List comprehensions

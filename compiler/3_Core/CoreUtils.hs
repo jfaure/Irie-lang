@@ -17,27 +17,6 @@ nullLattice pos = \case
 mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (singleton <$> args) (singleton retTy)
 mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
 
--- substitute all pi bound variables for new typevars;
--- otherwise guarded debruijn vars won't be biunified on contact with TVar
--- ; ie. TVar slots may contain stale debruijns, after which the pi-binder context is lost
--- TODO record and sum type also
-substFreshTVars tvarStart = Prelude.map $ let
-  r = substFreshTVars tvarStart
-  in \case
-  THBound i -> THVar (tvarStart + i)
-  THMu m t  -> THMu m $ r t
-  THTyCon t -> THTyCon $ case t of
-    THArrow as ret -> THArrow (r <$> as) (r ret)
-    THProduct as   -> THProduct $ r <$> as
-    THTuple as     -> THTuple   $ r <$> as
-    THSumTy as     -> THSumTy   $ r <$> as
---THMuBound m -> THMuBound m
---THTop -> THTop
---THBot -> THBot
---THExt i -> THExt i
-  t -> t
---t -> error $ show t
-
 getArrowArgs = \case
   [THTyCon (THArrow as r)] -> (as , r)
   [THBi i t] -> getArrowArgs t

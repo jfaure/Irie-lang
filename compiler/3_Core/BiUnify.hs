@@ -52,11 +52,27 @@ biSub a b = let
   (p:ps@(p1:p2) , m) -> biSub [p] m *> biSub ps m
   (p , m:ms) -> biSub p [m] *> biSub p ms
 
--- merge types and attempt to eliminate the THVar
---solveTVar varI (THVar v) [] = if varI == v then [] else [THVar v]
---solveTVar _ newTy [] = [newTy] -- TODO dangerous ?
-solveTVar varI newTy (ty:tys) = -- if eqTyHead newTy ty then mergeTyHead newTy ty `mergeTypes` tys else
-  ty : solveTVar varI newTy tys
+-- Instantiation; substitute quantified variables with fresh type vars;
+-- Note. weird special case (A & {f : B}) typevars as produced by lens over
+--   The A serves to propagate the input record, minus the lens field
+--   what is meant is really set difference: A =: A // { f : B }
+--   I decided to mark all A's of this form as dead immediately,
+--   which prevents biSub from recursing through them but I'm not certain this is robust
+instantiate :: Int -> [TyHead] -> TCEnv s [TyHead]
+instantiate tvarStart ty = let
+  mapFn hasProduct = let
+    r = instantiate tvarStart
+    in \case
+    THBound i -> THVar (tvarStart + i) <$ when hasProduct (deadVars %= (`setBit` (tvarStart + i)))
+    THMu m t  -> THMu m <$> r t
+    THTyCon t -> THTyCon <$> case t of
+      THArrow as ret -> THArrow   <$> (r `mapM` as) <*> (r ret)
+      THProduct as   -> THProduct <$> (r `mapM` as)
+      THTuple as     -> THTuple   <$> (r `mapM` as)
+      THSumTy as     -> THSumTy   <$> (r `mapM` as)
+    t -> pure t
+  hasProduct = any (\case { THTyCon THProduct{} -> True ; _ -> False }) ty
+  in mapFn hasProduct `mapM` ty
 
 atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
 atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> prettyTyRaw [p] <> " <==> " <> prettyTyRaw [m]) go else go) $
@@ -72,13 +88,12 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
   (THBound i , x) -> error $ "unexpected THBound: " <> show i
   (x , THBound i) -> error $ "unexpected THBound: " <> show i
   (x , THBi nb y) -> error $ "unexpected THBi: "    <> show (p,m)
-  (THBi nb x , y) -> do
-    (r , _) <- withBiSubs nb $ \tvars -> -- make new THVars for the debruijn bound vars here
-      biSub (substFreshTVars tvars x) [y]
-      -- now void out the tvars so we don't later leak bounds to shallower let nests
-      -- set the bit at each tvar index in the deadVars bitmask
---    <* (deadVars %= (.|. (setNBits nb `shiftL` tvars)))
-    pure r
+  (THBi nb x , y) ->
+    fmap fst $ withBiSubs nb $ \tvars -> do
+      instantiated <- instantiate tvars x
+--    pv <- prodVars <<.= 0
+      biSub instantiated [y]
+--    deadVars %= (.|. pv)
 
   (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)
   (THTyCon (THSumTy x) , THMu m y) -> biSub [p] y -- [Nil : {}] <: μx.[Nil : {} | Cons : {%i32 , x}]
@@ -108,7 +123,8 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
 --  MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) qa qb) p
     -- don't allow vars to form cycles
     let isVar v = (\case { THVar x -> x /= v ; _ -> True })
-    MV.modify v (\(BiSub a b qa qb) -> if any (isVar p) b then BiSub a b qa qb else BiSub a (THVar m : b) qa qb) p
+    MV.modify v (\(BiSub a b qa qb) ->
+      if any (isVar p) b then BiSub a b qa qb else BiSub a (THVar m : b) qa qb) p
   (THVar p , m) -> use bis >>= \v -> MV.read v p >>= \(BiSub p' m' pq mq) -> do
     MV.modify v (\(BiSub a b qa qb) -> BiSub a (mergeTyHeadType m b) qa qb) p
     use deadVars >>= \d -> unless (testBit d p) (void (biSub p' [m]))

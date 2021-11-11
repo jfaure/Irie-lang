@@ -89,8 +89,8 @@ resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords)
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
     modIName = maybe n oldModuleIName maybeOld
---  localsAndLabels = localNames `M.union` ((M.size localNames +) <$> labelNames)
-    localsAndLabels = localNames `M.union` ((0 -) <$> labelNames)
+    localsAndLabels = localNames `M.union` ((M.size localNames +) <$> labelNames)
+--  localsAndLabels = localNames `M.union` ((0 -) <$> labelNames)
 --  in M.unionWith (IM.unionWith const) ((\iNm -> IM.singleton modIName iNm) <$> localNames) curResolver
     in M.unionWith (IM.unionWith const) ((\iNm -> IM.singleton modIName iNm) <$> localsAndLabels) curResolver
 

@@ -1,0 +1,87 @@
+-- multi-arg builder foldr => stream
+--zip A B = case A of
+--  Nil       => Nil
+--  Cons a as => case B of
+--    Nil => Nil
+--    Cons b bs => Cons { l = a , r = b } (zip as bs)
+
+{-
+-- State is fn params + save state indicating which case and what free args
+-- recursive step resets to starting save state
+
+--zipS (Stream an a0) (Stream bn b0) = let
+--  next {A1 = a , A2 = b , st} = case st of
+--    CASE0    => case an a of
+--      Nil         => Nil
+--      Skip as'    => Skip {A1 = as', A2 = b , CASE0}
+--      Cons lv as' => Skip {A1 = as', A2 = b , CASE1 lv}
+--    CASE1 lv => case bn b of
+--      Nil         => Nil
+--      Skip as'    => Skip {A1 = a , A2 = as' , CASE1 lv}
+--      Cons rv bs' => Cons {l = lv , r = rv} {A1 = a , A2 = bs' , CASE0}
+--  in Stream next {A1 = a0 , A2 = b0 , lM = Nothing , rM = Nothing}
+
+--f x = f
+--_>_ = \f a => f a
+--_<_ = \a f => f a
+---- -- _>>=_ : Π A B C -> A & { ret : B } -> (B -> A -> C) -> C
+--_>>=_ = \a f => f (a.ret) a
+
+foldr f s l = case l of
+  Cons x xs => f x (foldr f s xs)
+  Nil       => s
+--foldl f s l = case l of
+--  Cons x xs => foldl f (f s x) xs
+--  Nil => s
+
+-- go f x b = foldr c b (f x)
+-- concatMap2 f xs = foldr (go f) Nil xs
+--reverse = foldl (flip (:)) []
+
+-- --printList l = case l of
+-- --  | Nil => 0
+-- --  | Cons i ll => add (putNumber i) (printList ll)
+-- --array = (Cons 9 Nil)
+-- 
+-- --addL l = case l of
+-- --  | Cons x xs => add x (addL xs)
+-- 
+-- --map f l = case l of
+-- --  | Cons x xs => Cons (f x) (map f xs)
+-- --  | Nil       => Nil
+-- --sumTo ls = foldr add 0 (map (add 8) ls)
+-- 
+-- --foldr = cata f [Nil , {A , x}]
+-- 
+-- foldl = stream > foldls
+-- foldls f z (Stream next s0) = go s0 where
+--   go s = case next s of
+-- S.Nil       -> z
+-- S.Skip s'   -> go s';
+-- S.Cons x s' -> f x (go s')
+-- -- foldl f a bs = foldr (\b g x => g (f x b)) identity bs a
+-- -- mapF f = foldr (\x xs => f x : xs) []
+-- --foldr f z (Stream next s0) = go s0 where go s = case next s of
+-- --  Done       -> z
+-- --  Skip s'    -> go s'
+-- --  Yield x s' -> f x (go s')
+-- 
+-- 
+-- --zipS (Stream an a0) (Stream bn b0) = let
+-- --  next as bs Empty = case an a of
+-- --    Done       -> Done
+-- --    Skip as'   -> Skip (as' , bs , Empty)
+-- --    Yield a as'-> Skip (as' , bs , One a)
+-- --  next as' bs (One a) = case bn bs of
+-- --    Done       -> Done
+-- --    Skip bs'   -> Skip  (as' , bs' , One a)
+-- --    Yield a bs'-> Yield (a , b) (as' , bs' , Empty)
+-- --  in Stream next (a0 , b0 , Empty)
+--foldlS f z (Stream next s0) = let
+--  go z s = case next s of
+--     Done       -> z
+--     Skip s'    -> go z s'
+--     Yield x s' -> go (x : z) s'
+--  in go s0
+
+

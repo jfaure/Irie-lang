@@ -10,8 +10,8 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.Map.Strict as M
 
---global_debug = False
-global_debug = True
+global_debug = False
+--global_debug = True
 d_ x   = let --if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
   in trace (clYellow (show x))
