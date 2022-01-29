@@ -32,6 +32,8 @@ null l = case l of
   Cons x xs => 0
   Nil       => 1
 
+singleton x = Cons x Nil
+
 --span p xs = case xs of
 --  Nil => { left = xs , right = xs }
 --  Cons x xs2 => if p x
@@ -45,15 +47,22 @@ foldr f s l = case l of
 foldl f s l = case l of
   Cons x xs => foldl f (f s x) xs
   Nil => s
- 
+
+
 c a b = Cons a b
 append front back = foldr c back front
 concat = foldr (append) Nil
 -- n = Cons '\n' Nil
 consF f x xs = Cons (f x) xs
 mapFold f l = foldr (consF f) Nil l
+map = mapFold
 concatMap f xs = foldr (\x b => foldr c b (f x)) Nil xs
 unlines ls = concat (mapFold (\l => append l (c '\n' Nil)) ls)
+
+-- -- partition a list into sequence of intervals starting at the 1s in the boolean fretlist
+-- partition fretsList = case fretsList of
+--   Nil => Nil
+--   Cons x xs => if x.fret then Cons
 
 -- unlines2 = concatMap (\l => append l (Cons '\n' Nil))
 

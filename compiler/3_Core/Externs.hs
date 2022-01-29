@@ -4,8 +4,8 @@
 -- * primitives: (note. prim bindings are CoreSyn)
 -- * imported modules
 -- * extern functions (esp. C)
-module Externs (GlobalResolver(..) , addModule2Resolver , primResolver , primBinds , Import(..) , Externs(..)
-  , readParseExtern , readQParseExtern , readPrimExtern , resolveImports , typeOfLit)-- , rmModule)
+-- * imported label/field names should overwrite locals (they are supposed to be the same)
+module Externs (GlobalResolver(..) , addModule2Resolver , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readQParseExtern , readLabel , readField , readPrimExtern , resolveImports , typeOfLit)
 where
 import Prim
 import qualified ParseSyntax as P
@@ -30,10 +30,13 @@ data Import = Import {
 
 data GlobalResolver = GlobalResolver {
    modCount      :: Int
+ , modNameMap    :: M.Map HName IName -- module HName -> Iname
  , globalNameMap :: M.Map HName (IM.IntMap IName) -- HName -> ModuleIName -> IName
  , allBinds      :: V.Vector (V.Vector (HName , Expr))
- , lnames        :: V.Vector (V.Vector HName)
- , fnames        :: V.Vector (V.Vector HName)
+ , labelHNames   :: V.Vector (V.Vector HName)
+ , fieldHNames   :: V.Vector (V.Vector HName)
+ , lnames        :: M.Map HName QName --V.Vector (V.Vector HName)
+ , fnames        :: M.Map HName QName --V.Vector (V.Vector HName)
 
   -- HName -> (MFIName -> ModuleIName)
  , globalMixfixWords :: M.Map HName (IM.IntMap [QMFWord])
@@ -46,33 +49,46 @@ data GlobalResolver = GlobalResolver {
 --  in resolver { globalNameMap
 --  = V.foldl (\mp hNm -> M.update (voidOut . IM.filterWithKey (\k i -> k /= modNm)) hNm mp) (globalNameMap resolver) names }
 
-primResolver :: GlobalResolver = GlobalResolver -- has no field/label names, so give an empty entry in its module slot
-  1 (IM.singleton 0 <$> primMap) (V.singleton primBinds) (V.singleton mempty) (V.singleton mempty) M.empty
+-- default resolver used to initialise a cache
+-- has no field/label names, so give an empty entry in its module slot
+-- the 0 module ".compilerPrimitives" is the interface for cpu-instructions and other magic
+primResolver :: GlobalResolver = GlobalResolver
+  1 (M.singleton ".compilerPrimitives" 0) (IM.singleton 0 <$> primMap)
+    (V.singleton primBinds) -- primitive bindings
+    (V.singleton mempty) (V.singleton mempty) M.empty mempty mempty
 
 -------------
 -- Externs --
 -------------
--- data Externsfor substituting P.VExtern during mixfix resolution
+-- how to substite P.VExtern during mixfix resolution
 data Externs = Externs {
-   extNames   :: V.Vector ExternVar
- , extBinds   :: V.Vector (V.Vector (HName , Expr))   -- all loaded bindings
+   extNames     :: V.Vector ExternVar
+ , extBinds     :: V.Vector (V.Vector (HName , Expr))   -- all loaded bindings
+ , importLabels :: V.Vector QName
+ , importFields :: V.Vector QName
 } deriving Show
 
+readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
+
+readLabel , readField :: Externs -> IName -> QName
+readLabel (Externs nms binds ils ifs) l = ils V.! l
+readField (Externs nms binds ils ifs) f = ifs V.! f
+
 -- exported functions to resolve ParseSyn.VExterns
-readQParseExtern = \(Externs nms binds) modNm iNm -> if modNm == V.length binds
+readQParseExtern (Externs nms binds ils ifs) modNm iNm = if modNm == V.length binds
   then ForwardRef iNm -- ie. not actually an extern
   else Imported $ case snd ((binds V.! modNm) V.! iNm) of
     Core f t -> Core (Var $ VQBind $ mkQName modNm iNm) t
+    PoisonExpr -> PoisonExpr
+    x -> error $ show x
 
-readParseExtern  = \e@(Externs nms binds) i -> case nms V.! i of
+readParseExtern e@(Externs nms binds ils ifs) i = case nms V.! i of
   Importable modNm iNm -> readQParseExtern e modNm iNm
   x -> x
-
 --readParseExtern = \(Externs nms binds) i -> let (modNm , iNm) = nms V.! i
 --  in if modNm >= V.length binds
 --  then ForwardRef iNm
 --  else Imported $ (binds V.! modNm) V.! iNm
-readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
 --readMixfixExtern e (m,i) = (\(MFBind mfdef e) -> mfdef) $ (extBinds e V.! m) V.! i
 
 -- First resolve names for a module, then that module can be added to the resolver
@@ -80,43 +96,56 @@ readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
 -- Externs are a vector of CoreExprs, generated as: builtins ++ concat imports;
 -- which is indexed by the permuation described in the extNames vector.
 -- * primitives must always be present in GlobalResolver
-resolveImports :: GlobalResolver -> M.Map HName IName -> M.Map HName IName
+resolveImports :: GlobalResolver -> M.Map HName IName
+  -> (M.Map HName IName , M.Map HName IName)
   -> M.Map HName [MFWord] -> M.Map HName IName -> Maybe OldCachedModule
   -> (GlobalResolver , Externs)
-resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords)
-  localNames labelNames mixfixHNames unknownNames maybeOld = let
+resolveImports (GlobalResolver n modNames curResolver prevBinds lh fh l f curMFWords)
+  localNames (labelMap , fieldMap) mixfixHNames unknownNames maybeOld = let
+
+  modIName = maybe n oldModuleIName maybeOld
 
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
-    modIName = maybe n oldModuleIName maybeOld
-    localsAndLabels = localNames `M.union` ((M.size localNames +) <$> labelNames)
---  localsAndLabels = localNames `M.union` ((0 -) <$> labelNames)
---  in M.unionWith (IM.unionWith const) ((\iNm -> IM.singleton modIName iNm) <$> localNames) curResolver
-    in M.unionWith (IM.unionWith const) ((\iNm -> IM.singleton modIName iNm) <$> localsAndLabels) curResolver
+    localsAndLabels = localNames --localNames `M.union` ((M.size localNames +) <$> labelMap)
+    -- temporarily mark field/label names (use 2 bits in the iname, the module name is crucial to track their origin)
+    -- resolveName could use 3 maps, but would be slow since frequently entire maps would come back negative
+    labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
+    fields = IM.singleton modIName . (`setBit` fieldBit) <$> fieldMap
+    in M.unionsWith (IM.unionWith const) [((\iNm -> IM.singleton modIName iNm) <$> localsAndLabels) , curResolver , labels , fields]
 
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [n..] [map (mfw2qmfw n) <$> mixfixHNames]
  
   -- TODO filter modules in scope !
   -- TODO expand lambda-mixfixes with explicit holes
+  -- TODO new Labels maybe already exist as imported labels!
   resolveName :: HName -> ExternVar -- (ModuleIName , IName)
   resolveName hNm = let
-    binds   = resolver   M.!? hNm
-    mfWords = mfResolver M.!? hNm
+    binds   = IM.toList <$> (resolver   M.!? hNm)
+    mfWords = IM.toList <$> (mfResolver M.!? hNm)
     flattenMFMap = concat . map snd
-    in case (IM.toList <$> binds , IM.toList <$> mfWords) of
+    in case (binds , mfWords) of
     (Just [] , _)  -> error $ "impossible: empty imap ?!"
-    (Just [(0     , iNm)] , Nothing)-> Imported $ snd ((prevBinds V.! 0) V.! iNm) -- resolve primitives directly
-    (Just [(modNm , iNm)] , Nothing)-> Importable modNm iNm
-    (Just [(m,i)] , Just mfWords)   -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
-    (Nothing        , Just mfWords) -> MixfixyVar $ Mixfixy Nothing        (flattenMFMap mfWords)
-    (Nothing        , Nothing)      -> NotInScope hNm
+    -- substitute compiler primitives directly
+    (Just [(0     , iNm)] , Nothing) -> Imported $ snd ((prevBinds V.! 0) V.! iNm)
+    (Just [(modNm , iNm)] , Nothing)
+--    | True <- testBit iNm fieldBit -> Imported (Core (Field (mkQName modNm (clearBit iNm fieldBit)) []) [])
+      | True <- testBit iNm labelBit -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) [])
+      | True -> Importable modNm iNm
+    (b , Just mfWords)
+      | Nothing      <- b -> MixfixyVar $ Mixfixy Nothing              (flattenMFMap mfWords)
+      | Just [(m,i)] <- b -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
+    (Nothing      , Nothing)         -> NotInScope hNm
 
-    -- 2 names found: maybe the name was deleted from the module in question but not removed from the global resolver
-    -- leaving stale names in the resolver is likely far cheaper than pessimistically removing all a module's names on recompile
-    (Just [(am,ai) , (bm,bi)] , _) | Just old <- maybeOld -> -- perhaps make a hmap of oldbindnames?
-      if      am == oldModuleIName old && (hNm `elem` oldBindNames old) then Importable bm bi
-      else if bm == oldModuleIName old && (hNm `elem` oldBindNames old) then Importable am ai
+    -- 2 names found: possibly we're recompiling a module which used to contain a duplicate name
+    -- leaving deleted names in the resolver is likely far cheaper than eagerly cleaning all names on recompile
+    -- perhaps make a hmap of oldbindnames?
+    -- TODO what if deleted name becomes false positive?
+    (Just [(am,ai) , (bm,bi)] , _) | Just old <- maybeOld ->
+      let isOldName = hNm `elem` oldBindNames old in
+      if      isOldName && am == oldModuleIName old then Importable bm bi
+      else if isOldName && bm == oldModuleIName old then Importable am ai
       else AmbiguousBinding hNm
     (Just many , _)                 -> AmbiguousBinding hNm
 
@@ -124,14 +153,28 @@ resolveImports (GlobalResolver n curResolver prevBinds l f curMFWords)
   names :: Map HName Int -> V.Vector ExternVar
   names noScopeNames = V.create $ do
     v <- MV.unsafeNew (M.size noScopeNames)
-    (\nm idx -> MV.write v idx $ resolveName nm) `M.traverseWithKey` noScopeNames
-    pure v
+    v <$ (\nm idx -> MV.write v idx $ resolveName nm) `M.traverseWithKey` noScopeNames
 
-  in (GlobalResolver n resolver prevBinds l f mfResolver
-     , Externs { extNames = names unknownNames , extBinds = prevBinds })
+  -- labels may be imported from elsewhere, else they are new and assigned to this module
+  mkTable map localMap = V.create $ do
+    v <- MV.unsafeNew (M.size localMap)
+    v <$ (\hNm localName -> MV.write v localName (fromMaybe (mkQName modIName localName) (map M.!? hNm)))
+         `M.traverseWithKey` localMap
 
-addModule2Resolver (GlobalResolver modCount nameMaps binds l f mfResolver) newBinds labelNames labelExprs = let
-  in GlobalResolver modCount nameMaps (binds `V.snoc` (newBinds V.++ V.zip labelNames labelExprs)) l f mfResolver
+  in ( GlobalResolver n modNames resolver prevBinds lh fh l f mfResolver
+     , Externs { extNames = names unknownNames
+               , extBinds = prevBinds
+               , importLabels = mkTable l labelMap
+               , importFields = mkTable f fieldMap
+               })
+
+addModule2Resolver (GlobalResolver modCount modNames nameMaps binds lh fh l f mfResolver)
+  modIName modName newBinds lHNames fHNames labelNames fieldNames labelExprs
+  = let modNames' = M.insert modName modIName modNames
+        binds' = binds `V.snoc` (newBinds)-- V.++ (V.zip lHNames labelExprs))
+        l' = alignWith (\case { This new -> mkQName modIName new ; That old -> old ; These new old -> old }) labelNames l
+        f' = alignWith (\case { This new -> mkQName modIName new ; That old -> old ; These new old -> old }) fieldNames f
+    in GlobalResolver (modIName + 1) modNames' nameMaps binds' (lh `V.snoc` lHNames) (fh `V.snoc` fHNames) l' f' mfResolver
 
 mkExtTy x = [THExt x]
 
@@ -171,9 +214,11 @@ primTys :: [(HName , PrimType)] =
   , ("CharPtr" , PtrTo $ PrimInt 8 )
   , ("CString" , PtrTo $ PrimInt 8 )
   , ("IntArray", PrimArr $ PrimInt 32)
+  , ("DIR*"    , POSIXTy DirP)
+  , ("dirent*" , POSIXTy DirentP)
   ]
 
-[i, bi, b, f, c, ia, str, set , i64] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64"]
+[i, bi, b, f, c, ia, str, set , i64 , dirp , dirent] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64" , "DIR*" , "dirent*"]
 
 --substPrimTy i = THPrim $ primTyBinds V.! i
 
@@ -196,11 +241,17 @@ instrs :: [(HName , (PrimInstr , Type))] =
 
 primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("Arrow" , (TyInstr Arrow  , ([set,set] , set)))
-  , ("puts"  , (Puts , ([str] , i)))
-  , ("putNumber" , (PutNbr , ([i] , i)))
-  , ("putChar"   , (PutChar , ([c] , c)))
   , ("IntN"  , (TyInstr MkIntN , ([i] , set)))
   , ("primLen" , (Len , ([ia] , i)))
+  , ("ptr2maybe" , (Ptr2Maybe , ([set] , set)))
+
+  , ("puts"  , (Puts , ([str] , i)))
+  , ("putNumber" , (PutNbr  , ([i] , i)))
+  , ("putChar"   , (PutChar , ([c] , c)))
+  , ("getcwd"    , (GetCWD  , ([] , str)))
+  , ("opendir"   , (OpenDir , ([str] , dirp)))
+  , ("readdir"   , (ReadDir , ([dirp] , dirent)))
+
   , ("add64" , (NumInstr (IntInstr Add    ) , ([i64, i64] , i64) ))
   , ("add"   , (NumInstr (IntInstr Add    ) , ([i, i] , i) ))
   , ("sub"   , (NumInstr (IntInstr Sub    ) , ([i, i] , i) ))

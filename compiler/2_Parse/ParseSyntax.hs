@@ -32,6 +32,7 @@ data ParseDetails = ParseDetails {
  , _hNameArgs     :: [NameMap]
  , _hNameMFWords  :: (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
  , _freeVars      :: FreeVars
+ , _underscoreArgs:: FreeVars -- just an intset
  , _nArgs         :: Int
  , _hNamesNoScope :: NameMap
  , _fields        :: NameMap

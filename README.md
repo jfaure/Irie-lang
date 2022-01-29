@@ -13,7 +13,7 @@ Subtyping describes data flow explicitly and allows more accurate types. Formall
 
 Subtyping examples:
 * Integer bitwidths `int32 <: int64` (C has this)
-* Records with excess fields  `{x : Int , y : Int} <: {x : Int}`
+* Records with excess fields  `{x : Int , y : Int} <: {x : Int}`. This is not only convenient, it also informs the compiler that it can release resources (memory) tied in the dropped field 'y'
 * Sum-types with fewer labels `[circle : Int] <: [circle : Int | square : Int]`
 * Parameterized data (including GADTs): instead of `LC a = Var a | Abs (LC a) [LC a] | etc`, define `LC = VarString String | Abs LC [LC] | etc` then elsewhere substitute `VarString String` with eg. `VarInt Int`, when via subtyping the rest of the AST and many functions on it are reusable.
 * Subtyping relations on algebraic data (records and sum types) are useful for quantitative type theory (including proof irrelevance).

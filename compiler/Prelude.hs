@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-module Prelude ( module Protolude , module Data.Align , module Data.These , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , setNBits)
+module Prelude ( module Protolude , module Data.Align , module Data.These , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , setNBits , BitSet)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -15,6 +15,7 @@ import qualified Data.Map.Strict as M
 import Data.Align
 import Data.These
 
+type BitSet = Integer
 type String = [Char]
 type IName  = Int
 type ModuleIName = Int

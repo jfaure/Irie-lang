@@ -32,8 +32,11 @@ data PrimType
  | PrimTuple [PrimType]
  | PrimExtern   [PrimType]
  | PrimExternVA [PrimType]
+ | POSIXTy POSIXType
 
 data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
+-- POSIXTypes require the backend to include C headers
+data POSIXType = DirP | DirentP
 
 ------------------
 -- Instructions -- 
@@ -66,6 +69,12 @@ data PrimInstr
  | Alloc
  | Len -- len of PrimArray
  | SizeOf
+ | Ptr2Maybe -- glue between ptr/nullptrs and algebraic data (usually Maybe t = [Nothing | Just t])
+
+ -- Posix instructions
+ | GetCWD
+ | OpenDir
+ | ReadDir
 
 data NumInstrs
  = IntInstr   !IntInstrs
@@ -117,6 +126,7 @@ deriving instance Show ArrayInstrs
 deriving instance Show Predicates
 deriving instance Show NumInstrs
 deriving instance Show GMPSpecial
+deriving instance Show POSIXType
 
 deriving instance Ord Literal
 deriving instance Ord PrimType
@@ -131,6 +141,7 @@ deriving instance Ord FracInstrs
 deriving instance Ord ArrayInstrs
 deriving instance Ord NumInstrs
 deriving instance Ord GMPSpecial
+deriving instance Ord POSIXType
 
 deriving instance Eq Literal
 deriving instance Eq PrimType
@@ -145,6 +156,7 @@ deriving instance Eq ArrayInstrs
 deriving instance Eq TyInstrs
 deriving instance Eq NumInstrs
 deriving instance Eq GMPSpecial
+deriving instance Eq POSIXType
 
 prettyPrimType :: PrimType -> Text
 prettyPrimType = toS . \case
@@ -157,6 +169,7 @@ prettyPrimType = toS . \case
   PtrTo t          -> "%ptr(" <> show t <> ")"
   PrimExtern   tys -> "%extern(" <> show tys <> ")"
   PrimExternVA tys -> "%externVA(" <> show tys <> ")"
+  POSIXTy t -> case t of { DirP -> "%DIR*" ; DirentP -> "%dirent*" }
 
 primSubtypeOf :: PrimType -> PrimType -> Bool
 PrimInt a `primSubtypeOf` PrimInt b = a <= b

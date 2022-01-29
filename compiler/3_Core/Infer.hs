@@ -23,8 +23,15 @@ import qualified Data.Map.Strict as M
 import qualified Data.IntMap as IM
 import qualified Data.Text as T
 
-formatError srcNames srcInfo (BiSubError o (TmpBiSubError msg got exp)) = let
+formatError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = let
   bindSrc = Just srcNames
+  msg = let getName names q = show (modName q) <> "." <> (names V.! modName q V.! unQName q)
+    in case failType of
+    TextMsg m     -> m
+    TyConMismatch -> "Type constructor mismatch"
+    AbsentField q -> "Absent field '" <> getName (srcFieldNames srcNames) q <> "'"
+    AbsentLabel q -> "Absent label '" <> getName (srcLabelNames srcNames) q <> "'"
+
   srcLoc = case srcInfo of
     Nothing -> ""
     Just (SrcInfo text nlOff) -> let
@@ -33,7 +40,7 @@ formatError srcNames srcInfo (BiSubError o (TmpBiSubError msg got exp)) = let
       col     = o - line - 1
       in "\n" <> show lineIdx <> ":" <> show col <> ": \"" <> T.takeWhile (/= '\n') (T.drop o text) <> "\""
   in 
-     "\n" <> clRed ("No subtype" <> if T.null msg then ":" else " (" <> msg <> "):")
+     "\n" <> clRed ("No subtype: " <> msg <> ":")
   <> srcLoc
   <> "\n      " <> clGreen (prettyTy bindSrc got)
   <> "\n  <:? " <> clGreen (prettyTy bindSrc exp)
@@ -121,7 +128,7 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
       -- we're entering a deeper let-nest; all existing tvars must be ignored while that is inferred
       -- TODO deeper tvars leaking upwards in biunify?
       sv <- use deadVars
-      use blen >>= \bl -> (deadVars .= setNBits (bl-1))
+      use blen >>= \bl -> (deadVars .= setNBits (bl - 1))
       expr <- infer tt
       deadVars .= (if isTop then sv else setBit sv idx) -- also void the expression var if it was part of a let
 
@@ -234,6 +241,11 @@ infer = let
  judgeLocalBind b = use thisMod >>= \modINm -> judgeBind b <&> \case
      Core e ty -> Core (Var $ VQBind $ mkQName modINm b) ty -- don't inline the body ! (
      t -> t
+
+ judgeLabel qNameL exprs = use thisMod <&> \modINm -> let
+   labTy = [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
+   in Core (Label qNameL exprs) [THTyCon $ THSumTy $ IM.singleton (qName2Key qNameL) labTy]
+
  in \case
 --P.Wildcard -> _
   P.Var v -> case v of -- vars : lookup in appropriate environment
@@ -270,23 +282,27 @@ infer = let
   P.Juxt srcOff juxt -> let
     inferExprApp srcOff = \case
       ExprApp fE [] -> panic "impossible: empty expr App"
-      ExprApp fE argsE -> inferExprApp srcOff fE >>= \f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
+      ExprApp fE argsE -> inferExprApp srcOff fE >>= \case
+        Core (Label iLabel ars) _ -> (inferExprApp srcOff `mapM`  argsE) >>= judgeLabel iLabel
+        f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
       QVar q -> use externs >>= \e -> handleExtern (readQParseExtern e (modName q) (unQName q))
---      <&> \case { Core f t -> Core (Var $ VQBind $ mkQName m i) t }
       MFExpr{}   -> PoisonExpr <$ (scopeFails %= (AmbigBind "mixfix word":))
       core -> pure core
     in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
 
-  P.Cons construct -> use thisMod >>= \modINm -> do
+  P.Cons construct -> use thisMod >>= \modINm -> use externs >>= \ext -> do
     let (fieldsLocal , rawTTs) = unzip construct
-        fields = qName2Key . mkQName modINm <$> fieldsLocal
+        fields = qName2Key . readField ext {-mkQName modINm-} <$> fieldsLocal
     exprs <- infer `mapM` rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) ; x -> error $ show x }) <$> exprs
+        poison = (\case { PoisonExpr -> True ; _ -> False }) `any` exprs
         mkFieldCol = \a b -> [THFieldCollision a b]
-    pure $ Core (Cons (IM.fromList $ zip fields tts)) [THTyCon $ THProduct (IM.fromListWith mkFieldCol $ zip fields tys)]
+    pure $ if poison
+      then PoisonExpr
+      else Core (Cons (IM.fromList $ zip fields tts)) [THTyCon $ THProduct (IM.fromListWith mkFieldCol $ zip fields tys)]
 
-  P.TTLens o tt fieldsLocal maybeSet -> use thisMod >>= \modINm -> infer tt >>= \record -> let
-      fields = mkQName modINm <$> fieldsLocal
+  P.TTLens o tt fieldsLocal maybeSet -> use thisMod >>= \modINm -> use externs >>= \ext -> infer tt >>= \record -> let
+      fields = readField ext {-mkQName modINm-} <$> fieldsLocal
       recordTy = tyOfExpr record
       mkExpected :: Type -> Type
       mkExpected dest = foldr (\fName ty -> [THTyCon $ THProduct (IM.singleton (qName2Key fName) ty)]) dest fields
@@ -323,18 +339,15 @@ infer = let
     PoisonExpr -> pure PoisonExpr
     t -> error $ "record type must be a term: " <> show t
 
-  P.Label localL tts -> use thisMod >>= \modINm -> infer `mapM` tts <&> \exprs -> let
-    l     = mkQName modINm localL
-    labTy = [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
-    in Core (Label l exprs) [THTyCon $ THSumTy $ IM.singleton (qName2Key l) labTy]
+  P.Label localL tts -> use externs >>= \ext -> (infer `mapM` tts) >>= judgeLabel (readLabel ext localL)
 
   -- Sumtype declaration
-  P.TySum alts -> use thisMod >>= \modINm -> do -- alts are function types
+  P.TySum alts -> use thisMod >>= \modINm -> use externs >>= \ext -> do -- alts are function types
     -- 1. Check against ann (retTypes must all subsume the signature)
     -- 2. Create sigma type from the arguments
     -- 3. Create proof terms from the return types
-    let go (l,ty,Nothing) = pure (qName2Key (mkQName modINm l) , [])
-        go (l,ty,Just (impls,gadt)) = (qName2Key (mkQName modINm l),) <$> (mkSigma (map fst impls) =<< infer ty)
+    let go (l,ty,Nothing)      = pure (qName2Key (readLabel ext l {- mkQName modINm l-}) , [])
+        go (l,ty,Just (impls,gadt)) = (qName2Key (readLabel ext l {- mkQName modINm l-}),) <$> (mkSigma (map fst impls) =<< infer ty)
         mkSigma impls ty = do
           ty' <- expr2Ty judgeBind ty
           pure $ case impls of
@@ -350,13 +363,13 @@ infer = let
         dataTy = foldl1 mergeTypes $ returnTypes
     pure $ Ty sumTy
 
-  P.Match alts catchAll -> use thisMod >>= \modINm -> let
+  P.Match alts catchAll -> use thisMod >>= \modINm -> use externs >>= \ext -> let
     -- * desugar all patterns in the alt fns
     -- * mk tuples out of those abstractions to represent the sum type
     -- * ret type is a join of all the abs ret tys
     desugarFns = \(lname , free , pats , tt) -> let
       (args , _ , e) = patterns2TT pats tt
-      in (qName2Key (mkQName modINm lname) , args , _ , e)
+      in (qName2Key (readLabel ext lname {-mkQName modINm lname-}) , args , _ , e)
     (labels , args , _ , exprs) = unzip4 $ (desugarFns <$> alts)
     in do
     alts <- infer `mapM` exprs

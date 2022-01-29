@@ -15,9 +15,11 @@ import MkSSA
 import C
 
 import Text.Megaparsec hiding (many)
+import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 import qualified Data.ByteString.Lazy as BSL.IO
 import qualified Data.Vector as V
+import qualified Data.IntMap as IM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Binary as DB
 import Control.Lens
@@ -90,6 +92,38 @@ evalImports flags resolver fileNames = do
   -- import loop?
   foldM (\res path -> (\(a,b,c)->a) <$> doFileCached flags False res path) resolver importPaths
 
+-- Judge the module and update the global resolver
+inferResolve flags fName modResolver parsed progText maybeOldModule = let
+  nBinds     = length $ parsed ^. P.bindings
+  hNames = let getNm (P.FunBind fnDef) = P.fnNm fnDef in getNm <$> V.fromListN nBinds (parsed ^. P.bindings)
+  labelMap   = parsed ^. P.parseDetails . P.labels
+  fieldMap   = parsed ^. P.parseDetails . P.fields
+  labelNames = iMap2Vector labelMap
+  nArgs      = parsed ^. P.parseDetails . P.nArgs
+  srcInfo    = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
+  modIName   = maybe (modCount modResolver) oldModuleIName maybeOldModule
+
+  (tmpResolver  , exts) = resolveImports
+      modResolver
+      (parsed ^. P.parseDetails . P.hNameBinds . _2)   -- local names
+      (labelMap , fieldMap)                            -- HName -> label and field names maps
+      (parsed ^. P.parseDetails . P.hNameMFWords . _2) -- mixfix names
+      (parsed ^. P.parseDetails . P.hNamesNoScope)     -- unknownNames not in local scope
+      maybeOldModule
+  (judgedModule , errors) = judgeModule nBinds parsed modIName nArgs hNames exts srcInfo
+  JudgedModule modNm nArgs' bindNames a b judgedBinds = judgedModule
+
+  newResolver = let
+    labelExprs  = let
+      mkLabelExpr iName = let q = mkQName modIName iName 
+        in Core (CoreSyn.Label q []) [THTyCon $ THSumTy (IM.singleton (qName2Key q) [THTyCon (THTuple V.empty)])]
+      in V.fromList (mkLabelExpr <$> [nBinds .. nBinds + V.length labelNames - 1])
+    -- add labelNames and dummy bindings so they can be imported by other modules
+    -- case on labels and all uses of fields are unambiguous
+    in addModule2Resolver tmpResolver modIName (T.pack fName) (V.zip bindNames (bind2Expr <$> judgedBinds))
+         labelNames (iMap2Vector fieldMap) labelMap fieldMap labelExprs
+  in (judgedModule , newResolver , exts , modIName , nArgs , errors , srcInfo)
+
 -- Just moduleIName indicates this module was already cached, so don't allocate a new iname for it
 text2Core :: CmdLine -> Maybe OldCachedModule -> GlobalResolver -> FilePath -> Text
   -> IO (GlobalResolver , Externs , JudgedModule)
@@ -102,45 +136,14 @@ text2Core flags maybeOldModule resolver fName progText = do
 
   modResolver <- evalImports flags resolver (parsed ^. P.imports)
 
-  let modNameMap = parsed ^. P.parseDetails . P.hNameBinds . _2
-      nBinds       = length $ parsed ^. P.bindings
-      hNames = let getNm (P.FunBind fnDef) = P.fnNm fnDef
-        in getNm <$> V.fromListN nBinds (parsed ^. P.bindings)
-      localNames   = parsed ^. P.parseDetails . P.hNameBinds   . _2
-      mixfixNames  = parsed ^. P.parseDetails . P.hNameMFWords . _2
-      unknownNames = parsed ^. P.parseDetails . P.hNamesNoScope
-      labelMap     = parsed ^. P.parseDetails . P.labels
-      labelNames   = iMap2Vector $ parsed ^. P.parseDetails . P.labels
-      fieldNames   = iMap2Vector $ parsed ^. P.parseDetails . P.fields
-      nArgs        = parsed ^. P.parseDetails . P.nArgs
-      srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
-
-      (modIName , isNewModule) = maybe (modCount modResolver , True)
-                                       ((,False) . oldModuleIName) maybeOldModule
-
-      (tmpResolver  , exts) = resolveImports modResolver localNames labelMap mixfixNames unknownNames maybeOldModule
-
-      (judgedModule , errors) = judgeModule nBinds parsed modIName nArgs hNames exts srcInfo
-      TCErrors scopeErrors biunifyErrors checkErrors = errors
-      JudgedModule modNm nArgs' bindNames a b judgedBinds = judgedModule
-
-      newResolver = let
-        labelExprs  = let
-          mkLabelExpr iName = Core (CoreSyn.Label (mkQName modIName iName) []) []
-          in V.fromList (mkLabelExpr <$> [nBinds .. nBinds + V.length labelNames - 1])
-
-        -- add labelNames and dummy bindings so they can be imported by other modules
-        -- necessary to disambiguate (Cons a b) (label or not-in-scope?)
-        -- case on labels and all uses of fields are unambiguous
-        r = addModule2Resolver tmpResolver (V.zip bindNames (bind2Expr <$> judgedBinds)) labelNames labelExprs
-        in r { lnames   = lnames r `V.snoc` labelNames 
-             , fnames   = fnames r `V.snoc` fieldNames 
-             , modCount = modCount r + (if isNewModule then 1 else 0) }
+  let (judgedModule , newResolver , exts , modIName , nArgs , errors , srcInfo)
+        = inferResolve flags fName modResolver parsed progText maybeOldModule
+      JudgedModule modNm nArgs' bindNames a b judgedBinds    = judgedModule
+      TCErrors scopeErrors biunifyErrors checkErrors         = errors
 
       bindNamePairs = V.zip bindNames judgedBinds
-      bindSrc = BindSource _ bindNames _ (lnames newResolver) (fnames newResolver) (allBinds newResolver)
+      bindSrc = BindSource _ bindNames _ (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
       namedBinds showBind bs = (\(nm,j)->clYellow nm <> toS (prettyBind showBind bindSrc j)) <$> bs
---traceShowM (fName , maybeOldModule , modIName)
 
   when ("types"  `elem` printPass flags) (T.IO.putStrLn `mapM_` namedBinds False bindNamePairs)
   when ("core"   `elem` printPass flags) (T.IO.putStrLn `mapM_` namedBinds True  bindNamePairs)
@@ -154,13 +157,12 @@ text2Core flags maybeOldModule resolver fName progText = do
   let simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
           simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
       judgedFinal = JudgedModule modNm nArgs bindNames a b simpleBinds
-  when ("simple" `elem` printPass flags)
-    (void $ T.IO.putStrLn `mapM` namedBinds True  (V.zip bindNames simpleBinds))
+  when ("simple" `elem` printPass flags) (T.IO.putStrLn `mapM_` namedBinds True (V.zip bindNames simpleBinds))
 
   when (doCacheCore && coreOK && not (noCache flags)) $ do
     DB.encodeFile resolverCacheFName newResolver
     cacheFile fName (modIName , exts , judgedFinal)
-  traceM $ show fName <> " " <> (if coreOK then clGreen "OK" else clRed "KO")
+  T.IO.putStrLn $ show fName <> " " <> "(" <> show modIName <> ") " <> (if coreOK then clGreen "OK" else clRed "KO")
   pure (newResolver , exts , judgedFinal)
 
 ---------------------------------

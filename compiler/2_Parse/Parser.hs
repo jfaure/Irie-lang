@@ -76,6 +76,9 @@ addArgName    h = do
     Left _sz -> moduleWIP . parseDetails . nArgs <<%= (1+)
     Right  x -> pure $ x
 
+-- register an '_'; so () and funBind can make an implicit abstraction
+addUnderscoreArg i = Var (VLocal i) <$ (moduleWIP . parseDetails . underscoreArgs %= (IS.insert i))
+
 -- search (local let bindings) first, then the main bindMap
 addBindName   h = do
   n <- use (moduleWIP . parseDetails . hNameBinds . _1)
@@ -247,6 +250,7 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
           , _hNameLocals   = []
           , _freeVars      = IS.empty
           , _nArgs         = 0
+          , _underscoreArgs= IS.empty
           , _hNamesNoScope = M.empty -- track VExterns
           , _fields        = M.empty -- field names
           , _labels        = M.empty -- explicit label names; note. `L a` is ambiguous
@@ -361,11 +365,19 @@ fnMatch pMFArgs sep = -- sep is "=" or "=>"
       normalFnMatch = FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
   in hoistLambda <|> normalFnMatch
 
+-- make a lambda around any '_' found within the tt eg. `(_ + 1)` => `\x => x + 1`
+catchUnderscoreAbs :: TT -> Parser TT
+catchUnderscoreAbs tt = use (moduleWIP . parseDetails . underscoreArgs) >>= \underscores ->
+  if IS.null underscores then pure tt else
+  let eqns = [FnMatch [] (PArg <$> IS.toList underscores) tt]
+  in Abs (FunBind $ FnDef "_abs" False LetOrRec Nothing [] mempty eqns Nothing)
+  <$ (moduleWIP . parseDetails . underscoreArgs .= IS.empty)
+
 -- TT parser
 ttArg , tt :: Parser TT
 (ttArg , tt) = (arg , anyTT)
   where
-  anyTT = (tySum <|> appOrArg) >>= typedTT <?> "tt"
+  anyTT = (tySum <|> appOrArg) >>= catchUnderscoreAbs >>= typedTT <?> "tt"
   argOrLens = arg       >>=                     \larg -> option larg (lens larg) -- lens bind tighter than App
   appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg
     ( case larg of
@@ -392,7 +404,7 @@ ttArg , tt :: Parser TT
       ]
     in lensNext []
   arg = use indent >>= \sv -> choice
-   [ reserved "_" $> WildCard
+   [ reserved "_" *> (addAnonArgName >>= addUnderscoreArg)
    , letIn
    , reserved "\\case" *> caseSplits
    , lambda -- "\"
@@ -403,9 +415,12 @@ ttArg , tt :: Parser TT
    , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x] -- varName -- incl. label
    , try $ iden >>= lookupBindName -- holey names used as defined
    , TyListOf <$> brackets tt
-   , parens $ choice [try piBinder , (tt >>= typedTT) , scn $> Cons []]
+   , parensExpr
    , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
    ] <?> "ttArg"
+
+  -- Catch potential implicit abstractions here parens
+  parensExpr = parens (choice [try piBinder , (tt >>= typedTT) , scn $> Cons []]) >>= catchUnderscoreAbs
   label i = lookupSLabel i >>= \case
     Nothing -> P.Label <$ reserved "@" <*> newSLabel i <*> (many arg)
     Just l  -> pure $ P.Label l [] -- <$> many arg (converted in App)
@@ -510,10 +525,10 @@ ttArg , tt :: Parser TT
 
 -- TODO parse patterns as TT's to handle pi-bound arguments
 pattern = choice
-  [ try idenNo_ >>= \i -> addArgName i >>= \a -> choice
+  [ try idenNo_ >>= \i -> choice -- addArgName i >>= \a -> choice
      [ some singlePattern >>= \args -> lookupSLabel i >>=
-         maybe (newSLabel i) pure <&> \f -> PComp a (PLabel f args)
-     , loneIden a i
+         maybe (newSLabel i) pure >>= \f -> addAnonArgName <&> \a -> PComp a (PLabel f args)
+     , addArgName i >>= \a -> loneIden a i
      ]
   , singlePattern
   ]
@@ -551,7 +566,7 @@ literalP = let
   -- L.charLiteral handles escaped chars (eg. \n)
   char :: Parser Char = between (single '\'') (single '\'') L.charLiteral
   stringLiteral :: Parser [Char] = choice
-    [ single '"'       *> manyTill L.charLiteral (single '"')
+    [ single '"'      *> manyTill L.charLiteral (single '"')
     , string "\"\"\"" *> manyTill L.charLiteral (string "\"\"\"")
     , string "''"     *> manyTill L.charLiteral (string "''")
     , string "$"      *> manyTill L.charLiteral endLine]

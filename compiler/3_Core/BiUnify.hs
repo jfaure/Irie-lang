@@ -34,7 +34,7 @@ import Control.Lens
 -- i : a -> ((i1 -> i1) & a)
 -- i : (b -> b) -> ((i1 -> i1) & (b -> b))
 
-failBiSub :: Text -> Type -> Type -> TCEnv s BiCast
+failBiSub :: BiFail -> Type -> Type -> TCEnv s BiCast
 failBiSub msg a b = BiEQ <$ (tmpFails %= (TmpBiSubError msg a b:))
 
 biSub_ a b = do
@@ -63,7 +63,8 @@ instantiate tvarStart ty = let
   mapFn hasProduct = let
     r = instantiate tvarStart
     in \case
-    THBound i -> THVar (tvarStart + i) <$ when hasProduct (deadVars %= (`setBit` (tvarStart + i)))
+    THBound i -> let newTVar = tvarStart + i
+      in THVar newTVar <$ when hasProduct (deadVars %= (`setBit` newTVar))
     THMu m t  -> THMu m <$> r t
     THTyCon t -> THTyCon <$> case t of
       THArrow as ret -> THArrow   <$> (r `mapM` as) <*> (r ret)
@@ -104,12 +105,14 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
 
   -- Recursive types are not deBruijn indexed ! this means we must note the equivalent mu types
   (THMu a x , THMu b y) | a == b -> biSub x y
+  (THMu a x , THTyCon(THSumTy{})) -> biSub x [m]
   (THMuBound x, THMuBound y) -> if x == y then pure BiEQ else error $ "mu types not equal: " <> show x <> " /= " <> show y
   -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
   -- TODO prevent loop on `[0 : {}] <==> τ3 ;; [0 : {}] <==> x`
-  (x , THMuBound y) -> pure BiEQ -- use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub
+  (THTyCon (THSumTy x) , THMuBound y) -> pure BiEQ
+  (THMuBound x , THTyCon (THSumTy y)) -> pure BiEQ
 --(x , THMuBound y) -> use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub
-  (THMuBound x , y) -> use bis >>= \d -> MV.read d x >>= biSub [y] . _mSub
+--(THMuBound x , y) -> use bis >>= \d -> MV.read d x >>= biSub [y] . _mSub
 
   (THRecSi f1 a1, THRecSi f2 a2) -> if f1 == f2
     then if (length a1 == length a2) && all identity (zipWith termEq a1 a2)
@@ -135,9 +138,9 @@ atomicBiSub p m = (\go -> if True && global_debug then trace ("⚛bisub: " <> pr
     use deadVars >>= \d -> unless (testBit d m) (void (biSub [p] m'))
     pure BiEQ
 
-  (x , THTyCon THArrow{}) -> failBiSub "Excess arguments"      [p] [m]
---(THTyCon THArrow{} , x) -> failBiSub "Insufficient arguments"  [p] [m]
-  (a , b) -> failBiSub "" [a] [b]
+  (x , THTyCon THArrow{}) -> failBiSub (TextMsg "Excess arguments")       [p] [m]
+  (THTyCon THArrow{} , x) -> failBiSub (TextMsg "Insufficient arguments") [p] [m]
+  (a , b) -> failBiSub (TextMsg "Incompatible types") [a] [b]
 
 -- used for computing both differences between 2 IntMaps (sadly alignWith won't give us the ROnly map key)
 data KeySubtype
@@ -155,7 +158,7 @@ biSubTyCon p m = \case
     normalized = V.fromList $ IM.elems merged -- $ IM.mapKeys (nf VU.!) merged
     go leafCasts normIdx ty = case ty of
       LOnly a   {- drop     -} -> pure $ leafCasts --(field : drops , leafCasts)
-      ROnly f a {- no subty -} -> leafCasts <$ failBiSub ("Record: absent field: "<>show f) [p] [m]
+      ROnly f a {- no subty -} -> leafCasts <$ failBiSub (AbsentField (QName f)) [p] [m]
       Both  a b {- leafcast -} -> biSub a b <&> (\x -> (normIdx , x) : leafCasts) -- leaf bicast
     in V.ifoldM go [] normalized <&> \leafCasts ->
        let drops = V.length normalized - length leafCasts -- TODO rm filthy list length
@@ -165,7 +168,7 @@ biSubTyCon p m = \case
        in if all (\case {BiEQ->True;_->False}) leaves then BiEQ else CastLeaves leaves
   (THSumTy x , THSumTy y) -> let
     go label subType = case y IM.!? label of -- y must contain supertypes of all x labels
-      Nothing -> failBiSub ("Sum type: label not present: " <> show label) [p] [m]
+      Nothing -> failBiSub (AbsentLabel (QName label)) [p] [m]
       Just superType -> biSub subType superType
     in BiEQ <$ (go `IM.traverseWithKey` x) -- TODO bicasts
   (THSumTy s , THArrow args retT) | [(lName , tuple)] <- IM.toList s -> -- singleton sumtype => Partial application of Label
@@ -173,8 +176,8 @@ biSubTyCon p m = \case
                [THTyCon (THTuple x)] -> [THTyCon $ THTuple (x V.++ V.fromList args)]
                x                     -> [THTyCon $ THTuple (V.fromList (x : args))]
     in biSub [THTyCon (THSumTy $ IM.singleton lName t')] retT
-  (THSumTy s , THArrow{}) | [single] <- IM.toList s -> failBiSub "Note. Labels must be fully applied to avoid ambiguity" [p] [m]
-  (a , b)         -> failBiSub "Type constructor mismatch" [p] [m]
+  (THSumTy s , THArrow{}) | [single] <- IM.toList s -> failBiSub (TextMsg "Note. Labels must be fully applied to avoid ambiguity") [p] [m]
+  (a , b)         -> failBiSub TyConMismatch [p] [m]
 
 arrowBiSub (argsp,argsm) (retp,retm) = let
   bsArgs [] [] = ([] , Nothing , ) <$> biSub retp retm
@@ -184,9 +187,9 @@ arrowBiSub (argsp,argsm) (retp,retm) = let
   in (\(argCasts, pap, retCast) -> CastApp argCasts pap retCast) <$> bsArgs argsp argsm
 
 primBiSub p1 m1 = case (p1 , m1) of
-  (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (CastInstr Zext) else (BiEQ <$ failBiSub "Primitive Finite Int" [THPrim p1] [THPrim m1])
+  (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (CastInstr Zext) else (BiEQ <$ failBiSub (TextMsg "Primitive Finite Int") [THPrim p1] [THPrim m1])
   (PrimInt p , PrimBigInt) -> pure (CastInstr (GMPZext p))
-  (p , m) -> if (p /= m) then (failBiSub "primitive types" [THPrim p1] [THPrim m1]) else pure BiEQ
+  (p , m) -> if (p /= m) then (failBiSub (TextMsg "primitive types") [THPrim p1] [THPrim m1]) else pure BiEQ
 
 -- deciding term equalities ..
 termEq t1 t2 = case (t1,t2) of

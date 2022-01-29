@@ -39,6 +39,8 @@ _>_  { a1 } = \a f => f a
 
 if_then_else_ { l0 } = ifThenElse
 
+identity x = x
+
 {-
 plus = _+_
 zero   = 0 + 0

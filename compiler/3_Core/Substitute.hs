@@ -79,7 +79,7 @@ genVarLoop pos vars = use bis >>= \b -> ((\v -> (v,) <$> MV.read b v) `mapM` var
     let varsIS = IS.fromList vars
     v <- addPiBound pos b first
 
-    -- Co-occurence analysis; find and remove generalisables that polar co-occur with this 'v'
+    -- Co-occurence analysis; find and remove generalisables that polar co-occur with v
     -- eg. foldr : (A → (C & B) → B) → C → μx.[Cons : {A , x} | Nil : {}] → (B & C)
     --     foldr : (A → B → B) → B → μx.[Cons : {A , x} | Nil : {}] → B
     let getVars = map (\(THVar i) -> i) . filter (\case { THVar{}->True; _->False})

@@ -206,6 +206,7 @@ data OldCachedModule = OldCachedModule {
 
 -- only used by prettyCore functions
 data BindSource = BindSource {
+-- moduleNames     :: V.Vector HName
    srcArgNames     :: V.Vector HName
  , srcBindNames    :: V.Vector HName
  , srcExtNames     :: V.Vector HName

@@ -17,6 +17,10 @@ xprof:
 
 #mk prof && .stack-work/dist/x86_64-linux-nix/Cabal-3.2.1.0/build/irie-exe/irie-exe demo.ii -p llvm-hs +RTS -p -xc
 
+opt:  $(SRC)
+	stack -j9 build --system-ghc --ghc-options="-O2" &&\
+	ln -sf $(EXE) ./$(NAME)
+
 $(NAME): $(SRC)
 	stack -j9 build --system-ghc --fast --ghc-options="-dynamic" &&\
 	ln -sf $(EXE) ./$(NAME)

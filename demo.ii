@@ -1,139 +1,42 @@
---externVarArg printf : CharPtr -> Int
--- import imports/church
--- import imports/dependents
-
---import imports/lambda
---import imports/basic
---import imports/mixfix
---import imports/records
---import imports/Impredicative
---import imports/array
---import imports/fin
---import imports/printf
---import imports/subtype
---import imports/parser
 import imports/prelude
 import imports/list
---import imports/Either
 
---f = \case
---  Nil  => 0
+-- b -> Maybe (a , b) -> b -> [a]
+--unfoldr f b0 = let
+--  go b = case f b of
+--    Just ({ val as a , seed as b1 }) => Cons a (go b1)
+--    Nothing       => Nil
+--  in go b0
 
---f : Int
---f = 3
-
---Either a b =
--- | Left  a
--- | Right b
---
---either : A B C => (A -> B) -> (C -> B) -> Either A C -> B
-either f g r = case r of
-  Left x  => f x
-  Right y => g y
-
-_++_ = append
-parse (Parser parseFn) = parseFn
+--unfoldr f b0 = case f b0 of
+--  Just ({ val as a , seed as b1 }) => Cons a (unfoldr f b1)
+--  Nothing       => Nil
  
--- Parser A : { parse : String -> [{ ret : A , stream : String }]
-runParser (Parser parseFn) s = case parseFn s of
-  Cons ({ ret , stream }) Nil => case stream of
-    Nil => Right ret
-    _   => Left "Parser did not consume entire stream"
-  _ => Left "Parser error"
-
---g = \ { ret } => ret
-
-item = Parser \case
-  Cons c cs => Cons { ret = c , stream = cs }
-  Nil       => Nil
-
-pure a   = Parser \s => Cons { ret = a , stream = s } Nil
---unit :: a -> Parser a
---bind : Parser a -> (a -> Parser b) -> Parser b
-bind p f = Parser \s => concatMap (\{ret , stream} => parse (f ret) stream) (parse p s)
-
-fmap f (Parser cs) = Parser \s => (cs s) . ret . over f
-_<$>_ = fmap
--- <*> (Parser cs1) (Parser cs2) = Parser \s -> [(f a, s2) | (f, s1) <- cs1 s, (a, s2) <- cs2 s1]
-_<*>_ = \(Parser cs1) (Parser cs2) => Parser \s1 => (\{ ret as f , stream as s2 } => (cs2 s2) . ret . over f) (cs1 s1)
-
--- _<|>_ = \p q => Parser \s => case parse p s of
---   Nil      => parse q s
---   Cons a b => Cons a b
--- 
--- combine p q = Parser \s => parse p s ++ parse q s
--- failure = Parser \cs => Nil
--- option  p q = Parser \s =>
---   case parse p s of
---     []     => parse q s
---     res    => res
--- 
--- l v = (\a b => Cons a b) <$> v
--- p   = pure Nil
--- manyv v = (((\a b => Cons a b) <$> v) <*> manyv v) <|> pure Nil
+scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons l))
 
 {-
---some v = let
---  manyv = somev <|> pure Nil
---  somev = ((\a b => Cons a b) <$> v) <*> manyv
---  in somev
+ls dName = let
+  step dirp = case ptr2maybe (Nothing@) (Just@) < readdir dirp of
+    Nothing => Nothing
+    Just a  => Just { val = a , seed = dirp }
+  in unfoldr step (opendir dName)
 
---many v = let
---  many_v = some_v <|> pure Nil
---  some_v = (\a b => Cons a b) <$> v <*> many_v
---  in many_v
+File = { basename = identity } --takeWhileEnd (/= '/') }
+Dir  = { pwd = getcwd , entries = ls }
 
---f l = fromMaybe l
---extern puts : CString -> Int
---main = puts "hello"
-
--- fmap f x = x . ret . over f
--- <*> fs as  = as . ret . over (fs . ret) -- ? need to merge the records
--- liftA2 f x = <*> (fmap f x)
--- -- ----p2    x = let y z = x z in y
--- -- ----liftA2 f x = let g = (fmap f x) in <*> g
--- -- ----lA2 f x y = y . ret . over (f (x . ret))
--- 
--- -- let generalization
--- probe x = let b = x in b
--- ff x = let y z = x z in y
-
---IO = | In : IO | Out : IO
-
---printList l = case l of
---  Nil => 0
---  Cons i ll => add (putNumber i) (printList ll)
---scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
---main = printList (scanSum 10 Nil)
-
--- produceL arg = Cons arg (produceL (add 1 arg))
-
---produce arg = { head = arg , tail = produce (add 1 arg) }
---consume strm = add strm.head (consume strm.tail)
---res = consume (produce 3)
-
---filter f l = case l of
---  | Cons x xs => if f x then Cons x (filter xs) else filter xs
---filterF p = foldr (\x xs => if p x then x : xs else xs)
-
---sum = foldr add 0
---concat = foldr append Nil
-
---f x = ifThenElse (le x 3) x (f (sub x 1))
--- foldl f s l = case l of
---   | Cons x xs => foldl f (f s x) xs
---   | Nil => s
-
---scanSum n l = if le n 0 then l else scanSum (sub n 1) (Cons n l)
---z = scanSum 3 Nil
-
--- constructor trans: a <: F a and F b <: b implies 'a <: 'b
--- (({t : µd.{t : d} & a} & a -> {t : µc.{t : c}} -> {t : µb.{t:b} | a} | a
--- µa.{t : a} -> a -> µd.{t : d}
--- A & {t : A}) → μx.{t : x} → (A & {t : A})
---true = le 0 1
---conTrans x y = if true then x else { t = conTrans x.t y.t }
-
--- fail-loneMFWord    = <
--- fail-loneMFWordApp = add 4 <
--}
+-- The prefix in pretty-printing:
+-- when a dir is opened:
+-- 1. replace preceeding "--" with spaces
+-- 2. append if last dir then "`-- " else "|-- " to prefix, 
+-- when a dir is closed, remove the "|-- "
+tree rootPath = let -- tree : String -> IO ()
+  subTree : (String where size >= 4) -> String -> IO ()
+  _*>_ = _+_ -- hack while I decide how to IO
+  subTree prefix path = let
+    (entries;last) = Dir.entries path >>= filter (\e => e.0 =? '.')
+    newPrefix  = dropTail 3 prefix ++ "   "
+    lastPrefix = dropTail 4 prefix ++ "`-- "
+    pp prefix ent = puts (prefix ++ File.basename ent) *> subTree (prefix ++ "|-- ") ent
+    in map (\e -> pp newPrefix e) entries *> pp lastPrefix last
+  in puts rootPath -- *> subTree "|-- " rootPath
+  -}

@@ -3,18 +3,20 @@
   * User declared type, more complex type annotations
   * normalize fields/labels for codegen
 ## Top
-  * repl typecase to print JIT results
   * language server
   * optimize cached modules
-  * check for (and allow?) module import loops
-  * Don't repeat not-in-scope errors
+  * check for (and make work?) module import loops
+  * Don't repeat not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
   * qualified imports / names / treat modules as records
+  * repl typecase to print JIT results
 ## Parse
   * don't allow tabs and spaces in parser
   * Use [n..] numbered args from Parser in a safer way
   * Pattern guards
   * List comprehensions
   * sh syntax `ls -lr` => `ls { l=True , r=True }`
+## Name resolution
+  * Issue with introducing new labels into existing modules
 ## Types
   * Char newtype + encoding subtyping vs bitwidths
   * propagate poisonexpr from matchAlts
