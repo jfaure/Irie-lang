@@ -103,7 +103,8 @@ resolveImports :: GlobalResolver -> M.Map HName IName
 resolveImports (GlobalResolver n modNames curResolver prevBinds lh fh l f curMFWords)
   localNames (labelMap , fieldMap) mixfixHNames unknownNames maybeOld = let
 
-  modIName = maybe n oldModuleIName maybeOld
+  oldIName = oldModuleIName <$> maybeOld
+  modIName = fromMaybe n oldIName
 
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
@@ -132,6 +133,7 @@ resolveImports (GlobalResolver n modNames curResolver prevBinds lh fh l f curMFW
     (Just [(modNm , iNm)] , Nothing)
 --    | True <- testBit iNm fieldBit -> Imported (Core (Field (mkQName modNm (clearBit iNm fieldBit)) []) [])
       | True <- testBit iNm labelBit -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) [])
+      | Just True <- ((==modNm) <$> oldIName) -> ForwardRef iNm -- discard old stuff
       | True -> Importable modNm iNm
     (b , Just mfWords)
       | Nothing      <- b -> MixfixyVar $ Mixfixy Nothing              (flattenMFMap mfWords)
