@@ -60,19 +60,20 @@ primResolver :: GlobalResolver = GlobalResolver
 -------------
 -- Externs --
 -------------
--- how to substite P.VExtern during mixfix resolution
+-- how to substitute P.VExtern during mixfix resolution
 data Externs = Externs {
    extNames     :: V.Vector ExternVar
- , extBinds     :: V.Vector (V.Vector (HName , Expr))   -- all loaded bindings
+ , extBinds     :: V.Vector (V.Vector (HName , Expr)) -- all loaded bindings
  , importLabels :: V.Vector QName
  , importFields :: V.Vector QName
 } deriving Show
 
 readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
 
+patchName bit q = let (m,i) = (modName q , unQName q) in mkQName m (clearBit i bit)
 readLabel , readField :: Externs -> IName -> QName
-readLabel (Externs nms binds ils ifs) l = ils V.! l
-readField (Externs nms binds ils ifs) f = ifs V.! f
+readLabel (Externs nms binds ils ifs) l = {-patchName labelBit $ -} ils V.! l
+readField (Externs nms binds ils ifs) f = {-patchName labelBit $ -} ifs V.! f
 
 -- exported functions to resolve ParseSyn.VExterns
 readQParseExtern (Externs nms binds ils ifs) modNm iNm = if modNm == V.length binds
@@ -108,12 +109,11 @@ resolveImports (GlobalResolver n modNames curResolver prevBinds lh fh l f curMFW
 
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
-    localsAndLabels = localNames --localNames `M.union` ((M.size localNames +) <$> labelMap)
-    -- temporarily mark field/label names (use 2 bits in the iname, the module name is crucial to track their origin)
-    -- resolveName could use 3 maps, but would be slow since frequently entire maps would come back negative
+    -- temporarily mark field/label names (use 2 bits in the iname, need the module name to track their origin)
+    -- instead resolveName could use 3 maps, but would be slow since frequently entire maps would come back negative
     labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
     fields = IM.singleton modIName . (`setBit` fieldBit) <$> fieldMap
-    in M.unionsWith (IM.unionWith const) [((\iNm -> IM.singleton modIName iNm) <$> localsAndLabels) , curResolver , labels , fields]
+    in M.unionsWith IM.union [((\iNm -> IM.singleton modIName iNm) <$> localNames) , curResolver , labels , fields]
 
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [n..] [map (mfw2qmfw n) <$> mixfixHNames]
@@ -170,13 +170,19 @@ resolveImports (GlobalResolver n modNames curResolver prevBinds lh fh l f curMFW
                , importFields = mkTable f fieldMap
                })
 
+updateVecIdx :: V.Vector a -> Int -> a -> V.Vector a
+updateVecIdx v i new = V.modify (\g -> MV.write g i new) v
+
 addModule2Resolver (GlobalResolver modCount modNames nameMaps binds lh fh l f mfResolver)
-  modIName modName newBinds lHNames fHNames labelNames fieldNames labelExprs
+  isRecompile modIName modName newBinds lHNames fHNames labelNames fieldNames
   = let modNames' = M.insert modName modIName modNames
-        binds' = binds `V.snoc` (newBinds)-- V.++ (V.zip lHNames labelExprs))
+        binds' = if isRecompile then updateVecIdx binds modIName newBinds else binds `V.snoc` newBinds
+        lh'    = if isRecompile then updateVecIdx lh    modIName lHNames  else lh    `V.snoc` lHNames 
+        fh'    = if isRecompile then updateVecIdx fh    modIName fHNames  else fh    `V.snoc` fHNames 
         l' = alignWith (\case { This new -> mkQName modIName new ; That old -> old ; These new old -> old }) labelNames l
         f' = alignWith (\case { This new -> mkQName modIName new ; That old -> old ; These new old -> old }) fieldNames f
-    in GlobalResolver (modIName + 1) modNames' nameMaps binds' (lh `V.snoc` lHNames) (fh `V.snoc` fHNames) l' f' mfResolver
+        modIName' = if isRecompile then modIName else modIName + 1
+    in GlobalResolver modIName' modNames' nameMaps binds' lh' fh' l' f' mfResolver
 
 mkExtTy x = [THExt x]
 
@@ -239,18 +245,20 @@ instrs :: [(HName , (PrimInstr , Type))] =
   , ("strtol"      , (StrToL , mkTHArrow [THExt str] (THExt i)))
   , ("mkTuple"     , (MkTuple , [THTyCon $ THTuple mempty]))
   , ("ifThenElse"  , (IfThenE , [THBi 1 $ mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]))
+  , ("getcwd"      , (GetCWD  , [THExt str]))
+
+  -- TODO fix type (set -> set -> A -> B)
+  , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 $ mkTHArrow [THExt set , THExt set , THBound 0] (THBound 0) ]))
   ]
 
 primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("Arrow" , (TyInstr Arrow  , ([set,set] , set)))
   , ("IntN"  , (TyInstr MkIntN , ([i] , set)))
   , ("primLen" , (Len , ([ia] , i)))
-  , ("ptr2maybe" , (Ptr2Maybe , ([set] , set)))
 
   , ("puts"  , (Puts , ([str] , i)))
   , ("putNumber" , (PutNbr  , ([i] , i)))
   , ("putChar"   , (PutChar , ([c] , c)))
-  , ("getcwd"    , (GetCWD  , ([] , str)))
   , ("opendir"   , (OpenDir , ([str] , dirp)))
   , ("readdir"   , (ReadDir , ([dirp] , dirent)))
 

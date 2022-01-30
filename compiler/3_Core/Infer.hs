@@ -38,7 +38,9 @@ formatError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = l
       lineIdx = (\x -> x - 2) $ fromMaybe (0) $ VU.findIndex (> o) nlOff
       line    = (nlOff VU.! lineIdx)
       col     = o - line - 1
-      in "\n" <> show lineIdx <> ":" <> show col <> ": \"" <> T.takeWhile (/= '\n') (T.drop o text) <> "\""
+      in if lineIdx < 0
+         then " <no source info>"
+         else "\n" <> show lineIdx <> ":" <> show col <> ": \"" <> T.takeWhile (/= '\n') (T.drop o text) <> "\""
   in 
      "\n" <> clRed ("No subtype: " <> msg <> ":")
   <> srcLoc
@@ -278,7 +280,7 @@ infer = let
           in Core (Abs (zip args argVars) mempty x fnTy) fnTy
       t -> t
 
-  P.App fTT argsTT -> infer fTT >>= \f -> (infer `mapM` argsTT) >>= inferApp 0 f
+  P.App fTT argsTT -> infer fTT >>= \f -> (infer `mapM` argsTT) >>= inferApp (-1) f
   P.Juxt srcOff juxt -> let
     inferExprApp srcOff = \case
       ExprApp fE [] -> panic "impossible: empty expr App"

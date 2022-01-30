@@ -8,18 +8,14 @@ import imports/list
 --    Nothing       => Nil
 --  in go b0
 
---unfoldr f b0 = case f b0 of
---  Just ({ val as a , seed as b1 }) => Cons a (unfoldr f b1)
---  Nothing       => Nil
- 
 scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons l))
 
-{-
-ls dName = let
-  step dirp = case ptr2maybe (Nothing@) (Just@) < readdir dirp of
-    Nothing => Nothing
-    Just a  => Just { val = a , seed = dirp }
-  in unfoldr step (opendir dName)
+step dirp = case j (readdir dirp) of
+  Nothing => Nothing
+  Just a  => Just { val = a , seed = dirp }
+j = Just
+
+ls dName = unfoldr step (opendir dName)
 
 File = { basename = identity } --takeWhileEnd (/= '/') }
 Dir  = { pwd = getcwd , entries = ls }
@@ -29,14 +25,16 @@ Dir  = { pwd = getcwd , entries = ls }
 -- 1. replace preceeding "--" with spaces
 -- 2. append if last dir then "`-- " else "|-- " to prefix, 
 -- when a dir is closed, remove the "|-- "
-tree rootPath = let -- tree : String -> IO ()
-  subTree : (String where size >= 4) -> String -> IO ()
-  _*>_ = _+_ -- hack while I decide how to IO
-  subTree prefix path = let
-    (entries;last) = Dir.entries path >>= filter (\e => e.0 =? '.')
-    newPrefix  = dropTail 3 prefix ++ "   "
-    lastPrefix = dropTail 4 prefix ++ "`-- "
-    pp prefix ent = puts (prefix ++ File.basename ent) *> subTree (prefix ++ "|-- ") ent
-    in map (\e -> pp newPrefix e) entries *> pp lastPrefix last
-  in puts rootPath -- *> subTree "|-- " rootPath
-  -}
+_*>_ = _+_ -- hack while I decide how to IO
+-- tree : String -> IO ()
+tree rootPath = puts rootPath -- *> subTree "|-- " rootPath
+pp pre ent = printList (append pre (File.basename ent))
+--subTree prefix path = map (pp prefix) (Dir.entries path)
+
+----subTree : (String where size >= 4) -> String -> IO ()
+--subTree prefix path = let
+--  ents = filter (\e => e.0 =? '.') (Dir.entries path)
+--  newPrefix  = dropTail 3 prefix ++ "   "
+--  lastPrefix = dropTail 4 prefix ++ "`-- "
+--  pp prefix ent = puts (prefix ++ File.basename ent) *> subTree (prefix ++ "|-- ") ent
+--  in map (\e => pp newPrefix e) entries *> pp lastPrefix last

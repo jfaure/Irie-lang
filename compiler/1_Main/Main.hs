@@ -82,7 +82,6 @@ doFileCached flags isMain resolver fName = let
     fresh <- isCachedFileFresh
     -- TODO don't read everything if wasn't fresh
     last@(modINm , exts , judged) <- decodeCoreFile cached :: IO CachedData
-    -- need to clear all cached bindings in case some were removed since
     if fresh && not (recompile flags) && not isMain then pure (resolver , exts , judged)
       --else go (rmModule modINm (bindNames judged) resolver) (Just modINm)
       else go resolver (Just $ OldCachedModule modINm (bindNames judged))
@@ -102,6 +101,7 @@ inferResolve flags fName modResolver parsed progText maybeOldModule = let
   nArgs      = parsed ^. P.parseDetails . P.nArgs
   srcInfo    = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
   modIName   = maybe (modCount modResolver) oldModuleIName maybeOldModule
+  isRecompile= isJust maybeOldModule
 
   (tmpResolver  , exts) = resolveImports
       modResolver
@@ -113,18 +113,11 @@ inferResolve flags fName modResolver parsed progText maybeOldModule = let
   (judgedModule , errors) = judgeModule nBinds parsed modIName nArgs hNames exts srcInfo
   JudgedModule modNm nArgs' bindNames a b judgedBinds = judgedModule
 
-  newResolver = let
-    labelExprs  = let
-      mkLabelExpr iName = let q = mkQName modIName iName 
-        in Core (CoreSyn.Label q []) [THTyCon $ THSumTy (IM.singleton (qName2Key q) [THTyCon (THTuple V.empty)])]
-      in V.fromList (mkLabelExpr <$> [nBinds .. nBinds + V.length labelNames - 1])
-    -- add labelNames and dummy bindings so they can be imported by other modules
-    -- case on labels and all uses of fields are unambiguous
-    in addModule2Resolver tmpResolver modIName (T.pack fName) (V.zip bindNames (bind2Expr <$> judgedBinds))
-         labelNames (iMap2Vector fieldMap) labelMap fieldMap labelExprs
+  newResolver = addModule2Resolver tmpResolver isRecompile modIName (T.pack fName)
+         (V.zip bindNames (bind2Expr <$> judgedBinds)) labelNames (iMap2Vector fieldMap) labelMap fieldMap
   in (judgedModule , newResolver , exts , modIName , nArgs , errors , srcInfo)
 
--- Just moduleIName indicates this module was already cached, so don't allocate a new iname for it
+-- Just moduleIName indicates this module was already cached, so don't allocate a new module iname for it
 text2Core :: CmdLine -> Maybe OldCachedModule -> GlobalResolver -> FilePath -> Text
   -> IO (GlobalResolver , Externs , JudgedModule)
 text2Core flags maybeOldModule resolver fName progText = do
@@ -176,16 +169,6 @@ codegen flags input@(resolver , exts , jm@(JudgedModule modNm nArgs bindNms a b 
     when ("C"   `elem` printPass flags) $ let str = mkC ssaMod
       in BSL.IO.putStrLn str *> BSL.IO.writeFile "/tmp/aryaOut.c" str
     pure input
---llvmMod      = mkStg exts (JudgedModule modNm bindNms a b judgedBinds)
---putPass :: Text -> IO () = \case
---  "llvm-hs"    -> let
---    text = ppllvm llvmMod
---    in TL.IO.putStrLn text *> TL.IO.writeFile "/tmp/aryaOut.ll" text
---  "llvm-cpp"   -> LD.dumpModule llvmMod
---  _            -> pure ()
---in input <$ do
---  putPass `mapM_` printPass flags
---  when (jit flags) $ LD.runJIT (optlevel flags) [] llvmMod
 
 ----------
 -- Repl --
