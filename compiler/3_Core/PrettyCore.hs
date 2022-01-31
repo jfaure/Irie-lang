@@ -56,6 +56,7 @@ prettyTerm bindSrc = let
   pE' = prettyExpr' True bindSrc
   prettyFree x = if IS.null x then "" else "Γ(" <> show x <> ")"
   prettyLabel l = clMagenta (prettyQName (Just (srcLabelNames bindSrc)) l)
+  prettyField f = prettyQName (Just $ srcFieldNames bindSrc) f --(QName f)
   in \case
 --Hole -> " _ "
   Question -> " ? "
@@ -71,7 +72,8 @@ prettyTerm bindSrc = let
   Cast  i t -> "(" <> show i <> ")    <" <> show t <> ">"
 
   Cons    ts -> let
-    sr (field , val) = show field <> " " <> (toS $ (srcFieldNames bindSrc V.! modName (QName field)) V.! unQName (QName field)) <> "@" <> pT val
+--  sr (field , val) = show field <> " " <> (toS $ (srcFieldNames bindSrc V.! modName (QName field)) V.! unQName (QName field)) <> "@" <> pT val
+    sr (field , val) = prettyField (QName field) <> "@" <> pT val
     in "{ " <> (T.intercalate " ; " (sr <$> IM.toList ts)) <> " }"
 --Proj    t f -> pT t <> "." <> show f <> (toS $ srcFieldNames bindSrc V.! f)
   Label   l t -> prettyLabel l <> "@" <> T.intercalate " " (parens . pET <$> t)
@@ -87,7 +89,7 @@ prettyTerm bindSrc = let
 
 --List    ts -> "[" <> (T.concatMap pE ts) <> "]"
 
-  TTLens r target ammo -> pT r <> " . " <> T.intercalate "." (show <$> target) <> prettyLens bindSrc ammo
+  TTLens r target ammo -> pT r <> " . " <> T.intercalate "." (prettyField <$> target) <> prettyLens bindSrc ammo
 
 
 prettyLens bindSrc = \case
@@ -106,7 +108,12 @@ prettyTy bindSrc = let
   x   -> "(" <> (T.intercalate " & " $ pTH <$> x) <> ")"
 
 prettyQName :: Maybe (V.Vector (V.Vector HName)) -> QName -> Text
-prettyQName names q = maybe (show (modName q) <> "." <> show (unQName q)) (\names -> toS $ (names V.! modName q) V.! unQName q) names
+prettyQName names q = let
+  showRaw  q = show (modName q) <> "." <> show (unQName q)
+  showText q names = toS $ (names V.! modName q) V.! unQName q
+  in if modName q == 0
+  then "!" <> show (unQName q)
+  else maybe (showRaw q) (showText q) names
 
 prettyTyHead bindSrc = let
  pTy = prettyTy bindSrc

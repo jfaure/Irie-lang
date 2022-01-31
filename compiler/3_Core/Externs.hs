@@ -5,6 +5,8 @@
 -- * imported modules
 -- * extern functions (esp. C)
 -- * imported label/field names should overwrite locals (they are supposed to be the same)
+--
+-- * The 0 module (compiler primitives) is used to mark tuple fields (forall n 0.n)
 module Externs (GlobalResolver(..) , addModule2Resolver , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readQParseExtern , readLabel , readField , readPrimExtern , resolveImports , typeOfLit)
 where
 import Prim
@@ -72,8 +74,8 @@ readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
 
 patchName bit q = let (m,i) = (modName q , unQName q) in mkQName m (clearBit i bit)
 readLabel , readField :: Externs -> IName -> QName
-readLabel (Externs nms binds ils ifs) l = {-patchName labelBit $ -} ils V.! l
-readField (Externs nms binds ils ifs) f = {-patchName labelBit $ -} ifs V.! f
+readLabel (Externs nms binds ils ifs) l = {-patchName labelBit $ -} if l < 0 then mkQName 0 (-1 - l) else ils V.! l
+readField (Externs nms binds ils ifs) f = {-patchName labelBit $ -} if f < 0 then mkQName 0 (-1 - f) else ifs V.! f
 
 -- exported functions to resolve ParseSyn.VExterns
 readQParseExtern (Externs nms binds ils ifs) modNm iNm = if modNm == V.length binds
@@ -132,6 +134,7 @@ resolveImports (GlobalResolver n modNames curResolver prevBinds lh fh l f curMFW
     (Just [(0     , iNm)] , Nothing) -> Imported $ snd ((prevBinds V.! 0) V.! iNm)
     (Just [(modNm , iNm)] , Nothing)
 --    | True <- testBit iNm fieldBit -> Imported (Core (Field (mkQName modNm (clearBit iNm fieldBit)) []) [])
+--    labels are weird in that they sometimes look like normal bindings `n = Nil`
       | True <- testBit iNm labelBit -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) [])
       | Just True <- ((==modNm) <$> oldIName) -> ForwardRef iNm -- discard old stuff
       | True -> Importable modNm iNm
@@ -203,7 +206,7 @@ primBinds :: V.Vector (HName , Expr) = V.fromList primTable
 
 primTable = concat
   [ (\(nm , x)         -> (nm , Ty [THPrim x]) )                  <$> primTys
-  , let tys2TyHead  (args , t) = mkTyArrow (mkExtTy <$> args) (mkExtTy t) in
+  , let tys2TyHead  (args , t) = [mkTyArrow (mkExtTy <$> args) (mkExtTy t)] in
     (\(nm , (i , tys)) -> (nm , Core (Instr i) (tys2TyHead tys))) <$> primInstrs
   , (\(nm , (i , t))   -> (nm , Core (Instr i) t))                <$> instrs
   , (\(nm , e)         -> (nm , Ty [e]))                          <$> tyFns
@@ -239,16 +242,23 @@ tyFns = [
   ]
 
 instrs :: [(HName , (PrimInstr , Type))] =
-  [ ("addOverflow" , (AddOverflow , mkTyArrow [[THExt i] , []] []))
+  [ ("addOverflow" , (AddOverflow , [mkTyArrow [[THExt i] , []] []]))
 --, ("unlink"      , (Unlink , mkTyArrow [[THExt str] , mkTHArrow [THExt c,THExt str] (THExt str)] [THExt str]))
 --, ("link"        , (Link , mkTHArrow [THExt c] (THExt str)))
-  , ("strtol"      , (StrToL , mkTHArrow [THExt str] (THExt i)))
+  , ("strtol"      , (StrToL  , [mkTHArrow [THExt str] (THExt i)]))
   , ("mkTuple"     , (MkTuple , [THTyCon $ THTuple mempty]))
-  , ("ifThenElse"  , (IfThenE , [THBi 1 $ mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]))
+  , ("ifThenElse"  , (IfThenE , [THBi 1 [mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]]))
   , ("getcwd"      , (GetCWD  , [THExt str]))
 
   -- TODO fix type (set -> set -> A -> B)
-  , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 $ mkTHArrow [THExt set , THExt set , THBound 0] (THBound 0) ]))
+  , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 [mkTHArrow [THExt set , THExt set , THBound 0] (THBound 0)] ]))
+
+   -- (Seed -> (Bool , A , Seed)) -> Seed -> %ptr(A)
+  , ("unfoldArray"   , (UnFoldArr , let unfoldRet = mkTHArrow [THBound 0] (mkTHTuple [[THExt b] , [THExt c] , [THBound 0]])
+      in [THBi 1 $ [mkTHArrow [THBound 0 , unfoldRet , THBound 0] (THExt str)]]))
+
+  -- %ptr(A) -> (Bool , A , %ptr(A))    == str -> (Bool , char , str)
+  , ("nextElem" , (NextElem , [mkTHArrow [THExt str] (mkTHTuple $ [[THExt b] , [THExt c] , [THExt str]])] ))
   ]
 
 primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
@@ -261,6 +271,7 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("putChar"   , (PutChar , ([c] , c)))
   , ("opendir"   , (OpenDir , ([str] , dirp)))
   , ("readdir"   , (ReadDir , ([dirp] , dirent)))
+  , ("direntName", (DirentName , ([dirent] , str)))
 
   , ("add64" , (NumInstr (IntInstr Add    ) , ([i64, i64] , i64) ))
   , ("add"   , (NumInstr (IntInstr Add    ) , ([i, i] , i) ))
@@ -302,10 +313,8 @@ typeOfLit = \case
   String{}  -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   Array{}   -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   PolyInt{} -> THPrim PrimBigInt
---PolyInt{} -> THPrim (PrimInt 32)
   Int 0     -> THPrim (PrimInt 1)
   Int 1     -> THPrim (PrimInt 1)
   Int{}     -> THPrim (PrimInt 32)
---Int{}     -> THPrim (PrimInt 32)
   Char{}    -> THPrim (PrimInt 8) --THExt 3
   x -> error $ "don't know type of literal: " <> show x

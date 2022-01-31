@@ -40,8 +40,7 @@ data ParseDetails = ParseDetails {
  , _newLines      :: [Int]
 }
 
-data TopBind = FunBind { fnDef :: FnDef }
-data LetRecT = Let | Rec | LetOrRec
+data TopBind = FunBind { fnDef :: FnDef } -- | PatBind [Pattern] FnDef
 
 data FnDef = FnDef {
    fnNm         :: HName
@@ -53,8 +52,8 @@ data FnDef = FnDef {
  , fnMatches    :: [FnMatch]
  , fnSig        :: (Maybe TT)
 }
-
 data FnMatch = FnMatch [ImplicitArg] [Pattern] TT
+data LetRecT = Let | Rec | LetOrRec
 
 data TTName
  = VBind   IName
@@ -75,6 +74,8 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
  | Juxt SourceOffset [TT] -- may contain mixfixes to resolve
 
  -- tt primitives (sum , product , list)
+-- | Tuple  [TT]   -- like a C struct
+-- | Idx    TT Int -- tuples & arrays
  | Cons   [(FName , TT)] -- can be used to type itself
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
@@ -101,6 +102,7 @@ data Pattern
 data CompositePattern
  = PLabel LName [Pattern]
  | PCons  [(FName , Pattern)]
+ | PTuple [Pattern]
  | PWildCard
  | PLit   Literal
 

@@ -1,15 +1,6 @@
 import imports/prelude
 import imports/list
 
--- b -> Maybe (a , b) -> b -> [a]
---unfoldr f b0 = let
---  go b = case f b of
---    Just ({ val as a , seed as b1 }) => Cons a (go b1)
---    Nothing       => Nil
---  in go b0
-
-scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons l))
-
 step dirp = case j (readdir dirp) of
   Nothing => Nothing
   Just a  => Just { val = a , seed = dirp }
@@ -20,17 +11,18 @@ ls dName = unfoldr step (opendir dName)
 File = { basename = identity } --takeWhileEnd (/= '/') }
 Dir  = { pwd = getcwd , entries = ls }
 
+_*>_ = _+_ -- hack while I decide how to IO
+-- tree : String -> IO ()
+tree rootPath = puts rootPath -- *> subTree "|-- " rootPath
+
+pp pre ent =  (append pre (File.basename (direntName ent)))
+subTree prefix path = map (pp prefix) (Dir.entries path)
+
 -- The prefix in pretty-printing:
 -- when a dir is opened:
 -- 1. replace preceeding "--" with spaces
 -- 2. append if last dir then "`-- " else "|-- " to prefix, 
 -- when a dir is closed, remove the "|-- "
-_*>_ = _+_ -- hack while I decide how to IO
--- tree : String -> IO ()
-tree rootPath = puts rootPath -- *> subTree "|-- " rootPath
-pp pre ent = printList (append pre (File.basename ent))
---subTree prefix path = map (pp prefix) (Dir.entries path)
-
 ----subTree : (String where size >= 4) -> String -> IO ()
 --subTree prefix path = let
 --  ents = filter (\e => e.0 =? '.') (Dir.entries path)

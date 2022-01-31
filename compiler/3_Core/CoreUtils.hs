@@ -15,7 +15,11 @@ nullLattice pos = \case
   t  -> t
 
 mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (singleton <$> args) (singleton retTy)
-mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
+mkTyArrow args retTy = THTyCon $ THArrow args retTy
+
+-- tuples are THProducts with negative indices;
+-- this makes typing tuple access far simpler than introducing a new subtyping relation on structs
+mkTHTuple vs = THTyCon $ THProduct $ IM.fromList (zip (qName2Key . mkQName 0 <$> [0..]) vs)
 
 getArrowArgs = \case
   [THTyCon (THArrow as r)] -> (as , r)

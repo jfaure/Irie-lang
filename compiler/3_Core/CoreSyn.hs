@@ -48,6 +48,8 @@ data Term -- β-reducable (possibly to a type)
  | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
  | App     Term [Term]    -- IName [Term]
 
+ | Tuple   (V.Vector Term)
+ | Idx     Term Int
  | Cons    (IM.IntMap Term)
  | TTLens  Term [IField] LensOp
 

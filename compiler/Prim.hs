@@ -71,10 +71,16 @@ data PrimInstr
  | SizeOf
  | Ptr2Maybe -- glue between ptr/nullptrs and algebraic data (usually Maybe t = [Nothing | Just t])
 
+ -- conversion between primitive arrays and ADTs
+ | UnFoldArr -- (Seed -> (Bool , A , Seed)) -> Seed -> %ptr(A)
+ | NextElem  -- %ptr(A) -> (A , %ptr(A))
+
  -- Posix instructions
  | GetCWD
  | OpenDir
  | ReadDir
+ -- Posix glue
+ | DirentName -- extract name from dirent struct
 
 data NumInstrs
  = IntInstr   !IntInstrs

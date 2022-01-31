@@ -11,6 +11,12 @@ import qualified Data.IntSet as IS
 import qualified Data.IntMap as IM
 import qualified Data.Vector.Mutable as MV
 
+-- Level-based generalisation
+-- * f1 x = let y z = z in y   -- nothing can go wrong
+-- * f2 x = let y   = x in y   -- typeof x quantified too early => f2 : a -> b
+-- * f3 x = let y y = x y in y -- similar
+-- Need to wait until fn inferred before generalising anything referenced above the let
+
 -- substTVars: recursively substitute type vars, insert foralls and μ binders, simplify types
 -- Simplifications:
 --  * ? A -> A & Int =? Int -> Int

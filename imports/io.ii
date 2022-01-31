@@ -1,2 +1,6 @@
 --IO = | In : IO | Out : IO
 --puts io = io.Out
+
+-- Linear
+-- fork?
+open : String -> IO -> (IO , String)

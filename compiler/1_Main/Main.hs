@@ -152,7 +152,7 @@ text2Core flags maybeOldModule resolver fName progText = do
       judgedFinal = JudgedModule modNm nArgs bindNames a b simpleBinds
   when ("simple" `elem` printPass flags) (T.IO.putStrLn `mapM_` namedBinds True (V.zip bindNames simpleBinds))
 
-  when (doCacheCore && coreOK && not (noCache flags)) $ do
+  when (doCacheCore && {-coreOK &&-} not (noCache flags)) $ do -- half-compiled modules should also be cached
     DB.encodeFile resolverCacheFName newResolver
     cacheFile fName (modIName , exts , judgedFinal)
   T.IO.putStrLn $ show fName <> " " <> "(" <> show modIName <> ") " <> (if coreOK then clGreen "OK" else clRed "KO")

@@ -2,24 +2,25 @@
   * languageDocumentation.md
   * User declared type, more complex type annotations
   * normalize fields/labels for codegen
+  * (a , b) = (1 , 3) top level functionless patterns
+  * generalisation: Don't write to typevars! count and mark THVars, then replace with THBound
 ## Top
   * language server
   * optimize cached modules
   * check for (and make work?) module import loops
   * Don't repeat not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
-  * qualified imports / names / treat modules as records
-  * repl typecase to print JIT results
+  * qualified imports / names / treat modules as records (local imports/mixfixes)
+  * show esp. repl typecase to print JIT results
+  * provide Vector alternative for Cons | THProduct when names sequential (frequent) [n..m]
 ## Parse
-  * don't allow tabs and spaces in parser
-  * Use [n..] numbered args from Parser in a safer way
+  * don't allow mixing tabs and spaces
+  * safer use of [n..] numbered args
   * Pattern guards
   * List comprehensions
   * sh syntax `ls -lr` => `ls { l=True , r=True }`
-## Name resolution
-  * Issue with introducing new labels into existing modules
+  * make more robust patterns2TT & patBind (top level patterns) maybe exploit functor modules?
 ## Types
   * Char newtype + encoding subtyping vs bitwidths
-  * propagate poisonexpr from matchAlts
   * check let|rec + mark Binds as let|rec
   * handle field name collisions (THFieldCollision)
   * Warn nonsense type joins
