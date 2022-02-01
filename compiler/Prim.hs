@@ -79,6 +79,11 @@ data PrimInstr
  | GetCWD
  | OpenDir
  | ReadDir
+ | ReadFile
+ | WriteFile
+ | Execve
+ | Fork
+
  -- Posix glue
  | DirentName -- extract name from dirent struct
 

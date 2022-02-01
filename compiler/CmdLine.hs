@@ -12,11 +12,12 @@ data CmdLine = CmdLine
   , noPrelude      :: Bool
   , noCache        :: Bool
   , recompile      :: Bool -- recompile even if cached
+  , quiet          :: Bool
   , outFile        :: Maybe FilePath
   , files          :: [FilePath]
   } deriving (Show)
 
-defaultCmdLine = CmdLine [] False False 0 False False False Nothing []
+defaultCmdLine = (CmdLine [] False False 0 False False False False Nothing []) { quiet = True }
 
 printPasses = T.words "args source parseTree types core simple ssa C" :: [Text]
 
@@ -54,6 +55,9 @@ cmdLineDecls = CmdLine
   <*> switch
       (             long "recompile"
       <> help "recompile even if cached file looks good")
+  <*> switch
+      (             long "quiet"
+      <> help "print less to stdout")
   <*> (optional . strOption) (
       (short 'o')
       <> help "Write llvm output to file")

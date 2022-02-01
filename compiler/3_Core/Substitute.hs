@@ -29,6 +29,11 @@ import qualified Data.Vector.Mutable as MV
 --  2. check if any in the var loops should be generalised
 --  3. mark vars as guarded and substitute guarded types
 -- could use a bitvector instead of IntSet since typevars are bounded naturals
+
+-- TODO
+-- * Don't write to typevars (to not break let-binds & mutuals)
+-- * Generalisable typevars are maybe simplifiable
+
 substTVars :: IName -> TCEnv s Type
 substTVars recTVar = do
   when global_debug (traceM $ "Subst: " <> show recTVar)
@@ -88,9 +93,11 @@ genVarLoop pos vars = use bis >>= \b -> ((\v -> (v,) <$> MV.read b v) `mapM` var
     -- Co-occurence analysis; find and remove generalisables that polar co-occur with v
     -- eg. foldr : (A → (C & B) → B) → C → μx.[Cons : {A , x} | Nil : {}] → (B & C)
     --     foldr : (A → B → B) → B → μx.[Cons : {A , x} | Nil : {}] → B
-    let getVars = map (\(THVar i) -> i) . filter (\case { THVar{}->True; _->False})
-    let go (l , r) v = MV.read b v >>= \(BiSub p m qp qm) -> pure $ --MV.write b v (BiSub (THBound q : p) (THBound q : m) qp qm) $>
-          ((IS.fromList (getVars p) IS.\\ varsIS) `IS.union` l , (IS.fromList (getVars m) IS.\\ varsIS) `IS.union` r)
+    let go (l , r) v = let
+          getVars = map (\(THVar i) -> i) . filter (\case { THVar{}->True; _->False})
+          getSet vars set = (IS.fromList (getVars vars) IS.\\ varsIS) `IS.union` set
+          in MV.read b v >>= \(BiSub p m qp qm) -> pure (getSet p l , getSet m r)
+--          ((IS.fromList (getVars p) IS.\\ varsIS) `IS.union` l , (IS.fromList (getVars m) IS.\\ varsIS) `IS.union` r)
     (cooccurL , cooccurR) <- foldM go (IS.empty,IS.empty) vars
     IS.toList (cooccurL `IS.difference` cooccurR) `forM` \i ->
 --    MV.modify b (\(BiSub p m qp qm) -> BiSub [THBound q] [THBound q] qp qm) i

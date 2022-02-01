@@ -110,8 +110,8 @@ extern name = do
   pure $ heapPtr $ castFunPtrToPtr fn
 
 -- examples
-printf :: Word32 -> Word32 -> X86 ()
-printf fnptr msg = do
+egprintf :: Word32 -> Word32 -> X86 ()
+egprintf fnptr msg = do
   push rbp
   mov rbp rsp
   mov rdi (A msg)
@@ -128,7 +128,7 @@ testJIT :: IO () = let jitsz = 256 * 1024 in do
   msg <- asciz "Hello"
   mem <- allocateMemory jitsz
 
-  let jitm = assemble mem (printf fn msg)
+  let jitm = assemble mem (egprintf fn msg)
   case jitm of
     Left err -> Prelude.putStrLn err
     Right jitst -> let machCode = _mach jitst in do

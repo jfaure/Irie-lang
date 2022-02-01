@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-module Prelude ( module Protolude , module Data.Align , module Data.These , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , setNBits , BitSet)
+module Prelude ( module Protolude , module Data.Align , module Data.These , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , setNBits , bitSet2IntList , BitSet , d_ , dv_ , did_)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -14,6 +14,7 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.Map.Strict as M
 import Data.Align
 import Data.These
+import Text.Printf
 
 type BitSet = Integer
 type String = [Char]
@@ -26,6 +27,15 @@ fromJust = fromMaybe (panic "fromJust")
 
 setNBits n = (2 `shiftL` n) - 1
 
+bitSet2IntList :: Integer -> [Int]
+bitSet2IntList b = let
+  littleEndian = testBit (1::Int) 0
+  shift = if littleEndian then shiftR else shiftL
+  count = if littleEndian then countTrailingZeros else countLeadingZeros
+  i64List = unfoldr (\b -> if b /= 0 then Just (fromInteger b :: Int64 , b `shift` 64) else Nothing) b
+  idxs    = unfoldr (\b -> let c = count b in if c == 64 then Nothing else Just (c , clearBit b c)) <$> i64List
+  in concat (zipWith (\off i -> map (+off) i) [0,64..] idxs)
+
 argSort :: Int -> M.Map HName IName -> VU.Vector IName
 argSort n hmap = let v = VU.fromList (M.elems hmap) in VU.unsafeBackpermute v v
 
@@ -34,3 +44,11 @@ imap f l = zipWith f ([0..] :: [Int]) l
 iMap2Vector mp = V.create $ do
   v <- MV.unsafeNew (M.size mp)
   v <$ (\nm idx -> MV.write v idx nm) `M.traverseWithKey` mp
+
+d_ x   = let --if not global_debug then identity else let
+  clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
+  in trace (clYellow (show x))
+did_ x = d_ x x
+dv_ f = traceShowM =<< V.freeze f
+
+

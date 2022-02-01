@@ -1,6 +1,6 @@
 -- Core Language (compiler pipeline = Text >> Parse >> Core >> STG >> LLVM)
 {-# LANGUAGE TemplateHaskell #-}
-module CoreSyn (module CoreSyn , module QName) where
+module CoreSyn (module CoreSyn , module QName , ModIName) where
 import Prim
 import QName
 import MixfixSyn
@@ -12,18 +12,11 @@ import qualified Data.Map.Strict as M
 
 global_debug = False
 --global_debug = True
-d_ x   = let --if not global_debug then identity else let
-  clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
-  in trace (clYellow (show x))
-did_ x = d_ x x
-dv_ f = traceShowM =<< V.freeze f
 
--- INames are indexes into the main bindings vector
 type ExtIName    = Int -- VExterns
 type BiSubName   = Int -- index into bisubs
 type SrcOff      = Int -- offset into the source file
 type Complexity  = Int -- number of Apps in the Term
-
 type IField = QName
 type ILabel = QName
 
@@ -107,6 +100,7 @@ data TyHead
  | THVar     BiSubName-- generalizes to THBound if survives biunification and simplification
  | THBound   IName  -- pi-bound debruijn index; replace with fresh THVar at THBi to biunify
  | THMuBound IName  -- mu-bound debruijn index (must be guarded and covariant) 
+
 -- type Families | indexed types
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
  | THFam Type [Type] [Expr] -- type of indexables, and things indexing it (both can be [])
@@ -190,30 +184,26 @@ data Kind = KPrim | KArrow | KVar | KSum | KProd | KRec | KAny | KBound | KTuple
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 data JudgedModule = JudgedModule {
-   modHName    :: HName
--- , fileDeps    :: [HName]
+   modIName    :: IName
+ , modHName    :: HName
  , nArgs       :: Int
  , bindNames   :: V.Vector HName
- , fieldNames  :: M.Map HName IName
+ , fieldNames  :: M.Map HName IName -- can we use Vector instead of Map?
  , labelNames  :: M.Map HName IName
  , judgedBinds :: V.Vector Bind
 }
 
--- old modules still have to be partially reused;
--- esp. to remove deleted names from the global resolver
 data OldCachedModule = OldCachedModule {
    oldModuleIName :: ModuleIName
- , oldBindNames   :: V.Vector HName
+ , oldBindNames   :: V.Vector HName -- to check if ambiguous names were deleted
 } deriving Show
 
 -- only used by prettyCore functions
 data BindSource = BindSource {
--- moduleNames     :: V.Vector HName
    srcArgNames     :: V.Vector HName
  , srcBindNames    :: V.Vector HName
  , srcExtNames     :: V.Vector HName
  , srcLabelNames   :: V.Vector (V.Vector HName)
  , srcFieldNames   :: V.Vector (V.Vector HName)
  , allNames        :: V.Vector (V.Vector (HName , Expr))
--- , resolveExtField :: QName -> HName
 }

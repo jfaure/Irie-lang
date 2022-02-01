@@ -42,6 +42,7 @@ data ParseDetails = ParseDetails {
 
 data TopBind = FunBind { fnDef :: FnDef } -- | PatBind [Pattern] FnDef
 
+-- TODO top binds don't need to be functions, perhaps [TT] is better
 data FnDef = FnDef {
    fnNm         :: HName
  , top          :: Bool

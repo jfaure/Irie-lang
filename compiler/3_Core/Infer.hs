@@ -100,7 +100,7 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
     bis''    <- V.unsafeFreeze (st ^. bis)
     wip''    <- V.unsafeFreeze (st ^. wip)
     let domain'' = V.take nArgs bis''
-    pure $ (JudgedModule modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
+    pure $ (JudgedModule modIName modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
 -- inference >> generalisation >> type checking of annotations
@@ -260,7 +260,7 @@ infer = let
   P.Var v -> case v of -- vars : lookup in appropriate environment
     P.VLocal l     -> pure $ Core (Var (VArg l)) [THVar l]
     P.VBind b      -> judgeLocalBind b -- polytype env
-    P.VExtern i    -> use externs >>= \e -> handleExtern (readParseExtern e i)
+    P.VExtern i    -> use thisMod >>= \mod -> use externs >>= \e -> handleExtern (readParseExtern mod e i)
 
   P.Foreign i tt   -> infer tt <&> \case
     PoisonExpr -> PoisonExpr
@@ -294,7 +294,8 @@ infer = let
       ExprApp fE argsE -> inferExprApp srcOff fE >>= \case
         Core (Label iLabel ars) _ -> (inferExprApp srcOff `mapM`  argsE) >>= judgeLabel iLabel
         f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
-      QVar q -> use externs >>= \e -> handleExtern (readQParseExtern e (modName q) (unQName q))
+      QVar q -> use thisMod >>= \modIName -> use externs >>= \e ->
+        handleExtern (readQParseExtern modIName e (modName q) (unQName q))
       MFExpr{}   -> PoisonExpr <$ (scopeFails %= (AmbigBind "mixfix word":))
       core -> pure core
     in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff

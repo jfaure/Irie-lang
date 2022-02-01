@@ -3,7 +3,7 @@ import SSA
 import Prim
 import CoreSyn hiding (Type , Expr)
 --import CoreUtils
-import Externs
+import ShowCore()
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V
 import qualified Data.IntMap as IM
@@ -11,7 +11,6 @@ import qualified Data.IntMap as IM
 type CGEnv s a = StateT (CGState s) (ST s) a
 data CGState s = CGState {
    wipBinds    :: MV.MVector s CGWIP
- , coreExts    :: Externs
  , typeDef     :: Int -- typedef counter
  , wipTypeDefs :: [Type]
  , top         :: Bool -- for inserting Rets
@@ -43,7 +42,7 @@ charPtr_t = TPrim (PtrTo (PrimInt 8))
 
 setTop t = modify $ \x->x{top = t}
 
-mkSSAModule coreExts' coreMod@(JudgedModule modName nArgs bindNames pFields pLabels coreBinds) = let
+mkSSAModule coreMod@(JudgedModule modIName modName nArgs bindNames pFields pLabels coreBinds) = let
   nArgs  = 100 -- TODO !
   nBinds = V.length coreBinds
   wip2Fn = \case
@@ -54,7 +53,6 @@ mkSSAModule coreExts' coreMod@(JudgedModule modName nArgs bindNames pFields pLab
     v  <- V.unsafeThaw (WIPCore <$> V.zip bindNames coreBinds)
     st <- (cgBind `mapM` [0 .. nBinds-1]) `execStateT` CGState {
       wipBinds = v
-    , coreExts = coreExts'
     , typeDef  = 0
     , wipTypeDefs = []
     , top = True
