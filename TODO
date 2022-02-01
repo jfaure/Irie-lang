@@ -1,21 +1,17 @@
 ## Top Priority
   * languageDocumentation.md
-  * User declared type, more complex type annotations
+  * User declared types and non-trivial type annotations
   * normalize fields/labels for codegen
   * (a , b) = (1 , 3) top level functionless patterns
   * generalisation: Don't write to typevars! count and mark THVars, then replace with THBound
-  * make new datatype for hashmap + vector
+  * make new datatype for hashmap + vector 'StrIntName'
   * reconcile first order foldl and foldr (somehow indicate for fromString and toString)
 ## Top
-  * language server
-  * optimize cached modules
-  * check for (and make work?) module import loops
-  * Don't repeat not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
   * qualified imports / names / treat modules as records (local imports/mixfixes)
-  * show esp. repl typecase to print JIT results
+  * show + repl typecase to print JIT results
   * provide Vector alternative for Cons | THProduct when names sequential (frequent) [n..m]
 ## Parse
-  * check let-rec and norecurse
+  * recognize let|rec and norecurse
   * don't allow mixing tabs and spaces
   * safer use of [n..] numbered args
   * Pattern guards
@@ -38,3 +34,9 @@
   * static argument transformation
 ## Codegen
   * promote single field records to field value (esp. if avoids pointer indirection)
+
+## Unimportant
+  * Don't repeat not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
+  * make work module import loops
+  * language server
+  * optimize cached modules
