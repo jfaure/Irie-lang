@@ -11,7 +11,7 @@ import Text.Megaparsec.Pos
 type FName        = IName -- record  fields
 type LName        = IName -- sumtype labels
 type FreeVar      = IName -- non-local argument
-type FreeVars     = IntSet
+type FreeVars     = BitSet
 type ImplicitArg  = (IName , Maybe TT) -- implicit (? no) arg with optional type annotation
 type NameMap      = M.Map HName IName
 type SourceOffset = Int
@@ -27,31 +27,31 @@ data Module = Module {
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
-   _hNameBinds    :: (Int , NameMap) -- also count anonymous (lambdas) (>= nameMap size)
- , _hNameLocals   :: [NameMap] -- let-bound
- , _hNameArgs     :: [NameMap]
- , _hNameMFWords  :: (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
- , _freeVars      :: FreeVars
- , _underscoreArgs:: FreeVars -- just an intset
- , _nArgs         :: Int
- , _hNamesNoScope :: NameMap
- , _fields        :: NameMap
- , _labels        :: NameMap
- , _newLines      :: [Int]
+   _hNameBinds     :: (Int , NameMap) -- also count anonymous (lambdas) (>= nameMap size)
+ , _hNameLocals    :: [NameMap] -- let-bound names stack
+ , _hNameArgs      :: [NameMap]
+ , _hNameMFWords   :: (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
+ , _freeVars       :: FreeVars
+ , _underscoreArgs :: FreeVars
+ , _nArgs          :: Int
+ , _hNamesNoScope  :: NameMap
+ , _fields         :: NameMap
+ , _labels         :: NameMap
+ , _newLines       :: [Int]
 }
 
+-- mark let origin ? `f = let g = G in F` => f.g = G
 data TopBind = FunBind { fnDef :: FnDef } -- | PatBind [Pattern] FnDef
 
--- TODO top binds don't need to be functions, perhaps [TT] is better
 data FnDef = FnDef {
    fnNm         :: HName
- , top          :: Bool
- , fnRecType    :: !LetRecT
- , fnMixfixName :: Maybe MixfixDef
- , implicitArgs :: [ImplicitArg]
+ , top          :: Bool            -- rm
+ , fnRecType    :: !LetRecT        -- or mutual
+ , fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
+ , implicitArgs :: [ImplicitArg]   -- rm
  , fnFreeVars   :: FreeVars
  , fnMatches    :: [FnMatch]
- , fnSig        :: (Maybe TT)
+ , fnSig        :: (Maybe TT)      -- rm
 }
 data FnMatch = FnMatch [ImplicitArg] [Pattern] TT
 data LetRecT = Let | Rec | LetOrRec
@@ -67,7 +67,7 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
  | WildCard           -- "_" implicit lambda argument
  | Question           -- "?" ask to infer
  | Foreign   HName TT -- no definition, and we have to trust the user given type
- | ForeignVA HName TT -- var-args for c compat
+ | ForeignVA HName TT -- var-args for C externs
 
  -- lambda-calculus
  | Abs TopBind
@@ -92,7 +92,6 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
  | TyListOf TT
  | TySum  [(LName , TT , Maybe ([ImplicitArg] , TT))] -- function signature , maybe gadt
 
- -- Sugar
  | DoStmts [DoStmt]
 
 -- patterns represent arguments of abstractions
@@ -111,12 +110,15 @@ data CompositePattern
 -- | PTyped Pattern TT
 -- | PAs   IName Pattern
 
+-- N is mutual with its name-deps that have N in their name-deps.
+-- since a direct search would be O(n!), let inference handle mutuals in O(1)
 data ParseState = ParseState {
-   _indent          :: Pos -- start of line indentation (need to save it for subparsers)
- , _piBound         :: [[ImplicitArg]]
- , _tmpReserved     :: [S.Set Text]
+   _indent      :: Pos    -- start of line indentation (need to save it for subparsers)
+-- , _nameDeps    :: BitSet -- what bindings are used by this definition
+ , _piBound     :: [[ImplicitArg]]
+ , _tmpReserved :: [S.Set Text]
 
- , _moduleWIP       :: Module -- result
+ , _moduleWIP   :: Module -- result
 }
 
 makeLenses ''Module

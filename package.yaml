@@ -17,6 +17,7 @@ description:         Please see the README on GitHub at <https://github.com/jfau
 dependencies:
 - unix
 - base-noprelude
+- pretty-simple
 - protolude
 - prettyprinter
 - blaze-builder
@@ -46,7 +47,7 @@ dependencies:
 # 
 # - llvm-hs-pretty
 # - array
-# - prettyprinter
+- prettyprinter
 
 default-extensions:
 - LambdaCase

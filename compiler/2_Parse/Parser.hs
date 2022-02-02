@@ -19,7 +19,6 @@ import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
-import qualified Data.IntSet as IS
 import qualified Data.Set as S
 import Control.Monad (fail)
 import Control.Lens
@@ -47,18 +46,18 @@ addMFWord h mfw = do
   moduleWIP . parseDetails . hNameMFWords . _2 %= M.insertWith (++) h [mfw sz]
   pure sz
 
--- The trickiness below can be blamed on insertLookup, but saving a log(n) operation is mandatory
+-- The trickiness below is due to insertLookup, which saves a log(n) operation
 il = M.insertLookupWithKey (\k new old -> old)
 -- Data.Map's builtin size is good enough for labels/fields
 insertOrRetrieve h mp = let sz = M.size mp in case il h sz mp of
   (Just x, mp) -> (Right x  , mp)
   (_,mp)       -> (Left  sz , mp)
--- custom size variable (track anonymous binds which aren't found in the map)
+-- use a custom size variable to track bind count since anonymous binds aren't in the map
 insertOrRetrieveSZ h (sz,mp) = case il h sz mp of
   (Just x, mp) -> (Right x , (sz,mp))
   (_,mp)       -> (Left sz , (sz+1,mp))
 -- the list of args corresponds to a nest of function defs
--- if we're adding an argument, we do so to the first (innermost level)
+-- if we're adding an argument, we do so to the first (innermost) level
 insertOrRetrieveArg :: Text -> Int -> [M.Map Text Int] -> (Either Int Int, [M.Map Text Int])
 insertOrRetrieveArg h sz argMaps = case argMaps of
   [] -> error "panic: empty function nesting" --impossible
@@ -78,7 +77,7 @@ addArgName    h = do
     Right  x -> pure $ x
 
 -- register an '_'; so () and funBind can make an implicit abstraction
-addUnderscoreArg i = Var (VLocal i) <$ (moduleWIP . parseDetails . underscoreArgs %= (IS.insert i))
+addUnderscoreArg i = Var (VLocal i) <$ (moduleWIP . parseDetails . underscoreArgs %= (`setBit` i))
 
 -- search (local let bindings) first, then the main bindMap
 addBindName   h = do
@@ -98,6 +97,7 @@ newFLabel h    = eitherOne <$> (moduleWIP . parseDetails . fields %%= insertOrRe
 newSLabel h    = eitherOne <$> (moduleWIP . parseDetails . labels %%= insertOrRetrieve h)
 lookupSLabel h = (M.!? h) <$> use (moduleWIP . parseDetails . labels)
 
+-- a Name may be an arg, or another binding in scope at some let-depth
 lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
   tryArg = case p ^. hNameArgs of
     [] -> pure $ Nothing
@@ -105,7 +105,7 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
       Just n  -> pure $ Just $ VLocal n
       Nothing -> case asum $ (M.!? h) <$> prevFrames of
         Just upStackArg -> do
-          moduleWIP .parseDetails .freeVars %= (IS.insert upStackArg)
+          moduleWIP .parseDetails .freeVars %= (`setBit` upStackArg)
           pure $ Just $ VLocal upStackArg
         Nothing -> pure Nothing
   tryLet = VBind  <$> (asum $ (M.lookup h) `map` (p ^. hNameLocals))
@@ -118,12 +118,18 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
 getFreeVars = do
   free <- use (moduleWIP . parseDetails . freeVars)
   ars  <- fromJust . head <$> use (moduleWIP . parseDetails . hNameArgs)
-  let free' = foldr IS.delete free (M.elems ars)
+  let free' = foldr (flip clearBit) free (M.elems ars)
   moduleWIP . parseDetails . freeVars .= free'
   pure free'
 
-incLetNest = moduleWIP . parseDetails . hNameLocals %= (M.empty :)
-decLetNest = moduleWIP . parseDetails . hNameLocals %= drop 1
+-- The names nest tracks the scope of local definitions
+-- The defstack searches for mutual binds
+newLetNest p = let
+  newNameNest p = (moduleWIP . parseDetails . hNameLocals %= (M.empty :))
+          *> p <* (moduleWIP . parseDetails . hNameLocals %= drop 1)
+--newDefStack p = (defStack <<.= 0) >>= \sv -> p <* (defStack .= sv)
+  in newNameNest p
+ 
 newArgNest p = let
   incArgNest = moduleWIP . parseDetails . hNameArgs %= (M.empty :)
   decArgNest = moduleWIP . parseDetails . hNameArgs %= drop 1
@@ -142,7 +148,8 @@ lookupImplicit h = do
 -----------
 -- A key convention: tokens consume trailing whitespace (using `symbol` or `lexeme`)
 -- so parsers can assume they start on a non-blank.
--- Space consumers: scn eats newlines, sc does not. Save newline offsets to track source locations
+-- Space consumers: scn eats newlines, sc does not.
+-- Save newline offsets so we can track source locations using a single Int
 addNewlineOffset :: Parser ()
 addNewlineOffset = getOffset >>= \o -> moduleWIP . parseDetails . newLines %= (o - 1 :)
 isHSpace x = isSpace x && x /= '\n' -- isHSpace , but handles all unicode spaces
@@ -193,7 +200,7 @@ checkLiteral x = if isDigit `T.all` x -- TODO not good enough (1e3 , 2.0 etc..)
   else pure x
 checkIden = checkReserved <=< checkLiteral
 
--- We must use 'try', to backtrack if we parse a reserved word
+-- We must use 'try', to backtrack if we ended up parsing a reserved word
 iden :: Parser HName = lexeme . try $ (idenChars >>= checkIden)
 idenNo_ = lexeme idenNo_'
 idenNo_' = try $ (takeWhile1P Nothing (\x->isIdenChar x && x /= '_') >>= checkIden)
@@ -245,17 +252,17 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
         , _imports     = []
         , _bindings    = []
         , _parseDetails = ParseDetails {
-            _hNameBinds    = (0 , M.empty)
-          , _hNameMFWords  = (0 , M.empty)
-          , _hNameArgs     = [] -- stack of lambda-bounds
-          , _hNameLocals   = []
-          , _freeVars      = IS.empty
-          , _nArgs         = 0
-          , _underscoreArgs= IS.empty
-          , _hNamesNoScope = M.empty -- track VExterns
-          , _fields        = M.empty -- field names
-          , _labels        = M.empty -- explicit label names; note. `L a` is ambiguous
-          , _newLines      = []
+            _hNameBinds     = (0 , M.empty)
+          , _hNameMFWords   = (0 , M.empty)
+          , _hNameArgs      = [] -- stack of lambda-bounds
+          , _hNameLocals    = []
+          , _freeVars       = 0 :: BitSet
+          , _nArgs          = 0
+          , _underscoreArgs = 0 :: BitSet
+          , _hNamesNoScope  = M.empty -- track VExterns
+          , _fields         = M.empty -- field names
+          , _labels         = M.empty -- explicit label names; note. `L a` is ambiguous
+          , _newLines       = []
         }
       }
       end = (bindings %~ reverse)
@@ -278,14 +285,14 @@ decl = svIndent *> choice
    ] <?> "import , extern or local binding"
 
 -- for the repl
-bareTT = addAnonBindName *> ((\tt -> addBind (FunBind $ FnDef "replExpr" True LetOrRec Nothing [] IS.empty [FnMatch [] [] tt] Nothing)) =<< tt)
+bareTT = addAnonBindName *> ((\tt -> addBind (FunBind $ FnDef "replExpr" True LetOrRec Nothing [] 0 [FnMatch [] [] tt] Nothing)) =<< tt)
 
 pForeign = do -- external function defined outside of Irie and opaque until link-time
   fn  <- ((Foreign <$ reserved "foreign") <|> (ForeignVA <$ reserved "foreignVA"))
   hNm <- iden
   addBindName hNm
   ty <- reservedOp ":" *> tt
-  addBind (FunBind $ FnDef hNm True Let Nothing mempty mempty [FnMatch [] [] (Foreign hNm ty)] (Just ty))
+  addBind (FunBind $ FnDef hNm True Let Nothing mempty 0 [FnMatch [] [] (Foreign hNm ty)] (Just ty))
 
 -------------------
 -- Function defs --
@@ -320,7 +327,7 @@ patBind = do
       patBindNames = (\(PArg i) -> i) <$> args
       
   -- ! depends on the bindNames being added in the same order as the lenses are added !
-  mapM_ (\e -> addBind (FunBind $ FnDef "patBind" True LetOrRec Nothing [] mempty [FnMatch [] [] e] Nothing)) (body : lensedTTs)
+  mapM_ (\e -> addBind (FunBind $ FnDef "patBind" True LetOrRec Nothing [] 0 [FnMatch [] [] e] Nothing)) (body : lensedTTs)
 
 funBind isTop letRecT = lexeme pMixfixWords >>= \case
   [Just nm] -> VBind <$> funBind' isTop letRecT nm Nothing (symbol nm *> many (lexeme (singlePattern isTop)))
@@ -385,10 +392,10 @@ fnMatch pMFArgs sep = -- sep is "=" or "=>"
 -- make a lambda around any '_' found within the tt eg. `(_ + 1)` => `\x => x + 1`
 catchUnderscoreAbs :: TT -> Parser TT
 catchUnderscoreAbs tt = use (moduleWIP . parseDetails . underscoreArgs) >>= \underscores ->
-  if IS.null underscores then pure tt else
-  let eqns = [FnMatch [] (PArg <$> IS.toList underscores) tt]
-  in Abs (FunBind $ FnDef "_abs" False LetOrRec Nothing [] mempty eqns Nothing)
-  <$ (moduleWIP . parseDetails . underscoreArgs .= IS.empty)
+  if 0 == underscores then pure tt else
+  let eqns = [FnMatch [] (PArg <$> bitSet2IntList underscores) tt]
+  in Abs (FunBind $ FnDef "_abs" False LetOrRec Nothing [] 0 eqns Nothing)
+  <$ (moduleWIP . parseDetails . underscoreArgs .= 0)
 
 -- TT parser
 ttArg , tt :: Parser TT
@@ -518,7 +525,7 @@ ttArg , tt :: Parser TT
     (`App` [scrut]) <$> caseSplits
 
   letIn = let
-    pletBinds letStart (letRecT :: LetRecT) = (\p -> incLetNest *> p <* decLetNest) $ do
+    pletBinds letStart (letRecT :: LetRecT) = newLetNest $ do
       scn -- go to first indented binding
       ref <- use indent
       svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
@@ -536,7 +543,7 @@ ttArg , tt :: Parser TT
     Just (implicits , ty) -> case exp of
       Var (VLocal l) -> addPiBound (l , Just ty) *> pure exp
       x -> (Var . VBind <$> addAnonBindName)
-        <* addBind (FunBind $ FnDef "_:" False LetOrRec Nothing [] IS.empty [FnMatch [] [] exp] (Just ty))
+        <* addBind (FunBind $ FnDef "_:" False LetOrRec Nothing [] 0 [FnMatch [] [] exp] (Just ty))
 
   piBinder = do
     i <- iden

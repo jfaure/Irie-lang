@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-module Prelude ( module Protolude , module Data.Align , module Data.These , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , setNBits , bitSet2IntList , BitSet , d_ , dv_ , did_)
+module Prelude ( module Protolude , module Data.Align , module Data.These , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -16,6 +16,7 @@ import Data.Align
 import Data.These
 import Text.Printf
 
+type Nat    = Int
 type BitSet = Integer
 type String = [Char]
 type IName  = Int
@@ -25,7 +26,9 @@ type HName  = Text
 --error (s :: String) = panic $ toS s
 fromJust = fromMaybe (panic "fromJust")
 
+emptyBitSet = 0 :: Integer
 setNBits n = (2 `shiftL` n) - 1
+a `bitDiff` b = a .&. complement b
 
 bitSet2IntList :: Integer -> [Int]
 bitSet2IntList b = let
@@ -35,6 +38,9 @@ bitSet2IntList b = let
   i64List = unfoldr (\b -> if b /= 0 then Just (fromInteger b :: Int64 , b `shift` 64) else Nothing) b
   idxs    = unfoldr (\b -> let c = count b in if c == 64 then Nothing else Just (c , clearBit b c)) <$> i64List
   in concat (zipWith (\off i -> map (+off) i) [0,64..] idxs)
+
+intList2BitSet :: [Int] -> Integer
+intList2BitSet = foldl setBit 0
 
 argSort :: Int -> M.Map HName IName -> VU.Vector IName
 argSort n hmap = let v = VU.fromList (M.elems hmap) in VU.unsafeBackpermute v v

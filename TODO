@@ -2,32 +2,37 @@
   * languageDocumentation.md
   * User declared types and non-trivial type annotations
   * normalize fields/labels for codegen
-  * (a , b) = (1 , 3) top level functionless patterns
-  * generalisation: Don't write to typevars! count and mark THVars, then replace with THBound
-  * make new datatype for hashmap + vector 'StrIntName'
-  * reconcile first order foldl and foldr (somehow indicate for fromString and toString)
+  * functor modules/records; patterns in records (?) `(a , b) = (1 , 3)` opened vs closed (qualified names) records , mixfixes
+  * reconcile first order foldl and foldr for fusion; ListFn => FoldL fl | FoldR fr | Array fl fr (| Indexable)
+  * toCStruct : A -> CStruct
+  * Reduce TVars required and Bisub vector size
+  * check escapedVars are updated at right time through let-nests & mutuals
 ## Top
-  * qualified imports / names / treat modules as records (local imports/mixfixes)
   * show + repl typecase to print JIT results
   * provide Vector alternative for Cons | THProduct when names sequential (frequent) [n..m]
+  * make new datatypes: growable vector and hashmap + vector 'StrIntName'
 ## Parse
   * recognize let|rec and norecurse
   * don't allow mixing tabs and spaces
   * safer use of [n..] numbered args
   * Pattern guards
   * List comprehensions
-  * sh syntax `ls -lr` => `ls { l=True , r=True }`
   * make more robust patterns2TT & patBind (top level patterns) maybe exploit functor modules?
-  * warn conflicting definitions (from pattern args , let bindings etc..)
 ## Types
+  * rm THVar in favor of THVars
   * handle field name collisions (THFieldCollision)
-  * Warn nonsense type joins
-  * lone mfWords that aren't ambig-binds should error (also things like f = 3 <)
-  * Dependent normalisation & Staging
+  * cache escaped vars in THTyCon (add a bitset)
+  * Dependent normalisation & Staging (compile recursive defs when normalising)
   * typevars with bounds (a->b) & (c->d) need to be flattened and merged for co-occurence analysis (a&c -> b&d)
   * simplify type; imports.basic.twice f x = f (f x)
   * Careful mergeing mu types; µx. may contain other µx.!
   * need to generalise (place the forall.) in polymorphic subexpressions correctly
+  * Perhaps insert Mus during finalisation
+## Error messages
+  * Warn nonsense type joins
+  * lone mfWords that aren't ambig-binds should error (also things like f = 3 <)
+  * conflicting definitions (from pattern args , let bindings etc..)
+  * mixfix parser errors & locations
 ## Simplifier
   * constructor specialisation
   * case-of-case
@@ -40,3 +45,4 @@
   * make work module import loops
   * language server
   * optimize cached modules
+  * sh syntax `ls -lr` => `ls { l=True , r=True }`

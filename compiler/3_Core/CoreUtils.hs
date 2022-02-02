@@ -115,6 +115,7 @@ eqTyHead a b = kindOf a == kindOf b
 kindOf = \case
   THPrim{}  -> KPrim
   THVar{}   -> KVar
+  THVars{}  -> KVars
   THTyCon t -> case t of
     THArrow{}   -> KArrow
     THProduct{} -> KProd
@@ -170,7 +171,8 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
     _ -> join
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
   [THBound a , THBound b]     -> if a == b then [t1] else join
-  [THVar a , THVar b]         -> if a == b then [t1] else join
+  [THVar  a , THVar  b]       -> [THVars (setBit (setBit 0 a) b)] --if a == b then [t1] else join
+  [THVars a , THVars b]       -> [THVars (a .|. b)]
   [THExt a , THExt  b]        -> if a == b then [t1] else join
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of -- TODO depends on polarity (!)
     [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ IM.unionWith mergeTypes a b]

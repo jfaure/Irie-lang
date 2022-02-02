@@ -31,11 +31,14 @@ data TCEnvState s = TCEnvState {
  , _quants     :: Int -- fresh names for generalised typevars [A..Z,A1..Z1..]
  , _blen       :: Int
  , _bis        :: MV.MVector s BiSub -- typeVars
- , _deadVars   :: Integer -- bitmask for TVars of shallower let-nests that we mustn't generalize
+ , _escapedVars:: Integer -- bitmask for TVars of shallower let-nests that we mustn't generalize
+ , _genedVars  :: Integer -- bitmask for TVars that are considered generalised
 
  , _mus        :: Int -- fresh names for recursive types [x,y,z,x1,y1...]
  , _muNest     :: IntMap (IName , Type)  -- mu bound types deeper in the type that could be merged with
  , _muEqui     :: IntMap IName -- THVars converted to THMuBound (recursive type marker)
+ , _biEqui     :: MV.MVector s IName
+ , _coOccurs   :: MV.MVector s ([Type] , [Type]) -- (pos , neg) occurs
  , _liftMu     :: Maybe Type   -- mus constructed inside tycons can often be rolled up to contain the outer tycon
 
  , _normFields :: VU.Vector IName
@@ -47,7 +50,7 @@ makeLenses ''TCEnvState
 --tcFail e = error $ e -- Poison e _ --(errors %= (e:)) *> pure (Fail e)
 
 dupVar pos x = use bis >>= \v -> MV.modify v
-  (\(BiSub p m qp qm) -> if pos then BiSub p m (qp+1) qm else BiSub p m qp (qm+1)) x
+  (\(BiSub p m) -> if pos then BiSub p m else BiSub p m ) x
 
 dupp pos ty = let dup = dupp in ty `forM` \case
   THVar x -> dupVar pos x
@@ -69,7 +72,6 @@ withBiSubs n action = do
   blen .= (biLen + n)
   bisubs <- MV.grow bisubs n
   bis .= bisubs
-  tyVars `forM` \i -> MV.write bisubs i (BiSub [] [] 0 0)
+  tyVars `forM` \i -> MV.write bisubs i (BiSub [] [])
   ret <- action biLen
---tyVars `forM` \i -> MV.write bisubs i (BiSub [] [] 0 0)
   pure (ret , tyVars)

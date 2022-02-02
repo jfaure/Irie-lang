@@ -7,6 +7,7 @@ SRC	:=	$(shell find $(SrcDir) -type f -name '*.hs')
 
 all: $(NAME)
 fast: $(SRC)
+#stack -j9 ghci --ghci-options "-interactive-print=Text.Pretty.Simple.pPrint" --system-ghc --no-build --ghc-options="-j -fbyte-code -dynamic +RTS -A128m -n2m -RTS"
 	stack -j9 ghci --system-ghc --no-build --ghc-options="-j -fbyte-code -dynamic +RTS -A128m -n2m -RTS"
 prof:
 	stack -j9 build --system-ghc --executable-profiling --ghc-options="-fprof-auto -fprof-cafs -with-rtsopts=-xc"

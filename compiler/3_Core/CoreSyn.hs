@@ -17,8 +17,9 @@ type ExtIName    = Int -- VExterns
 type BiSubName   = Int -- index into bisubs
 type SrcOff      = Int -- offset into the source file
 type Complexity  = Int -- number of Apps in the Term
-type IField = QName
-type ILabel = QName
+type IField  = QName
+type ILabel  = QName
+type TVarSet = BitSet
 
 data VName
  = VBind    IName -- name defined within this module (probably deprecate this)
@@ -38,7 +39,7 @@ data Term -- β-reducable (possibly to a type)
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
- | Abs     [(IName , Type)] IntSet Term Type -- arg inames, types, freevars, term ty
+ | Abs     [(IName , Type)] BitSet Term Type -- arg inames, types, freevars, term ty
  | App     Term [Term]    -- IName [Term]
 
  | Tuple   (V.Vector Term)
@@ -79,6 +80,10 @@ data TyCon -- Type constructors
 
 data Pi = Pi [(IName , Type)] Type
 
+--data Type
+-- = TPure TyHead
+-- | TVars TyHead TVarSet
+
 -- Head constructors in the profinite distributive lattice of types
 data TyHead
  = THPrim     PrimType
@@ -88,18 +93,19 @@ data TyHead
  | THTop | THBot
 
  | THFieldCollision Type Type
- | THTyCon !TyCon
+ | THTyCon !TyCon -- BitSet cache escaped vars
 
  -- Binders
  | THMu IName Type-- recursive type
  | THBi Int Type  -- deBruijn pi binder
- | THPi Pi        -- dependent function space. implicitly bound. (for explicit: `∏(x:_) x -> Z`)
+ | THPi Pi        -- dependent function space. implicitly bound. (explicit: `∏(x:_) x -> T`)
  | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
 
  -- Type variables
- | THVar     BiSubName-- generalizes to THBound if survives biunification and simplification
- | THBound   IName  -- pi-bound debruijn index; replace with fresh THVar at THBi to biunify
- | THMuBound IName  -- mu-bound debruijn index (must be guarded and covariant) 
+ | THVar     BiSubName -- generalizes to THBound if survives biunification and simplification
+ | THVars    BitSet    -- BitSet of TVars
+ | THBound   IName     -- pi-bound debruijn index; replace with fresh THVar at THBi to biunify
+ | THMuBound IName     -- mu-bound debruijn index (must be guarded and covariant) 
 
 -- type Families | indexed types
  | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
@@ -125,7 +131,7 @@ data Expr
 data Bind -- indexes in the bindmap
  = WIP
  | Guard     { mutuals :: [IName] , args :: [IName] , tvar :: IName }
- | Mutual    { naiveExpr :: Expr , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
+ | Mutual    { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
 
  | Checking  { mutuals :: [IName] 
              , monoMorphic :: Maybe Expr -- if set, shouldn't generalise itself (ask (the first seen) mutual bind do it)
@@ -134,6 +140,8 @@ data Bind -- indexes in the bindmap
              }
  | BindKO -- failed typecheck
  | BindOK    Expr
+
+ | BindMutuals [Expr]
  | BindOpt   Complexity Expr -- optimized binding
 
 data ExternVar
@@ -171,15 +179,13 @@ data BiCast
 data BiSub = BiSub {
    _pSub :: [TyHead]
  , _mSub :: [TyHead]
- , _pQ   :: Int
- , _mQ   :: Int
 }
 
 makeLenses ''BiSub
 --makeLenses ''QTT
 
 -- label for the different head constructors. (KAny is in a way top of the entire universe)
-data Kind = KPrim | KArrow | KVar | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
+data Kind = KPrim | KArrow | KVar | KVars | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
  deriving (Eq , Ord)
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)

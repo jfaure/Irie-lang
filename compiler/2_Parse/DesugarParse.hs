@@ -19,14 +19,14 @@ convPat isTop = \case
   P.PComp i pat -> (i , [] ,) . Just $ let
     thisArg = P.Var (if isTop then P.VBind i else P.VLocal i)
     in case pat of
-    P.PLabel l pats -> \t -> P.App (P.Match [(l , mempty , pats , t)] Nothing) [thisArg]
+    P.PLabel l pats -> \t -> P.App (P.Match [(l , 0 , pats , t)] Nothing) [thisArg]
     P.PTuple  fields -> \t -> let
     -- Note uses negative numbers to indicate tuple indexing
       mkProj l (P.PArg i) = (i , P.TTLens 0 thisArg [l] P.LensGet) -- (i , P.Idx thisArg l)
       mkProj _ p = error $ "not ready for patterns within tuples" <> show p
       (fieldArgs , projs) = unzip $ zipWith mkProj [-1,-2..] fields
       fArgs = P.PArg <$> fieldArgs
-      abs = P.Abs (P.FunBind (P.FnDef "tupleProj" False P.Let Nothing [] mempty [P.FnMatch [] fArgs t] Nothing))
+      abs = P.Abs (P.FunBind (P.FnDef "tupleProj" False P.Let Nothing [] 0 [P.FnMatch [] fArgs t] Nothing))
       in P.App abs projs
 
     P.PCons  fields -> \t -> let
@@ -34,7 +34,7 @@ convPat isTop = \case
       mkProj p = error $ "not ready for patterns within records" <> show p
       (fieldArgs , projs) = unzip $ mkProj <$> fields
       fArgs = P.PArg <$> fieldArgs
-      abs  = P.Abs (P.FunBind (P.FnDef "patProj" False P.Let Nothing [] mempty [P.FnMatch [] fArgs t] Nothing))
+      abs  = P.Abs (P.FunBind (P.FnDef "patProj" False P.Let Nothing [] 0 [P.FnMatch [] fArgs t] Nothing))
       in P.App abs projs
     x -> error $ "not ready for pattern: " <> show x
 --    P.Literal l    -> _

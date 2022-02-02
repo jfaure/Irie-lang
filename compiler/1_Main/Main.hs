@@ -19,7 +19,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 import qualified Data.ByteString.Lazy as BSL.IO
 import qualified Data.Vector as V
-import qualified Data.IntMap as IM
+--import qualified Data.IntMap as IM
 import qualified Data.Map    as M
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Binary as DB

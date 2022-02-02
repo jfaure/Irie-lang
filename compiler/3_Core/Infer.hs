@@ -12,7 +12,7 @@ import PrettyCore
 import DesugarParse -- (matches2TT)
 import Externs
 import Mixfix
-import Substitute
+import Generalise --Substitute
 
 import Control.Lens
 import Data.List (unzip4, foldl1, span , zipWith3)
@@ -68,15 +68,16 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
     deBruijn' <- MV.new 0
     wip'      <- MV.replicate nBinds WIP
     bis'      <- MV.new nArgs
-    [0 .. nArgs - 1] `forM_` \i -> MV.write bis' i (BiSub [] [] 0 0)
+    biEqui'   <- MV.replicate nBinds (complement 0)
+    [0 .. nArgs - 1] `forM_` \i -> MV.write bis' i (BiSub [] [])
 
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
       { _pBinds   = pBinds'
       , _externs  = exts
       , _thisMod  = modIName
 
-      , _wip      = wip'
-      , _biFails  = []
+      , _wip        = wip'
+      , _biFails    = []
       , _scopeFails = []
       , _checkFails = []
 
@@ -92,7 +93,10 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
       , _mus      = 0
       , _muEqui   = mempty
       , _muNest   = mempty
-      , _deadVars = 0
+      , _biEqui   = biEqui'
+      , _coOccurs = _
+      , _escapedVars= 0
+      , _genedVars  = 0
       , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
       , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
@@ -104,11 +108,11 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
           , TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
 -- inference >> generalisation >> type checking of annotations
--- Warning. this handles mutual binds and stacks inference of forward references
+-- This stacks inference of forward references and handles mutual binds
 judgeBind :: IName -> TCEnv s Expr
 judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
   BindOK e -> pure e
-  Mutual e isRec tvar tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) [THVar tvar]) -- pure e
+  Mutual e freeVs isRec tvar tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) [THVar tvar]) -- pure e
 
   Guard mutuals ars tvar -> do
     this <- use bindWIP
@@ -119,33 +123,20 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
 
   WIP -> use wip >>= \wip' -> do
     svwip <- bindWIP <<.= bindINm
-    let getTT (P.FunBind (P.FnDef hNm isTop letRecT mf implicits freeVars matches tyAnn)) = let
-          (mainArgs , mainArgTys , tt) = matches2TT False matches
-          args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort ; parser should always give sorted argnames
-          in (tt , args , isTop , tyAnn)
-    (tt , args , isTop , tyAnn) <- getTT . (V.! bindINm) <$> use pBinds
+    startTVar <- use blen
+    P.FunBind (P.FnDef hNm isTop letRecT mf implicits freeVars matches tyAnn) <- (V.! bindINm) <$> use pBinds
+    let (mainArgs , mainArgTys , tt) = matches2TT False matches
+        args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort ; parser should always give sorted argnames
 
+    svEscapes <- escapedVars <<%= (.|. freeVars)
     ((tvarIdx , jb , ms) , resultTy) <- withBiSubs 1 $ \idx -> do
---    traceM $ "recIdx: " <> show idx
       MV.write wip' bindINm (Guard [] args idx)
-
-      -- deadVars .= repeat bl 1 (1111..)
-      -- we're entering a deeper let-nest; all existing tvars must be ignored while that is inferred
-      -- TODO deeper tvars leaking upwards in biunify?
-      sv <- use deadVars
---    use blen >>= \bl -> (deadVars .= setNBits (bl - 1)) -- TODO what consequences?
---    Note. this messed up forward declarations since later defs won't be substituted
       expr <- infer tt
-
---    TODO should we eagerly substitute let expressions ?
---    this could be an issue if THBounds are inserted in there
---    deadVars .= (if isTop then sv else setBit sv idx)
-
       let arTys = (\x->[THVar x]) <$> args
           jb = case expr of
             Core x ty -> let fnTy = prependArrowArgs arTys ty in case args of
               []  -> Core x ty
-              ars -> Core (Abs (zip ars arTys) mempty x fnTy) fnTy
+              ars -> Core (Abs (zip ars arTys) emptyBitSet x fnTy) fnTy
             t -> t
       bindWIP .= svwip
       Guard ms _ars tVar <- MV.read wip' bindINm
@@ -158,36 +149,30 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
         Nothing -> pure Nothing --error $ "not a type: " <> show t
         t       -> pure t
 
-    MV.write wip' bindINm (Mutual jb False tvarIdx typeAnn)
-    if minimum (bindINm:ms) == bindINm then fromJust . head <$> generaliseBinds bindINm ms else pure jb
--- Check annotation if given
---bindTy <- maybe (pure genTy) (\ann -> checkAnnotation ann genTy mainArgTys (V.fromList argTys)) tyAnn
+    MV.write wip' bindINm (Mutual jb freeVars False tvarIdx typeAnn)
+    if minimum (bindINm:ms) == bindINm then fromJust . head <$> generaliseBinds svEscapes bindINm ms else pure jb
 
-generaliseBinds i ms = use wip >>= \wip' -> do
-  let getMutual m = do
-        Mutual naiveExpr isRec recTVar tyAnn <- MV.read wip' m
-        pure (m , recTVar , naiveExpr , tyAnn)
-      substVars = \(m , recTVar , naiveExpr , annotation) -> let
-        traceVars= when global_debug $ use bis >>= \b -> [0..MV.length b -1] `forM_` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
-        in do
-        inferred <- case naiveExpr of
-          Core expr coreTy -> do
-            ty <- case expr of
-              Abs ars free x fnTy -> pure $ coreTy --prependArrowArgs ((\(x,_t)->[THVar x]) <$> ars) coreTy
-              _ -> pure coreTy
-            -- check for recursive type
-            use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
-              [] -> BiEQ <$ MV.write v recTVar (BiSub ty [] 0 0)
-              t  -> biSub ty [THVar recTVar] -- ! recursive expression
-            traceVars
-            Core expr <$> substTVars recTVar
-          t -> pure t
-        done <- case (annotation , inferred) of
-          (Just t , Core e inferredTy) -> Core e <$> checkAnnotation t inferredTy
-          _                            -> pure inferred
-        done <$ MV.write wip' m (BindOK done)
-  mutuals <- (i : ms) `forM` getMutual -- Usually a singleton list
-  (mutuals `forM` substVars) <* (quants .= 0) <* (mus .= 0)
+generaliseBinds :: Integer -> Int -> [Int] -> TCEnv s [Expr]
+generaliseBinds svEscapes i ms = use wip >>= \wip' -> (i : ms) `forM` \m ->
+  MV.read wip' m >>= \(Mutual naiveExpr freeVs isRec recTVar annotation) -> do
+  inferred <- case naiveExpr of
+    Core expr coreTy -> do
+      (ty , free) <- case expr of
+        Abs ars free x fnTy -> pure (coreTy , free)
+        _ -> pure (coreTy , emptyBitSet)
+      -- check for recursive type
+      use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
+        [] -> BiEQ <$ MV.write v recTVar (BiSub ty [])
+        t  -> biSub ty [THVar recTVar] -- ! recursive expression
+      when global_debug $ use bis >>= \b -> [0..MV.length b -1] `forM_`
+        \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
+      Core expr <$> generalise recTVar
+    t -> pure t
+  escapedVars .= svEscapes
+  done <- case (annotation , inferred) of
+    (Just t , Core e inferredTy) -> Core e <$> checkAnnotation t inferredTy
+    _                            -> pure inferred
+  done <$ MV.write wip' m (BindOK done)
 
 checkAnnotation :: Type -> Type {--> [[P.TT]] -> V.Vector Type-} -> TCEnv s Type
 checkAnnotation annTy inferredTy {-mainArgTys argTys-} = do
@@ -284,7 +269,7 @@ infer = let
         args -> let
           argVars = (\x->[THVar x]) <$> args
           fnTy    = prependArrowArgs argVars ty
-          in Core (Abs (zip args argVars) mempty x fnTy) fnTy
+          in Core (Abs (zip args argVars) emptyBitSet x fnTy) fnTy
       t -> t
 
   P.App fTT argsTT -> infer fTT >>= \f -> (infer `mapM` argsTT) >>= inferApp (-1) f
@@ -392,7 +377,7 @@ infer = let
         arg2ty i= [THVar i]
         argAndTys  = map (map (\x -> (x , arg2ty x))) args
         altsMap = let
-          addAbs ty (Core t _) args = Core (Abs args mempty t []) ty
+          addAbs ty (Core t _) args = Core (Abs args 0 t []) ty
           addAbs ty PoisonExpr _ = PoisonExpr
           in IM.fromList $ zip labels (zipWith3 addAbs altTys alts argAndTys)
     pure $ if poison then PoisonExpr else

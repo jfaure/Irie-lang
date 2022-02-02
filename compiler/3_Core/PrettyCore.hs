@@ -23,7 +23,7 @@ unParens x = if T.head x == '(' then T.drop 1 (T.dropEnd 1 x) else x
 prettyBind showExpr bindSrc = \case
   Checking m e g ty     -> "CHECKING: " <> show m <> show e <> show g <> " : " <> show ty
   Guard m ars tvar      -> "GUARD : " <> show m <> show ars <> show tvar
-  Mutual m isRec tvar tyAnn -> "MUTUAL: " <> show m <> show isRec <> show tvar <> show tyAnn
+  Mutual m free isRec tvar tyAnn -> "MUTUAL: " <> show m <> show isRec <> show tvar <> show tyAnn
   WIP -> "WIP"
   BindOK expr -> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
   BindOpt complex expr -> " (" <> show complex <> ")" <> prettyExpr' showExpr bindSrc "\n  " expr <> "\n  "
@@ -54,7 +54,7 @@ prettyTerm bindSrc = let
   pE  = prettyExpr  False bindSrc
   pET = prettyExpr  True bindSrc
   pE' = prettyExpr' True bindSrc
-  prettyFree x = if IS.null x then "" else "Γ(" <> show x <> ")"
+  prettyFree x = if x == 0 then "" else "Γ(" <> show (bitSet2IntList x) <> ")"
   prettyLabel l = clMagenta (prettyQName (Just (srcLabelNames bindSrc)) l)
   prettyField f = prettyQName (Just $ srcFieldNames bindSrc) f --(QName f)
   in \case
@@ -123,6 +123,7 @@ prettyTyHead bindSrc = let
  THBot        -> "⊥"
  THPrim     p -> prettyPrimType p
  THVar      i -> "τ" <> show i
+ THVars     i -> "τ(" <> T.intercalate "," (show <$> bitSet2IntList i) <> ")"
  THBound    i -> number2CapLetter i
  THMuBound  t -> {-"μ" <>-} number2xyz t
  THMu v     t -> "μ" <> number2xyz v <> "." <> pTy t

@@ -1,21 +1,49 @@
 --import imports/prelude
-import imports/list
+--import imports/list
+--import imports/simpleTests
+-- 
+-- step dirp = case j (readdir dirp) of
+--   Nothing => Nothing
+--   Just a  => Just { val = a , seed = dirp }
+-- j = Just
+-- 
+-- ls dName = unfoldr step (opendir dName)
+-- 
+-- File = { basename = identity } --takeWhileEnd (/= '/') }
+-- Dir  = { pwd = getcwd , entries = ls }
+-- 
+-- -- tree : String -> IO ()
+-- tree rootPath = puts rootPath -- *> subTree "|-- " rootPath
+-- 
+-- pp pre ent =  (append pre (File.basename (direntName ent)))
+-- subTree prefix path = map (pp prefix) (Dir.entries path)
+--printList l = case l of
+--  Nil => 0
+--  Cons i ll => add (putNumber i) (printList ll)
 
-step dirp = case j (readdir dirp) of
-  Nothing => Nothing
-  Just a  => Just { val = a , seed = dirp }
-j = Just
+fromMaybe l = case l of 
+  Maybe b => b
+  Nothing => 0
 
-ls dName = unfoldr step (opendir dName)
+x a = ifThenElse a a 3 -- a & Bool -> a & Int
 
-File = { basename = identity } --takeWhileEnd (/= '/') }
-Dir  = { pwd = getcwd , entries = ls }
+foldl f s l = case l of
+  Cons x xs => foldl f (f s x) xs
+  Nil => s
 
--- tree : String -> IO ()
-tree rootPath = puts rootPath -- *> subTree "|-- " rootPath
+foldr f s l = case l of
+  Cons x xs => f x (foldr f s xs)
+  Nil       => s
 
-pp pre ent =  (append pre (File.basename (direntName ent)))
-subTree prefix path = map (pp prefix) (Dir.entries path)
+--fr f s l = ifThenElse l.isCons (f l.x (fr f s l.x)) s
+
+append front back = foldr Cons back front
+concat = foldr (append) Nil
+
+--f1 x = let y z = z in y   -- (: ⊤ → A → A) nothing can go wrong
+--f2 x = let y   = x in y   -- (: A → A) typeof x quantified too early => f2 : A → B
+--f3 x = let y z = x z in y -- (: (A → B) → (A → B))
+--f a b = a (a b) -- mlsub indicates: (A & B -> A) -> B -> A
 
 --_*>_ = _+_ -- hack while I decide how to IO
 -- The prefix in pretty-printing:
