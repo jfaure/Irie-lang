@@ -1,6 +1,6 @@
 module Errors where
 import CoreSyn
-import ShowCore
+import ShowCore()
 
 data BiFail
   = TextMsg     Text

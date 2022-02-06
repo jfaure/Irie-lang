@@ -47,12 +47,12 @@ formatError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = l
   in 
      "\n" <> clRed ("No subtype: " <> msg <> ":")
   <> srcLoc
-  <> "\n      " <> clGreen (prettyTy bindSrc got)
-  <> "\n  <:? " <> clGreen (prettyTy bindSrc exp)
+  <> "\n      " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } got)
+  <> "\n  <:? " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } exp)
 
 formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annotation: "
-  <>  "\n  inferred: " <> clGreen (prettyTy (Just bindSrc) inferredTy)
-  <>  "\n  expected: " <> clGreen (prettyTy (Just bindSrc) annTy)
+  <>  "\n  inferred: " <> clGreen (prettyTy (ansiRender { bindSource = Just bindSrc }) inferredTy)
+  <>  "\n  expected: " <> clGreen (prettyTy (ansiRender { bindSource = Just bindSrc }) annTy)
 
 formatScopeError = \case
   ScopeError h -> clRed "Not in scope: "      <> h

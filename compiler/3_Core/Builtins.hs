@@ -7,7 +7,6 @@ import Prim
 import CoreSyn
 import CoreUtils
 import qualified Data.Map.Strict as M
-import qualified Data.IntMap as IM
 import qualified Data.Vector as V
 
 mkExtTy x = [THExt x]

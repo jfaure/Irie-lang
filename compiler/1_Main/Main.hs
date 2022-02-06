@@ -17,6 +17,7 @@ import C
 import Text.Megaparsec hiding (many)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
+import qualified Data.Text.Lazy.IO as TL.IO
 import qualified Data.ByteString.Lazy as BSL.IO
 import qualified Data.Vector as V
 --import qualified Data.IntMap as IM
@@ -149,27 +150,28 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
 
       bindNamePairs = V.zip bindNames judgedBinds
       bindSrc = BindSource _ bindNames _ (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
-      namedBinds showBind bs = (\(nm,j)->clYellow nm <> toS (prettyBind showBind bindSrc j)) <$> bs
+      nameBinds showTerm bs = (\(nm,j) -> (prettyBind ansiRender { bindSource = Just bindSrc , ansiColor = True } showTerm nm j)) <$> bs
 
-  when ("types"  `elem` printPass flags && not (quiet flags)) (T.IO.putStrLn `mapM_` namedBinds False bindNamePairs)
-  when ("core"   `elem` printPass flags && not (quiet flags)) (T.IO.putStrLn `mapM_` namedBinds True  bindNamePairs)
+  when ("types"  `elem` printPass flags && not (quiet flags)) (TL.IO.putStrLn `mapM_` nameBinds False bindNamePairs)
+  when ("core"   `elem` printPass flags && not (quiet flags)) (TL.IO.putStrLn `mapM_` nameBinds True  bindNamePairs)
 
   let handleErrors = (null biunifyErrors && null scopeErrors && null checkErrors) <$ do
-        (T.IO.putStrLn . formatError bindSrc srcInfo) `mapM_` biunifyErrors
-        (T.IO.putStrLn . formatScopeError)            `mapM_` scopeErrors
-        (T.IO.putStrLn . formatCheckError bindSrc)    `mapM_` checkErrors
+        (T.IO.putStrLn  . formatError bindSrc srcInfo) `mapM_` biunifyErrors
+        (T.IO.putStrLn  . formatScopeError)            `mapM_` scopeErrors
+        (TL.IO.putStrLn . formatCheckError bindSrc)    `mapM_` checkErrors
   coreOK <- handleErrors
 
   let simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
           simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
       judgedFinal = JudgedModule _modIName modNm nArgs bindNames a b simpleBinds
-  when ("simple" `elem` printPass flags) (T.IO.putStrLn `mapM_` namedBinds True (V.zip bindNames simpleBinds))
+--when ("simple" `elem` printPass flags) (TL.IO.putStrLn `mapM_` namedBinds True simpleBinds)-- (V.zip bindNames simpleBinds))
 
   -- half-compiled modules should also be cached (their names were pre-added to the resolver)
   when (doCacheCore && {-coreOK &&-} not (noCache flags)) $ do
     DB.encodeFile resolverCacheFName newResolver
     cacheFile fName judgedFinal
-  T.IO.putStrLn $ show fName <> " " <> "(" <> show modIName <> ") " <> (if coreOK then clGreen "OK" else clRed "KO")
+  T.IO.putStrLn $ show fName <> " " <> "(" <> show modIName <> ") "
+    <> (if coreOK then "OK" else "KO")
   pure (newResolver , judgedFinal)
 
 ---------------------------------
