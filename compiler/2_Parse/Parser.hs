@@ -1,14 +1,13 @@
 module Parser (parseModule , parseMixFixDef) where
--- Parsing is responsible for converting all text names to int indexes into various vectors
--- This pass is designed to work without knowledge of imported modules
+-- Parsing converts all text names to ints and doesn't require importing or reading other modules
 --   1. VBind:   top-level let bindings
 --   2. VLocal:  lambda-bound arguments
 --   3. VExtern: out-ofscope HNames inamed now and resolved later
--- * name scope is checked and free variables are noted
+-- * name scope is checked and free variables are noted:
 -- * we cannot resolve externs (incl forward refs) or mixfixes yet.
 --
 -- Note: add corresponding bind immediately after adding an IName (can resort to recursiveDo)
--- This module is split into 3 parts: 1.Module building and parser state 2.Lexing 3.Parsing
+-- 3 parts: 1.Module builder and parse state 2.Lexing 3.Parsing
 
 import Prim
 import ParseSyntax as P
@@ -105,7 +104,7 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
       Just n  -> pure $ Just $ VLocal n
       Nothing -> case asum $ (M.!? h) <$> prevFrames of
         Just upStackArg -> do
-          moduleWIP .parseDetails .freeVars %= (`setBit` upStackArg)
+          moduleWIP .parseDetails . freeVars %= (`setBit` upStackArg)
           pure $ Just $ VLocal upStackArg
         Nothing -> pure Nothing
   tryLet = VBind  <$> (asum $ (M.lookup h) `map` (p ^. hNameLocals))
@@ -114,26 +113,27 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
     Just i  -> pure i
     Nothing -> VExtern <$> addUnknownName h
 
--- function defs add a layer of lambda-bound arguments , same for let
-getFreeVars = do
-  free <- use (moduleWIP . parseDetails . freeVars)
-  ars  <- fromJust . head <$> use (moduleWIP . parseDetails . hNameArgs)
-  let free' = foldr (flip clearBit) free (M.elems ars)
-  moduleWIP . parseDetails . freeVars .= free'
-  pure free'
 
 -- The names nest tracks the scope of local definitions
--- The defstack searches for mutual binds
-newLetNest p = let
-  newNameNest p = (moduleWIP . parseDetails . hNameLocals %= (M.empty :))
-          *> p <* (moduleWIP . parseDetails . hNameLocals %= drop 1)
---newDefStack p = (defStack <<.= 0) >>= \sv -> p <* (defStack .= sv)
-  in newNameNest p
+newLetNest p = (moduleWIP . parseDetails . hNameLocals %= (M.empty :))
+               *> p <* (moduleWIP . parseDetails . hNameLocals %= drop 1)
  
+getFreeVars = use (moduleWIP . parseDetails . freeVars)
+
+-- Add an argMap to the argMaps stack and compute freeVars when this new nest returns
+newArgNest :: Parser a -> Parser (a , FreeVars)
 newArgNest p = let
   incArgNest = moduleWIP . parseDetails . hNameArgs %= (M.empty :)
   decArgNest = moduleWIP . parseDetails . hNameArgs %= drop 1
-  in incArgNest *> p <* decArgNest
+  in do
+    incArgNest
+    ret <- p
+    -- freeVars is freeVars minus args introduced at this nest
+    ourArgs <- fromJust . head <$> use (moduleWIP . parseDetails . hNameArgs)
+    free    <- moduleWIP . parseDetails . freeVars <%= (\oldFree -> foldr (flip clearBit) oldFree (M.elems ourArgs))
+    decArgNest
+    pure (ret , free)
+
 withTmpReserved ms p = (tmpReserved %= (ms :)) *> p <* (tmpReserved %= drop 1)
 
 lookupImplicit :: Text -> Parser IName -- implicit args
@@ -152,11 +152,11 @@ lookupImplicit h = do
 -- Save newline offsets so we can track source locations using a single Int
 addNewlineOffset :: Parser ()
 addNewlineOffset = getOffset >>= \o -> moduleWIP . parseDetails . newLines %= (o - 1 :)
-isHSpace x = isSpace x && x /= '\n' -- isHSpace , but handles all unicode spaces
+isHSpace x = isSpace x && x /= '\n' && x /= '\t' -- isHSpace , but handles all unicode spaces
+tabsc :: Parser () = L.space (void $ takeWhile1P (Just "tabs") (== '\t')) lineComment blockComment
 sc  :: Parser () = L.space (void $ takeWhile1P (Just "white space") isHSpace) lineComment blockComment
 scn :: Parser () = let
-  space1 = sc *> some endLine *> space
-  space  = skipMany (sc *> endLine)
+  space1 = sc *> some endLine *> skipMany (sc *> endLine)
   in L.space space1 lineComment blockComment
 endLine = lexeme (single '\n') <* addNewlineOffset
 lineComment = L.skipLineComment "--" -- <* addNewlineOffset
@@ -329,7 +329,7 @@ patBind = do
   -- ! depends on the bindNames being added in the same order as the lenses are added !
   mapM_ (\e -> addBind (FunBind $ FnDef "patBind" True LetOrRec Nothing [] 0 [FnMatch [] [] e] Nothing)) (body : lensedTTs)
 
-funBind isTop letRecT = lexeme pMixfixWords >>= \case
+funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
   [Just nm] -> VBind <$> funBind' isTop letRecT nm Nothing (symbol nm *> many (lexeme (singlePattern isTop)))
   mfdefHNames -> let
     hNm = mixFix2Nm mfdefHNames
@@ -346,46 +346,38 @@ funBind isTop letRecT = lexeme pMixfixWords >>= \case
 
 -- parse a function definition (given a possible mixfix pattern parsed in the type annotation)
 funBind' :: Bool -> LetRecT -> Text -> Maybe MixfixDef -> Parser [Pattern] -> Parser IName
-funBind' isTop letRecT nm mfDef pMFArgs = (<?> "function body") $ newArgNest $ mdo
+funBind' isTop letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
   iNm <- addBindName nm -- handle recursive references
     <* addBind (FunBind $ FnDef nm isTop letRecT mfDef (implicits ++ pi) free eqns ty)
-  ars <- many (singlePattern False)
-  ann <- tyAnn
-  let (implicits , ty) = case ann of { Just (i,t) -> (i,Just t) ; _ -> ([],Nothing) }
-  (pi , eqns) <- getPiBounds $ choice
-    [ (:[]) <$> fnMatch (pure ars) (reserved "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
-    , case (ars , ann) of
-        ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
-        (x  , Just{})  -> fail "TODO no parser for: fn args followed by type signature"
-        (x  , Nothing) -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
-    ]
-  free <- getFreeVars
+  ((implicits , pi , eqns , ty) , free) <- newArgNest $ do
+    ars <- many (singlePattern False)
+    ann <- tyAnn
+    let (implicits , ty) = case ann of { Just (i,t) -> (i,Just t) ; _ -> ([],Nothing) }
+    (pi , eqns) <- getPiBounds $ choice
+      [ (:[]) <$> fnMatch (pure ars) (reserved "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
+      , case (ars , ann) of
+          ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
+          (x  , Just{})  -> fail "TODO no parser for: fn args followed by type signature"
+          (x  , Nothing) -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
+      ]
+    pure (implicits , pi , eqns , ty)
   pure iNm
 
 tyAnn :: Parser (Maybe ([ImplicitArg] , TT)) = let
     implicitArg = (,) <$> (iden >>= addArgName) <*> optional (reservedChar ':' *> tt)
-  in newArgNest $ do
+  in {-newArgNest $-} do
   optional (reserved "::" *> bracesn (implicitArg `sepBy` reserved ";")) >>= \case
     Just implicits -> fmap (implicits,) <$> optional (reservedChar ':' *> tt)
     Nothing        -> fmap ([],)        <$> optional (reservedChar ':' *> tt)
 
--- TODO sadly will have to generalise this using levels anyway
---lambda = reservedChar '\\' *> (Var . VBind <$> addAnonBindName) <* do
---  newArgNest $ mdo
---    addBind $ FunBind $ FnDef "lambda" Let Nothing [] free eqns Nothing
---    eqns <- (:[]) <$> fnMatch (many pattern) (reserved "=>")
---    free <- getFreeVars
---    pure ()
-
-lambda = reservedChar '\\' *> do
-  newArgNest $ do
-    eqns <- (:[]) <$> fnMatch (many (singlePattern False)) (reserved "=>")
-    free <- getFreeVars
-    pure $ Abs $ FunBind $ FnDef "lambda" False LetOrRec Nothing [] free eqns Nothing
+lambda = (reservedChar '\\' *>) $ do
+  (eqns , free) <- newArgNest $ (:[]) <$> fnMatch (many (singlePattern False)) (reserved "=>")
+  pure $ Abs $ FunBind $ FnDef "lambda" False LetOrRec Nothing [] free eqns Nothing
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ?
-  let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case") *> newArgNest (fnMatch (many (singlePattern False)) (reserved "=>"))
+  let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case")
+        *> (fnMatch (many (singlePattern False)) (reserved "=>"))
       normalFnMatch = FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
   in hoistLambda <|> normalFnMatch
 
@@ -394,8 +386,9 @@ catchUnderscoreAbs :: TT -> Parser TT
 catchUnderscoreAbs tt = use (moduleWIP . parseDetails . underscoreArgs) >>= \underscores ->
   if 0 == underscores then pure tt else
   let eqns = [FnMatch [] (PArg <$> bitSet2IntList underscores) tt]
-  in Abs (FunBind $ FnDef "_abs" False LetOrRec Nothing [] 0 eqns Nothing)
-  <$ (moduleWIP . parseDetails . underscoreArgs .= 0)
+  in do
+    free <- getFreeVars -- Freevars are exactly those in the pares state, since we introduced none of them at this new Abs
+    Abs (FunBind $ FnDef "_abs" False LetOrRec Nothing [] free eqns Nothing) <$ (moduleWIP . parseDetails . underscoreArgs .= 0)
 
 -- TT parser
 ttArg , tt :: Parser TT
@@ -498,13 +491,14 @@ ttArg , tt :: Parser TT
       _  -> indentedItems ref scn doStmt (void (char ')'))
 
   caseSplits = let
-    split = newArgNest $ do
+    split = do
       svIndent
       lName <- idenNo_ >>= newSLabel
-      pats  <- many (singlePattern False)
-      reserved "=>"
-      splitFn <- tt
-      free    <- getFreeVars
+      ((pats , splitFn) , free) <- newArgNest $ do
+        pats  <- many (singlePattern False)
+        reserved "=>"
+        splitFn <- tt
+        pure (pats , splitFn)
       pure (lName , free , pats , splitFn)
     in do
       ref <- use indent <* scn
@@ -532,7 +526,7 @@ ttArg , tt :: Parser TT
       indentedItems ref scn (funBind False letRecT) (reserved "in") <* reserved "in"
       tt
     in do
-      letStart <- use indent -- <* scn
+      letStart <- use indent
       inExpr <- (reserved "let" *> pletBinds letStart Let)
             <|> (reserved "rec" *> pletBinds letStart Rec)
       pure inExpr

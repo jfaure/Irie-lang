@@ -44,7 +44,7 @@ formatError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = l
       in if lineIdx < 0
          then " <no source info>"
          else "\n" <> show lineIdx <> ":" <> show col <> ": \"" <> T.takeWhile (/= '\n') (T.drop o text) <> "\""
-  in 
+  in
      "\n" <> clRed ("No subtype: " <> msg <> ":")
   <> srcLoc
   <> "\n      " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } got)
@@ -67,9 +67,10 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
   in runST $ do
     deBruijn' <- MV.new 0
     wip'      <- MV.replicate nBinds WIP
-    bis'      <- MV.new nArgs
+    bis'      <- MV.new 0
+    argVars'  <- MV.new nArgs
     biEqui'   <- MV.replicate nBinds (complement 0)
-    [0 .. nArgs - 1] `forM_` \i -> MV.write bis' i (BiSub [] [])
+--  [0 .. nArgs - 1] `forM_` \i -> MV.write bis' i (BiSub [] [])
 
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
       { _pBinds   = pBinds'
@@ -81,29 +82,23 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
       , _scopeFails = []
       , _checkFails = []
 
-      , _lvl      = 0
-      , _srcRefs  = source
-      , _tmpFails = []
+      , _argVars  = argVars'
+      , _seenVars = 0
       , _bindWIP  = 0
-      , _blen     = nArgs
+      , _tmpFails = []
+      , _blen     = 0 --nArgs
       , _bis      = bis'
-      , _deBruijn = deBruijn'
       , _quants   = 0
-      , _liftMu   = Nothing
-      , _mus      = 0
-      , _muEqui   = mempty
-      , _muNest   = mempty
       , _biEqui   = biEqui'
       , _coOccurs = _
       , _escapedVars= 0
-      , _genedVars  = 0
-      , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
-      , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
+      , _recVars = 0
+--    , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
+--    , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
 
     bis''    <- V.unsafeFreeze (st ^. bis)
     wip''    <- V.unsafeFreeze (st ^. wip)
-    let domain'' = V.take nArgs bis''
     pure $ (JudgedModule modIName modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
@@ -114,33 +109,27 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
   BindOK e -> pure e
   Mutual e freeVs isRec tvar tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) [THVar tvar]) -- pure e
 
-  Guard mutuals ars tvar -> do
+  Guard mutuals tvar -> do
     this <- use bindWIP
     when (this /= bindINm) $ do
-      MV.write wip' bindINm (Guard (this:mutuals) ars tvar)
-      MV.modify wip' (\(Guard ms ars tv) -> Guard (bindINm:ms) ars tv) this
+      MV.write wip' bindINm (Guard (this:mutuals) tvar)
+      MV.modify wip' (\(Guard ms tv) -> Guard (bindINm:ms) tv) this
     pure $ Core (Var (VQBind $ mkQName modINm bindINm)) [THVar tvar]
 
   WIP -> use wip >>= \wip' -> do
+    abs   <- (V.! bindINm) <$> use pBinds
     svwip <- bindWIP <<.= bindINm
-    startTVar <- use blen
-    P.FunBind (P.FnDef hNm isTop letRecT mf implicits freeVars matches tyAnn) <- (V.! bindINm) <$> use pBinds
-    let (mainArgs , mainArgTys , tt) = matches2TT False matches
-        args = sort $ (map fst implicits) ++ mainArgs -- TODO don't sort ; parser should always give sorted argnames
+    let freeVars = P.fnFreeVars (P.fnDef abs)
+        tyAnn    = P.fnSig (P.fnDef abs)
+    freeTVars <- use argVars >>= \avs -> bitSet2IntList freeVars `forM` \i -> MV.read avs i
+    svEscapes <- escapedVars <<%= (.|. intList2BitSet freeTVars)
 
-    svEscapes <- escapedVars <<%= (.|. freeVars)
-    ((tvarIdx , jb , ms) , resultTy) <- withBiSubs 1 $ \idx -> do
-      MV.write wip' bindINm (Guard [] args idx)
-      expr <- infer tt
-      let arTys = (\x->[THVar x]) <$> args
-          jb = case expr of
-            Core x ty -> let fnTy = prependArrowArgs arTys ty in case args of
-              []  -> Core x ty
-              ars -> Core (Abs (zip ars arTys) emptyBitSet x fnTy) fnTy
-            t -> t
+    (tvarIdx , jb , ms) <- freshBiSubs 1 >>= \[idx] -> do
+      MV.write wip' bindINm (Guard [] idx)
+      expr <- infer (P.Abs abs)
       bindWIP .= svwip
-      Guard ms _ars tVar <- MV.read wip' bindINm
-      pure (idx , jb , ms)
+      Guard ms tVar <- MV.read wip' bindINm
+      pure (idx , expr , ms)
 
     -- get the Maybe type annotation
     typeAnn <- case tyAnn of
@@ -150,23 +139,27 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
         t       -> pure t
 
     MV.write wip' bindINm (Mutual jb freeVars False tvarIdx typeAnn)
-    if minimum (bindINm:ms) == bindINm then fromJust . head <$> generaliseBinds svEscapes bindINm ms else pure jb
+    if minimum (bindINm:ms) /= bindINm then pure jb
+    else (fromJust . head <$> generaliseBinds svEscapes bindINm ms)
+      -- 'need' to wait until our inference stack is completely unrolled to clearbisubs, in case any of them were let bound
+--    <* (use escapedVars >>= \e -> use bindWIP >>= \this -> when (e == 0 && bindINm == this) clearBiSubs))
 
 generaliseBinds :: Integer -> Int -> [Int] -> TCEnv s [Expr]
 generaliseBinds svEscapes i ms = use wip >>= \wip' -> (i : ms) `forM` \m ->
   MV.read wip' m >>= \(Mutual naiveExpr freeVs isRec recTVar annotation) -> do
   inferred <- case naiveExpr of
-    Core expr coreTy -> do
+    Core expr coreTy -> Core expr <$> do -- generalise the type
       (ty , free) <- case expr of
         Abs ars free x fnTy -> pure (coreTy , free)
-        _ -> pure (coreTy , emptyBitSet)
-      -- check for recursive type
+        _ -> pure (coreTy , freeVs)
+      -- check for recursive type: if this binding : τ was used within itself , something bisubed with -τ
       use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
         [] -> BiEQ <$ MV.write v recTVar (BiSub ty [])
-        t  -> biSub ty [THVar recTVar] -- ! recursive expression
+        t  -> bisub ty [THVar recTVar] -- ! this binding is recursive (maybe mutually)
       when global_debug $ use bis >>= \b -> [0..MV.length b -1] `forM_`
         \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
-      Core expr <$> generalise recTVar
+      escaped <- use escapedVars
+      generalise escaped recTVar <* when (free == 0) (clearBiSubs recTVar)
     t -> pure t
   escapedVars .= svEscapes
   done <- case (annotation , inferred) of
@@ -191,11 +184,16 @@ checkAnnotation annTy inferredTy {-mainArgTys argTys-} = do
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
+ addArgTVars args = use argVars >>= \argPerms -> let
+    nArgs = length args
+    mkArgVars = (\i -> [THVar i])
+   in map mkArgVars <$> (freshBiSubs nArgs >>= \argTVars -> zipWithM (\a v -> v <$ MV.write argPerms a v) args argTVars)
+
   -- App is the only place typechecking can fail
   -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
- biUnifyApp fTy argTys = do
-   (biret , [retV]) <- withBiSubs 1 (\idx -> biSub_ fTy (prependArrowArgs argTys [THVar idx]))
-   pure $ (biret , [THVar $ retV])
+ biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] -> do
+   biret <- bisub fTy (prependArrowArgs argTys [THVar retV])
+   pure (biret , [THVar retV])
  retCast rc tt = case rc of { BiEQ -> tt ; c -> case tt of { Core f ty -> Core (Cast c f) ty } }
 
  checkFails srcOff x = use tmpFails >>= \case
@@ -236,15 +234,15 @@ infer = let
    Core e ty -> Core (Var $ VQBind $ mkQName modINm b) ty -- don't inline the body ! (
    t -> t
 
- judgeLabel qNameL exprs = use thisMod <&> \modINm -> let
+ judgeLabel qNameL exprs = let
    labTy = [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
    in Core (Label qNameL exprs) [THTyCon $ THSumTy $ IM.singleton (qName2Key qNameL) labTy]
 
  in \case
   P.WildCard -> pure $ Core Question []
   P.Var v -> case v of -- vars : lookup in appropriate environment
-    P.VLocal l     -> pure $ Core (Var (VArg l)) [THVar l]
-    P.VBind b      -> judgeLocalBind b -- polytype env
+    P.VLocal l     -> use argVars >>= (`MV.read` l) <&> \t -> Core (Var (VArg l)) [THVar t] -- [THVar l]
+    P.VBind b      -> judgeLocalBind b
     P.VExtern i    -> use thisMod >>= \mod -> use externs >>= \e -> handleExtern (readParseExtern mod e i)
 
   P.Foreign i tt   -> infer tt <&> \case
@@ -254,22 +252,17 @@ infer = let
     PoisonExpr -> PoisonExpr
     ty         -> Core (Var (VForeign i)) (fromMaybe (error $ "not a type: " <> show ty) (tyExpr ty))
 
-  P.Abs top -> let
-    -- unlike topBind, don't bother generalising the type
-      getTT (P.FunBind (P.FnDef hNm False letRecT mf implicits freeVars matches tyAnn)) = let
-        (mainArgs , mainArgTys , tt) = matches2TT False matches
-        args = {-sort $-} (map fst implicits) ++ mainArgs -- TODO don't sort !
-        in (tt , args)
-      (tt , args) = getTT top
+  P.Abs (P.FunBind (P.FnDef hNm isTop letRecT mf implicits freeVars matches tyAnn)) -> let
+    (mainArgs , mainArgTys , tt) = matches2TT False matches
+    args = (fst <$> implicits) ++ mainArgs
     in do
-    -- TODO args should always be consecutive !!
+    argTVars  <- addArgTVars args
     infer tt <&> \case
       Core x ty -> case args of
         []  -> Core x ty
         args -> let
-          argVars = (\x->[THVar x]) <$> args
-          fnTy    = prependArrowArgs argVars ty
-          in Core (Abs (zip args argVars) emptyBitSet x fnTy) fnTy
+          fnTy    = prependArrowArgs argTVars ty
+          in Core (Abs (zip args argTVars) freeVars x fnTy) fnTy
       t -> t
 
   P.App fTT argsTT -> infer fTT >>= \f -> (infer `mapM` argsTT) >>= inferApp (-1) f
@@ -277,7 +270,7 @@ infer = let
     inferExprApp srcOff = \case
       ExprApp fE [] -> panic "impossible: empty expr App"
       ExprApp fE argsE -> inferExprApp srcOff fE >>= \case
-        Core (Label iLabel ars) _ -> (inferExprApp srcOff `mapM`  argsE) >>= judgeLabel iLabel
+        Core (Label iLabel ars) _ -> (inferExprApp srcOff `mapM`  argsE) <&> judgeLabel iLabel
         f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
       QVar q -> use thisMod >>= \modIName -> use externs >>= \e ->
         handleExtern (readQParseExtern modIName e (modName q) (unQName q))
@@ -285,9 +278,9 @@ infer = let
       core -> pure core
     in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
 
-  P.Cons construct -> use thisMod >>= \modINm -> use externs >>= \ext -> do
+  P.Cons construct -> use externs >>= \ext -> do
     let (fieldsLocal , rawTTs) = unzip construct
-        fields = qName2Key . readField ext {-mkQName modINm-} <$> fieldsLocal
+        fields = qName2Key . readField ext <$> fieldsLocal
     exprs <- infer `mapM` rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) ; x -> error $ show x }) <$> exprs
         poison = (\case { PoisonExpr -> True ; _ -> False }) `any` exprs
@@ -296,15 +289,15 @@ infer = let
       then PoisonExpr
       else Core (Cons (IM.fromList $ zip fields tts)) [THTyCon $ THProduct (IM.fromListWith mkFieldCol $ zip fields tys)]
 
-  P.TTLens o tt fieldsLocal maybeSet -> use thisMod >>= \modINm -> use externs >>= \ext -> infer tt >>= \record -> let
-      fields = readField ext {-mkQName modINm-} <$> fieldsLocal
+  P.TTLens o tt fieldsLocal maybeSet -> use externs >>= \ext -> infer tt >>= \record -> let
+      fields = readField ext <$> fieldsLocal
       recordTy = tyOfExpr record
       mkExpected :: Type -> Type
       mkExpected dest = foldr (\fName ty -> [THTyCon $ THProduct (IM.singleton (qName2Key fName) ty)]) dest fields
     in (>>= checkFails o) $ case record of
     e@(Core f gotTy) -> case maybeSet of
-      P.LensGet    -> withBiSubs 1 (\ix -> biSub recordTy (mkExpected [THVar ix]))
-        <&> \(cast , [retTy]) -> Core (TTLens (Cast cast f) fields LensGet) [THVar retTy]
+      P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected [THVar i])
+        <&> \cast -> Core (TTLens (Cast cast f) fields LensGet) [THVar i]
 
       P.LensSet x  -> infer x <&> \case -- LeafTy -> Record -> Record & { path : LeafTy }
         new@(Core newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (gotTy ++ mkExpected newLeafTy)
@@ -312,14 +305,14 @@ infer = let
 
       P.LensOver x -> infer x >>= \fn -> do
          let [singleField] = fields
-         ((ac , rc , outT , rT) , {-[tyOld, tyNew, output]-} _) <- withBiSubs 3 $ \ ix -> let
-           inT = [THVar ix] ; outT = [THVar (ix+1)] ; rT  = THVar (ix + 2)
+         (ac , rc , outT , rT) <- freshBiSubs 3 >>= \[inI , outI , rI] -> let
+           inT = [THVar inI] ; outT = [THVar outI] ; rT  = THVar rI
            in do -- need 3 fresh TVars since we cannot assume anything about the "fn" or the "record" type
-           argCast <- biSub (tyOfExpr fn) [THTyCon $ THArrow [inT] outT] <&> \case
+           argCast <- bisub (tyOfExpr fn) [THTyCon $ THArrow [inT] outT] <&> \case
              CastApp [argCast] pap BiEQ  -> argCast -- pap ?
              BiEQ                        -> BiEQ
            -- note. the typesystem does not atm support quantifying over field presences
-           rCast <- biSub recordTy (rT : mkExpected inT)
+           rCast <- bisub recordTy (rT : mkExpected inT)
            pure (argCast , rCast , outT , rT)
 --       traceShowM (ac , rc , outT , rT)
 
@@ -334,15 +327,15 @@ infer = let
     PoisonExpr -> pure PoisonExpr
     t -> error $ "record type must be a term: " <> show t
 
-  P.Label localL tts -> use externs >>= \ext -> (infer `mapM` tts) >>= judgeLabel (readLabel ext localL)
+  P.Label localL tts -> use externs >>= \ext -> (infer `mapM` tts) <&> judgeLabel (readLabel ext localL)
 
   -- Sumtype declaration
-  P.TySum alts -> use thisMod >>= \modINm -> use externs >>= \ext -> do -- alts are function types
+  P.TySum alts -> use externs >>= \ext -> do -- alts are function types
     -- 1. Check against ann (retTypes must all subsume the signature)
     -- 2. Create sigma type from the arguments
     -- 3. Create proof terms from the return types
-    let go (l,ty,Nothing)      = pure (qName2Key (readLabel ext l {- mkQName modINm l-}) , [])
-        go (l,ty,Just (impls,gadt)) = (qName2Key (readLabel ext l {- mkQName modINm l-}),) <$> (mkSigma (map fst impls) =<< infer ty)
+    let go (l,ty,Nothing)      = pure (qName2Key (readLabel ext l) , [])
+        go (l,ty,Just (impls,gadt)) = (qName2Key (readLabel ext l),) <$> (mkSigma (map fst impls) =<< infer ty)
         mkSigma impls ty = do
           ty' <- expr2Ty judgeBind ty
           pure $ case impls of
@@ -358,24 +351,24 @@ infer = let
         dataTy = foldl1 mergeTypes $ returnTypes
     pure $ Ty sumTy
 
-  P.Match alts catchAll -> use thisMod >>= \modINm -> use externs >>= \ext -> let
+  P.Match alts catchAll -> use externs >>= \ext -> let
     -- * desugar all patterns in the alt fns
     -- * mk tuples out of those abstractions to represent the sum type
     -- * ret type is a join of all the abs ret tys
     desugarFns = \(lname , free , pats , tt) -> let
       (args , _ , e) = patterns2TT False pats tt
-      in (qName2Key (readLabel ext lname {-mkQName modINm lname-}) , args , _ , e)
+      in (qName2Key (readLabel ext lname) , args , _ , e)
     (labels , args , _ , exprs) = unzip4 $ (desugarFns <$> alts)
     in do
+    argTVars <- addArgTVars `mapM` args
     alts <- infer `mapM` exprs
     let poison = (\case { PoisonExpr -> True ; _ -> False }) `any` alts
         altTys  = tyOfExpr <$> alts
         retTy   = foldl mergeTypes [] altTys
-        altTys' = map (\altArgs -> [THTyCon$ THTuple $ V.fromList (arg2ty <$> altArgs)]) args
+        altTys' = map (\argTVars -> [THTyCon$ THTuple $ V.fromList argTVars]) argTVars
         scrutTy = [THTyCon $ THSumTy $ IM.fromList $ zip labels altTys']
         matchTy = [mkTyArrow [scrutTy] retTy]
-        arg2ty i= [THVar i]
-        argAndTys  = map (map (\x -> (x , arg2ty x))) args
+        argAndTys  = zipWith zip args argTVars
         altsMap = let
           addAbs ty (Core t _) args = Core (Abs args 0 t []) ty
           addAbs ty PoisonExpr _ = PoisonExpr

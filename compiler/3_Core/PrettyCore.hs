@@ -11,6 +11,9 @@ import Prettyprinter
 import Prettyprinter.Render.Util.SimpleDocTree
 import Prettyprinter.Internal as P
 
+-- HTML links:
+-- <a href="#Marker></a>
+-- <h1 id="Marker">There's a link to here!</h1>
 data Annotation
  = AArg IName | ABindName IName | AQBindName  QName | AQLabelName QName | AQFieldName QName -- Names
  | AInstr | ALiteral | AType  | AAbs | AKeyWord
@@ -102,7 +105,11 @@ pTy :: Type -> Doc Annotation
 pTy = \case
   [] -> "_"
   [x] -> pTyHead x
-  ts  -> parens $ hsep (punctuate " & " $ pTyHead <$> ts)
+  ts  -> parens $ hsep (punctuate " &" (pTyHeadParens <$> ts))
+
+pTyHeadParens t = case t of
+  THTyCon THArrow{} -> parens (pTyHead t)
+  _ -> pTyHead t
 
 pTyHead :: TyHead -> Doc Annotation
 pTyHead = \case
@@ -118,14 +125,20 @@ pTyHead = \case
 
   THTyCon t -> case t of
     THArrow [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> prettyTy ansiRender ret <> ")"
-    THArrow args ret -> parens (hsep $ punctuate " →" (pTy <$> (args <> [ret])))
+    THArrow args ret -> let
+      pTHArrowArg t = case t of -- only add parens if necessary
+        [THTyCon THArrow{}] -> parens (pTy t)
+        _ -> pTy t
+--      [_] -> pTy t
+--      _   -> parens (pTy t)
+      in (hsep $ punctuate " →" ((pTHArrowArg <$> args) <> [pTy ret]))
     THSumTy l -> let
       prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> " : " <> pTy ty
-      in enclose "[" "]" (hsep $ punctuate " | " (prettyLabel <$> IM.toList l))
+      in enclose "[" "]" (hsep $ punctuate " |" (prettyLabel <$> IM.toList l))
     THProduct l -> let
       prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy ty
-      in enclose "{" "}" (hsep $ punctuate " , " (prettyField <$> IM.toList l))
-    THTuple  l  -> enclose "{" "}" (hsep $ punctuate " , " (pTy <$> V.toList l))
+      in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> IM.toList l))
+    THTuple  l  -> enclose "{" "}" (hsep $ punctuate " ," (pTy <$> V.toList l))
     THArray    t -> "Array " <> viaShow t
 
   THBi i t -> "∏ " <> (hsep $ pretty . number2CapLetter <$> [0..i-1]) <> " → " <> pTy t
@@ -137,7 +150,7 @@ pTyHead = \case
 
 pBind nm showTerm bind = pretty nm <> " = " <> case bind of
   Checking m e g ty     -> "CHECKING: " <> viaShow m <> viaShow e <> viaShow g <> " : " <> viaShow ty
-  Guard m ars tvar      -> "GUARD : "   <> viaShow m <> viaShow ars <> viaShow tvar
+  Guard m tvar      -> "GUARD : "   <> viaShow m <> viaShow tvar
   Mutual m free isRec tvar tyAnn -> "MUTUAL: " <> viaShow m <> viaShow isRec <> viaShow tvar <> viaShow tyAnn
   WIP -> "WIP"
   BindOK expr -> if showTerm then pExpr expr else pExprType expr
@@ -171,7 +184,7 @@ pTerm = let
   Lit     l -> annotate ALiteral (viaShow l)
   Abs ars free term ty -> let
     prettyArg (i , ty) = viaShow i
-    prettyFree x = if x == 0 then "" else enclose "Γ(" ")" (viaShow (bitSet2IntList x))
+    prettyFree x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
     in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFree free <> " => " <> pTerm term
 --   <> ": " <> annotate AType (pTy ty)
   App f args -> parens (pTerm f <+> sep (pTerm <$> args))
@@ -185,7 +198,7 @@ pTerm = let
   Label   l t    -> prettyLabel l <> "@" <> hsep (parens . pExpr <$> t)
 --RecLabel l i t -> prettyLabel l <> parens (viaShow i) <> "@" <> hsep (parens . pExpr <$> t)
   Match caseTy ts d -> let
-    showLabel l t = indent 2 $ prettyLabel (QName l) <> " => " <> pExpr t
+    showLabel l t = indent 2 $ prettyLabel (QName l) <> softline <> indent 2 (pExpr t)
     in annotate AKeyWord "\\case " <> (" : " <> annotate AType (pTy caseTy)) <> hardline
       <> vsep (punctuate "|" (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
 --    <> maybe "%Default" pExpr d <> hardline

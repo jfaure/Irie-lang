@@ -1,4 +1,5 @@
 -- main = Text >> Parse >> Core >> STG >> LLVM
+module Main where
 import CmdLine
 import qualified ParseSyntax as P
 import Parser
@@ -20,7 +21,6 @@ import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy.IO as TL.IO
 import qualified Data.ByteString.Lazy as BSL.IO
 import qualified Data.Vector as V
---import qualified Data.IntMap as IM
 import qualified Data.Map    as M
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Binary as DB
@@ -34,7 +34,7 @@ objPath      = ["./"]
 objDir       = ".irie-obj/@" -- prefix '@' to files in there
 getCachePath fName = objDir <> map (\case { '/' -> '%' ; x -> x} ) fName
 resolverCacheFName = getCachePath "resolver"
-doCacheCore  = False --True
+doCacheCore  = False--True
 
 deriving instance Generic GlobalResolver
 deriving instance Generic Externs
@@ -43,7 +43,8 @@ instance DB.Binary GlobalResolver
 instance DB.Binary Externs
 instance DB.Binary ModDependencies
 
--- for use in ghci
+-- For use in GHCI; It's convenient to run tests without a full recompile
+-- This is all dead code so should be removed at linktime
 demoFile   = "demo.ii"
 sh         = main' . Data.List.words
 shL        = main' . (["-p" , "llvm-hs"] ++ ) . Data.List.words
@@ -55,16 +56,15 @@ opt        = sh $ demoFile <> " -p simple"
 emitC      = sh $ demoFile <> " -p C"
 
 main = getArgs >>= main'
-main' args = parseCmdLine args >>= \cmdLine ->
+main' args = parseCmdLine args >>= \cmdLine -> do
   when ("args" `elem` printPass cmdLine) (print cmdLine)
-  *> case files cmdLine of
-    []  -> replCore cmdLine
-    av  -> do
-      exists   <- doesFileExist resolverCacheFName
-      resolver <- if doCacheCore && exists
-        then DB.decodeFile resolverCacheFName :: IO GlobalResolver
-        else pure primResolver
-      av `forM_` doFileCached cmdLine True resolver 0
+  resolverExists <- doesFileExist resolverCacheFName
+  resolver       <- if doCacheCore && resolverExists
+    then DB.decodeFile resolverCacheFName :: IO GlobalResolver
+    else pure primResolver
+  [strings cmdLine] `forM_` \e -> text2Core cmdLine Nothing resolver 0 "CmdLineBinding" (toS e) >>= handleJudgedModule
+  files cmdLine `forM_` doFileCached cmdLine True resolver 0
+  when (repl cmdLine || null (files cmdLine) && null (strings cmdLine)) (replCore cmdLine)
 
 type CachedData = JudgedModule
 decodeCoreFile :: FilePath -> IO CachedData       = DB.decodeFile
@@ -75,7 +75,7 @@ doFileCached :: CmdLine -> Bool -> GlobalResolver -> ModDeps -> FilePath -> IO (
 doFileCached flags isMain resolver depStack fName = let
   cached            = getCachePath fName
   isCachedFileFresh = (<) <$> getModificationTime fName <*> getModificationTime cached
-  go resolver modNm = T.IO.readFile fName >>= text2Core flags modNm resolver depStack fName
+  go resolver modNm = T.IO.readFile fName >>= text2Core flags modNm resolver depStack fName >>= handleJudgedModule
   go' resolver = go resolver Nothing
   didIt = modNameMap resolver M.!? toS fName
   in
@@ -126,12 +126,13 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
 
   newResolver = addModule2Resolver tmpResolver isRecompile modIName (T.pack fName)
          (V.zip bindNames (bind2Expr <$> judgedBinds)) labelNames (iMap2Vector fieldMap) labelMap fieldMap modDeps
-  in (judgedModule , newResolver , exts , nArgs , errors , srcInfo)
+  in (flags , fName , judgedModule , newResolver , exts , errors , srcInfo)
 
--- Just moduleIName indicates this module was already cached, so don't allocate a new module iname for it
+-- Parse , judge , simplify a module (depending on cmdline flags)
 text2Core :: CmdLine -> Maybe OldCachedModule -> GlobalResolver -> ModDeps -> FilePath -> Text
-  -> IO (GlobalResolver , JudgedModule)
+  -> IO (CmdLine, [Char], JudgedModule, GlobalResolver, Externs, TCErrors, Maybe SrcInfo)
 text2Core flags maybeOldModule resolver' depStack fName progText = do
+  -- Just moduleIName indicates this module was already cached, so don't allocate a new module iname for it
   let modIName = maybe (modCount resolver' {-modResolver-}) oldModuleIName maybeOldModule
       resolver = if isJust maybeOldModule then resolver' else addModName modIName (T.pack fName) resolver'
   when (testBit depStack modIName) (error $ "Import loop: " <> show ((modNamesV resolver' V.!) <$> bitSet2IntList depStack))
@@ -139,19 +140,20 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
   parsed <- case parseModule fName progText of
     Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
     Right r -> pure r
-  when ("parseTree" `elem` printPass flags) (putStrLn (P.prettyModule parsed) <* die "")
+  when ("parseTree" `elem` printPass flags) (putStrLn (P.prettyModule parsed))
 
   (modResolver , modDeps)  <- evalImports flags modIName resolver (setBit depStack modIName) (parsed ^. P.imports)
+  pure $ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule
 
-  let (judgedModule , newResolver , exts , nArgs , errors , srcInfo)
-        = inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule
-      JudgedModule _modIName modNm nArgs' bindNames a b judgedBinds    = judgedModule
-      TCErrors scopeErrors biunifyErrors checkErrors         = errors
-
-      bindNamePairs = V.zip bindNames judgedBinds
-      bindSrc = BindSource _ bindNames _ (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
-      nameBinds showTerm bs = (\(nm,j) -> (prettyBind ansiRender { bindSource = Just bindSrc , ansiColor = True } showTerm nm j)) <$> bs
-
+handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors , srcInfo) = let
+  JudgedModule modIName modNm nArgs bindNames a b judgedBinds = judgedModule
+  TCErrors scopeErrors biunifyErrors checkErrors = errors
+  nameBinds showTerm bs = let
+    prettyBind' = prettyBind ansiRender { bindSource = Just bindSrc , ansiColor = not (noColor flags) }
+    in (\(nm,j) -> (prettyBind' showTerm nm j)) <$> bs
+  bindNamePairs = V.zip bindNames judgedBinds
+  bindSrc = BindSource _ bindNames _ (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
+  in do
   when ("types"  `elem` printPass flags && not (quiet flags)) (TL.IO.putStrLn `mapM_` nameBinds False bindNamePairs)
   when ("core"   `elem` printPass flags && not (quiet flags)) (TL.IO.putStrLn `mapM_` nameBinds True  bindNamePairs)
 
@@ -166,12 +168,10 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
       judgedFinal = JudgedModule _modIName modNm nArgs bindNames a b simpleBinds
 --when ("simple" `elem` printPass flags) (TL.IO.putStrLn `mapM_` namedBinds True simpleBinds)-- (V.zip bindNames simpleBinds))
 
-  -- half-compiled modules should also be cached (their names were pre-added to the resolver)
-  when (doCacheCore && {-coreOK &&-} not (noCache flags)) $ do
-    DB.encodeFile resolverCacheFName newResolver
-    cacheFile fName judgedFinal
-  T.IO.putStrLn $ show fName <> " " <> "(" <> show modIName <> ") "
-    <> (if coreOK then "OK" else "KO")
+  -- half-compiled modules `not coreOK` should also be cached (their names were pre-added to the resolver)
+  when (doCacheCore && not (noCache flags))
+    $ DB.encodeFile resolverCacheFName newResolver *> cacheFile fName judgedFinal
+  T.IO.putStrLn $ show fName <> " " <> "(" <> show modIName <> ") " <> (if coreOK then "OK" else "KO")
   pure (newResolver , judgedFinal)
 
 ---------------------------------
@@ -199,6 +199,7 @@ replWith startState fn = let
 replCore :: CmdLine -> IO ()
 replCore cmdLine = let
   doLine l = text2Core cmdLine Nothing primResolver 0 "<stdin>" l
+    >>= handleJudgedModule
     >>= codegen cmdLine
     >>= print . V.last . allBinds . fst
   in void $ replWith cmdLine $ \cmdLine line -> cmdLine <$ doLine line

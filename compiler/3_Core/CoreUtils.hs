@@ -8,7 +8,18 @@ import ShowCore()
 import PrettyCore
 import Prim
 import qualified Data.IntMap as IM
+import qualified Data.Vector as V
 --import qualified Data.IntSet as IS
+
+eqTypes a b = all identity (zipWith eqTyHeads a b) -- TODO not zipwith !
+eqTyHeads a b = kindOf a == kindOf b && case (a,b) of
+  (THVar a  , THVar b)  -> a == b
+  (THVars a  , THVars b)  -> a == b
+  (THPrim a  , THPrim b)  -> a == b
+  (THTyCon a , THTyCon b) -> case did_ (a,b) of
+    (THSumTy a , THSumTy b) -> all identity $ IM.elems $ alignWith (these (const False) (const False) eqTypes) a b
+    (THTuple a , THTuple b) -> all identity $ V.zipWith eqTypes a b
+  _ -> False
 
 nullLattice pos = \case
   [] -> if pos then [THBot] else [THTop]
@@ -113,7 +124,7 @@ bind2Expr = \case
 ------------------------
 eqTyHead a b = kindOf a == kindOf b
 kindOf = \case
-  THPrim{}  -> KPrim
+  THPrim p  -> KPrim p
   THVar{}   -> KVar
   THVars{}  -> KVars
   THTyCon t -> case t of
@@ -128,7 +139,6 @@ kindOf = \case
   _ -> KAny
 
 mergeTypes :: [TyHead] -> [TyHead] -> [TyHead]
---mergeTypes l1 l2 = concat $ foldr doSub [] <$> (groupBy eqTyHead (l1 ++ l2))
 mergeTypes l1 l2 = let
   cmp a b = case (a,b) of
     (THBound a' , THBound b') -> compare a' b'
@@ -176,7 +186,7 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   [THExt a , THExt  b]        -> if a == b then [t1] else join
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of -- TODO depends on polarity (!)
     [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ IM.unionWith mergeTypes a b]
-    [THProduct a , THProduct b] -> [THTyCon $ THProduct $ IM.unionWith mergeTypes a b]
+    [THProduct a , THProduct b] -> [THTyCon $ THProduct $ IM.intersectionWith mergeTypes a b]
     [THTuple a , THTuple b]     -> [THTyCon $ THTuple   $ zM a b]
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM d1 d2) (mergeTypes r1 r2)]
     x -> join

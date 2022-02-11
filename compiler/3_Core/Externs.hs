@@ -164,7 +164,10 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
   -- labels may be imported from elsewhere, else they are new and assigned to this module
   mkTable map localMap = V.create $ do
     v <- MV.unsafeNew (M.size localMap)
-    v <$ (\hNm localName -> MV.write v localName (fromMaybe (mkQName modIName localName) (map M.!? hNm)))
+    let getQName hNm localName = case map M.!? hNm of -- if field imported, use that QName
+          Just q | modName q /= modIName -> q -- iff not from the module we're recompiling
+          _ -> mkQName modIName localName     -- new field introduced here
+    v <$ (\hNm localName -> MV.write v localName (getQName hNm localName))
          `M.traverseWithKey` localMap
 
   in ( GlobalResolver modCount modNames resolver l f modNamesV prevBinds lh fh deps mfResolver
@@ -174,9 +177,9 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
                , importFields = mkTable f fieldMap
                })
 
--- Often we deal with incomplete vectors (with holes for modules in the pipeline (when processing dependencies))
+-- Often we deal with incomplete vectors (with holes for modules in the pipeline eg. when processing dependencies)
 -- Unfortunately writing/caching them to disk requires full initialisation (error "" would trigger before writing)
--- the trashValue serves as an obviously wrong 'uninitialised' element which should never be read
+-- the trashValue serves as an obviously wrong 'uninitialised' element which should never be read eg. "(Uninitialized)"
 updateVecIdx :: a -> V.Vector a -> Int -> a -> V.Vector a
 updateVecIdx trashValue v i new = runST $ do
   v <- V.unsafeThaw v

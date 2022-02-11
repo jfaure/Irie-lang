@@ -10,8 +10,8 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.Map.Strict as M
 
-global_debug = False
---global_debug = True
+--global_debug = False
+global_debug = True
 
 type ExtIName    = Int -- VExterns
 type BiSubName   = Int -- index into bisubs
@@ -130,7 +130,7 @@ data Expr
 
 data Bind -- indexes in the bindmap
  = WIP
- | Guard     { mutuals :: [IName] , args :: [IName] , tvar :: IName }
+ | Guard     { mutuals :: [IName] , tvar :: IName }
  | Mutual    { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
 
  | Checking  { mutuals :: [IName] 
@@ -185,7 +185,7 @@ makeLenses ''BiSub
 --makeLenses ''QTT
 
 -- label for the different head constructors. (KAny is in a way top of the entire universe)
-data Kind = KPrim | KArrow | KVar | KVars | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
+data Kind = KPrim PrimType | KArrow | KVar | KVars | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
  deriving (Eq , Ord)
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)

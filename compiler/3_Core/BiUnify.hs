@@ -1,5 +1,5 @@
 -- See presentation/TypeTheory for commentary
-module BiUnify where
+module BiUnify (bisub , instantiate) where
 import Prim
 import CoreSyn as C
 import Errors
@@ -25,7 +25,7 @@ import Control.Lens
 failBiSub :: BiFail -> Type -> Type -> TCEnv s BiCast
 failBiSub msg a b = BiEQ <$ (tmpFails %= (TmpBiSubError msg a b:))
 
-biSub_ a b = do
+bisub a b = (seenVars .= 0) *> do
 --when global_debug $ traceM ("bisub: " <> prettyTyRaw a <> " <==> " <> prettyTyRaw b)
   biSub a b
 
@@ -46,13 +46,14 @@ biSub a b = let
 --   what is meant is really set difference: A =: A // { f : B }
 --   I decided to mark all A's of this form as dead immediately,
 --   which prevents biSub from recursing through them but I'm not certain this is robust
-instantiate :: Int -> [TyHead] -> TCEnv s [TyHead]
-instantiate tvarStart ty = let
+instantiate nb x = freshBiSubs nb >>= \tvars@(tvStart:_) -> doInstantiate tvStart x
+-- Replace THBound with fresh TVars
+doInstantiate :: Int -> [TyHead] -> TCEnv s [TyHead]
+doInstantiate tvarStart ty = let
   mapFn hasProduct = let
-    r = instantiate tvarStart
+    r = doInstantiate tvarStart
     in \case
-    THBound i -> let newTVar = tvarStart + i
-      in THVar newTVar <$ when hasProduct (escapedVars %= (`setBit` newTVar))
+    THBound i -> pure (THVar (tvarStart + i))
     THMu m t  -> THMu m <$> r t
     THTyCon t -> THTyCon <$> case t of
       THArrow as ret -> THArrow   <$> (r `mapM` as) <*> (r ret)
@@ -77,27 +78,19 @@ atomicBiSub p m = when global_debug (traceM ("⚛bisub: " <> prettyTyRaw [p] <> 
   (THBound i , x) -> error $ "unexpected THBound: " <> show i
   (x , THBound i) -> error $ "unexpected THBound: " <> show i
   (x , THBi nb y) -> error $ "unexpected THBi: "    <> show (p,m)
-  (THBi nb x , y) -> fmap fst $ withBiSubs nb $ \tvars -> do
-    instantiated <- instantiate tvars x
+
+  (THBi nb x , y) -> do
+    instantiated <- instantiate nb x
     biSub instantiated [y]
 
-  (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)
-  (THTyCon (THSumTy x) , THMu m y) -> biSub [p] y -- [Nil : {}] <: μx.[Nil : {} | Cons : {%i32 , x}]
+  (THTyCon t1 , THTyCon t2) -> do
+    sv <- seenVars <<.= 0
+    r <- biSubTyCon p m (t1 , t2)
+    seenVars .= sv
+    pure r
 
---(THArray t1 , THPrim (PrimArr p1)) -> biSub t1 [THPrim p1]
   (THPi (Pi p ty) , y) -> biSub ty [y]
   (x , THPi (Pi p ty)) -> biSub [x] ty
-
-  -- Recursive types are not deBruijn indexed ! this means we must note the equivalent mu types
-  (THMu a x , THMu b y) | a == b  -> biSub x y
-  (THMu a x , THTyCon(THSumTy{})) -> biSub x [m]
-  (THMuBound x, THMuBound y) -> if x == y then pure BiEQ else error $ "mu types not equal: " <> show x <> " /= " <> show y
-  -- TODO subi(mu a.t+ <= t-) = { t+[mu a.t+ / a] <= t- } -- mirror case for t+ <= mu a.t-
-  -- TODO prevent loop on `[0 : {}] <==> τ3 ;; [0 : {}] <==> x`
-  (THTyCon (THSumTy x) , THMuBound y) -> pure BiEQ
-  (THMuBound x , THTyCon (THSumTy y)) -> pure BiEQ
---(x , THMuBound y) -> use bis >>= \d -> MV.read d y >>= biSub [x] . _pSub
---(THMuBound x , y) -> use bis >>= \d -> MV.read d x >>= biSub [y] . _mSub
 
   (THRecSi f1 a1, THRecSi f2 a2) -> if f1 == f2
     then if (length a1 == length a2) && all identity (zipWith termEq a1 a2)
@@ -108,8 +101,11 @@ atomicBiSub p m = when global_debug (traceM ("⚛bisub: " <> prettyTyRaw [p] <> 
   (x , THSet u) -> pure BiEQ
   (THVar p , THVar m) -> use bis >>= \v -> BiEQ <$ do
     MV.modify v (\(BiSub a b) -> BiSub (THVar p : a) b) m
---  MV.modify v (\(BiSub a b qa qb) -> BiSub a (THVar m : b) qa qb) p
-    -- don't allow vars to form cycles
+    MV.modify v (\(BiSub a b) -> BiSub a (THVar m : b)) p
+    e <- use escapedVars
+    when (testBit e m) (escapedVars %= (`setBit` p))
+    when (testBit e p) (escapedVars %= (`setBit` m))
+    -- don't allow vars to form cycles:
     let isVar v = (\case { THVar x -> x /= v ; _ -> True })
     MV.modify v (\(BiSub a b) ->
       if any (isVar p) b then BiSub a b else BiSub a (THVar m : b)) p
@@ -117,35 +113,38 @@ atomicBiSub p m = when global_debug (traceM ("⚛bisub: " <> prettyTyRaw [p] <> 
   (THVars p , m) -> biSub (THVar <$> bitSet2IntList p) [m]
   (p , THVars m) -> biSub [p] (THVar <$> bitSet2IntList m)
 
-  (THVar p , m) -> use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
+  (THVar p , m) -> use seenVars >>= \s -> if (testBit s p) then pure BiEQ else
+    use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
     MV.modify v (\(BiSub a b) -> BiSub a (mergeTyHeadType m b)) p
+    use escapedVars >>= \escaped -> when (testBit escaped p) (escapedVars %= (.|. getTVarsTyHead m))
+    p' `forM_` \case { THVar i -> seenVars %= (`setBit` i) ; _ -> pure () }
     biSub p' [m]
-    use escapedVars >>= \escaped -> when (testBit escaped p) (traceM ("escaped" <> show p :: Text) *> walkTyHead m)
---  use escapedVars >>= \d -> unless (testBit d p) (void (biSub p' [m]))
     pure BiEQ
 
-  (p , THVar m) -> use bis >>= \v -> MV.read v m >>= \(BiSub p' m') -> do
+  (p , THVar m) -> use seenVars >>= \s -> if (testBit s m) then pure BiEQ else
+    use bis >>= \v -> MV.read v m >>= \(BiSub p' m') -> do
     MV.modify v (\(BiSub a b) -> BiSub (mergeTyHeadType p a) b) m
+    use escapedVars >>= \escaped -> when (testBit escaped m) (escapedVars %= (.|. getTVarsTyHead p))
+    m' `forM_` \case { THVar i -> seenVars %= (`setBit` i) ; _ -> pure () }
     biSub [p] m'
-    use escapedVars >>= \escaped -> when (testBit escaped m) (traceM ("escaped " <> show m :: Text) *> walkTyHead p)
---  use escapedVars >>= \d -> unless (testBit d m) (void (biSub [p] m'))
     pure BiEQ
 
   (x , THTyCon THArrow{}) -> failBiSub (TextMsg "Excess arguments")       [p] [m]
   (THTyCon THArrow{} , x) -> failBiSub (TextMsg "Insufficient arguments") [p] [m]
   (a , b) -> failBiSub (TextMsg "Incompatible types") [a] [b]
 
--- TODO optimise this
-walkType = mapM_ walkTyHead
-walkTyHead :: TyHead -> TCEnv s ()
-walkTyHead = \case
-  THVar v -> escapedVars %= (`setBit` v)
-  THTyCon t -> void $ case t of
-    THArrow ars r -> traverse_ walkType ars <* walkType r
-    THProduct   r -> traverse_ walkType r
-    THSumTy     r -> traverse_ walkType r
-    THTuple     r -> traverse_ walkType r
-  x -> pure ()
+-- TODO cache THTycon contained vars?
+getTVarsType = foldr (.|.) 0 . map getTVarsTyHead
+getTVarsTyHead :: TyHead -> BitSet
+getTVarsTyHead = \case
+  THVar   v -> setBit 0 v
+  THVars vs -> vs
+  THTyCon t -> case t of
+    THArrow ars r -> foldr (.|.) 0 (getTVarsType r : (getTVarsType <$> ars) )
+    THProduct   r -> foldr (.|.) 0 (getTVarsType <$> IM.elems r)
+    THSumTy     r -> foldr (.|.) 0 (getTVarsType <$> IM.elems r)
+    THTuple     r -> foldr (.|.) 0 (getTVarsType <$> r)
+  x -> 0
 
 -- used for computing both differences between 2 IntMaps (sadly alignWith won't give us the ROnly map key)
 data KeySubtype
@@ -157,7 +156,7 @@ biSubTyCon p m = \case
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
   (THArrow ars ret ,  THSumTy x) -> pure BiEQ --_
   (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSub x y
-  (THProduct x , THProduct y) -> use normFields >>= \nf -> let -- record: fields in the second must all be in the first
+  (THProduct x , THProduct y) -> let --use normFields >>= \nf -> let -- record: fields in the second must all be in the first
     merged     = IM.mergeWithKey (\k a b -> Just (Both a b)) (fmap LOnly) (IM.mapWithKey ROnly) x y
 --  normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
     normalized = V.fromList $ IM.elems merged -- $ IM.mapKeys (nf VU.!) merged

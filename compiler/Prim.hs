@@ -27,9 +27,9 @@ data PrimType
  | PrimBigInt  -- =~ gmp int
  | PrimBigNat
  | PrimFloat !FloatTy
- | PrimArr   PrimType
- | PtrTo     PrimType
- | PrimTuple [PrimType]
+ | PrimArr      PrimType
+ | PtrTo        PrimType
+ | PrimTuple    [PrimType]
  | PrimExtern   [PrimType]
  | PrimExternVA [PrimType]
  | POSIXTy POSIXType

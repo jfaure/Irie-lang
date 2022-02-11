@@ -5,7 +5,6 @@ import Errors
 import Externs
 import qualified ParseSyntax as P
 import qualified Data.Vector as V
-import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Mutable as MV
 import Control.Lens
 
@@ -13,65 +12,48 @@ type TCEnv s a = StateT (TCEnvState s) (ST s) a
 data TCEnvState s = TCEnvState {
  -- in
    _pBinds  :: V.Vector P.TopBind -- parsed module
- , _externs :: Externs
- , _thisMod :: ModuleIName -- annotate local labels / types etc
+ , _externs :: Externs            -- imported bindings
+ , _thisMod :: ModuleIName        -- used to make the QName for local bindings
 
  -- out
- , _wip        :: MV.MVector s Bind
- , _biFails    :: [BiSubError]
- , _scopeFails :: [ScopeError]
- , _checkFails :: [CheckError]
+ , _wip         :: MV.MVector s Bind
+ , _biFails     :: [BiSubError] -- inference failure
+ , _scopeFails  :: [ScopeError] -- name not in scope
+ , _checkFails  :: [CheckError] -- type annotation doesn't subsume the inferred one
 
- -- state
- , _lvl        :: Int
- , _srcRefs    :: Maybe SrcInfo
- , _tmpFails   :: [TmpBiSubError] -- App local bisub failures
- , _bindWIP    :: IName
- , _deBruijn   :: MV.MVector s Int
- , _quants     :: Int -- fresh names for generalised typevars [A..Z,A1..Z1..]
- , _blen       :: Int
- , _bis        :: MV.MVector s BiSub -- typeVars
- , _escapedVars:: Integer -- bitmask for TVars of shallower let-nests that we mustn't generalize
- , _genedVars  :: Integer -- bitmask for TVars that are considered generalised
+ -- Biunification state
+ , _bindWIP     :: IName              -- to identify recursion and mutuals
+ , _tmpFails    :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
+ , _blen        :: Int                -- cursor for bis whose length may exceed number of active vars
+ , _bis         :: MV.MVector s BiSub -- typeVars
+ , _argVars     :: MV.MVector s Int   -- arg IName -> TVar map (used to be Arg i => TVar i, but bis should be minimal)
+ , _seenVars    :: Integer            -- cache for biunification to avoid looping
+ , _escapedVars :: Integer            -- bitmask for TVars of shallower let-nests (don't generalize them until fully captured)
 
- , _mus        :: Int -- fresh names for recursive types [x,y,z,x1,y1...]
- , _muNest     :: IntMap (IName , Type)  -- mu bound types deeper in the type that could be merged with
- , _muEqui     :: IntMap IName -- THVars converted to THMuBound (recursive type marker)
- , _biEqui     :: MV.MVector s IName
- , _coOccurs   :: MV.MVector s ([Type] , [Type]) -- (pos , neg) occurs
- , _liftMu     :: Maybe Type   -- mus constructed inside tycons can often be rolled up to contain the outer tycon
+ -- Generalisation state
+ , _quants      :: Int     -- fresh names for generalised typevars [A..Z,A1..Z1..]
+ , _biEqui      :: MV.MVector s IName -- TVar -> Maybe genned var map (complement 0 indicates Nothing)
 
- , _normFields :: VU.Vector IName
- , _normLabels :: VU.Vector IName
+ -- Generalisation analysis phase
+ , _recVars     :: Integer -- bitmask for recursive TVars
+ , _coOccurs    :: MV.MVector s ([Type] , [Type]) -- (pos , neg) occurs are used to enable simplifications
 }
 
 makeLenses ''TCEnvState
 
 --tcFail e = error $ e -- Poison e _ --(errors %= (e:)) *> pure (Fail e)
 
-dupVar pos x = use bis >>= \v -> MV.modify v
-  (\(BiSub p m) -> if pos then BiSub p m else BiSub p m ) x
+clearBiSubs :: Int -> TCEnv s ()
+clearBiSubs n = blen .= n
 
-dupp pos ty = let dup = dupp in ty `forM` \case
-  THVar x -> dupVar pos x
-  THTyCon t -> case t of
-    THArrow ars x -> void $ (dup (not pos) `mapM` ars) *> dup pos x
-    THTuple   tys -> dup pos `traverse_` tys
-    THProduct tys -> dup pos `traverse_` tys
-    THSumTy   tys -> dup pos `traverse_` tys
-  THBi b ty -> void $ dup pos ty
-  THMu b ty -> void $ dup pos ty
-  x -> pure ()
-
--- do a bisub with typevars
-withBiSubs :: Int -> (Int->TCEnv s a) -> TCEnv s (a , [Int]) --(a , MV.MVector s BiSub)
-withBiSubs n action = do
+-- spawn new tvars slots in the bisubs vector
+freshBiSubs :: Int -> TCEnv s [Int]
+freshBiSubs n = do
   bisubs <- use bis
   biLen  <- use blen
-  let tyVars   = [biLen .. biLen+n-1]
+  let tyVars  = [biLen .. biLen+n-1]
   blen .= (biLen + n)
-  bisubs <- MV.grow bisubs n
+  bisubs <- if MV.length bisubs < biLen + n then MV.grow bisubs n else pure bisubs
   bis .= bisubs
   tyVars `forM` \i -> MV.write bisubs i (BiSub [] [])
-  ret <- action biLen
-  pure (ret , tyVars)
+  pure tyVars

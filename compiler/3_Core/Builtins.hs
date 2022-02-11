@@ -74,6 +74,9 @@ instrs :: [(HName , (PrimInstr , Type))] =
 
   -- %ptr(A) -> (Bool , A , %ptr(A))    == str -> (Bool , char , str)
   , ("nextElem" , (NextElem , [mkTHArrow [THExt str] (mkTHTuple $ [[THExt b] , [THExt c] , [THExt str]])] ))
+-- CStruct should be an opaque type
+--, ("toCStruct"  , (ToCStruct , [THBi 1 [mkTHArrow [THBound 0] (THExt cstruct)]] ))
+--, ("fromCStruct", (ToCStruct , [THBi 1 [mkTHArrow [THExt cstruct] [THBound 0]]] ))
 
   , ("readFile"  , (ReadFile  , [mkTHArrow [THExt str] (THExt str)]))
   , ("writeFile" , (WriteFile , [mkTHArrow [THExt str] (THExt str)]))

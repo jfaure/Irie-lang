@@ -1,23 +1,40 @@
--- Command line arguments are very nearly global constants
---  they must be initialized first thing at runtime
-module CmdLine (CmdLine(..), parseCmdLine, defaultCmdLine) where
+-- Command line arguments
+module CmdLine (CmdLine(..) , parseCmdLine, defaultCmdLine) where
 import Options.Applicative
 import Data.Text as T
 
 data CmdLine = CmdLine
   { printPass      :: [Text]
   , jit            :: Bool
-  , debug          :: Bool
+  , noColor        :: Bool
+  , repl           :: Bool
   , optlevel       :: Word
+  , threads        :: Int
   , noPrelude      :: Bool
   , noCache        :: Bool
-  , recompile      :: Bool -- recompile even if cached
+--  , reportErrors   :: Bool -- print an error summary (not doing so is probably only useful for the test suite)
+  , recompile      :: Bool   -- recompile even if cached
   , quiet          :: Bool
   , outFile        :: Maybe FilePath
+  , strings        :: String -- work on text from the commandline (as opposed to reading it from a file)
   , files          :: [FilePath]
   } deriving (Show)
 
-defaultCmdLine = (CmdLine [] False False 0 False False False False Nothing []) { quiet = True }
+defaultCmdLine = CmdLine -- Intended for use from ghci
+  { printPass      = []
+  , jit            = False
+  , noColor        = True
+  , repl           = False
+  , optlevel       = 0
+  , threads        = 1
+  , noPrelude      = False
+  , noCache        = False
+  , recompile      = False
+  , quiet          = False
+  , outFile        = Nothing
+  , strings        = []
+  , files          = []
+  }
 
 printPasses = T.words "args source parseTree types core simple ssa C" :: [Text]
 
@@ -25,33 +42,40 @@ parsePrintPass :: ReadM [Text]
 parsePrintPass = eitherReader $ \str -> let
   passesStr = split (==',') (toS str)
   checkAmbiguous s = case Prelude.filter (isInfixOf s) printPasses of
-    []  -> Left $ "Unrecognized print pass: '" ++ str ++ "'"
+    []  -> Left $ "Unrecognized print pass: '" <> str <> "'"
     [p] -> Right p
-    tooMany -> Left $ "Ambiguous print pass: '" ++ str ++ "' : " ++ show tooMany
+    tooMany -> Left $ "Ambiguous print pass: '" <> str <> "' : " <> show tooMany
   in sequence (checkAmbiguous <$> passesStr)
 
 cmdLineDecls :: Parser CmdLine
 cmdLineDecls = CmdLine
   <$> (option parsePrintPass)
       (short 'p' <> long "print"
-      <> help (toS $ "print compiler pass(es separated by ',') : [" <> T.intercalate " | " printPasses <> "]")
+      <> help (toS $ "list of compiler passes to print (separated by ',') : [" <> T.intercalate " | " printPasses <> "]")
       <> value [])
   <*> switch
       (short 'j' <> long "jit"
-      <> help "Execute program in jit")
+      <> help "Execute 'main' binding in jit")
   <*> switch
-      (short 'd' <> long "debug"
-      <> help "Print information with maximum verbosity")
+      (short 'N' <> long "no-color"
+      <> help "Don't print ANSI color codes")
+  <*> switch
+      (short 'r' <> long "repl"
+      <> help "Interactive read-eval-print loop")
   <*> option auto
       (short 'O'
-      <> help "Optimization level [0..3]"
+      <> help "Optimization level 0|1|2|3"
       <> value 0)
+  <*> option auto
+      (short 't' <> long "threads"
+      <> help "Number of threads >0 to run concurrently (should use far less RAM than forking the compiler on each file)"
+      <> value 1)
   <*> switch
       (short 'n' <> long "no-prelude"
-      <> help "don't import prelude implicitly")
+      <> help "Don't import prelude implicitly")
   <*> switch
       (             long "no-cache"
-      <> help "don't save compiled files")
+      <> help "Don't save or re-use compiled files")
   <*> switch
       (             long "recompile"
       <> help "recompile even if cached file looks good")
@@ -60,7 +84,12 @@ cmdLineDecls = CmdLine
       <> help "print less to stdout")
   <*> (optional . strOption) (
       (short 'o')
-      <> help "Write llvm output to file")
+      <> help "Write output to FILE")
+  <*> (strOption
+      (short 'e' <> long "expression"
+      <> metavar "STRING"
+      <> help "Add the binding to the 'CmdLineBindings' module"
+      <> value ""))
   <*> many (argument str (metavar "FILE"))
 
 progDescription = "Compiler and Interpreter for the Irie language, a subtyping CoC for system level programming."
@@ -74,5 +103,4 @@ cmdLineInfo =
 -- parseCmdLine = execParser cmdLineInfo
 -- parseCmdLine = customExecParser (prefs disambiguate) cmdLineInfo
 parseCmdLine :: [String] -> IO CmdLine
- = \rawArgs -> handleParseResult
-   $ execParserPure (prefs disambiguate) cmdLineInfo rawArgs
+ = \rawArgs -> handleParseResult $ execParserPure (prefs disambiguate) cmdLineInfo rawArgs
