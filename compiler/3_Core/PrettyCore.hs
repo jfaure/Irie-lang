@@ -102,6 +102,7 @@ number2xyz i = let
   in if overflow > 0 then (letter `TL.cons` show overflow) else TL.singleton letter
 
 pTy :: Type -> Doc Annotation
+--pTy (TyUnion t) = case t of
 pTy = \case
   [] -> "_"
   [x] -> pTyHead x
@@ -127,6 +128,7 @@ pTyHead = \case
     THArrow [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> prettyTy ansiRender ret <> ")"
     THArrow args ret -> let
       pTHArrowArg t = case t of -- only add parens if necessary
+--      Type (THTyCon THArrow{}) -> parens (pTy t)
         [THTyCon THArrow{}] -> parens (pTy t)
         _ -> pTy t
 --      [_] -> pTy t

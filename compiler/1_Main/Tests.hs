@@ -34,6 +34,6 @@ doTests = T.IO.readFile "imports/simpleTests.ii" <&> T.lines <&> filter (/= "")
   results <- catMaybes <$> lines `forM` runTest
   T.IO.putStrLn `mapM_` results
   let (nTests , ok) = (length lines , nTests - length results)
-  T.IO.putStrLn $ show ok <> " / " <> show nTests <> " tests"
+  T.IO.putStrLn $ show ok <> " / " <> show nTests <> " one-line tests"
 
 ts = doTests

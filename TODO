@@ -1,22 +1,21 @@
 ## Top Priority
   * languageDocumentation.md
   * User declared types and non-trivial type annotations
-  * normalize fields/labels for codegen
   * functor modules/records; patterns in records (?) `(a , b) = (1 , 3)` opened vs closed
   * reconcile first order foldl and foldr for fusion; ListFn => FoldL fl | FoldR fr | Array fl fr (| Ix)
   * toCStruct / fromCStruct / [ptr] : A -> CStruct
-  * check escapedVars are updated at right time through let-nests & mutuals
   * globalresolver should discard names from the module its recompiling (esp. to avoid exporting now deleted names)
   * improve Type (to avoid partitioning out tvars, speed up mergeing and tycon tvar bitset)
   * after function with no free-vars generalised, can trim but not fully clear bisubs!
+  * type intersection vs type union
+  * extrusion & check escapedVars are updated at right time through let-nests & mutuals
 ## Top
   * show + repl typecase to print JIT results
   * provide Vector alternative for Cons | THProduct when names sequential (frequent) [n..m]
   * make new datatypes: growable vector and hashmap + vector 'StrIntName'
   * let-bound functions origin `f.l` + f knows owned let-binds (what if in a record ?)
-  * Simplify Abs/FunBind and merge sequential Abs into one
+  * Linear typing
 ## Parse
-  * recognize let|rec and norecurse
   * don't allow mixing tabs and spaces
   * Pattern guards
   * List comprehensions
@@ -36,11 +35,14 @@
   * case-of-case
   * static argument transformation
   * tycon promotion (promote single field /labels to value)
+  * normalize fields/labels for codegen
 
 ## Unimportant
+  * check let-rec / mutuals
   * Don't repeat not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
   * make work module import loops
   * language server
   * optimize cached modules
   * sh syntax `ls -lr` => `ls { l=True , r=True }`
   * engineer GlobalResolver to work concurrently
+  * when recompiling cached modules, figure out what changed

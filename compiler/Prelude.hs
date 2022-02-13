@@ -27,7 +27,7 @@ type HName  = Text
 fromJust = fromMaybe (panic "fromJust")
 
 emptyBitSet = 0 :: Integer
-setNBits n = (2 `shiftL` n) - 1
+setNBits n = (1 `shiftL` n) - 1 -- setNBits 2 = 0b11
 a `bitDiff` b = a .&. complement b
 
 bitSet2IntList :: Integer -> [Int]

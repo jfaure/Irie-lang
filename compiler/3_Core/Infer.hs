@@ -65,12 +65,11 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
   nLabels = M.size (pm ^. P.parseDetails . P.labels)
   pBinds' = V.fromListN nBinds (pm ^. P.bindings)
   in runST $ do
-    deBruijn' <- MV.new 0
     wip'      <- MV.replicate nBinds WIP
     bis'      <- MV.new 0
+--  bis'      <- MV.replicate 1 (BiSub [] [])
     argVars'  <- MV.new nArgs
     biEqui'   <- MV.replicate nBinds (complement 0)
---  [0 .. nArgs - 1] `forM_` \i -> MV.write bis' i (BiSub [] [])
 
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
       { _pBinds   = pBinds'
@@ -86,13 +85,13 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
       , _seenVars = 0
       , _bindWIP  = 0
       , _tmpFails = []
-      , _blen     = 0 --nArgs
+      , _blen     = 0
       , _bis      = bis'
       , _quants   = 0
       , _biEqui   = biEqui'
       , _coOccurs = _
-      , _escapedVars= 0
-      , _recVars = 0
+      , _escapedVars = 0
+      , _recVars     = 0
 --    , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
 --    , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
@@ -141,8 +140,6 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
     MV.write wip' bindINm (Mutual jb freeVars False tvarIdx typeAnn)
     if minimum (bindINm:ms) /= bindINm then pure jb
     else (fromJust . head <$> generaliseBinds svEscapes bindINm ms)
-      -- 'need' to wait until our inference stack is completely unrolled to clearbisubs, in case any of them were let bound
---    <* (use escapedVars >>= \e -> use bindWIP >>= \this -> when (e == 0 && bindINm == this) clearBiSubs))
 
 generaliseBinds :: Integer -> Int -> [Int] -> TCEnv s [Expr]
 generaliseBinds svEscapes i ms = use wip >>= \wip' -> (i : ms) `forM` \m ->
@@ -156,7 +153,8 @@ generaliseBinds svEscapes i ms = use wip >>= \wip' -> (i : ms) `forM` \m ->
       use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
         [] -> BiEQ <$ MV.write v recTVar (BiSub ty [])
         t  -> bisub ty [THVar recTVar] -- ! this binding is recursive (maybe mutually)
-      when global_debug $ use bis >>= \b -> [0..MV.length b -1] `forM_`
+      bl <- use blen
+      when global_debug $ use bis >>= \b -> [0..bl -1] `forM_`
         \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
       escaped <- use escapedVars
       generalise escaped recTVar <* when (free == 0) (clearBiSubs recTVar)
@@ -190,7 +188,6 @@ infer = let
    in map mkArgVars <$> (freshBiSubs nArgs >>= \argTVars -> zipWithM (\a v -> v <$ MV.write argPerms a v) args argTVars)
 
   -- App is the only place typechecking can fail
-  -- f x : biunify [Df n Dx]tx+ under (tf+ <= tx+ -> a)
  biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] -> do
    biret <- bisub fTy (prependArrowArgs argTys [THVar retV])
    pure (biret , [THVar retV])

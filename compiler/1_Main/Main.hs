@@ -34,7 +34,7 @@ objPath      = ["./"]
 objDir       = ".irie-obj/@" -- prefix '@' to files in there
 getCachePath fName = objDir <> map (\case { '/' -> '%' ; x -> x} ) fName
 resolverCacheFName = getCachePath "resolver"
-doCacheCore  = False--True
+doCacheCore  = False --True
 
 deriving instance Generic GlobalResolver
 deriving instance Generic Externs
@@ -165,7 +165,7 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
 
   let simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
           simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
-      judgedFinal = JudgedModule _modIName modNm nArgs bindNames a b simpleBinds
+      judgedFinal = JudgedModule modIName modNm nArgs bindNames a b simpleBinds
 --when ("simple" `elem` printPass flags) (TL.IO.putStrLn `mapM_` namedBinds True simpleBinds)-- (V.zip bindNames simpleBinds))
 
   -- half-compiled modules `not coreOK` should also be cached (their names were pre-added to the resolver)

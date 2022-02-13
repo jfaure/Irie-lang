@@ -8,10 +8,11 @@ import BiUnify (instantiate)
 import Control.Lens
 import Data.List (partition)
 import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector as V
 import qualified Data.Text as T
 
--- Generalisation quantifies over only local tvars of a type T
--- generalising tvars that escape into enclosing scope would allow them to be instantiated to anything
+-- Generalisation allows polymorphic types to be instantiated with fresh tvars on each use.
+-- Only generalise local tvars; if a Gen'd var escapes into enclosing scope it could be instantiated to anything there
 -- escapedVars : BitSet indicates which tvars escape and should be left alone
 -- thus most let-bindings have to be generalised twice
 --  1. if locally used more than once they need to be instantiatable (else can skip and inline it)
@@ -20,25 +21,29 @@ import qualified Data.Text as T
 -- * f2 x = let y   = x in y   -- if x generalised at y => f2 : a -> b
 -- * f3 x = let y y = x y in y -- similar
 
+-- The idea is to make sure that escaped tvars never refer to ones enclosed deeper
+-- instantiate = replace tvars at or above lvl with fresh vars at lvl
+-- constraining: while types / tvars came from deeper let-nest, make new tvars at this lvl
+
 -- Simplifications:
 --  * ? A -> A & Int =? Int -> Int
 --  * remove polar variables `a&int -> int` => int->int ; `int -> a` => `int -> bot`
---  * unify inseparable variables (co-occurence `a&b -> a|b` and indistinguishables `a->b->a|b`)
---  * remove variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int`
+--  * unify inseparable variables (polar co-occurence `a&b -> a|b` and indistinguishables `a->b->a|b`)
+--  * unify variables that contain the same upper and lower bound (a<:t and t<:a) `a&int->a|int`
 --  * tighten recursive types
 
 -- eg. foldr : (A → (C & B) → B) → C → μx.[Cons : {A , x} | Nil : {}] → (B & C)
 -- =>  foldr : (A → B → B) → B → μx.[Cons : {A , x} | Nil : {}] → B
 
 -- Generalisation is a 2 pass process
--- 1. Preparation & Analysis:
+-- 1 Preparation & Analysis:
 --   * read TVar bounds from Bisubs
---   * detect tvar cycles and whether they are guarded by TyCon (loops and recVars BitSets)
---   * hash consing (merge type constructors to bring TVars closer together)
+--   * detect whether tvar cycles are guarded by TyCon (loops and recVars BitSets)
 --   * save TVar co-occurences
--- 2. Finalise:
---   * Remove or generalise TVars (depending on co-occurence)
---   * insert and tighten recursive types
+--   * Co-occurence analysis: with each tvar either
+--     - generalise (including recursive tvars)
+--     - unify with some type or typevar
+-- 2. Finalise: Remove or generalise (maybe with mu binder) all TVars depending on results of co-occurence analysis
 generalise :: BitSet -> IName -> TCEnv s Type
 generalise escapees recTVar = let
   showTys t        = T.intercalate " , " (prettyTyRaw <$> t)
@@ -49,70 +54,96 @@ generalise escapees recTVar = let
   (quants .= 0)
 
   bs <- use bis
-  let coocLen = MV.length bs + 5 -- + let-bound instantiatables
-  (biEqui .=)   =<<  MV.replicate coocLen (complement 0)
+  let coocLen = MV.length bs + 5 -- + let-bound instantiatables TODO
+  (biEqui .=)   =<< MV.replicate coocLen (complement 0)
   (coOccurs .=) =<< MV.replicate coocLen ([],[])
   recVars .= 0
 
-  analysed <- substTypeVar True recTVar 0 0
+  analysed   <- substTypeVar True recTVar emptyBitSet emptyBitSet
   recursives <- use recVars
-  occurs <- use coOccurs
-  occLen <- use blen
+  occurs     <- use coOccurs
+  occLen     <- use blen
   when global_debug (traceCoocs occLen occurs)
-
-  polars <- let -- Remove non-recursive typevars that occur only at one polarity (trivial case of co-occurence)
-    testPolar polars i = MV.read occurs i >>= \(a,b) ->
-      if not (escapees `testBit` i) && (null a || null b) && not (recursives `testBit` i)
-      then setBit polars i <$ MV.write occurs i ([],[]) else pure polars
-    in foldM testPolar (0 :: BitSet) [0..occLen - 1]
-
-  -- co-occurence analysis
-  unifiables  <- let
-    getTVars = (\(a,b) -> ((\case {THVars vs->vs} <$> a),b)) . partition (\case {THVars{}->True ; _ -> False })
-
-    -- hasCooc t1 t2: find tvars that always cooccur with some T in both t1 and t2
-    -- hoping to unify them with T (remove the co-occuring tvars)
-    -- unifying recursive and non-recursive vars is only admissible if the non-rec var is also covariant
-    hasCooc v t1 t2 = let
-      ((pTVs , p) , (mTVs , m)) = (unzip (getTVars <$> t1) , unzip (getTVars <$> t2)) -- :: (([[BitSet]], [[TyHead]]) , _)
-      coocVs = (foldr (.|.) 0 (concat pTVs) .|. foldr (.|.) 0 (concat mTVs)) -- `clearBit` v
-      recCoocs = coocVs .&. recursives -- TODO iff the non-rec vars are covariant (strictly polar)
-      coocL' = bitSet2IntList coocVs
-      lvs    = fromMaybe v (head (bitSet2IntList recCoocs) <|> head coocL') -- last var standing
-      unified = setBit 0 lvs
-      mergeCoocs occs = [foldr mergeTypes [] occs] -- dubious..?
-      in if coocVs == 0
-         then {- if some Type is present in all p and in all m then unify v with it (rm v) -} Nothing
-         else Just ([] , (mergeCoocs $ (THVars unified :) <$> p , mergeCoocs $ (THVars unified :) <$> m))
-
-    testCoocs voids v = if testBit voids v || testBit escapees v then pure voids else
-      MV.read occurs v >>= \(pRaw , mRaw) -> do
-        -- indistinguishables: v + T always occur together at +v,-v => drop v (unify with T)
-        voids1 <- case hasCooc v pRaw mRaw of
-          Just (drops , occ') -> setBit voids v <$ (MV.write occurs v occ') -- *> drops `forM` \i -> MV.write occurs i occ')
-          Nothing             -> pure voids
-        -- polarEquality:      v + w always occur together at +v,+w or at -v,-w => drop v (unify with w)
-        MV.read occurs v >>= \(pRaw , mRaw) -> let
-          testPolarCooc pos v voids t = case t of
-            [[THVars vs]] -> let -- Right is used to terminate the foldM once a cooc is found
-               go (Right voids) i = pure (Right voids)
-               go (Left voids)  i = MV.read occurs i <&> (if pos then fst else snd) <&> hasCooc v t >>= \case
-                Just (drops , occ') -> Right (setBit voids i) <$ MV.write occurs v occ'
-                Nothing      -> pure $ Left voids
-              in foldM go (Left voids) (bitSet2IntList (clearBit vs v)) <&> \case { Right v -> v ; Left v -> v }
-            _ -> pure voids
-          in testPolarCooc True  v voids1 pRaw >>= \voids2 -> testPolarCooc False v voids2 mRaw
-    in foldM testCoocs polars [0..occLen - 1]
-
-  coOccurs .= occurs
+  tvarSubs' <- coocVars occLen escapees recursives <$> V.unsafeFreeze occurs
+  -- If a var is subbed to, it cannot be removed eg:
+  -- 2: + [τ(2, 3) ]; - [τ(2)]
+  -- 3: + [τ(2, 3) ]; - []
+  -- here 2 is unified with 3 (ie. 2 subs to 3) by polar co-occurence, but 3 is polar
+  tvarSubs  <- let
+    patchSubs s subs i = MV.read s i >>= \case
+      Remove   -> subs <$ when (subs `testBit` i) (MV.write s i Generalise)
+      SubVar i -> pure (subs `setBit` i)
+      _ -> pure subs
+    in V.unsafeThaw tvarSubs' >>= \s -> foldM (patchSubs s) emptyBitSet [0 .. MV.length s - 1] *> V.unsafeFreeze s
 
   when global_debug $ do
     traceM $ "analysed: "   <> prettyTyRaw analysed
     traceM $ "escapees: "   <> show (bitSet2IntList escapees)
-    traceM $ "unifiables: " <> show (bitSet2IntList unifiables)
-    traceM $ "recVars: "    <> show (bitSet2IntList recursives)
-    use coOccurs >>= traceCoocs occLen
-  subGen escapees unifiables recursives analysed
+    traceM $ "recVars:  "   <> show (bitSet2IntList recursives)
+    traceM   "tvarSubs: "   *> V.imapM_ (\i f -> traceM $ show i <> " => " <> show f) tvarSubs
+
+  subGen tvarSubs analysed
+
+-- co-occurence with v in TList1 TList2: find a tvar or a type that always cooccurs with v
+-- hoping to unify v with its co-occurence (straight up remove it if unifies with a var)
+-- * unifying recursive and non-recursive vars is only admissible if the non-rec var is covariant
+-- opposite co-occurence: v + T always occur together at +v,-v => drop v (unify with T)
+-- polar co-occurence:    v + w always occur together at +v,+w or at -v,-w => drop v (unify with w)
+-- ! Sub should never sub in a tvar
+data VarSub = Remove | Escaped | Generalise | Recursive | SubVar Int | SubTy Type deriving Show
+--coocVars occLen escapees recursives coocs = V.constructN occLen $ \prevSubs -> let
+coocVars occLen escapees recursives coocs = V.constructN occLen $ \prevSubs -> let
+  collectCoocVs [] = 0
+  collectCoocVs (x:xs) = foldr (.&.) x xs
+  v = V.length prevSubs -- next var to analyse
+  prevTVs = setNBits v  -- sub in solved vars rather than redoing cooccurence analysis on them
+  (pOccs , mOccs) = (coocs V.! v)
+  subPrevVars (tvars , rest) = let
+    subVar w = let self = [THVars (setBit 0 w)] in if w >= v then self else case prevSubs V.! w of
+      Remove     -> []
+      Escaped    -> self 
+      Generalise -> self
+      SubTy t    -> t
+      SubVar x   -> subVar x -- it is possible x is < v and should be subbed
+    allTVars = foldr (.|.) 0 (concat tvars)
+    nextTVars = THVars (complement prevTVs .&. allTVars)
+    in partitionTVars ([[nextTVars]] ++ rest ++ (subVar <$> bitSet2IntList (prevTVs .&. allTVars)))
+  (_ , (pVars , pTs) , (mVars , mTs)) = (v , subPrevVars (partitionTVars pOccs) , subPrevVars (partitionTVars mOccs))
+  (_ , coocPVs , coocMVs) = (v , collectCoocVs (concat pVars) , collectCoocVs (concat mVars))
+
+  cooc :: ([[BitSet]] , [Type]) -> ([[BitSet]] , [Type]) -> VarSub
+  cooc (vs , vTs) (ws , wTs) = let
+    coocVars = collectCoocVs (concat (vs ++ ws)) `clearBit` v
+    in if coocVars /= 0
+       then SubVar (fromJust (head (bitSet2IntList coocVars)))
+       else coocType vTs wTs
+
+  coocType pTs mTs = case Nothing of --case typeIntersection (pTs ++ mTs) of -- find some ty present everywhere to unify with
+    Just t  -> SubTy t
+    Nothing -> Generalise
+
+  in if -- Max simplification involves trying hard to avoid Generalise by justifying Remove, or failing that, Sub
+  | escapees `testBit` v -> Escaped -- belongs to deeper let nest
+  | not (recursives `testBit` v) && (null pOccs || null mOccs) -> Remove -- Only occurs at one polarity
+  | otherwise -> let
+    polarCooc :: Bool -> Int -> VarSub
+    polarCooc pos w = {-d_ (v , w , pos) $-} let -- (pos case:) for all w in +v, look for coocs in +v,+w
+      wCoocs = coocs V.! w
+      (wVars , wTs) = partitionTVars ((if pos then fst else snd) wCoocs)
+      in if null (fst wCoocs) || null (snd wCoocs) then Generalise -- don't merge with a polar (or recursive variable)
+         else cooc (if pos then (pVars , pTs) else (mVars , mTs)) (subPrevVars (wVars , wTs))
+    -- in v+v- when unifying v with w we can directly remove v because it always co-occurs with w
+    vPvM = if collectCoocVs (concat (pVars ++ mVars)) `clearBit` v /= 0 then Remove else coocType pTs mTs
+
+    vPwP , vMwM :: [VarSub] -- Note. we already attempted to unify w<v with v, so only try w>v
+    vPwP = polarCooc True  <$> bitSet2IntList (complement prevTVs .&. coocPVs `clearBit` v)
+    vMwM = polarCooc False <$> bitSet2IntList (complement prevTVs .&. coocMVs `clearBit` v)
+    -- use foldl' to stop once we've found a reason to either Remove or Sub the tvar
+    bestSub ok next = case ok of { Remove -> ok ; (SubTy t) -> ok ; (SubVar v) -> ok ; ko -> next }
+    in foldl' bestSub vPvM (vPwP ++ vMwM) -- if none of this found anything the tvar will Generalise
+
+getTVars = (\(a,b) -> ((\case {THVars vs->vs} <$> a),b)) . partition (\case {THVars{}->True ; _ -> False })
+partitionTVars = unzip . map getTVars :: [Type] -> ([[BitSet]], [Type])
 
 rmTVar v = fmap $ \case
   THVars vs -> THVars (vs `clearBit` v)
@@ -124,8 +155,8 @@ latticeTop pos = \case
 
 -- Final step; eliminate all THVars
 -- * either sub in THBound | unify with co-occurences (possibly [])
-subGen :: BitSet -> BitSet -> BitSet -> Type -> TCEnv s Type
-subGen escapedVars unifiables recursives raw = use bis >>= \b -> use biEqui >>= \biEqui' -> use coOccurs >>= \coocs ->
+subGen :: V.Vector VarSub -> Type -> TCEnv s Type
+subGen tvarSubs raw = use bis >>= \b -> use biEqui >>= \biEqui' -> use coOccurs >>= \coocs ->
   latticeTop True <$> let
   generaliseVar v = MV.read biEqui' v >>= \perm ->
     if perm /= complement 0 then pure perm
@@ -133,41 +164,33 @@ subGen escapedVars unifiables recursives raw = use bis >>= \b -> use biEqui >>= 
       q <- quants <<%= (+1)
       when global_debug (traceM $ show v <> " =>∀ " <> toS (number2CapLetter q))
       q <$ MV.write biEqui' v q
-  doVar pos v = if
-    | escapedVars `testBit` v -> pure [THVars (0 `setBit` v)]
-    | recursives  `testBit` v -> MV.read coocs v >>= \(p' , m') -> let (p , m) = (rmTVar v <$> p' , rmTVar v <$> m')
-      in case if pos then (p,m) else (m,p) of
-      ([] , []) -> generaliseVar v <&> \q -> [THBound q] -- [THMuBound 0]
-      (t , _ {-[]-}) -> do
-        MV.write coocs v ([],[])
-        raw <- goJoin pos $ rmTVar v (foldr mergeTypes [] t)
-        q   <- generaliseVar v <&> \q -> THBound q
-        pure (q : raw) -- pure [THMu 0 raw]
---    t -> error $ "Recursive var is not strictly covariant! " <> show (pos , p , m)
-    | unifiables `testBit` v -> MV.read coocs v >>= \(p , m) -> case if pos then p else m of
-      -- substitute a TVar for its co-occurence , generalise if still present after substitution
-      []  -> pure []
-      [t] -> if any (\case { THVars vs -> testBit vs v ; _ -> False } ) t
-             then (\q t -> THBound q : t) <$> generaliseVar v <*> goJoin pos (rmTVar v t)
-             else goJoin pos t
-      t   -> error $ "Multiple cooccurence substitutions" <> show t
-    | True -> generaliseVar v <&> \q -> [THBound q]
-
+  doVar pos v = case tvarSubs V.! v of
+    Remove     -> pure []
+--  Escaped    -> pure [THVars (0 `setBit` v)]
+    Escaped    -> generaliseVar v <&> \q -> [THBound q] -- TODO this is overgeneralising some vars
+    Generalise -> generaliseVar v <&> \q -> [THBound q]
+    Recursive  -> generaliseVar v <&> \q -> [THBound q]
+    SubVar i   -> doVar pos i
+    SubTy t    -> goJoin pos t -- pure t
   goJoin pos ty = fmap (foldr mergeTypes []) (mapM (finaliseTyHead pos) ty)
+  goGuarded pos = fmap (latticeTop pos) . goJoin pos 
   finaliseTyHead pos = \case
     THVars v  -> foldr mergeTypes [] <$> (doVar pos `mapM` bitSet2IntList v)
     THVar v   -> doVar pos v
     x -> (\x -> [x]) <$> case x of
       THBi b ty -> THBi b <$> goJoin pos ty
       THMu x ty -> THMu x <$> goJoin pos ty
-      THTyCon t -> let goGuarded pos = fmap (latticeTop pos) . goJoin pos in THTyCon <$> case t of
+      THTyCon t -> THTyCon <$> case t of
         THArrow ars r -> THArrow   <$> traverse (goGuarded (not pos)) ars <*> goGuarded pos r
         THProduct   r -> THProduct <$> traverse (goGuarded       pos) r
         THSumTy     r -> THSumTy   <$> traverse (goGuarded       pos) r
         THTuple     r -> THTuple   <$> traverse (goGuarded       pos) r
       x -> pure x
-  in goJoin True raw >>= \done -> use quants <&> \q -> if q > 0 then [THBi q done] else done
+  in goGuarded True raw >>= \done -> use quants <&> \q -> if q > 0 then [THBi q done] else done
 
+--------------------
+-- Analysis Phase --
+--------------------
 -- Read typevars from Bisubs, collect co-occurences and identify recursive types
 -- non-escaped typevars are possibly safe to cache their substitution to (=<< updateVar)
 substTypeVar pos v loops guarded = use bis >>= \b -> if

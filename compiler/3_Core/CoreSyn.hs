@@ -64,12 +64,23 @@ data Term -- β-reducable (possibly to a type)
 
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs idx for extracting field
 
--- TODO improve this ; Typemerge should be very fast
+-- Type: designed for fast merging and partitioned out tvars
+--data Type
+-- = Type TyHead
+-- | TyMerge BitSet [TyHead]
+-- | TyTop | TyBot
+-- | TyUnion { tyunion :: [TyHead] }
+--bot = TyBot
+--top = TyTop
+--catTypes
+
+--type TyMinus = Type
+--type TyPlus  = Type
 type Type    = TyPlus
-type Uni     = Int
-type TyMinus = [TyHead] -- input  types (lattice meet) eg. args
-type TyPlus  = [TyHead] -- output types (lattice join)
+type TyMinus = [TyHead] -- input  types (lattice meet ^) eg. args
+type TyPlus  = [TyHead] -- output types (lattice join v)
 holeTy       = []
+type Uni     = Int
 
 data TyCon -- Type constructors
  = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot -> top is the largest)
@@ -79,10 +90,6 @@ data TyCon -- Type constructors
  | THArray    TyPlus
 
 data Pi = Pi [(IName , Type)] Type
-
---data Type
--- = TPure TyHead
--- | TVars TyHead TVarSet
 
 -- Head constructors in the profinite distributive lattice of types
 data TyHead

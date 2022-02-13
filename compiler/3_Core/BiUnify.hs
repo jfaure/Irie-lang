@@ -21,6 +21,7 @@ import Control.Lens
 -- i : a -> a
 
 -- useless inferred type: a & (a -> i1 -> i1) -> i1
+-- a & a -> i1 -> i1 => (Π B → B → B)
 
 failBiSub :: BiFail -> Type -> Type -> TCEnv s BiCast
 failBiSub msg a b = BiEQ <$ (tmpFails %= (TmpBiSubError msg a b:))
@@ -44,8 +45,6 @@ biSub a b = let
 -- Note. weird special case (A & {f : B}) typevars as produced by lens over
 --   The A serves to propagate the input record, minus the lens field
 --   what is meant is really set difference: A =: A // { f : B }
---   I decided to mark all A's of this form as dead immediately,
---   which prevents biSub from recursing through them but I'm not certain this is robust
 instantiate nb x = freshBiSubs nb >>= \tvars@(tvStart:_) -> doInstantiate tvStart x
 -- Replace THBound with fresh TVars
 doInstantiate :: Int -> [TyHead] -> TCEnv s [TyHead]
@@ -99,32 +98,36 @@ atomicBiSub p m = when global_debug (traceM ("⚛bisub: " <> prettyTyRaw [p] <> 
     else error $ "RecSi functions do not match ! " ++ show f1 ++ " /= " ++ show f2
   (THSet u , x) -> pure BiEQ
   (x , THSet u) -> pure BiEQ
-  (THVar p , THVar m) -> use bis >>= \v -> BiEQ <$ do
-    MV.modify v (\(BiSub a b) -> BiSub (THVar p : a) b) m
-    MV.modify v (\(BiSub a b) -> BiSub a (THVar m : b)) p
-    e <- use escapedVars
-    when (testBit e m) (escapedVars %= (`setBit` p))
-    when (testBit e p) (escapedVars %= (`setBit` m))
-    -- don't allow vars to form cycles:
-    let isVar v = (\case { THVar x -> x /= v ; _ -> True })
-    MV.modify v (\(BiSub a b) ->
-      if any (isVar p) b then BiSub a b else BiSub a (THVar m : b)) p
 
   (THVars p , m) -> biSub (THVar <$> bitSet2IntList p) [m]
   (p , THVars m) -> biSub [p] (THVar <$> bitSet2IntList m)
 
-  (THVar p , m) -> use seenVars >>= \s -> if (testBit s p) then pure BiEQ else
+  (THVar p , THVar m) -> use bis >>= \v -> BiEQ <$ do
+    MV.modify v (\(BiSub a b) -> BiSub (THVar p : a) b) m
+    MV.read v m >>= \(BiSub p' m') -> biSub [THVar p] m' --  MV.modify v (\(BiSub a b) -> BiSub a (THVar m : b)) p
+    e <- use escapedVars
+    when (testBit e m) (escapedVars %= (`setBit` p))
+    when (testBit e p) (escapedVars %= (`setBit` m))
+
+  (THVar p , m) -> use seenVars >>= \s -> if (testBit s p) then pure BiEQ else do
+    escapees <- use escapedVars
+--  m <- extrudeTH escapees mRaw
     use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
     MV.modify v (\(BiSub a b) -> BiSub a (mergeTyHeadType m b)) p
-    use escapedVars >>= \escaped -> when (testBit escaped p) (escapedVars %= (.|. getTVarsTyHead m))
+--  MV.modify v (\(BiSub a b) -> BiSub a (mergeTypes m b)) p
+    when (testBit escapees p) (escapedVars %= (.|. getTVarsTyHead m))
+    -- TODO spawn new tvars in m for m higher level than p (anything not escaped)
     p' `forM_` \case { THVar i -> seenVars %= (`setBit` i) ; _ -> pure () }
     biSub p' [m]
     pure BiEQ
 
-  (p , THVar m) -> use seenVars >>= \s -> if (testBit s m) then pure BiEQ else
+  (p , THVar m) -> use seenVars >>= \s -> if (testBit s m) then pure BiEQ else do
+    escapees <- use escapedVars
+--  p <- extrudeTH escapees pRaw
     use bis >>= \v -> MV.read v m >>= \(BiSub p' m') -> do
     MV.modify v (\(BiSub a b) -> BiSub (mergeTyHeadType p a) b) m
-    use escapedVars >>= \escaped -> when (testBit escaped m) (escapedVars %= (.|. getTVarsTyHead p))
+--  MV.modify v (\(BiSub a b) -> BiSub (mergeTypes p a) b) m
+    when (testBit escapees m) (escapedVars %= (.|. getTVarsTyHead p))
     m' `forM_` \case { THVar i -> seenVars %= (`setBit` i) ; _ -> pure () }
     biSub [p] m'
     pure BiEQ
@@ -132,6 +135,26 @@ atomicBiSub p m = when global_debug (traceM ("⚛bisub: " <> prettyTyRaw [p] <> 
   (x , THTyCon THArrow{}) -> failBiSub (TextMsg "Excess arguments")       [p] [m]
   (THTyCon THArrow{} , x) -> failBiSub (TextMsg "Insufficient arguments") [p] [m]
   (a , b) -> failBiSub (TextMsg "Incompatible types") [a] [b]
+
+-- extrude :: BitSet -> Type -> TCEnv s Type
+-- extrude escapees t = concat <$> mapM (extrudeTH escapees) t
+-- 
+-- extrudeTH :: BitSet -> TyHead -> TCEnv s Type
+-- extrudeTH escapees = let e = extrude escapees in \case
+--   THVar   v -> (\x -> [x]) <$> (if escapees `testBit` v then pure (THVar v) else (freshBiSubs 1 <&> \[i] -> THVar i))
+--   THVars vs -> fmap concat $ (extrudeTH escapees . THVar) `mapM` bitSet2IntList vs
+--   THTyCon t -> (\x -> [THTyCon x]) <$> case t of
+--     THArrow ars r -> THArrow   <$> (traverse e ars) <*> e r
+--     THProduct   r -> THProduct <$> (traverse e r)
+--     THSumTy     r -> THSumTy   <$> (traverse e r)
+--     THTuple     r -> THTuple   <$> (traverse e r)
+--   x -> case x of
+--     THExt{}  -> pure [x]
+--     THPrim{} -> pure [x]
+--     THBot{} -> pure [x]
+--     THTop{} -> pure [x]
+--     x -> error $ show x
+-- --x -> x
 
 -- TODO cache THTycon contained vars?
 getTVarsType = foldr (.|.) 0 . map getTVarsTyHead
@@ -146,12 +169,13 @@ getTVarsTyHead = \case
     THTuple     r -> foldr (.|.) 0 (getTVarsType <$> r)
   x -> 0
 
--- used for computing both differences between 2 IntMaps (sadly alignWith won't give us the ROnly map key)
+-- used for computing both differences between 2 IntMaps (alignWith doesn't give access to the ROnly map key)
 data KeySubtype
   = LOnly Type         -- OK by record | sumtype subtyping
   | ROnly IName {-IField-} Type  -- KO field not present
   | Both  Type Type    -- biunify the leaf types
 
+-- This is complicated slightly by needing to recover the necessary subtyping casts
 biSubTyCon p m = \case
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
   (THArrow ars ret ,  THSumTy x) -> pure BiEQ --_
