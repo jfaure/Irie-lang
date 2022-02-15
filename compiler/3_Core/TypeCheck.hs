@@ -21,8 +21,8 @@ import qualified Data.Vector as V
 -- additionally, subsumption <===> equivalence of typing schemes
 -- ie. to decide [d1]t1 <= [d2]t2,
 --   * check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
-check :: Externs -> V.Vector [TyHead] -> V.Vector (Maybe Type)
-     -> [TyHead] -> [TyHead] -> Bool
+check :: Externs -> V.Vector Type -> V.Vector (Maybe Type)
+     -> Type -> Type -> Bool
 check e ars labTys inferred gotRaw = let
   go = check' e ars labTys inferred gotRaw
   in if global_debug -- True {-debug getGlobalFlags-}
@@ -30,30 +30,29 @@ check e ars labTys inferred gotRaw = let
 
 --check' :: Externs -> V.Vector [TyHead]
 --       -> [TyHead] -> [TyHead] -> Bool
-check' es ars labTys inferred gotTy = let
-  check'' = check' es ars labTys :: [TyHead] -> [TyHead] -> Bool
+check' es ars labTys (TyGround inferred) (TyGround gotTy) = let
+  check'' = check' es ars labTys :: Type -> Type -> Bool
   readExt es x = case readPrimExtern es x of
     c@Core{} -> error $ "type expected, got: " <> show c
     Ty t -> t
   checkAtomic :: TyHead -> TyHead -> Bool
   checkAtomic inferred gotTy = case {-trace (prettyTyRaw [inferred] <> " <?: " <> prettyTyRaw [gotTy])-} (inferred , gotTy) of
     (THBound x , THBound y) -> x == y
-    (THMu x _, THMuBound y) -> x == y -- recursive bound equal to its binding
     (THSet l1, THSet l2)  -> l1 <= l2
     (THSet 0 , x)         -> True --case x of { THArrow{} -> False ; _ -> True }
     (x , THSet 0)         -> True --case x of { THArrow{} -> False ; _ -> True }
-    (THVar x , gTy)       -> True -- check'' (bis V.! x) [gTy]
-    (lTy , THVar x)       -> False
+--  (THVar x , gTy)       -> True -- check'' (bis V.! x) [gTy]
+--  (lTy , THVar x)       -> False
     (THPrim x , THPrim y) -> x `primSubtypeOf` y
-    (THMu x [t1] , THTyCon t2) -> alignMu x t1 t1 gotTy
-    (THTyCon t2 , THMu x [t1]) -> alignMu x t1 t1 inferred
+--  (THMu x [t1] , THTyCon t2) -> alignMu x t1 t1 gotTy
+--  (THTyCon t2 , THMu x [t1]) -> alignMu x t1 t1 inferred
     (THTyCon t1 , THTyCon t2) -> case (t1,t2) of
       (THArrow a1 r1 , THArrow a2 r2) -> let -- handle differing arities (since currying is allowed)
         -- note. (a->(b->c)) is eq to (a->b->c) via currying
         go (x:xs) (y:ys) = check'' y x && go xs ys
         go [] [] = check'' r1 r2
-        go [] y  = check'' r1 [THTyCon $ THArrow y r2]
-        go x []  = check'' [THTyCon $ THArrow x r1] r2
+        go [] y  = check'' r1 (TyGround [THTyCon $ THArrow y r2])
+        go x []  = check'' (TyGround [THTyCon $ THArrow x r1]) r2
         in go a1 a2
       (THSumTy labels , t@THArrow{}) -> False
       (THSumTy x , THSumTy y)     -> all identity (alignWith (these (const False) (const False) check'') x y)
@@ -68,6 +67,7 @@ check' es ars labTys inferred gotTy = let
     []   -> False
     tys  -> all (\t -> any (checkAtomic t) gotTy) $ tys
 
+{-
 alignMu :: Int -> TyHead -> TyHead -> TyHead -> Bool
 alignMu x target lty muBound = (if global_debug
   then trace (prettyTyRaw [lty] <> " µ=? " <> prettyTyRaw [muBound] <> " (" <> prettyTyRaw [target] <> ")")
@@ -84,8 +84,6 @@ alignMu x target lty muBound = (if global_debug
   (THTyCon (THTuple   lt) , THTyCon (THTuple   rt)) -> all identity $ exactAlign lt rt
 --(THTyCon (THSumTy lt) , THTyCon (THSumTy rt)) -> exactAlign lt rt
   (THPrim l , THPrim r) -> l == r -- must be exactly equal to roll up mus
-  (THMuBound x , THMu y _) -> x == y
-  (THMu y _ , THMuBound x) -> x == y
-  (THMu x _ , THMu y _) -> x == y
   (a , b) -> check _ mempty mempty [a] [b]
 --_ -> False
+-}

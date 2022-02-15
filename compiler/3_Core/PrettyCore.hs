@@ -1,5 +1,6 @@
 module PrettyCore where
 import Prim
+import Builtins
 import CoreSyn
 import ShowCore()
 import qualified Data.Vector as V
@@ -16,7 +17,7 @@ import Prettyprinter.Internal as P
 -- <h1 id="Marker">There's a link to here!</h1>
 data Annotation
  = AArg IName | ABindName IName | AQBindName  QName | AQLabelName QName | AQFieldName QName -- Names
- | AInstr | ALiteral | AType  | AAbs | AKeyWord
+ | AInstr | ALiteral | AType  | AAbs | AKeyWord | AExternType
 -- | ASrcLoc -- for clickable html
 
 data RenderOptions = RenderOptions
@@ -75,6 +76,7 @@ render flags = let
     AInstr        -> addColor ansiCLMagenta b
     AAbs          -> addColor ansiCLCyan b
     AType         -> addColor ansiCLGreen   b
+--  AExternType i -> allNames <$> 
     AKeyWord      -> addColor ansiCLMagenta b
   in TLB.toLazyText . renderTree . treeForm
 
@@ -103,10 +105,16 @@ number2xyz i = let
 
 pTy :: Type -> Doc Annotation
 --pTy (TyUnion t) = case t of
-pTy = \case
-  [] -> "_"
-  [x] -> pTyHead x
-  ts  -> parens $ hsep (punctuate " &" (pTyHeadParens <$> ts))
+pTy = let
+  pTyUnion = \case
+    [] -> "_"
+    [x] -> pTyHead x
+    ts  -> parens $ hsep (punctuate " &" (pTyHeadParens <$> ts))
+  in \case
+  TyVar  i   -> "τ" <> viaShow i
+  TyVars i []-> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
+  TyVars i g -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> "&" <+> parens (pTyUnion g)
+  TyGround u -> pTyUnion u
 
 pTyHeadParens t = case t of
   THTyCon THArrow{} -> parens (pTyHead t)
@@ -117,19 +125,18 @@ pTyHead = \case
   THTop        -> "⊤"
   THBot        -> "⊥"
   THPrim     p -> pretty (prettyPrimType p)
-  THVar      i -> "τ" <> viaShow i
-  THVars     i -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
   THBound    i -> pretty (number2CapLetter i)
-  THMuBound  t -> {-"μ" <>-} pretty (number2xyz t)
-  THMu v     t -> "μ" <> pretty (number2xyz v) <> "." <> pTy t
-  THExt      i -> "E" <> viaShow i
+  THMuBound  t -> pretty (number2xyz t)
+--THExt      i -> "E" <> viaShow i
+--THExt      i -> pretty $ fst (primBinds V.! i)
+  THExt      i -> pTy $ (\(Ty t) -> t) $ snd (primBinds V.! i)
 
   THTyCon t -> case t of
     THArrow [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> prettyTy ansiRender ret <> ")"
     THArrow args ret -> let
       pTHArrowArg t = case t of -- only add parens if necessary
 --      Type (THTyCon THArrow{}) -> parens (pTy t)
-        [THTyCon THArrow{}] -> parens (pTy t)
+        TyGround [THTyCon THArrow{}] -> parens (pTy t)
         _ -> pTy t
 --      [_] -> pTy t
 --      _   -> parens (pTy t)
@@ -143,9 +150,12 @@ pTyHead = \case
     THTuple  l  -> enclose "{" "}" (hsep $ punctuate " ," (pTy <$> V.toList l))
     THArray    t -> "Array " <> viaShow t
 
-  THBi i t -> "∏ " <> (hsep $ pretty . number2CapLetter <$> [0..i-1]) <> " → " <> pTy t
-  THPi pi  -> "∏(" <> viaShow pi <> ")"
-  THSi pi arsMap -> "Σ(" <> viaShow pi <> ") where (" <> viaShow arsMap <> ")"
+  THBi g m t -> let
+    gs = if g == 0 then "" else "∏ " <> (hsep $ pretty . number2CapLetter <$> [0..g-1]) <> " → "
+--  ms = if m <= 0  then "" else "µ" <> pretty (number2xyz m) <> "."
+    in gs <> pTy t
+--THPi pi  -> "∏(" <> viaShow pi <> ")"
+--THSi pi arsMap -> "Σ(" <> viaShow pi <> ") where (" <> viaShow arsMap <> ")"
 
   THSet   uni -> "Set" <> pretty uni
   x -> viaShow x

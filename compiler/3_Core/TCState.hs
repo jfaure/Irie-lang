@@ -27,11 +27,11 @@ data TCEnvState s = TCEnvState {
  , _blen        :: Int                -- cursor for bis whose length may exceed number of active vars
  , _bis         :: MV.MVector s BiSub -- typeVars
  , _argVars     :: MV.MVector s Int   -- arg IName -> TVar map (used to be Arg i => TVar i, but bis should be minimal)
- , _seenVars    :: Integer            -- cache for biunification to avoid looping
  , _escapedVars :: Integer            -- bitmask for TVars of shallower let-nests (don't generalize them until fully captured)
 
  -- Generalisation state
  , _quants      :: Int     -- fresh names for generalised typevars [A..Z,A1..Z1..]
+ , _quantsRec   :: Int     -- fresh names for generalised recursive typevars [x..y,x1..y1..]
  , _biEqui      :: MV.MVector s IName -- TVar -> Maybe genned var map (complement 0 indicates Nothing)
 
  -- Generalisation analysis phase
@@ -55,5 +55,5 @@ freshBiSubs n = do
   blen .= (biLen + n)
   bisubs <- if MV.length bisubs < biLen + n then MV.grow bisubs n else pure bisubs
   bis .= bisubs
-  tyVars `forM` \i -> MV.write bisubs i (BiSub [] [])
+  tyVars `forM` \i -> MV.write bisubs i (BiSub tyBot tyTop)
   pure tyVars

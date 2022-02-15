@@ -119,29 +119,30 @@ simplifyBindings nArgs nBinds bindsV = do
   }
 
 identifyLabels :: Type -> SimplifierEnv s ()
-identifyLabels ty = let
-  isMuBound = \case { THMuBound x -> True ; _ -> False}
-  goL [THTyCon (THTuple t)] = (fst <$> V.filter (\(_,t) -> any isMuBound t) (V.imap (,) t))
-  go = mapM_ goTH
-  goTH = \case
-    THBi b ty   -> go ty
-    THMu x ty   -> go ty
-    THTyCon s -> case s of
-      THSumTy ls -> do
-        let is = goL <$> ls
-        modify $ \x->x{recLabels = IM.union (recLabels x) $ is}
-      THTuple t   -> go `mapM_` t
-      THProduct t -> go `mapM_` t
-      THArrow t r -> (go `mapM_` t) *> go r
-    x -> pure ()
-  in go ty
+identifyLabels = _
+--identifyLabels (TyGround ty) = let
+--  isMuBound x = False -- \case { THMuBound x -> True ; _ -> False}
+--  goL [THTyCon (THTuple t)] = _ --(fst <$> V.filter (\(_,t) -> any isMuBound t) (V.imap (,) t))
+--  go = mapM_ goTH
+--  goTH = \case
+--    THBi b m ty -> go ty
+----  THMu x ty   -> go ty
+--    THTyCon s -> case s of
+--      THSumTy ls -> do
+--        let is = goL <$> ls
+--        modify $ \x->x{recLabels = IM.union (recLabels x) $ is}
+--      THTuple t   -> go `mapM_` t
+--      THProduct t -> go `mapM_` t
+--      THArrow t r -> (go `mapM_` t) *> go r
+--    x -> pure ()
+--  in go ty
 
 simpleBind :: Int -> SimplifierEnv s Bind
 simpleBind n = gets cBinds >>= \cb -> MV.read cb n >>= \b -> do
 --traceM "\n"
   svN <- zeroNApps
   modify $ \x->x{self = n}
-  MV.write cb n (BindOpt (0xFFFFFF) (Core (Var (VBind n)) [])) -- recursion guard
+  MV.write cb n (BindOpt (0xFFFFFF) (Core (Var (VBind n)) tyBot)) -- recursion guard
   new <- case b of
     BindOpt nApps body -> setNApps nApps *> pure body
     BindOK (Core t ty) -> (identifyLabels ty *> {-(gets recLabels) *>-} simpleTerm t) <&> \case

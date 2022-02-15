@@ -90,7 +90,7 @@ getExprType = \case
     LitE l       -> TPrim (PrimInt 32)
     y -> error $ show x
 
-ssaTy :: [TyHead] -> CGEnv s Type
+--ssaTy :: Type -> CGEnv s Type
 ssaTy = let
   singleT2ssa = \case
     THPrim p  -> pure $ TPrim p
@@ -110,19 +110,19 @@ ssaTy = let
         <*> ssaTy r
       x -> error $ show x
     THMuBound x -> TRec . (IM.! x) <$> gets muDefs
-    THMu x t    -> do
-      nm <- gets typeDef -- bit yolo, but we can assume THMu directly contains a struct TODO semi HACK
-      modify (\y->y{ muDefs = IM.insert x nm (muDefs y) })
-      t <- ssaTy t
-      pure t
+--  THMu x t    -> do
+--    nm <- gets typeDef -- bit yolo, but we can assume THMu directly contains a struct TODO semi HACK
+--    modify (\y->y{ muDefs = IM.insert x nm (muDefs y) })
+--    t <- ssaTy t
+--    pure t
 
-    THBi y t  -> ssaTy t
-    THBound b -> pure TPoly
-    THVar x   -> pure $ trace ("warning THVar: " <> show x :: Text) TPoly
+    THBi y m t -> ssaTy t
+    THBound b  -> pure TPoly
+--  THVar x    -> pure $ trace ("warning THVar: " <> show x :: Text) TPoly
 
     x -> error $ show x
   in \case
-  [t] -> singleT2ssa t
+  TyGround [t] -> singleT2ssa t
   _   -> pure TPoly -- low effort
 
 emitFunction nm i args t ty = gets wipBinds >>= \wip ->

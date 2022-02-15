@@ -2,12 +2,13 @@
 -- * the Prelude supplies mixfixes and more convenient access to many primitives
 -- * construct a vector of primitives
 -- * supply a (Map HName IName) to resolve names to indexes
-module Builtins where
+module Builtins (primBinds , primMap , typeOfLit) where
 import Prim
 import CoreSyn
-import CoreUtils
+--import CoreUtils
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
+import qualified Data.IntMap as IM
 
 mkExtTy x = [THExt x]
 getPrimIdx = (primMap M.!?)
@@ -20,11 +21,11 @@ primMap = M.fromList $ zipWith (\(nm,_val) i -> (nm,i)) primTable [0..]
 primBinds :: V.Vector (HName , Expr) = V.fromList primTable
 
 primTable = concat
-  [ (\(nm , x)         -> (nm , Ty [THPrim x]) )                  <$> primTys
-  , let tys2TyHead  (args , t) = [mkTyArrow (mkExtTy <$> args) (mkExtTy t)] in
+  [ (\(nm , x)         -> (nm , Ty $ TyGround [THPrim x]) )                  <$> primTys
+  , let tys2TyHead  (args , t) = TyGround $ mkTyArrow (TyGround . mkExtTy <$> args) (TyGround $ mkExtTy t) in
     (\(nm , (i , tys)) -> (nm , Core (Instr i) (tys2TyHead tys))) <$> primInstrs
-  , (\(nm , (i , t))   -> (nm , Core (Instr i) t))                <$> instrs
-  , (\(nm , e)         -> (nm , Ty [e]))                          <$> tyFns
+  , (\(nm , (i , t))   -> (nm , Core (Instr i) $ TyGround t))                <$> instrs
+  , (\(nm , e)         -> (nm , Ty $ TyGround [e]))                          <$> tyFns
 -- , uncurry ExtFn <$> extFnBinds
   ]
 
@@ -56,30 +57,37 @@ tyFns = [
 --  , ("_→_", (ArrowTy , ([set] , set)))
   ]
 
-instrs :: [(HName , (PrimInstr , Type))] =
-  [ ("addOverflow" , (AddOverflow , [mkTyArrow [[THExt i] , []] []]))
+-- tuples are THProducts with negative indices;
+-- this makes typing tuple access far simpler than introducing a new subtyping relation on records
+mkTHTuple vs = THTyCon $ THProduct $ IM.fromList (zip (qName2Key . mkQName 0 <$> [0..]) vs)
+
+mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
+mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (TyGround . singleton <$> args) (TyGround $ [retTy])
+
+instrs :: [(HName , (PrimInstr , [TyHead]))] = [
+--[ ("addOverflow" , (AddOverflow , mkTHArrow [TyGround [THExt i] , TyGround []] (TyGround [])))
 --, ("unlink"      , (Unlink , mkTyArrow [[THExt str] , mkTHArrow [THExt c,THExt str] (THExt str)] [THExt str]))
 --, ("link"        , (Link , mkTHArrow [THExt c] (THExt str)))
-  , ("strtol"      , (StrToL  , [mkTHArrow [THExt str] (THExt i)]))
+    ("strtol"      , (StrToL  , mkTHArrow [THExt str] (THExt i)))
   , ("mkTuple"     , (MkTuple , [THTyCon $ THTuple mempty]))
-  , ("ifThenElse"  , (IfThenE , [THBi 1 [mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]]))
+  , ("ifThenElse"  , (IfThenE , [THBi 1 (-1) $ TyGround $ mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]))
   , ("getcwd"      , (GetCWD  , [THExt str]))
 
   -- TODO fix type (set -> set -> A -> B)
-  , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 [mkTHArrow [THExt set , THExt set , THBound 0] (THBound 0)] ]))
+  , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 (-1) $ TyGround $ mkTHArrow [THExt set , THExt set , THBound 0] (THBound 0) ]))
 
    -- (Seed -> (Bool , A , Seed)) -> Seed -> %ptr(A)
-  , ("unfoldArray"   , (UnFoldArr , let unfoldRet = mkTHArrow [THBound 0] (mkTHTuple [[THExt b] , [THExt c] , [THBound 0]])
-      in [THBi 1 $ [mkTHArrow [THBound 0 , unfoldRet , THBound 0] (THExt str)]]))
+--, ("unfoldArray"   , (UnFoldArr , let unfoldRet = mkTHArrow [THBound 0] (mkTHTuple [[THExt b] , [THExt c] , [THBound 0]])
+--    in [THBi 1 (-1) $ [mkTHArrow [THBound 0 , unfoldRet , THBound 0] (THExt str)]]))
 
   -- %ptr(A) -> (Bool , A , %ptr(A))    == str -> (Bool , char , str)
-  , ("nextElem" , (NextElem , [mkTHArrow [THExt str] (mkTHTuple $ [[THExt b] , [THExt c] , [THExt str]])] ))
+  , ("nextElem" , (NextElem , mkTHArrow [THExt str] (mkTHTuple $ TyGround <$> [[THExt b] , [THExt c] , [THExt str]]) ))
 -- CStruct should be an opaque type
 --, ("toCStruct"  , (ToCStruct , [THBi 1 [mkTHArrow [THBound 0] (THExt cstruct)]] ))
 --, ("fromCStruct", (ToCStruct , [THBi 1 [mkTHArrow [THExt cstruct] [THBound 0]]] ))
 
-  , ("readFile"  , (ReadFile  , [mkTHArrow [THExt str] (THExt str)]))
-  , ("writeFile" , (WriteFile , [mkTHArrow [THExt str] (THExt str)]))
+  , ("readFile"  , (ReadFile  , mkTHArrow [THExt str] (THExt str)))
+  , ("writeFile" , (WriteFile , mkTHArrow [THExt str] (THExt str)))
   ]
 
 primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =

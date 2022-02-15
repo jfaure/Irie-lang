@@ -1,20 +1,22 @@
 ## Top Priority
   * languageDocumentation.md
-  * User declared types and non-trivial type annotations
+  * Type aliases
+  * polymorphic subsumption
   * functor modules/records; patterns in records (?) `(a , b) = (1 , 3)` opened vs closed
   * reconcile first order foldl and foldr for fusion; ListFn => FoldL fl | FoldR fr | Array fl fr (| Ix)
   * toCStruct / fromCStruct / [ptr] : A -> CStruct
   * globalresolver should discard names from the module its recompiling (esp. to avoid exporting now deleted names)
   * improve Type (to avoid partitioning out tvars, speed up mergeing and tycon tvar bitset)
   * after function with no free-vars generalised, can trim but not fully clear bisubs!
-  * type intersection vs type union
+  * type intersection vs type union functions (intersection should indicate if noop)
   * extrusion & check escapedVars are updated at right time through let-nests & mutuals
 ## Top
   * show + repl typecase to print JIT results
-  * provide Vector alternative for Cons | THProduct when names sequential (frequent) [n..m]
+  * provide Vector alternative for ADTs when names sequential (they frequently are) [n..m]
   * make new datatypes: growable vector and hashmap + vector 'StrIntName'
   * let-bound functions origin `f.l` + f knows owned let-binds (what if in a record ?)
   * Linear typing
+  * make a prettyprinter Doc for error messages
 ## Parse
   * don't allow mixing tabs and spaces
   * Pattern guards
@@ -25,6 +27,7 @@
   * Dependent normalisation & Staging (compile recursive defs when normalising)
   * Place the forall. in negative positions correctly
   * first class polymorphism
+  * mergetyhead should indicate if merge was a noop (so bisub knows it has already seen that input)
 ## Error messages
   * Warn nonsense type joins
   * lone mfWords that aren't ambig-binds should error (also non-explicit partial apps like f = 3 <)
@@ -35,14 +38,17 @@
   * case-of-case
   * static argument transformation
   * tycon promotion (promote single field /labels to value)
+  * + 0 => identity
   * normalize fields/labels for codegen
 
 ## Unimportant
   * check let-rec / mutuals
-  * Don't repeat not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
+  * Repeat not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
   * make work module import loops
   * language server
   * optimize cached modules
   * sh syntax `ls -lr` => `ls { l=True , r=True }`
   * engineer GlobalResolver to work concurrently
   * when recompiling cached modules, figure out what changed
+  * prefetch memory | loop unrolling
+  * exploit the cpu carry flag ?

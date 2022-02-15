@@ -11,6 +11,7 @@ deriving instance Generic Term
 deriving instance Generic LensOp
 deriving instance Generic TyCon
 deriving instance Generic TyHead
+deriving instance Generic Type
 deriving instance Generic Bind
 deriving instance Generic JudgedModule
 deriving instance Generic Expr
@@ -47,6 +48,7 @@ instance Binary Term
 instance Binary LensOp
 instance Binary TyCon
 instance Binary TyHead
+instance Binary Type
 instance Binary Bind
 instance Binary JudgedModule
 instance Binary Expr

@@ -136,7 +136,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     (Just [(modNm , iNm)] , Nothing)
 --    | True <- testBit iNm fieldBit -> Imported (Core (Field (mkQName modNm (clearBit iNm fieldBit)) []) [])
 --    labels are weird in that they sometimes look like normal bindings `n = Nil`
-      | True <- testBit iNm labelBit -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) [])
+      | True <- testBit iNm labelBit -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) (TyGround []))
       | Just True <- ((==modNm) <$> oldIName) -> ForwardRef iNm -- discard old stuff
       | True -> Importable modNm iNm
     (b , Just mfWords)
@@ -197,7 +197,12 @@ addModName modIName modHName g = g
   }
 
 addDependency imported moduleIName r = r
-  { dependencies = V.modify (\v -> MV.modify v (\d->d{dependents = (dependents d) `setBit` imported}) moduleIName) (dependencies r) }
+--   { dependencies = let
+--     ModDependencies deps dependents = if V.length (dependencies r) > moduleIName
+--       then dependencies r V.! moduleIName
+--       else ModDependencies emptyBitSet emptyBitSet
+--     in updateVecIdx (ModDependencies 0 0) (dependencies r) moduleIName (ModDependencies (deps `setBit` imported) dependents)
+--   }
 
 addModule2Resolver (GlobalResolver modCount modNames nameMaps l f modNamesV binds lh fh deps mfResolver)
   isRecompile modIName modHName newBinds lHNames fHNames labelNames fieldNames modDeps

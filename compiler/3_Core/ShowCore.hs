@@ -12,7 +12,7 @@ deriving instance Show Term
 deriving instance Show LensOp
 deriving instance Show TyCon
 deriving instance Show TyHead
---deriving instance Show Type
+deriving instance Show Type
 deriving instance Show Bind
 deriving instance Show JudgedModule
 deriving instance Show Expr

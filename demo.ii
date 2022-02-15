@@ -2,15 +2,23 @@
 --import imports/list
 --import imports/simpleTests
 
--- Make sure that escaped tvars never refer to deeper ones
--- instantiate = replace tvars at or above lvl with fresh vars at lvl
--- constraining: while types / tvars came from deeper let-nest, make new tvars at this lvl
-lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)} -- ∏ A → (%i32 & {t : %i1} → A) → {u : {a : %i32 , b : A} , v: {a : %i1 , b : A}}
--- 
---records5 f = { x = f 42 }.x           -- ∏ A → (%i32 → A) → A
+{-
+rr f x g = { a = g x , b = f x }
+lp17 f = let
+  -- x should be generalised, but it is affected by the type of f, an escaped variable
+  r x g = { a = g x , b = f x }
+  in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
+-- ∏ A → (%i32 & {t : %i1} → A) → {u : {a : %i32 , b : A} , v: {a : %i1 , b : A}}
+-- ∏ A → τ(3) → (τ(3) → A) → {a : A , b : τ(6)}
+-- Should generalise all tvars that are fully captured !
+-- ⚛bisub: τ4 <==> τ3 → τ5
+-- ⚛bisub: τ1 <==> τ3 → τ6
+-- τ1 is an escaped var
+-}
 
-lp3 y = let f = \x => y x in {a = f 7 , b = f 1}   -- ∏ A → ((%i1 & %i32) → A) → {a : A , b : A}
-
+-- when extruding v (bissubing it with an escaped variable):
+-- => create a conservative approximation of v so later insantiations can receive additional constraints independently as long as they are within these approximating bounds
+--
 -- step dirp = case j (readdir dirp) of
 --   Nothing => Nothing
 --   Just a  => Just { val = a , seed = dirp }
@@ -36,16 +44,17 @@ lp3 y = let f = \x => y x in {a = f 7 , b = f 1}   -- ∏ A → ((%i1 & %i32) �
 -- 
 -- x a = ifThenElse a a 3 -- a & Bool -> a & Int
 -- 
--- foldl f s l = case l of
---   Cons x xs => foldl f (f s x) xs
---   Nil => s
--- 
--- foldr f s l = case l of
---   Cons x xs => f x (foldr f s xs)
---   Nil       => s
+--foldl f s l = case l of
+--  Cons x xs => foldl f (f s x) xs
+--  Nil => s
 
---append front back = foldr Cons back front
---concat = foldr append Nil
+foldr f s l = case l of
+  Cons x xs => f x (foldr f s xs)
+  Nil       => s
+
+-- r = { next = r }
+-- append front back = foldr Cons back front
+-- concat = foldr append Nil
 
 -- The prefix in pretty-printing:
 -- when a dir is opened:

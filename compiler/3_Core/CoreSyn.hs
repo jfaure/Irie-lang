@@ -10,8 +10,8 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.Map.Strict as M
 
---global_debug = False
-global_debug = True
+global_debug = False
+--global_debug = True
 
 type ExtIName    = Int -- VExterns
 type BiSubName   = Int -- index into bisubs
@@ -64,23 +64,32 @@ data Term -- β-reducable (possibly to a type)
 
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs idx for extracting field
 
--- Type: designed for fast merging and partitioned out tvars
---data Type
--- = Type TyHead
--- | TyMerge BitSet [TyHead]
--- | TyTop | TyBot
--- | TyUnion { tyunion :: [TyHead] }
---bot = TyBot
---top = TyTop
---catTypes
+type Uni     = Int -- a universe of types
+type TyMinus = Type
+type TyPlus  = Type
+ 
+-- Type: designed for fast merging and having pre-partitioned out tvars
+-- True / + / output / join , False / - / input / meet
+--data GroundType -- no tvars
+-- = TyGround TyHead
+-- | TyUnion TyCon [TyHead]
+type GroundType = [TyHead]
 
---type TyMinus = Type
---type TyPlus  = Type
-type Type    = TyPlus
-type TyMinus = [TyHead] -- input  types (lattice meet ^) eg. args
-type TyPlus  = [TyHead] -- output types (lattice join v)
-holeTy       = []
-type Uni     = Int
+-- Note. Theoretically Type vars have their own presence in the profinite distributive lattice of types
+-- The point is to partition tvars out of the [TyHead] list since they are usually handled separately
+data Type
+ = TyGround GroundType
+ | TyVar    Int
+ | TyVars   BitSet GroundType
+ deriving Eq
+-- | TyQuantified Int Int GroundType
+
+tyTop = TyGround []
+tyBot = TyGround []
+
+--type Type    = TyPlus
+--type TyMinus = [TyHead] -- input  types (lattice meet ^) eg. args
+--type TyPlus  = [TyHead] -- output types (lattice join v)
 
 data TyCon -- Type constructors
  = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot -> top is the largest)
@@ -88,8 +97,9 @@ data TyCon -- Type constructors
  | THProduct  (IntMap TyPlus)
  | THSumTy    (IntMap TyPlus)
  | THArray    TyPlus
+ deriving Eq
 
-data Pi = Pi [(IName , Type)] Type
+data Pi = Pi [(IName , Type)] Type deriving Eq
 
 -- Head constructors in the profinite distributive lattice of types
 data TyHead
@@ -103,20 +113,20 @@ data TyHead
  | THTyCon !TyCon -- BitSet cache escaped vars
 
  -- Binders
- | THMu IName Type-- recursive type
- | THBi Int Type  -- deBruijn pi binder
- | THPi Pi        -- dependent function space. implicitly bound. (explicit: `∏(x:_) x -> T`)
- | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
+ | THBi Int Int Type -- generalised vars `Π A → T` and if m >= 0 a µm.T (they are handled the same for inference)
+-- | THPi Pi           -- dependent function space. implicitly bound. (explicit: `∏(x:_) x -> T`)
+-- | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
 
  -- Type variables
- | THVar     BiSubName -- generalizes to THBound if survives biunification and simplification
- | THVars    BitSet    -- BitSet of TVars
+-- | THVar     BiSubName -- generalizes to THBound if survives biunification and simplification
+-- | THVars    BitSet    -- BitSet of TVars
  | THBound   IName     -- pi-bound debruijn index; replace with fresh THVar at THBi to biunify
- | THMuBound IName     -- mu-bound debruijn index (must be guarded and covariant) 
+ | THMuBound IName     -- mu-bound debruijn index (must be guarded and covariant) inference treats it exactly as THBound
 
 -- type Families | indexed types
- | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
- | THFam Type [Type] [Expr] -- type of indexables, and things indexing it (both can be [])
+-- | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
+-- | THFam Type [Type] [Expr] -- type of indexables, and things indexing it (both can be [])
+ deriving Eq
 
 data Expr
  = Core     Term Type
@@ -184,8 +194,8 @@ data BiCast
 -- | BiCast Term
 
 data BiSub = BiSub {
-   _pSub :: [TyHead]
- , _mSub :: [TyHead]
+   _pSub :: Type
+ , _mSub :: Type
 }
 
 makeLenses ''BiSub
