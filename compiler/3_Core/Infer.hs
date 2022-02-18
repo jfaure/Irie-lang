@@ -91,7 +91,10 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
       , _biEqui   = biEqui'
       , _coOccurs = _
       , _escapedVars = 0
+      , _escapingVars = 0
+      , _muWrap      = Nothing
       , _recVars     = 0
+      , _hasRecs     = 0
 --    , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
 --    , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
@@ -122,6 +125,7 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
         tyAnn    = P.fnSig (P.fnDef abs)
     freeTVars <- use argVars >>= \avs -> bitSet2IntList freeVars `forM` \i -> MV.read avs i
     svEscapes <- escapedVars <<%= (.|. intList2BitSet freeTVars)
+    svEscaping <- use escapingVars
 
     (tvarIdx , jb , ms) <- freshBiSubs 1 >>= \[idx] -> do
       MV.write wip' bindINm (Guard [] idx)
@@ -139,10 +143,10 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
 
     MV.write wip' bindINm (Mutual jb freeVars False tvarIdx typeAnn)
     if minimum (bindINm:ms) /= bindINm then pure jb
-    else (fromJust . head <$> generaliseBinds svEscapes bindINm ms)
+    else (fromJust . head <$> generaliseBinds svEscapes svEscaping bindINm ms)
 
-generaliseBinds :: Integer -> Int -> [Int] -> TCEnv s [Expr]
-generaliseBinds svEscapes i ms = use wip >>= \wip' -> (i : ms) `forM` \m ->
+generaliseBinds :: BitSet -> BitSet -> Int -> [Int] -> TCEnv s [Expr]
+generaliseBinds svEscapes svEscaping i ms = use wip >>= \wip' -> (i : ms) `forM` \m ->
   MV.read wip' m >>= \(Mutual naiveExpr freeVs isRec recTVar annotation) -> do
   inferred <- case naiveExpr of
     Core expr coreTy -> Core expr <$> do -- generalise the type
@@ -160,7 +164,8 @@ generaliseBinds svEscapes i ms = use wip >>= \wip' -> (i : ms) `forM` \m ->
       escaped <- use escapedVars
       generalise escaped recTVar <* when (free == 0) (clearBiSubs recTVar)
     t -> pure t
-  escapedVars .= svEscapes
+  escapedVars  .= svEscapes
+--escapingVars .= svEscaping
   done <- case (annotation , inferred) of
     (Just t , Core e inferredTy) -> Core e <$> checkAnnotation t inferredTy
     _                            -> pure inferred
@@ -380,9 +385,9 @@ infer = let
       Core (Match retTy altsMap Nothing) matchTy
 
   -- TODO merge (join) all the tys to produce the array ?
-  P.LitArray literals -> let
-    ty = TyGround [typeOfLit (fromJust $ head literals)]
-    in pure $ Core (Lit . Array $ literals) (TyGround [THTyCon $ THArray ty])
+--P.LitArray literals -> let
+--  ty = TyGround [typeOfLit (fromJust $ head literals)]
+--  in pure $ Core (Lit . Array $ literals) (TyGround [THTyCon $ THArray ty])
 
   P.Lit l  -> pure $ Core (Lit l) (TyGround [typeOfLit l])
 

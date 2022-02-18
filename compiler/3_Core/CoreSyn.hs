@@ -1,4 +1,4 @@
--- Core Language (compiler pipeline = Text >> Parse >> Core >> STG >> LLVM)
+-- Core Language. compiler pipeline = Text >> Parse >> Core >> STG >> SSA
 {-# LANGUAGE TemplateHaskell #-}
 module CoreSyn (module CoreSyn , module QName , ModIName) where
 import Prim
@@ -10,8 +10,8 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.Map.Strict as M
 
-global_debug = False
---global_debug = True
+--global_debug = False
+global_debug = True
 
 type ExtIName    = Int -- VExterns
 type BiSubName   = Int -- index into bisubs
@@ -79,8 +79,9 @@ type GroundType = [TyHead]
 -- The point is to partition tvars out of the [TyHead] list since they are usually handled separately
 data Type
  = TyGround GroundType
- | TyVar    Int
+ | TyVar    Int -- generalizes to THBound if survives biunification and simplification
  | TyVars   BitSet GroundType
+-- | TyMu Int Type
  deriving Eq
 -- | TyQuantified Int Int GroundType
 
@@ -96,7 +97,7 @@ data TyCon -- Type constructors
  | THTuple    (V.Vector  TyPlus) -- ordered form of THproduct
  | THProduct  (IntMap TyPlus)
  | THSumTy    (IntMap TyPlus)
- | THArray    TyPlus
+-- | THArray    TyPlus
  deriving Eq
 
 data Pi = Pi [(IName , Type)] Type deriving Eq
@@ -113,13 +114,11 @@ data TyHead
  | THTyCon !TyCon -- BitSet cache escaped vars
 
  -- Binders
+ | THMu Int Type
  | THBi Int Int Type -- generalised vars `Π A → T` and if m >= 0 a µm.T (they are handled the same for inference)
 -- | THPi Pi           -- dependent function space. implicitly bound. (explicit: `∏(x:_) x -> T`)
 -- | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
 
- -- Type variables
--- | THVar     BiSubName -- generalizes to THBound if survives biunification and simplification
--- | THVars    BitSet    -- BitSet of TVars
  | THBound   IName     -- pi-bound debruijn index; replace with fresh THVar at THBi to biunify
  | THMuBound IName     -- mu-bound debruijn index (must be guarded and covariant) inference treats it exactly as THBound
 
@@ -199,10 +198,9 @@ data BiSub = BiSub {
 }
 
 makeLenses ''BiSub
---makeLenses ''QTT
 
--- label for the different head constructors. (KAny is in a way top of the entire universe)
-data Kind = KPrim PrimType | KArrow | KVar | KVars | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
+-- label for the different head constructors.
+data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
  deriving (Eq , Ord)
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)

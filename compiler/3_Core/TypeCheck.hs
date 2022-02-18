@@ -44,8 +44,7 @@ check' es ars labTys (TyGround inferred) (TyGround gotTy) = let
 --  (THVar x , gTy)       -> True -- check'' (bis V.! x) [gTy]
 --  (lTy , THVar x)       -> False
     (THPrim x , THPrim y) -> x `primSubtypeOf` y
---  (THMu x [t1] , THTyCon t2) -> alignMu x t1 t1 gotTy
---  (THTyCon t2 , THMu x [t1]) -> alignMu x t1 t1 inferred
+    (THMu x _ , THMuBound y) -> y == x
     (THTyCon t1 , THTyCon t2) -> case (t1,t2) of
       (THArrow a1 r1 , THArrow a2 r2) -> let -- handle differing arities (since currying is allowed)
         -- note. (a->(b->c)) is eq to (a->b->c) via currying

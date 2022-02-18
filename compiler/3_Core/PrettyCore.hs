@@ -126,7 +126,8 @@ pTyHead = \case
   THBot        -> "⊥"
   THPrim     p -> pretty (prettyPrimType p)
   THBound    i -> pretty (number2CapLetter i)
-  THMuBound  t -> pretty (number2xyz t)
+--THMuBound  t -> pretty (number2xyz t)
+  THMuBound  t -> "µ" <> pretty (number2CapLetter t)
 --THExt      i -> "E" <> viaShow i
 --THExt      i -> pretty $ fst (primBinds V.! i)
   THExt      i -> pTy $ (\(Ty t) -> t) $ snd (primBinds V.! i)
@@ -148,8 +149,9 @@ pTyHead = \case
       prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy ty
       in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> IM.toList l))
     THTuple  l  -> enclose "{" "}" (hsep $ punctuate " ," (pTy <$> V.toList l))
-    THArray    t -> "Array " <> viaShow t
+--  THArray    t -> "Array " <> viaShow t
 
+  THMu m t -> "µ" <> pretty (number2CapLetter m) <> "." <> pTy t
   THBi g m t -> let
     gs = if g == 0 then "" else "∏ " <> (hsep $ pretty . number2CapLetter <$> [0..g-1]) <> " → "
 --  ms = if m <= 0  then "" else "µ" <> pretty (number2xyz m) <> "."
@@ -212,7 +214,7 @@ pTerm = let
   Match caseTy ts d -> let
     showLabel l t = indent 2 $ prettyLabel (QName l) <> softline <> indent 2 (pExpr t)
     in annotate AKeyWord "\\case " <> (" : " <> annotate AType (pTy caseTy)) <> hardline
-      <> vsep (punctuate "|" (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
+      <> vsep ((IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
 --    <> maybe "%Default" pExpr d <> hardline
 --RecMatch ts d -> let
 --  showLabel l (i,t) = prettyLabel (QName l) <> "(" <> viaShow i<> ") => " <> pE' "   " t

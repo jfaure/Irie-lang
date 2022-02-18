@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module TCState where
 import CoreSyn
+import CoreUtils
 import Errors
 import Externs
 import qualified ParseSyntax as P
@@ -28,10 +29,13 @@ data TCEnvState s = TCEnvState {
  , _bis         :: MV.MVector s BiSub -- typeVars
  , _argVars     :: MV.MVector s Int   -- arg IName -> TVar map (used to be Arg i => TVar i, but bis should be minimal)
  , _escapedVars :: Integer            -- bitmask for TVars of shallower let-nests (don't generalize them until fully captured)
+ , _escapingVars:: Integer            -- bitmask for TVars bisubbed with some escapedVars
 
  -- Generalisation state
- , _quants      :: Int     -- fresh names for generalised typevars [A..Z,A1..Z1..]
- , _quantsRec   :: Int     -- fresh names for generalised recursive typevars [x..y,x1..y1..]
+ , _muWrap      :: Maybe (IName , Type)
+ , _hasRecs     :: BitSet
+ , _quants      :: Int  -- fresh names for generalised typevars [A..Z,A1..Z1..]
+ , _quantsRec   :: Int  -- fresh names for generalised recursive typevars [x..y,x1..y1..]
  , _biEqui      :: MV.MVector s IName -- TVar -> Maybe genned var map (complement 0 indicates Nothing)
 
  -- Generalisation analysis phase

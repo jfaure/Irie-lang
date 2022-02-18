@@ -8,6 +8,8 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V
 import qualified Data.IntMap as IM
 
+-- Static argument transofrmation translates nested computations into nested recursive fns
+-- specialisation on paps produces flat loops with mutually recursive functions
 type CGEnv s a = StateT (CGState s) (ST s) a
 data CGState s = CGState {
    wipBinds    :: MV.MVector s CGWIP

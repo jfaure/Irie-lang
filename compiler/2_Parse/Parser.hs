@@ -357,7 +357,7 @@ funBind' isTop letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
       [ (:[]) <$> fnMatch (pure ars) (reserved "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
       , case (ars , ann) of
           ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
-          (x  , Just{})  -> fail "TODO no parser for: fn args followed by type signature"
+          (x  , Just{})  -> fail $ "Expected function definition, got type annotation"
           (x  , Nothing) -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
       ]
     pure (implicits , pi , eqns , ty)

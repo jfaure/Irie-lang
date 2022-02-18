@@ -6,10 +6,10 @@
   * reconcile first order foldl and foldr for fusion; ListFn => FoldL fl | FoldR fr | Array fl fr (| Ix)
   * toCStruct / fromCStruct / [ptr] : A -> CStruct
   * globalresolver should discard names from the module its recompiling (esp. to avoid exporting now deleted names)
-  * improve Type (to avoid partitioning out tvars, speed up mergeing and tycon tvar bitset)
   * after function with no free-vars generalised, can trim but not fully clear bisubs!
   * type intersection vs type union functions (intersection should indicate if noop)
   * extrusion & check escapedVars are updated at right time through let-nests & mutuals
+  * switch to old handling of mus (don't replace with tvars unless have to look in the mu)
 ## Top
   * show + repl typecase to print JIT results
   * provide Vector alternative for ADTs when names sequential (they frequently are) [n..m]
@@ -42,6 +42,7 @@
   * normalize fields/labels for codegen
 
 ## Unimportant
+  * optimise checking for recursive wrappers
   * check let-rec / mutuals
   * Repeat not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
   * make work module import loops

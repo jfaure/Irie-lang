@@ -10,15 +10,15 @@ import Prim
 import qualified Data.IntMap as IM
 import qualified Data.Vector as V
 
--- eqTypes a b = all identity (zipWith eqTyHeads a b) -- TODO not zipwith !
--- eqTyHeads a b = kindOf a == kindOf b && case (a,b) of
--- --(THVar a  , THVar b)  -> a == b
--- --(THVars a  , THVars b)  -> a == b
---   (THPrim a  , THPrim b)  -> a == b
---   (THTyCon a , THTyCon b) -> case did_ (a,b) of
---     (THSumTy a , THSumTy b) -> all identity $ IM.elems $ alignWith (these (const False) (const False) eqTypes) a b
---     (THTuple a , THTuple b) -> all identity $ V.zipWith eqTypes a b
---   _ -> False
+-- eqTypes a b = all identity (zipWith eqTyHeads a b) -- not zipwith !
+eqTypes (TyGround a) (TyGround b) = all identity (alignWith (these (const False) (const False) eqTyHeads) a b)
+
+eqTyHeads a b = kindOf a == kindOf b && case (a,b) of
+  (THPrim a  , THPrim b)  -> a == b
+  (THTyCon a , THTyCon b) -> case did_ (a,b) of
+    (THSumTy a , THSumTy b) -> all identity $ IM.elems $ alignWith (these (const False) (const False) eqTypes) a b
+    (THTuple a , THTuple b) -> all identity $ V.zipWith eqTypes a b
+  _ -> False
 
 partitionType = \case
   TyVars vs g -> (vs , g)
@@ -64,46 +64,12 @@ prependArrowArgsTy args = \case
   TyGround [THBi i m t] -> TyGround [THBi i m $ prependArrowArgsTy args t]
   x -> TyGround [THTyCon $ THArrow args x]
 
---onRetType :: (Type -> Type) -> Type -> Type
---onRetType fn = \case
---  [THTyCon (THArrow as r)] -> [THTyCon $ THArrow as (onRetType fn r)]
---  [THPi (Pi p t)] -> [THPi (Pi p $ onRetType fn t)]
---  x -> fn x
---x -> x --onRetType fn <$> x
-
---getRetTy = \case
---  [THTyCon (THArrow _ r)] -> getRetTy r -- currying
-----[THPi (Pi ps t)] -> getRetTy t
---  [THBi i m t] -> getRetTy t
---  x -> x
-
 isTyCon = \case
  THTyCon{} -> True
  _         -> False
 
--- isArrowTy = \case
---   [THTyCon (THArrow{})] -> True
---   [THPi (Pi p t)] -> isArrowTy t
---   [THBi i m t] -> isArrowTy t
--- --[THSi (Pi p t) _] -> isArrowTy t
---   x -> False
-
---flattenArrowTy ty = let
---  go = \case
---    [THTyCon (THArrow d r)] -> let (d' , r') = go r in (d ++ d' , r')
---    t -> ([] , t)
---  in (\(ars,r) -> [THArrow ars r]) . go $ ty
-
 tyOfTy :: Type -> Type
 tyOfTy t = TyGround [THSet 0]
---tyOfTy t = case t of
---  [] -> _
-----[THRecSi f ars] -> let
-----  arTys = take (length ars) $ repeat [THSet 0]
-----  uni = maximum $ (\case { [THSet n] -> n ; x -> 0 }) <$> arTys
-----  in [THTyCon $ THArrow arTys [THSet uni]]
---  [t] -> [THSet 0]
---  t  -> panic $ "multiple types: " <> show t
 
 tyExpr = \case -- expr found as type, (note. raw exprs cannot be types however)
   Ty t -> Just t
@@ -136,14 +102,11 @@ bind2Expr = \case
 --eqTyHead a b = kindOf a == kindOf b
 kindOf = \case
   THPrim p  -> KPrim p
---THVar{}   -> KVar
---THVars{}  -> KVars
   THTyCon t -> case t of
     THArrow{}   -> KArrow
     THProduct{} -> KProd
     THSumTy{}   -> KSum
     THTuple{}   -> KTuple
-    THArray{}   -> KArray
   THBound{} -> KBound
   THMuBound{} -> KRec
   _ -> KAny
@@ -160,9 +123,6 @@ mergeTyUnions l1 l2 = let
 mergeTyHeadType :: TyHead -> [TyHead] -> [TyHead]
 mergeTyHeadType newTy [] = [newTy]
 mergeTyHeadType newTy (ty:tys) = mergeTyHead newTy ty ++ tys
---if eqTyHead newTy ty
---then mergeTyHead newTy ty ++ tys
---else (ty : doSub newTy tys)
 
 mergeTyHead :: TyHead -> TyHead -> [TyHead]
 mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
@@ -180,8 +140,6 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
     _ -> join
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
   [THBound a , THBound b]     -> if a == b then [t1] else join
---[THVar  a , THVar  b]       -> [THVars (setBit (setBit 0 a) b)] --if a == b then [t1] else join
---[THVars a , THVars b]       -> [THVars (a .|. b)]
   [THExt a , THExt  b]        -> if a == b then [t1] else join
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of -- TODO depends on polarity (!)
     [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ IM.unionWith mergeTypes a b]
@@ -189,10 +147,6 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
     [THTuple a , THTuple b]     -> [THTyCon $ THTuple   $ zM a b]
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM d1 d2) (mergeTypes r1 r2)]
     x -> join
---[THFam f1 a1 i1 , THFam f2 a2 i2] -> [THFam (mergeTypes f1 f2) (zM a1 a2) i1] -- TODO merge i1 i2!
---[THPi (Pi b1 t1) , THPi (Pi b2 t2)] -> [THPi $ Pi (b1 ++ b2) (mergeTypes t1 t2)]
---[THPi (Pi b1 t1) , t2] -> [THPi $ Pi b1 (mergeTypes t1 [t2])]
---[t1 , THPi (Pi b1 t2)] -> [THPi $ Pi b1 (mergeTypes [t1] t2)]
   _ -> join
 
 nullType = \case
@@ -202,6 +156,15 @@ nullType = \case
 
 mergeTypeList :: [Type] -> Type
 mergeTypeList = foldr mergeTypes (TyGround [])
+
+rmMuBound m = \case
+  TyGround g -> TyGround $ filter (\case { THMuBound x -> x /= m ; _ -> True }) g
+  t -> t
+
+rmTVar v = \case
+  TyVar w     -> if w == v then TyGround [] else TyVar w
+  TyVars ws g -> TyVars (ws `clearBit` v) g
+  TyGround g  -> TyGround g
 
 mergeTVars vs = \case
   TyVar w     -> TyVars (vs `setBit` w) []
@@ -220,11 +183,68 @@ mergeTypes (TyVars vs g1) (TyGround g2)  = TyVars vs (mergeTyUnions g1 g2)
 mergeTypes (TyGround g1) (TyVars vs g2)  = TyVars vs (mergeTyUnions g1 g2)
 mergeTypes a b = error $ "attempt to merge weird types: " <> show (a , b)
   
+-- TODO check at the same time if this did anything
 mergeTysNoop :: Type -> Type -> Maybe Type = \a b -> Just $ mergeTypes a b
 
---tUnionThTh t1 th =
---tUnionTTh  t1 th =
---tUnionTyTy t1 t2 = 
---tUnionTyTyEq t1 t2 = () -- test equality of the types (to avoid loops in biunification)
---partitionTVars :: Type -> (BitSet , Type)
---tIntersection :: [Type] -> Type -- used by co-occurence to find types present everywhere
+{-
+-- Attempt to merge a mu type into it's enclosing type constructors
+-- This can be checked in O(N) by working inside->out, checking if each subsequent wrapper matches the mu type
+data NextWrap
+ = NextWrap { testWrapper :: (Type -> NextWrap) }
+ | NonRec Type
+ | End      (Maybe Type) -- the wrapper can be rolled into the mu or not
+showWrap = \case
+  NextWrap{} -> "nextWrap"
+  NonRec t   -> "NonRec " <> prettyTyRaw t
+  End    t   -> show t
+wrapOK = \case
+  End (Just _) -> True
+  _ -> False
+
+-- fold into the mu, making a new function at each tycon to check the next layer, and return those functions inside out
+mkMuRoll :: Type -> NextWrap
+mkMuRoll mu = traceShow mu $ let
+  -- do n and return nwrap
+  -- calling this at each step essentially inverts the mu
+  composeNexts n nwrap = NextWrap $ \g -> case testWrapper n g of
+    End Nothing -> End Nothing -- stop if it ends here
+    other -> nwrap
+
+  end b = End $ if b then Just mu else Nothing
+
+  -- Only look at the non-recursive branches (all branches except the one we came out of)
+  aligner = these (const False) (const False) $ \got mu -> case mu of
+    NonRec t -> got == t
+    _ -> True
+
+  isMuBranch = \case {NextWrap{}->True ; _->False}
+  in case mu of
+  TyGround [THTyCon t] -> case t of
+    -- return one of the mu-branches
+    THTuple tys  -> end True
+    THTuple tys  -> let
+      muRolls = mkMuRoll <$> tys
+      next = fromMaybe (-1) $ V.findIndex isMuBranch muRolls
+      in composeNexts (muRolls V.! next) $ NextWrap $ \case
+        TyGround [THTyCon (THTuple tys2)] -> end $ all identity (V.izipWith (\i l r -> i == next || l == r) tys tys2)
+
+    -- deep equality on all branches except the recursive one which we came out of
+    THSumTy   alts  -> let
+      muRolls = mkMuRoll <$> alts
+      next    = case filter isMuBranch (IM.elems muRolls) of
+        [n] -> n
+        _   -> error $ show alts -- ?! should be impossible
+      in composeNexts next $ NextWrap $ \case
+        TyGround [THTyCon (THSumTy got)] -> end $ all identity (alignWith aligner got muRolls)
+
+  -- start: innermost THMuBound should (always) match with its own mu binder (test ms are eq?)
+  TyGround [THMuBound{}] -> NextWrap $ \got -> case got of { TyGround [THMu{}] -> end True ; _ -> end False }
+  TyGround [THMu m t]    -> let
+    next = mkMuRoll t
+    in composeNexts next $ NextWrap $ \got -> case got of { TyGround [THMu{}] -> end True ; _ -> end False }
+  t -> NonRec t
+
+-- Check one layer of types are equal including (THMu = THMuBound)
+eqMu (TyGround [t]) (TyGround [t2]) = True
+eqMu _ _ = True
+-}

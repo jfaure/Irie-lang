@@ -31,31 +31,33 @@ bisub a b = --when global_debug (traceM ("bisub: " <> prettyTyRaw a <> " <==> " 
   biSubType a b
 
 biSubTVars :: BitSet -> BitSet -> TCEnv s BiCast
-biSubTVars m p = BiEQ <$ (bitSet2IntList m `forM` \v -> biSubTVarTVar v `mapM` bitSet2IntList p)
+biSubTVars p m = BiEQ <$ (bitSet2IntList p `forM` \v -> biSubTVarTVar v `mapM` bitSet2IntList m)
 
-biSubTVarTVar p m = use bis >>= \v -> MV.read v m >>= \(BiSub p' m') -> do
---  | p == m {-|| p' `hasVar` p-} -> pure BiEQ
-  when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar m) <> " <==> " <> prettyTyRaw (TyVar p)))
-  MV.write v m (BiSub (mergeTVar p p') m')
-  unless (p == m) $ void $ biSubType (TyVar p) m'
---biSubType (TyVar p) m'
+biSubTVarTVar p m = use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
+  when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar p) <> " <==> " <> prettyTyRaw (TyVar m)))
+  MV.write v p (BiSub p' (mergeTVar m m'))
+  unless (hasVar m' m) $ void (biSubType p' (TyVar m))
   pure BiEQ
 
-biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> case mergeTysNoop m m' of
+biSubTVarP v m =
+  use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> case mergeTysNoop m m' of
   Nothing      -> pure BiEQ -- we already bisubbed these, stop here in case this would loop
   Just mMerged -> do
     when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " <==> " <> prettyTyRaw m))
-    use escapedVars >>= \escapees -> when (testBit escapees v) $ escapedVars %= (.|. getTVarsType m)
+--  use escapedVars >>= \escapees -> when (testBit escapees v) $ escapingVars %= (.|. getTVarsType m)
     MV.write b v (BiSub p' mMerged)
-    biSubType p' m
+    if (mMerged == m') then pure BiEQ -- if merging was noop, this would probably loop
+    else biSubType p' m
 
-biSubTVarM p v = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> case mergeTysNoop p p' of
+biSubTVarM p v =
+  use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> case mergeTysNoop p p' of
   Nothing      -> pure BiEQ -- we already bisubbed these, stop here in case this would loop
   Just pMerged -> do
   when global_debug (traceM ("bisub: " <> prettyTyRaw p <> " <==> " <> prettyTyRaw (TyVar v)))
-  use escapedVars >>= \escapees -> when (testBit escapees v) $ escapedVars %= (.|. getTVarsType p)
+--use escapedVars >>= \escapees -> when (testBit escapees v) $ escapingVars %= (.|. getTVarsType p)
   MV.write b v (BiSub pMerged m')
-  biSubType p m'
+  if (pMerged == p') then pure BiEQ -- if merging was noop, this would probably loop
+  else biSubType p m'
 
 biSubType :: Type -> Type -> TCEnv s BiCast
 biSubType tyP tyM =
@@ -66,38 +68,21 @@ biSubType tyP tyM =
   biSub pTs mTs
   pure BiEQ
 
---(TyVar p , TyGround [mRaw]) -> use bis >>= \v -> MV.read v p >>=
---  \(BiSub p' m') -> if mRaw `elem` m' then pure BiEQ else
---  BiEQ <$ do --if False && testBit escapees p then do mE <- extrudeTH escapees mRaw biSub mE [mRaw] biSub [THVar p] mE else do
---    escapees <- use escapedVars
---    when (testBit escapees p) $ escapedVars %= (.|. getTVarsTyHead mRaw)
---    MV.write v p (BiSub p' (mergeTyHeadType mRaw m'))
---    biSubType p' tyM
---(TyGround [pRaw] , TyVar m) -> use bis >>= \v -> MV.read v m >>=
---  \(BiSub p' m') -> if pRaw `elem` p' then pure BiEQ else
---  BiEQ <$ do-- if False && testBit escapees m then do pE <- extrudeTH escapees pRaw biSub [pRaw] pE biSub pE [THVar m] else do
---    escapees <- use escapedVars
---    when (testBit escapees m) $ escapedVars %= (.|. getTVarsTyHead pRaw)
---    MV.write v m (BiSub (mergeTyHeadType pRaw p') m')
---    biSubType tyP m'
-
 -- bisub on ground types
 biSub :: [TyHead] -> [TyHead] -> TCEnv s BiCast
-biSub a b = let
-  in case (a , b) of
-  -- lattice top and bottom
+biSub a b = case (a , b) of
   ([] ,  _)  -> pure BiEQ
   (_  , [])  -> pure BiEQ
-  ([p] , [m])-> atomicBiSub p m
-  -- lattice subconstraints
-  (p:ps@(p1:p2) , m) -> biSub [p] m *> biSub ps m
-  (p , m:ms) -> biSub p [m] *> biSub p ms
+  (p , m)    -> BiEQ <$ (p `forM` \aP -> atomicBiSub aP `mapM` m)
 
 -- Instantiation; substitute quantified variables with fresh type vars;
 -- Note. weird special case (A & {f : B}) typevars as produced by lens over
 --   The A serves to propagate the input record, minus the lens field
 --   what is meant is really set difference: A =: A // { f : B }
-instantiate nb m x = freshBiSubs (nb + if m >= 0 then m+1 else 0) >>= \tvars@(tvStart:_) -> doInstantiate tvStart x
+instantiate nb m x = do
+  r <- freshBiSubs (nb + if m >= 0 then m+1 else 0) >>= \tvars@(tvStart:_) -> doInstantiate tvStart x
+--traceM ("Instantiate: " <> prettyTyRaw x <> " => " <> prettyTyRaw r)
+  pure r
 
 -- Replace THBound with fresh TVars
 doInstantiate :: Int -> Type -> TCEnv s Type
@@ -107,6 +92,10 @@ doInstantiate tvarStart ty = let
     in \case
     THBound i   -> pure (0 `setBit` (tvarStart + i) , [])
     THMuBound i -> pure (0 `setBit` (tvarStart + i) , [])
+    THMu m t    -> (\case { TyGround g -> (0 `setBit` (tvarStart + m) , g) ; TyVars vs g -> (vs , g) })
+--    <$> r (mergeTypes (TyGround [THMuBound m]) t) -- µx.T is to inference (x & T)
+      <$> r t -- µx.T is to inference (x & T)
+--  THMu m t    -> (\(TyGround g) -> (0,g)) <$> r t
     THTyCon t -> (\x -> (0 , [THTyCon x])) <$> case t of
       THArrow as ret -> THArrow   <$> (r `mapM` as) <*> (r ret)
       THProduct as   -> THProduct <$> (r `mapM` as)
@@ -125,7 +114,7 @@ doInstantiate tvarStart ty = let
 atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
 atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
  when global_debug (traceM ("⚛bisub: " <> prettyTyRaw tyP <> " <==> " <> prettyTyRaw tyM)) *>
- use escapedVars >>= \escapees -> case (p , m) of
+ case (p , m) of
   (_ , THTop) -> pure (CastInstr MkTop)
   (THBot , _) -> pure (CastInstr MkBot)
   (THPrim p1 , THPrim p2) -> primBiSub p1 p2

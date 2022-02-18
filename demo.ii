@@ -2,18 +2,22 @@
 --import imports/list
 --import imports/simpleTests
 
-{-
-rr f x g = { a = g x , b = f x }
+
+rEasy f x g = { a = g x , b = f x }
+lpEasy f = {u = rEasy f 5 (add 1) , v = rEasy f {t = 1} (\y => y.t)}
+
 lp17 f = let
   -- x should be generalised, but it is affected by the type of f, an escaped variable
   r x g = { a = g x , b = f x }
   in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
 -- ∏ A → (%i32 & {t : %i1} → A) → {u : {a : %i32 , b : A} , v: {a : %i1 , b : A}}
 -- ∏ A → τ(3) → (τ(3) → A) → {a : A , b : τ(6)}
--- Should generalise all tvars that are fully captured !
+-- τ1 escaped in:
 -- ⚛bisub: τ4 <==> τ3 → τ5
 -- ⚛bisub: τ1 <==> τ3 → τ6
--- τ1 is an escaped var
+
+{-
+lp3 y = let f = \x => y x in {a = f 7 , b = f 1}   -- ∏ A → ((%i1 & %i32) → A) → {a : A , b : A}
 -}
 
 -- when extruding v (bissubing it with an escaped variable):
@@ -48,12 +52,13 @@ lp17 f = let
 --  Cons x xs => foldl f (f s x) xs
 --  Nil => s
 
-foldr f s l = case l of
-  Cons x xs => f x (foldr f s xs)
-  Nil       => s
-
--- r = { next = r }
+-- -- r = { next = r }
+-- foldr f s l = case l of
+--   Cons x xs => f x (foldr f s xs)
+--   Nil       => s
+-- 
 -- append front back = foldr Cons back front
+
 -- concat = foldr append Nil
 
 -- The prefix in pretty-printing:

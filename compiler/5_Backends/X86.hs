@@ -1,4 +1,3 @@
--- Thanks to Stephen Diehl for the template
 module X86 where
 --import Data.Bits
 import Data.Binary.Put
@@ -12,10 +11,7 @@ import Foreign.Ptr
 --import Foreign.C.Types
 --import Foreign.C.String
 
----------------
--- X86 Monad --
----------------
-data Reg -- The order here is important (for fromEnum)
+data Reg -- The order is vital, so fromEnum produces the right int for each register
   = RAX  -- Accumulator
   | RCX  -- Counter (Loop counters)
   | RDX  -- Data
@@ -108,35 +104,23 @@ imm = emit . bytes
 ret :: X86 ()
 ret = emit [0xc3]
 
+rexPre = 0x48
+
 add :: Val -> Val -> X86 ()
-add (R l) (I r) = do
-  emit [0x48]              -- REX prefix
-  emit [0x05]              -- ADD
-  imm r
-add (R l) (R r) = do
-  emit [0x48]              -- REX prefix
-  emit [0x01]              -- ADD
-  emit [0xc0 .|. index r `shiftL` 3 .|. index l]
+add (R l) (I r) = emit [0x48 , 0x05] *> imm r
+add (R l) (R r) = emit [0x48 , 0x01 , 0xc0 .|. index r `shiftL` 3 .|. index l]
 add _ _ = nodef
 
 sub :: Val -> Val -> X86 ()
-sub (R l) (I r) = do
-  emit [0x48]              -- REX prefix
-  emit [0x2D]              -- SUB
-  imm r
-sub (R l) (R r) = do
-  emit [0x48]              -- REX prefix
-  emit [0x29]              -- SUB
-  emit [0xc0 .|. index r `shiftL` 3 .|. index l]
+sub (R l) (I r) = emit [0x48 , 0x2D] *> imm r
+sub (R l) (R r) = emit [0x48 , 0x29 , 0xc0 .|. index r `shiftL` 3 .|. index l]
 
 push :: Val -> X86 ()
-push (R l) = do
-  emit [0x50 + index l]
+push (R l) = emit [0x50 + index l]
 push _ = nodef
 
 pop :: Val -> X86 ()
-pop (R l) = do
-  emit [0x58 + index l]
+pop (R l) = emit [0x58 + index l]
 pop _ = nodef
 
 call :: Val -> X86 ()
@@ -147,58 +131,29 @@ call (A dst) = do
 call _ = nodef
 
 mul :: Val -> X86 ()
-mul (R l) = do
-  emit [0x48]
-  emit [0xF7]
-  emit [0xE0 .|. index l]
+mul (R l) = emit [0x48 , 0xF7 , 0xE0 .|. index l]
 mul _ = nodef
 
 imul :: Val -> Val -> X86 ()
-imul (R l) (I r) = do
-  emit [0x48]
-  emit [0x69]
-  emit [0xc0 .|. index l]
-  imm r
-imul (R l) (R r) = do
-  emit [0x48]
-  emit [0x0F]
-  emit [0xAF]
-  emit [0xC0 .|. index r `shiftL` 3 .|. index l]
+imul (R l) (I r) = emit [0x48 , 0x69 , 0xC0 .|. index l] *> imm r
+imul (R l) (R r) = emit [0x48 , 0x0F , 0xAF , 0xC0 .|. index r `shiftL` 3 .|. index l]
 imul _ _ = nodef
 
 mov :: Val -> Val -> X86 ()
-mov (R dst) (I src) = do
-  emit [0x48]
-  emit [0xC7]
-  emit [0xC0 .|. (index dst .&. 7)]
-  imm src
-mov (R dst) (A src) = do
-  emit [0x48]
-  emit [0xC7]
-  emit [0xC7]
-  imm src
-mov (R dst) (R src) = do
-  emit [0x48]              -- REX.W prefix
-  emit [0x89]              -- MOV
-  emit [0xC0 .|. index src `shiftL` 3 .|. index dst]
+mov (R dst) (I src) = emit [0x48 , 0xC7 , 0xC0 .|. (index dst .&. 7)] *> imm src
+mov (R dst) (A src) = emit [0x48 , 0xC7 , 0xC7] *> imm src
+mov (R dst) (R src) = emit [0x48 , 0x89 , 0xC0 .|. index src `shiftL` 3 .|. index dst]
 mov _ _ = nodef
 
 nop :: X86 ()
-nop = do
-  emit [0x90]
+nop = emit [0x90]
 
 inc :: Val -> X86()
-inc (R dst) = do
-  emit [0x48]              -- REX prefix
-  emit [0xFF]              -- INC
-  emit [0xc0 + index dst]
+inc (R dst) = emit [0x48 , 0xFF , 0xc0 + index dst]
 inc _ = nodef
 
 dec :: Val -> X86()
-dec (R dst) = do
-  emit [0x48]              -- REX prefix
-  emit [0xFF]              -- DEC
-  emit [0xc0 + (index dst + 8)]
+dec (R dst) = emit [0x48 , 0xFF , 0xc0 + (index dst + 8)]
 dec _ = nodef
 
 loop :: Val -> X86()
@@ -210,9 +165,7 @@ loop (A dst) = do
 loop _ = nodef
 
 syscall :: X86 ()
-syscall = do
-  emit [0x0f]
-  emit [0x05]
+syscall = emit [0x0f , 0x05]
 
 -- Functions
 prologue :: X86 ()
@@ -239,11 +192,9 @@ rcx = R RCX
 
 label :: X86 Val = A <$> gets _memoff
 
-nodef :: X86 ()
- = lift $ throwE "Invalid operation"
+nodef :: X86 () = lift (throwE "Invalid operation")
 
-index :: Reg -> Word8
- = fromIntegral . fromEnum
+index :: Reg -> Word8 = fromIntegral . fromEnum
 
 assemble :: Ptr a -> X86 b -> Either String JITMem
 assemble start = runExcept . flip execStateT (istate (heapPtr start))

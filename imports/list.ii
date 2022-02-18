@@ -49,7 +49,6 @@ foldl f s l = case l of
   Cons x xs => foldl f (f s x) xs
   Nil => s
 
-
 c a b = Cons a b
 append front back = foldr c back front
 concat = foldr (append) Nil

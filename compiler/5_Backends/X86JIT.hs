@@ -18,34 +18,16 @@ import System.Posix.DynamicLinker
 import System.Posix.Types
 import Unsafe.Coerce
 
------------------
--- Prot Option --
------------------
-newtype ProtOption = ProtOption CInt
-  deriving (Eq, Show, Ord, Num, Bits)
+-- MMap flags
+newtype ProtOption = ProtOption CInt deriving (Eq, Show, Ord, Num, Bits)
+[protNone , protExec , protWrite , protRead] = ProtOption <$> [0x0 , 0x01 , 0x02 , 0x04]
+instance Semigroup ProtOption where (ProtOption a) <> (ProtOption b) = ProtOption (a .|. b)
+instance Monoid ProtOption    where mempty = protNone
 
-newtype MmapOption = MmapOption CInt
-  deriving (Eq, Show, Ord, Num, Bits)
-
-protExec , protRead , protWrite , protNone :: ProtOption
-protExec  = ProtOption 0x01
-protRead  = ProtOption 0x04
-protWrite = ProtOption 0x02
-protNone  = ProtOption 0x0
-
-mmapNone , mmapAnon , mmapPrivate :: MmapOption
-mmapNone    = MmapOption 0x0
-mmapAnon    = MmapOption 0x20
-mmapPrivate = MmapOption 0x02
-
-instance Semigroup ProtOption where
-  (ProtOption a) <> (ProtOption b) = ProtOption (a .|. b)
-instance Monoid ProtOption where
-  mempty = protNone
-instance Semigroup MmapOption where
-  (MmapOption a) <> (MmapOption b) = MmapOption (a .|. b)
-instance Monoid MmapOption where
-  mempty = mmapNone
+newtype MmapOption = MmapOption CInt deriving (Eq, Show, Ord, Num, Bits)
+[mmapNone , mmapPrivate , mmapAnon] = MmapOption <$> [0x0 , 0x02 , 0x20]
+instance Semigroup MmapOption where (MmapOption a) <> (MmapOption b) = MmapOption (a .|. b)
+instance Monoid MmapOption    where mempty = mmapNone
 
 ----------------
 -- JIT Memory --
@@ -96,7 +78,7 @@ vecPtr = fst . VM.unsafeToForeignPtr0
 
 allocateMemory :: CSize -> IO (Ptr Word8)
 allocateMemory size = let
-  pflags = protRead <> protWrite
+  pflags = protRead .|. protWrite
   mflags = mapAnon .|. mapPrivate
   in mmap nullPtr size pflags mflags (-1) 0
 
