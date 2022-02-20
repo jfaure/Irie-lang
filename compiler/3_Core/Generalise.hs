@@ -12,28 +12,29 @@ import qualified Data.Vector as V
 import qualified Data.Text as T
 
 -- Generalisation allows polymorphic types to be instantiated with fresh tvars on each use.
--- Only generalise local tvars; if a Gen'd var escapes into enclosing scope it could be instantiated to anything there
--- escapedVars : BitSet indicates which tvars escape and should be left alone
--- thus most let-bindings have to be generalised twice
---  1. if locally used more than once they need to be instantiatable (else can skip and inline it)
---  2. finally fully generalise it once its freevars have been generalised at enclosing scope
+-- Concretely, some tvars / tvar unions are promoted to polymorphic tvars
+-- However as many tvars as possible are removed or unified with some other tvar or type
+-- TVars:
+-- 1. Escaped : tvars belong to outer let-nests, don't generalise (leave the raw tvar)
+-- 2. Leaked  : local vars biunified with escaped vars (generalise and merge with raw tvar)
+--   * necessary within let-binds to constrain free variables. considered dead outside the let-bind
+-- 3. Dead    : overconstrained tvars biunified with all instantiations of their let-binding
+--   * leaked vars once their scope expires
+-- Escaped vars examples:
 -- * f1 x = let y z = z in y   -- nothing can go wrong
--- * f2 x = let y   = x in y   -- if x generalised at y => f2 : a -> b
+-- * f2 x = let y   = x in y   -- if x generalised at y => f2 : a → b
 -- * f3 x = let y y = x y in y -- similar
+--  Note. because of escaped vars, a let-bindings type may contain raw tvars.
+--  It may be necessary (eg. codegen) to 're'generalise it once all free/escaped vars are resolved
 
--- The idea is to make sure that escaped tvars never refer to ones enclosed deeper
--- instantiate = replace tvars at or above lvl with fresh vars at lvl
--- constraining: while types / tvars came from deeper let-nest, make new tvars at this lvl
-
--- Simplifications:
---  * ? A -> A & Int =? Int -> Int
---  * remove polar variables `a&int -> int` => int->int ; `int -> a` => `int -> bot`
---  * unify inseparable variables (polar co-occurence `a&b -> a|b` and indistinguishables `a->b->a|b`)
---  * unify variables that contain the same upper and lower bound (a<:t and t<:a) `a&int->a|int`
---  * tighten recursive types
-
+-- Simplifications (Note. performed just before | during generalisation):
 -- eg. foldr : (A → (C & B) → B) → C → μx.[Cons : {A , x} | Nil : {}] → (B & C)
 -- =>  foldr : (A → B → B) → B → μx.[Cons : {A , x} | Nil : {}] → B
+--  * ? A → A & Int =? Int → Int
+--  * remove polar variables `a&int → int => int→int` ; `int → a => int → bot`
+--  * unify inseparable vars (polar co-occurence `a&b → a|b` and indistinguishables `a→b→a|b`)
+--  * unify variables that contain the same upper and lower bound (a<:t and t<:a) `a&int→a|int`
+--  * tighten recursive types
 
 -- Generalisation is a 2 pass process
 -- 1 Preparation & Analysis:
@@ -64,12 +65,13 @@ generalise escapees recTVar = let
   occurs     <- use coOccurs
   occLen     <- use blen
   when global_debug (traceCoocs occLen occurs)
-  escaping <- use escapingVars
-  tvarSubs <- coocVars occLen escapees escaping recursives <$> V.unsafeFreeze occurs
+  leaks    <- use leakedVars 
+  tvarSubs <- coocVars occLen escapees leaks recursives <$> V.unsafeFreeze occurs
 
   when global_debug $ do
     traceM $ "analysed: "   <> prettyTyRaw analysed
     traceM $ "escapees: "   <> show (bitSet2IntList escapees)
+    traceM $ "leaked:   "   <> show (bitSet2IntList leaks)
     traceM $ "recVars:  "   <> show (bitSet2IntList recursives)
     traceM   "tvarSubs: "   *> V.imapM_ (\i f -> traceM $ show i <> " => " <> show f) tvarSubs
 
@@ -82,10 +84,10 @@ generalise escapees recTVar = let
 -- * unifying recursive and non-recursive vars is only admissible if the non-rec var is covariant
 -- opposite co-occurence: v + T always occur together at +v,-v => drop v (unify with T)
 -- polar co-occurence:    v + w always occur together at +v,+w or at -v,-w => drop v (unify with w)
-data VarSub = Remove | Escaped | Generalise | Recursive | SubVar Int | SubTy Type deriving Show
+data VarSub = Remove | Escaped | Leaked | Generalise | Recursive | SubVar Int | SubTy Type deriving Show
 --coocVars occLen escapees recursives coocs = V.constructN occLen $ \prevSubs -> let
 coocVars :: Int -> BitSet -> BitSet -> BitSet -> V.Vector ([Type] , [Type]) -> V.Vector VarSub
-coocVars occLen escapees escaping recursives coocs = V.constructN occLen $ \prevSubs -> let
+coocVars occLen escapees leaks recursives coocs = V.constructN occLen $ \prevSubs -> let
   collectCoocVs = \case { [] -> 0 ; x : xs -> foldr (.&.) x xs }
   v = V.length prevSubs -- next var to analyse
   (pOccs , mOccs) = coocs V.! v
@@ -96,6 +98,7 @@ coocVars occLen escapees escaping recursives coocs = V.constructN occLen $ \prev
     subVar w = let self = TyVars (setBit 0 w) [] in if w >= v then self else case prevSubs V.! w of
       Remove     -> TyGround []
       Escaped    -> self
+      Leaked     -> self
       Generalise -> self
       SubTy t    -> t
       SubVar x   -> subVar x
@@ -112,7 +115,7 @@ coocVars occLen escapees escaping recursives coocs = V.constructN occLen $ \prev
 
   in if -- Simplify: Try hard to justify Remove, failing that Sub, otherwise must Generalise
   | escapees `testBit` v -> Escaped -- belongs to deeper let nest
---  | escaping `testBit` v -> Escaping
+--  | leaks `testBit` v -> Leaked --Leaked
   | null pOccs || null mOccs -> if recursives `testBit` v then Recursive else Remove -- 'polar' var
   | otherwise -> let
     polarCooc :: Bool -> Int -> VarSub -- eg. + case: for all w in +v, look for coocs in +v,+w
@@ -149,16 +152,12 @@ subGen tvarSubs raw = use bis >>= \b -> use biEqui >>= \biEqui' -> use coOccurs 
       when global_debug (traceM $ show v <> " =>∀ " <> toS (number2CapLetter q))
       q <$ MV.write biEqui' v q
 
-  doVar pos v = case tvarSubs V.! v of
-    Remove     -> pure (TyGround [])
-    Escaped    -> pure (TyVar v)
---  Escaping   -> pure (TyVar v)
---  Escaping   -> (quants <<%= (+1)) <&> \q -> mergeTypes (TyGround [THBound q]) (TyVar v)
---  Escaping   -> MV.read b v >>= \(BiSub p m) -> let
---    t = if pos then p else m
---    in (quants <<%= (+1)) <&> \q -> mergeTypes (TyGround [THBound q]) t
+  doVar pos v = use leakedVars >>= \leaks -> case tvarSubs V.! v of
+    Escaped  -> pure (TyVar v)
+    Remove   | leaks `testBit` v -> pure (TyVar v)
+    Remove   -> pure (TyGround [])
+    Generalise | leaks `testBit` v -> generaliseVar v <&> \q -> mergeTVar v (TyGround [THBound q])
     Generalise -> generaliseVar v    <&> \q -> TyGround [THBound q]
---  Recursive  -> generaliseRecVar v <&> \m -> TyGround [THMuBound m]
     Recursive  -> (hasRecs %= (`setBit` v)) *> generaliseVar v <&> \m -> TyGround [THMuBound m]
     SubVar i   -> doVar pos i
     SubTy t    -> goType pos t -- pure t

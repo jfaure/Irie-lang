@@ -33,40 +33,39 @@ bisub a b = --when global_debug (traceM ("bisub: " <> prettyTyRaw a <> " <==> " 
 biSubTVars :: BitSet -> BitSet -> TCEnv s BiCast
 biSubTVars p m = BiEQ <$ (bitSet2IntList p `forM` \v -> biSubTVarTVar v `mapM` bitSet2IntList m)
 
-biSubTVarTVar p m = use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
-  when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar p) <> " <==> " <> prettyTyRaw (TyVar m)))
-  MV.write v p (BiSub p' (mergeTVar m m'))
-  unless (hasVar m' m) $ void (biSubType p' (TyVar m))
-  pure BiEQ
+biSubTVarTVar p m = use deadVars >>= \dead -> -- if testBit ls p || testBit ls m then pure BiEQ else
+  use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
+    when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar p) <> " <==> " <> prettyTyRaw (TyVar m)))
+    MV.write v p (BiSub p' (mergeTVar m m'))
+    unless (hasVar m' m || testBit dead p) $ void (biSubType p' (TyVar m))
+    pure BiEQ
 
-biSubTVarP v m =
-  use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> case mergeTysNoop m m' of
-  Nothing      -> pure BiEQ -- we already bisubbed these, stop here in case this would loop
-  Just mMerged -> do
+biSubTVarP v m = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ else
+  use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
+    let mMerged = mergeTypes m m'
     when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " <==> " <> prettyTyRaw m))
---  use escapedVars >>= \escapees -> when (testBit escapees v) $ escapingVars %= (.|. getTVarsType m)
+    use escapedVars >>= \es -> when (testBit es v) $ leakedVars %= (.|. getTVarsType m)
     MV.write b v (BiSub p' mMerged)
-    if (mMerged == m') then pure BiEQ -- if merging was noop, this would probably loop
+    if (mMerged == m' || testBit dead v) then pure BiEQ -- if merging was noop, this would probably loop
     else biSubType p' m
 
-biSubTVarM p v =
-  use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> case mergeTysNoop p p' of
-  Nothing      -> pure BiEQ -- we already bisubbed these, stop here in case this would loop
-  Just pMerged -> do
-  when global_debug (traceM ("bisub: " <> prettyTyRaw p <> " <==> " <> prettyTyRaw (TyVar v)))
---use escapedVars >>= \escapees -> when (testBit escapees v) $ escapingVars %= (.|. getTVarsType p)
-  MV.write b v (BiSub pMerged m')
-  if (pMerged == p') then pure BiEQ -- if merging was noop, this would probably loop
-  else biSubType p m'
+biSubTVarM p v = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ else
+  use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
+    let pMerged = mergeTypes p p'
+    when global_debug (traceM ("bisub: " <> prettyTyRaw p <> " <==> " <> prettyTyRaw (TyVar v)))
+    use escapedVars >>= \es -> when (testBit es v) $ leakedVars %= (.|. getTVarsType p)
+    MV.write b v (BiSub pMerged m')
+    if (pMerged == p' || testBit dead v) then pure BiEQ -- if merging was noop, this would probably loop
+    else biSubType p m'
 
 biSubType :: Type -> Type -> TCEnv s BiCast
 biSubType tyP tyM =
   let ((pVs , pTs) , (mVs , mTs)) = (partitionType tyP , partitionType tyM) in do
-  biSubTVars pVs mVs
-  unless (null mTs) $ bitSet2IntList pVs `forM_` \v -> biSubTVarP v (TyGround mTs)
-  unless (null pTs) $ bitSet2IntList mVs `forM_` \v -> biSubTVarM (TyGround pTs) v
-  biSub pTs mTs
-  pure BiEQ
+    biSubTVars pVs mVs
+    unless (null mTs) $ bitSet2IntList pVs `forM_` \v -> biSubTVarP v (TyGround mTs)
+    unless (null pTs) $ bitSet2IntList mVs `forM_` \v -> biSubTVarM (TyGround pTs) v
+    biSub pTs mTs
+    pure BiEQ
 
 -- bisub on ground types
 biSub :: [TyHead] -> [TyHead] -> TCEnv s BiCast
@@ -142,25 +141,30 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THTyCon THArrow{} , x) -> failBiSub (TextMsg "Insufficient arguments") (TyGround [p]) (TyGround [m])
   (a , b) -> failBiSub (TextMsg "Incompatible types") (TyGround [a]) (TyGround [b])
 
---extrude :: BitSet -> Type -> TCEnv s Type
---extrude escapees t = concat <$> mapM (extrudeTH escapees) t
---
---extrudeTH :: BitSet -> TyHead -> TCEnv s Type
---extrudeTH escapees = let e = extrude escapees in \case
---  THVar   v -> (\x -> [x]) <$> (if escapees `testBit` v then pure (THVar v) else (freshBiSubs 1 <&> \[i] -> THVar i))
---  THVars vs -> fmap concat $ (extrudeTH escapees . THVar) `mapM` bitSet2IntList vs
---  THTyCon t -> (\x -> [THTyCon x]) <$> case t of
---    THArrow ars r -> THArrow   <$> (traverse e ars) <*> e r
---    THProduct   r -> THProduct <$> (traverse e r)
---    THSumTy     r -> THSumTy   <$> (traverse e r)
---    THTuple     r -> THTuple   <$> (traverse e r)
---  x -> case x of
---    THExt{}  -> pure [x]
---    THPrim{} -> pure [x]
---    THBot{} -> pure [x]
---    THTop{} -> pure [x]
---    x -> error $ show x
---x -> x
+{-
+extrude :: BitSet -> Type -> TCEnv s Type
+extrude escapees t = case t of
+  TyVar v -> freshBiSubs 1 <&> \[w] -> TyVar w
+  TyVars tvars g -> let es = tvars in do -- tvars .&. complement escapees in do
+    freshVars <- freshBiSubs (popCnt es) <&> intList2BitSet
+    gs <- extrudeTH escapees `mapM` g
+    pure $ mergeTypeList (TyVars ({-tvars .&. complement es .&.-} freshVars) [] : gs)
+  TyGround g -> mergeTypeList <$> (extrudeTH escapees `mapM` g)
+
+extrudeTH :: BitSet -> TyHead -> TCEnv s Type
+extrudeTH escapees = let e = extrude escapees in \case
+  THTyCon t -> (\x -> TyGround [THTyCon x]) <$> case t of
+    THArrow ars r -> THArrow   <$> (traverse e ars) <*> e r
+    THProduct   r -> THProduct <$> (traverse e r)
+    THSumTy     r -> THSumTy   <$> (traverse e r)
+    THTuple     r -> THTuple   <$> (traverse e r)
+  x -> (\x -> pure (TyGround [x])) $ case x of
+    THExt{}  -> x
+    THPrim{} -> x
+    THBot{} ->  x
+    THTop{} ->  x
+    x -> error $ show x
+-}
 
 -- TODO cache THTycon contained vars?
 getTVarsType = \case

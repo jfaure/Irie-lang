@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-module Prelude ( module Protolude , module Data.Align , module Data.These , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_)
+module Prelude ( module Protolude , module Data.Align , module Data.These , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -25,6 +25,8 @@ type HName  = Text
 
 --error (s :: String) = panic $ toS s
 fromJust = fromMaybe (panic "fromJust")
+
+popCnt b = let i64List = unfoldr (\b -> if b /= 0 then Just (fromInteger b :: Int64 , b `shift` 64) else Nothing) b in sum $ popCount <$> i64List
 
 emptyBitSet = 0 :: Integer
 setNBits n = (1 `shiftL` n) - 1 -- setNBits 2 = 0b11

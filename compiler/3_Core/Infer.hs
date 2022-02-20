@@ -91,7 +91,8 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
       , _biEqui   = biEqui'
       , _coOccurs = _
       , _escapedVars = 0
-      , _escapingVars = 0
+      , _leakedVars  = 0
+      , _deadVars    = 0
       , _muWrap      = Nothing
       , _recVars     = 0
       , _hasRecs     = 0
@@ -125,7 +126,7 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
         tyAnn    = P.fnSig (P.fnDef abs)
     freeTVars <- use argVars >>= \avs -> bitSet2IntList freeVars `forM` \i -> MV.read avs i
     svEscapes <- escapedVars <<%= (.|. intList2BitSet freeTVars)
-    svEscaping <- use escapingVars
+    svLeaked  <- use leakedVars
 
     (tvarIdx , jb , ms) <- freshBiSubs 1 >>= \[idx] -> do
       MV.write wip' bindINm (Guard [] idx)
@@ -143,29 +144,32 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
 
     MV.write wip' bindINm (Mutual jb freeVars False tvarIdx typeAnn)
     if minimum (bindINm:ms) /= bindINm then pure jb
-    else (fromJust . head <$> generaliseBinds svEscapes svEscaping bindINm ms)
+    else (fromJust . head <$> generaliseBinds svEscapes svLeaked bindINm ms)
 
 generaliseBinds :: BitSet -> BitSet -> Int -> [Int] -> TCEnv s [Expr]
-generaliseBinds svEscapes svEscaping i ms = use wip >>= \wip' -> (i : ms) `forM` \m ->
+generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \m ->
   MV.read wip' m >>= \(Mutual naiveExpr freeVs isRec recTVar annotation) -> do
   inferred <- case naiveExpr of
     Core expr coreTy -> Core expr <$> do -- generalise the type
       (ty , free) <- case expr of
         Abs ars free x fnTy -> pure (coreTy , free)
         _ -> pure (coreTy , freeVs)
-      -- check for recursive type: if this binding : τ was used within itself , something bisubed with -τ
+      -- rec / mutual: if this bind : τ was used within itself , something bisubed with -τ
       use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
         TyGround [] -> BiEQ <$ MV.write v recTVar (BiSub ty (TyGround []))
-        t           -> bisub ty (TyVar recTVar) -- ! this binding is recursive (maybe mutually)
+        t           -> bisub ty (TyVar recTVar) -- ! this binding is recursive | mutual
       bl <- use blen
       when global_debug $ use bis >>= \b -> [0..bl -1] `forM_`
         \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
       freeArgTVars <- use argVars >>= \argPerms -> bitSet2IntList freeVs `forM` \i -> MV.read argPerms i
       escaped <- use escapedVars
+--    when (free == 0) (leakedVars .= 0) --svLeaked)
       generalise escaped recTVar <* when (free == 0) (clearBiSubs recTVar)
     t -> pure t
-  escapedVars  .= svEscapes
---escapingVars .= svEscaping
+  l <- use leakedVars
+  leakedVars  .= svLeaked
+  escapedVars .= svEscapes
+  deadVars %= (.|. (l .&. complement svEscapes))
   done <- case (annotation , inferred) of
     (Just t , Core e inferredTy) -> Core e <$> checkAnnotation t inferredTy
     _                            -> pure inferred
@@ -195,9 +199,9 @@ infer = let
    in map mkArgVars <$> (freshBiSubs nArgs >>= \argTVars -> zipWithM (\a v -> v <$ MV.write argPerms a v) args argTVars)
 
   -- App is the only place typechecking can fail
- biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] -> do
-   biret <- bisub fTy (prependArrowArgsTy argTys (TyVar retV))
-   pure (biret , (TyVar retV))
+ biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
+   (, TyVar retV) <$> bisub fTy (prependArrowArgsTy argTys (TyVar retV))
+   
  retCast rc tt = case rc of { BiEQ -> tt ; c -> case tt of { Core f ty -> Core (Cast c f) ty } }
 
  checkFails srcOff x = use tmpFails >>= \case
@@ -219,7 +223,7 @@ infer = let
      CastApp ac maybePap rc -> zipWith castArg args' (ac ++ repeat BiEQ) -- supplement paps with bieqs
      BiEQ -> args'
      x    -> _
-   in do
+   in if any (\case {PoisonExpr{}->True ; _->False}) (f : args) then pure PoisonExpr else do
      (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
      use tmpFails >>= \case
        [] -> setRetTy retTy biret castArgs <$> ttApp judgeBind f args

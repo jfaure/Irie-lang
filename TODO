@@ -8,8 +8,8 @@
   * globalresolver should discard names from the module its recompiling (esp. to avoid exporting now deleted names)
   * after function with no free-vars generalised, can trim but not fully clear bisubs!
   * type intersection vs type union functions (intersection should indicate if noop)
-  * extrusion & check escapedVars are updated at right time through let-nests & mutuals
-  * switch to old handling of mus (don't replace with tvars unless have to look in the mu)
+  * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals
+  * switch back to deBruijn mus
 ## Top
   * show + repl typecase to print JIT results
   * provide Vector alternative for ADTs when names sequential (they frequently are) [n..m]

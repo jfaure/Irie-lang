@@ -42,6 +42,7 @@ dependencies:
 - directory
 - haskeline
 - process
+# - traverse-with-class
 # - llvm-hs-pure >= 9.0.0
 # - llvm-hs >= 9.0.0
 # 

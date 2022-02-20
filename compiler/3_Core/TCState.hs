@@ -27,9 +27,13 @@ data TCEnvState s = TCEnvState {
  , _tmpFails    :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen        :: Int                -- cursor for bis whose length may exceed number of active vars
  , _bis         :: MV.MVector s BiSub -- typeVars
- , _argVars     :: MV.MVector s Int   -- arg IName -> TVar map (used to be Arg i => TVar i, but bis should be minimal)
- , _escapedVars :: Integer            -- bitmask for TVars of shallower let-nests (don't generalize them until fully captured)
- , _escapingVars:: Integer            -- bitmask for TVars bisubbed with some escapedVars
+ , _argVars     :: MV.MVector s Int   -- arg IName -> TVar map
+   -- (rather than Arg i => TVar i) to trim bisubs more frequently
+
+ -- tvar kinds (see Generalise.hs)
+ , _escapedVars :: BitSet  -- TVars of shallower let-nests (don't generalize)
+ , _leakedVars  :: BitSet  -- TVars bisubbed with escapedVars
+ , _deadVars    :: BitSet  -- formerly leaked now fully captured
 
  -- Generalisation state
  , _muWrap      :: Maybe (IName , Type)
@@ -48,7 +52,7 @@ makeLenses ''TCEnvState
 --tcFail e = error $ e -- Poison e _ --(errors %= (e:)) *> pure (Fail e)
 
 clearBiSubs :: Int -> TCEnv s ()
-clearBiSubs n = blen .= n
+clearBiSubs n = (blen .= n) *> (deadVars .= 0)
 
 -- spawn new tvars slots in the bisubs vector
 freshBiSubs :: Int -> TCEnv s [Int]
