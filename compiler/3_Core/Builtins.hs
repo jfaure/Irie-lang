@@ -43,16 +43,17 @@ primTys :: [(HName , PrimType)] =
   , ("IntArray", PrimArr $ PrimInt 32)
   , ("DIR*"    , POSIXTy DirP)
   , ("dirent*" , POSIXTy DirentP)
+  , ("CStruct" , PrimCStruct)
   ]
 
-[i, bi, b, f, c, ia, str, set , i64 , dirp , dirent] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64" , "DIR*" , "dirent*"]
+[i, bi, b, f, c, ia, str, set , i64 , dirp , dirent , cstruct] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64" , "DIR*" , "dirent*" , "CStruct"]
 
 --substPrimTy i = THPrim $ primTyBinds V.! i
 
 -- instrs are typed with indexes into the primty map
 tyFns = [
 --[ ("IntN" , (THPi [(0,(mkExtTy i))] [THInstr MkIntN [0]] M.empty))
---  ("->", (THPi [(0,[THSet 0]),(1,[THSet 0])] [THInstr ArrowTy [0, 1]] M.empty))
+--  ("arrowTycon", (THPi [(0,[THSet 0]),(1,[THSet 0])] [THInstr ArrowTy [0, 1]] M.empty))
     ("Set" , THSet 0)
 --  , ("_→_", (ArrowTy , ([set] , set)))
   ]
@@ -70,21 +71,22 @@ instrs :: [(HName , (PrimInstr , [TyHead]))] = [
 --, ("link"        , (Link , mkTHArrow [THExt c] (THExt str)))
     ("strtol"      , (StrToL  , mkTHArrow [THExt str] (THExt i)))
   , ("mkTuple"     , (MkTuple , [THTyCon $ THTuple mempty]))
-  , ("ifThenElse"  , (IfThenE , [THBi 1 (-1) $ TyGround $ mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]))
+  , ("ifThenElse"  , (IfThenE , [THBi 1 $ TyGround $ mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]))
   , ("getcwd"      , (GetCWD  , [THExt str]))
 
   -- TODO fix type (set -> set -> A -> B)
-  , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 (-1) $ TyGround $ mkTHArrow [THExt set , THExt set , THBound 0] (THBound 0) ]))
+  , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 $ TyGround $ mkTHArrow [THExt set , THExt set , THBound 0] (THBound 0) ]))
 
    -- (Seed -> (Bool , A , Seed)) -> Seed -> %ptr(A)
---, ("unfoldArray"   , (UnFoldArr , let unfoldRet = mkTHArrow [THBound 0] (mkTHTuple [[THExt b] , [THExt c] , [THBound 0]])
---    in [THBi 1 (-1) $ [mkTHArrow [THBound 0 , unfoldRet , THBound 0] (THExt str)]]))
+  , ("unfoldArray"   , (UnFoldArr , let unfoldRet = (\[x] -> x) $ mkTHArrow [THBound 0] (mkTHTuple $ (\x -> TyGround [x]) <$> [THExt b , THExt c , THBound 0])
+      in [THBi 1 $ TyGround $ mkTHArrow [THBound 0 , unfoldRet , THBound 0] (THExt str)]))
 
   -- %ptr(A) -> (Bool , A , %ptr(A))    == str -> (Bool , char , str)
   , ("nextElem" , (NextElem , mkTHArrow [THExt str] (mkTHTuple $ TyGround <$> [[THExt b] , [THExt c] , [THExt str]]) ))
--- CStruct should be an opaque type
---, ("toCStruct"  , (ToCStruct , [THBi 1 [mkTHArrow [THBound 0] (THExt cstruct)]] ))
---, ("fromCStruct", (ToCStruct , [THBi 1 [mkTHArrow [THExt cstruct] [THBound 0]]] ))
+  , ("toCStruct"       , (ToCStruct       , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (THExt cstruct)] ))
+  , ("toCStructPacked" , (ToCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (THExt cstruct)] ))
+  , ("fromCStruct", (FromCStruct , [THBi 1 $ TyGround $ mkTHArrow [THExt cstruct] (THBound 0)] ))
+  , ("fromCStructPacked", (FromCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [THExt cstruct] (THBound 0)] ))
 
   , ("readFile"  , (ReadFile  , mkTHArrow [THExt str] (THExt str)))
   , ("writeFile" , (WriteFile , mkTHArrow [THExt str] (THExt str)))

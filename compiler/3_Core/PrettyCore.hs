@@ -121,27 +121,24 @@ pTyHeadParens t = case t of
   _ -> pTyHead t
 
 pTyHead :: TyHead -> Doc Annotation
-pTyHead = \case
+pTyHead = let
+  parensIfArrow t = case t of -- only add parens if necessary
+    TyGround [THTyCon THArrow{}] -> parens (pTy t)
+    _ -> pTy t
+  in \case
   THTop        -> "⊤"
   THBot        -> "⊥"
   THPrim     p -> pretty (prettyPrimType p)
   THBound    i -> pretty (number2CapLetter i)
---THMuBound  t -> pretty (number2xyz t)
-  THMuBound  t -> "µ" <> pretty (number2CapLetter t)
+  THMuBound  t -> pretty (number2xyz t)
+--THMuBound  t -> "µ" <> pretty (number2CapLetter t)
 --THExt      i -> "E" <> viaShow i
 --THExt      i -> pretty $ fst (primBinds V.! i)
   THExt      i -> pTy $ (\(Ty t) -> t) $ snd (primBinds V.! i)
 
   THTyCon t -> case t of
     THArrow [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> prettyTy ansiRender ret <> ")"
-    THArrow args ret -> let
-      pTHArrowArg t = case t of -- only add parens if necessary
---      Type (THTyCon THArrow{}) -> parens (pTy t)
-        TyGround [THTyCon THArrow{}] -> parens (pTy t)
-        _ -> pTy t
---      [_] -> pTy t
---      _   -> parens (pTy t)
-      in (hsep $ punctuate " →" ((pTHArrowArg <$> args) <> [pTy ret]))
+    THArrow args ret -> hsep $ punctuate " →" ((parensIfArrow <$> args) <> [pTy ret])
     THSumTy l -> let
       prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> " : " <> pTy ty
       in enclose "[" "]" (hsep $ punctuate " |" (prettyLabel <$> IM.toList l))
@@ -151,8 +148,9 @@ pTyHead = \case
     THTuple  l  -> enclose "{" "}" (hsep $ punctuate " ," (pTy <$> V.toList l))
 --  THArray    t -> "Array " <> viaShow t
 
-  THMu m t -> "µ" <> pretty (number2CapLetter m) <> "." <> pTy t
-  THBi g m t -> let
+--THMu m t -> "µ" <> pretty (number2CapLetter m) <> "." <> parensIfArrow t
+  THMu m t -> "µ" <> pretty (number2xyz m) <> "." <> parensIfArrow t
+  THBi g t -> let
     gs = if g == 0 then "" else "∏ " <> (hsep $ pretty . number2CapLetter <$> [0..g-1]) <> " → "
 --  ms = if m <= 0  then "" else "µ" <> pretty (number2xyz m) <> "."
     in gs <> pTy t

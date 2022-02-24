@@ -53,7 +53,6 @@ data Term -- β-reducable (possibly to a type)
  -- Extra info built by the simplifier
  | RecLabel ILabel (V.Vector Int) [Expr] -- annotate where fixpoints are
  | RecMatch (IM.IntMap (V.Vector Int , Expr)) (Maybe Expr)
-
  | PartialApp [Type] Term [Term] -- Top level PAp => Abs (no fresh argnames after parse)
  | BruijnAbs  Int Term -- debruijn abstraction
  | StreamCons (IM.IntMap Term) -- difference with Cons is that absent labels produce Nothing
@@ -68,39 +67,31 @@ type Uni     = Int -- a universe of types
 type TyMinus = Type
 type TyPlus  = Type
  
--- Type: designed for fast merging and having pre-partitioned out tvars
--- True / + / output / join , False / - / input / meet
---data GroundType -- no tvars
--- = TyGround TyHead
--- | TyUnion TyCon [TyHead]
-type GroundType = [TyHead]
+type GroundType = [TyHead] -- True / + / output / join , False / - / input / meet
 
--- Note. Theoretically Type vars have their own presence in the profinite distributive lattice of types
--- The point is to partition tvars out of the [TyHead] list since they are usually handled separately
+-- Theoretically TVars have their own presence in the profinite distributive lattice of types
+-- The point is to pre-partition tvars since they are usually handled separately
 data Type
  = TyGround GroundType
  | TyVar    Int -- generalizes to THBound if survives biunification and simplification
  | TyVars   BitSet GroundType
--- | TyMu Int Type
  deriving Eq
+-- | TyMu Int Type
 -- | TyQuantified Int Int GroundType
 
 tyTop = TyGround []
 tyBot = TyGround []
 
 --type Type    = TyPlus
---type TyMinus = [TyHead] -- input  types (lattice meet ^) eg. args
---type TyPlus  = [TyHead] -- output types (lattice join v)
+--type TyMinus = [TyHead] -- input  types (lattice meet ∧) eg. args
+--type TyPlus  = [TyHead] -- output types (lattice join ∨)
 
 data TyCon -- Type constructors
  = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot -> top is the largest)
  | THTuple    (V.Vector  TyPlus) -- ordered form of THproduct
  | THProduct  (IntMap TyPlus)
  | THSumTy    (IntMap TyPlus)
--- | THArray    TyPlus
  deriving Eq
-
-data Pi = Pi [(IName , Type)] Type deriving Eq
 
 -- Head constructors in the profinite distributive lattice of types
 data TyHead
@@ -111,21 +102,18 @@ data TyHead
  | THTop | THBot
 
  | THFieldCollision Type Type
- | THTyCon !TyCon -- BitSet cache escaped vars
+ | THTyCon !TyCon -- BitSet cache contained tvars?
 
- -- Binders
- | THMu Int Type
- | THBi Int Int Type -- generalised vars `Π A → T` and if m >= 0 a µm.T (they are handled the same for inference)
--- | THPi Pi           -- dependent function space. implicitly bound. (explicit: `∏(x:_) x -> T`)
+ | THBi Int Type -- Π A → F(A) polymorphic type to be instantiated on each use
+ | THMu Int Type -- µx.F(x) recursive type is instantiated same as Π A → A & F(A)`
+-- | THPi Pi           -- dependent function space. (for explicit: `∏(x:_) x -> T`)
 -- | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
 
- | THBound   IName     -- pi-bound debruijn index; replace with fresh THVar at THBi to biunify
- | THMuBound IName     -- mu-bound debruijn index (must be guarded and covariant) inference treats it exactly as THBound
-
--- type Families | indexed types
--- | THRecSi IName [Term]     -- basic case when parsing a definition; also a valid CoreExpr
--- | THFam Type [Type] [Expr] -- type of indexables, and things indexing it (both can be [])
+ | THBound   IName  -- Π-bound tvar; instantiating Π-binder involves sub with fresh tvars
+ | THMuBound IName  -- µ-bound tvar (must be guarded and covariant)
  deriving Eq
+
+data Pi = Pi [(IName , Type)] Type deriving Eq
 
 data Expr
  = Core     Term Type

@@ -62,7 +62,8 @@ main' args = parseCmdLine args >>= \cmdLine -> do
   resolver       <- if doCacheCore && resolverExists
     then DB.decodeFile resolverCacheFName :: IO GlobalResolver
     else pure primResolver
-  [strings cmdLine] `forM_` \e -> text2Core cmdLine Nothing resolver 0 "CmdLineBinding" (toS e) >>= handleJudgedModule
+  unless (null (strings cmdLine)) $ [strings cmdLine] `forM_` \e ->
+    text2Core cmdLine Nothing resolver 0 "CmdLineBindings" (toS e) >>= handleJudgedModule
   files cmdLine `forM_` doFileCached cmdLine True resolver 0
   when (repl cmdLine || null (files cmdLine) && null (strings cmdLine)) (replCore cmdLine)
 
@@ -78,20 +79,19 @@ doFileCached flags isMain resolver depStack fName = let
   go resolver modNm = T.IO.readFile fName >>= text2Core flags modNm resolver depStack fName >>= handleJudgedModule
   go' resolver = go resolver Nothing
   didIt = modNameMap resolver M.!? toS fName
-  in
-  if not doCacheCore then case didIt of -- TODO don't recompile deps just because no cache
-    Just modI -> error $ "compiling a module twice without cache is unsupported: " <> show fName
-    Nothing   -> go' resolver
-  else doesFileExist cached >>= \exists ->
-  if not exists      then go' resolver else do
-    fresh <- isCachedFileFresh
-    -- TODO avoid reading the cache if wasn't fresh
-    judged <- decodeCoreFile cached :: IO CachedData
-    if fresh && not (recompile flags) && not isMain then pure (resolver , judged)
-      --else go (rmModule modINm (bindNames judged) resolver) (Just modINm)
-      else go resolver (Just $ OldCachedModule (modIName judged) (bindNames judged))
+  in case didIt of
+    Just modI | not doCacheCore -> error $ "compiling a module twice without cache is unsupported: " <> show fName
+    Just modI | depStack `testBit` modI -> error $ "Import loop: "
+      <> toS (T.intercalate " <- " (show . (modNamesV resolver V.!) <$> bitSet2IntList depStack))
+    _         | not doCacheCore -> go' resolver
+    _ -> doesFileExist cached >>= \exists -> if not exists then go' resolver else do
+      fresh  <- isCachedFileFresh
+      judged <- decodeCoreFile cached :: IO CachedData -- even stale cached modules need to be read
+      if fresh && not (recompile flags) && not isMain then pure (resolver , judged)
+        --else go (rmModule modINm (bindNames judged) resolver) (Just modINm)
+        else go resolver (Just $ OldCachedModule (modIName judged) (bindNames judged))
 
-evalImports :: CmdLine -> ModIName -> GlobalResolver -> Integer -> [Text] -> IO (GlobalResolver, ModDependencies)
+evalImports :: CmdLine -> ModIName -> GlobalResolver -> BitSet -> [Text] -> IO (GlobalResolver, ModDependencies)
 evalImports flags moduleIName resolver depStack fileNames = do
   importPaths <- (findModule searchPath . toS) `mapM` fileNames
   -- the compilation work stack is the same for each imported module
@@ -99,7 +99,7 @@ evalImports flags moduleIName resolver depStack fileNames = do
   (r , importINames) <- let
     inferImport (res,imports) path = (\(a,j)->(a,modIName j: imports)) <$> doFileCached flags False res depStack path
     in foldM inferImport (resolver , []) importPaths
-  let modDeps = ModDependencies (foldl setBit 0 importINames) 0 -- initially no dependents
+  let modDeps = ModDependencies { deps = (foldl setBit emptyBitSet importINames) , dependents = emptyBitSet }
       r' = foldl (\r imported -> addDependency imported moduleIName r) r importINames
   pure (r' , modDeps)
 
@@ -115,12 +115,12 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
   isRecompile= isJust maybeOldModule
 
   (tmpResolver  , exts) = resolveImports
-      modResolver modIName
-      (parsed ^. P.parseDetails . P.hNameBinds . _2)   -- local names
-      (labelMap , fieldMap)                            -- HName -> label and field names maps
-      (parsed ^. P.parseDetails . P.hNameMFWords . _2) -- mixfix names
-      (parsed ^. P.parseDetails . P.hNamesNoScope)     -- unknownNames not in local scope
-      maybeOldModule
+    modResolver modIName
+    (parsed ^. P.parseDetails . P.hNameBinds . _2)   -- local names
+    (labelMap , fieldMap)                            -- HName -> label and field names maps
+    (parsed ^. P.parseDetails . P.hNameMFWords . _2) -- mixfix names
+    (parsed ^. P.parseDetails . P.hNamesNoScope)     -- unknownNames not in local scope
+    maybeOldModule
   (judgedModule , errors) = judgeModule nBinds parsed modIName nArgs hNames exts srcInfo
   JudgedModule _modIName modNm nArgs' bindNames a b judgedBinds = judgedModule
 
@@ -133,9 +133,8 @@ text2Core :: CmdLine -> Maybe OldCachedModule -> GlobalResolver -> ModDeps -> Fi
   -> IO (CmdLine, [Char], JudgedModule, GlobalResolver, Externs, TCErrors, Maybe SrcInfo)
 text2Core flags maybeOldModule resolver' depStack fName progText = do
   -- Just moduleIName indicates this module was already cached, so don't allocate a new module iname for it
-  let modIName = maybe (modCount resolver' {-modResolver-}) oldModuleIName maybeOldModule
+  let modIName = maybe (modCount resolver') oldModuleIName maybeOldModule
       resolver = if isJust maybeOldModule then resolver' else addModName modIName (T.pack fName) resolver'
-  when (testBit depStack modIName) (error $ "Import loop: " <> show ((modNamesV resolver' V.!) <$> bitSet2IntList depStack))
   when ("source" `elem` printPass flags) (putStr =<< readFile fName)
   parsed <- case parseModule fName progText of
     Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
@@ -168,7 +167,7 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
       judgedFinal = JudgedModule modIName modNm nArgs bindNames a b simpleBinds
 --when ("simple" `elem` printPass flags) (TL.IO.putStrLn `mapM_` namedBinds True simpleBinds)-- (V.zip bindNames simpleBinds))
 
-  -- half-compiled modules `not coreOK` should also be cached (their names were pre-added to the resolver)
+  -- half-compiled modules `not coreOK` should also be cached (since heir names were pre-added to the resolver)
   when (doCacheCore && not (noCache flags))
     $ DB.encodeFile resolverCacheFName newResolver *> cacheFile fName judgedFinal
   T.IO.putStrLn $ show fName <> " " <> "(" <> show modIName <> ") " <> (if coreOK then "OK" else "KO")

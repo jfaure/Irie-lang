@@ -42,6 +42,7 @@ if_then_else_ { l0 } = ifThenElse
 identity x = x
 
 {-
+-- mixfix tests
 plus = _+_
 zero   = 0 + 0
 one    = 0 + add 1 2

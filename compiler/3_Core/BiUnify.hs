@@ -42,7 +42,7 @@ biSubTVarTVar p m = use deadVars >>= \dead -> -- if testBit ls p || testBit ls m
 
 biSubTVarP v m = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ else
   use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
-    let mMerged = mergeTypes m m'
+    let mMerged = mergeTypes False m m'
     when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " <==> " <> prettyTyRaw m))
     use escapedVars >>= \es -> when (testBit es v) $ leakedVars %= (.|. getTVarsType m)
     MV.write b v (BiSub p' mMerged)
@@ -51,7 +51,7 @@ biSubTVarP v m = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ els
 
 biSubTVarM p v = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ else
   use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
-    let pMerged = mergeTypes p p'
+    let pMerged = mergeTypes True p p'
     when global_debug (traceM ("bisub: " <> prettyTyRaw p <> " <==> " <> prettyTyRaw (TyVar v)))
     use escapedVars >>= \es -> when (testBit es v) $ leakedVars %= (.|. getTVarsType p)
     MV.write b v (BiSub pMerged m')
@@ -78,23 +78,33 @@ biSub a b = case (a , b) of
 -- Note. weird special case (A & {f : B}) typevars as produced by lens over
 --   The A serves to propagate the input record, minus the lens field
 --   what is meant is really set difference: A =: A // { f : B }
-instantiate nb m x = do
-  r <- freshBiSubs (nb + if m >= 0 then m+1 else 0) >>= \tvars@(tvStart:_) -> doInstantiate tvStart x
---traceM ("Instantiate: " <> prettyTyRaw x <> " => " <> prettyTyRaw r)
+instantiate nb x = do
+  sv <- muInstances <<.= mempty
+  r <- if nb == 0 then doInstantiate mempty x else
+    freshBiSubs nb >>= \tvars@(tvStart:_) -> doInstantiate (IM.fromList (zip [0..] tvars)) x
+  muInstances .= sv
   pure r
 
 -- Replace THBound with fresh TVars
-doInstantiate :: Int -> Type -> TCEnv s Type
-doInstantiate tvarStart ty = let
-  mapFn = let
-    r = doInstantiate tvarStart
-    in \case
-    THBound i   -> pure (0 `setBit` (tvarStart + i) , [])
-    THMuBound i -> pure (0 `setBit` (tvarStart + i) , [])
-    THMu m t    -> (\case { TyGround g -> (0 `setBit` (tvarStart + m) , g) ; TyVars vs g -> (vs , g) })
---    <$> r (mergeTypes (TyGround [THMuBound m]) t) -- µx.T is to inference (x & T)
-      <$> r t -- µx.T is to inference (x & T)
---  THMu m t    -> (\(TyGround g) -> (0,g)) <$> r t
+-- this mixes mu-bound vars xyz.. and generalised vars A..Z
+doInstantiate :: IM.IntMap Int -> Type -> TCEnv s Type
+doInstantiate tvars ty = let
+  keyNotFound = fromMaybe (error "panic: muvar not found")
+  mapFn = let r = doInstantiate tvars in \case
+--  THBound i   -> pure (0 `setBit` (tvarStart + i - IM.size muVars) , [])
+    THBound i   -> pure (0 `setBit` (keyNotFound $ tvars IM.!? i)  , [])
+    THMuBound i -> use muInstances >>= \muVars -> case muVars IM.!? i of
+      Just m -> pure (0 `setBit` m , [])
+      Nothing -> freshBiSubs 1 >>= \[mInst] -> (muInstances %= IM.insert i mInst) $> (0 `setBit` mInst , [])
+    THBi{}      -> error $ "higher rank polymorphic instantiation"
+    THMu m t    -> do -- µx.F(x) is to inference (x & F(x))
+      use muInstances >>= \muVars -> do
+        mInst <- case muVars IM.!? m of
+          Nothing -> freshBiSubs 1 >>= \[mInst] -> mInst <$ (muInstances %= IM.insert m mInst)
+          Just m -> pure m
+        doInstantiate tvars t <&> \case
+          TyGround g  -> (0 `setBit` mInst , g)
+          TyVars vs g -> (vs `setBit` mInst , g)
     THTyCon t -> (\x -> (0 , [THTyCon x])) <$> case t of
       THArrow as ret -> THArrow   <$> (r `mapM` as) <*> (r ret)
       THProduct as   -> THProduct <$> (r `mapM` as)
@@ -107,7 +117,7 @@ doInstantiate tvarStart ty = let
     in if tvs == 0 then TyGround groundTys else TyVars tvs groundTys
   in case ty of 
     TyGround g -> instantiateGround g
-    TyVars vs g -> mergeTypes (TyVars vs []) <$> instantiateGround g
+    TyVars vs g -> mergeTypes True (TyVars vs []) <$> instantiateGround g -- TODO ! get the right polarity here
     TyVar v -> pure (TyVar v)
 
 atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
@@ -122,12 +132,12 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THExt i , m) -> (`biSubType` tyM) =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
 
   -- Bound vars (removed at +THBi, so should never be encountered during biunification)
-  (THBound i , x)   -> error $ "unexpected THBound: " <> show i
-  (x , THBound i)   -> error $ "unexpected THBound: " <> show i
-  (x , THBi nb m y) -> error $ "unexpected THBi: "    <> show (p,m)
+  (THBound i , x) -> error $ "unexpected THBound: " <> show i
+  (x , THBound i) -> error $ "unexpected THBound: " <> show i
+  (x , THBi nb y) -> error $ "unexpected THBi: "      <> show (p,m)
 
-  (THBi nb mus p , m) -> do
-    instantiated <- instantiate nb mus p
+  (THBi nb p , m) -> do
+    instantiated <- instantiate nb p
     biSubType instantiated tyM
 
   (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)
@@ -141,40 +151,13 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THTyCon THArrow{} , x) -> failBiSub (TextMsg "Insufficient arguments") (TyGround [p]) (TyGround [m])
   (a , b) -> failBiSub (TextMsg "Incompatible types") (TyGround [a]) (TyGround [b])
 
-{-
-extrude :: BitSet -> Type -> TCEnv s Type
-extrude escapees t = case t of
-  TyVar v -> freshBiSubs 1 <&> \[w] -> TyVar w
-  TyVars tvars g -> let es = tvars in do -- tvars .&. complement escapees in do
-    freshVars <- freshBiSubs (popCnt es) <&> intList2BitSet
-    gs <- extrudeTH escapees `mapM` g
-    pure $ mergeTypeList (TyVars ({-tvars .&. complement es .&.-} freshVars) [] : gs)
-  TyGround g -> mergeTypeList <$> (extrudeTH escapees `mapM` g)
-
-extrudeTH :: BitSet -> TyHead -> TCEnv s Type
-extrudeTH escapees = let e = extrude escapees in \case
-  THTyCon t -> (\x -> TyGround [THTyCon x]) <$> case t of
-    THArrow ars r -> THArrow   <$> (traverse e ars) <*> e r
-    THProduct   r -> THProduct <$> (traverse e r)
-    THSumTy     r -> THSumTy   <$> (traverse e r)
-    THTuple     r -> THTuple   <$> (traverse e r)
-  x -> (\x -> pure (TyGround [x])) $ case x of
-    THExt{}  -> x
-    THPrim{} -> x
-    THBot{} ->  x
-    THTop{} ->  x
-    x -> error $ show x
--}
-
 -- TODO cache THTycon contained vars?
 getTVarsType = \case
   TyVar v -> setBit 0 v
-  TyVars vs g -> vs .|. foldr (.|.) 0 (getTVarsTyHead <$> g)
+  TyVars vs g -> foldr (.|.) vs (getTVarsTyHead <$> g)
   TyGround  g -> foldr (.|.) 0 (getTVarsTyHead <$> g)
 getTVarsTyHead :: TyHead -> BitSet
 getTVarsTyHead = \case
---THVar   v -> setBit 0 v
---THVars vs -> vs
   THTyCon t -> case t of
     THArrow ars r -> foldr (.|.) 0 (getTVarsType r : (getTVarsType <$> ars) )
     THProduct   r -> foldr (.|.) 0 (getTVarsType <$> IM.elems r)
@@ -232,16 +215,3 @@ primBiSub p1 m1 = case (p1 , m1) of
   (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (CastInstr Zext) else (BiEQ <$ failBiSub (TextMsg "Primitive Finite Int") (TyGround [THPrim p1]) (TyGround [THPrim m1]))
   (PrimInt p , PrimBigInt) -> pure (CastInstr (GMPZext p))
   (p , m) -> if (p /= m) then (failBiSub (TextMsg "primitive types") (TyGround [THPrim p1]) (TyGround [THPrim m1])) else pure BiEQ
-
--- deciding term equalities ..
-termEq t1 t2 = case (t1,t2) of
---(Var v1 , Var v2) -> v1 == v2
-  x -> True
---x -> False
-
--- evaluate type application (from THIxPAp s)
---tyAp :: [TyHead] -> IM.IntMap Expr -> [TyHead]
---tyAp ty argMap = map go ty where
---  go :: TyHead -> TyHead = \case
---    THTyCon (THArrow as ret) -> THTyCon $ THArrow (map go <$> as) (go <$> ret)
---    x -> x

@@ -8,7 +8,7 @@ import Errors
 import CoreUtils
 import TypeCheck
 import TCState
-import PrettyCore
+--import PrettyCore
 import DesugarParse -- (matches2TT)
 import Externs
 import Mixfix
@@ -17,46 +17,9 @@ import Generalise --Substitute
 import Control.Lens
 import Data.List (unzip4, span , zipWith3)
 import qualified Data.Vector as V
-import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Map.Strict as M
 import qualified Data.IntMap as IM
-import qualified Data.Text as T
-
-formatError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = let
-  bindSrc = Just srcNames
-  msg = let
-    getName names q = if unQName q < 0
-      then "!" <> show (0 - unQName q)
-      else show (modName q) <> "." <> (names V.! modName q V.! unQName q)
-    in case failType of
-    TextMsg m     -> m
-    TyConMismatch -> "Type constructor mismatch"
-    AbsentField q -> "Absent field '" <> getName (srcFieldNames srcNames) q <> "'"
-    AbsentLabel q -> "Absent label '" <> getName (srcLabelNames srcNames) q <> "'"
-
-  srcLoc = case srcInfo of
-    Nothing -> ""
-    Just (SrcInfo text nlOff) -> let
-      lineIdx = (\x -> x - 2) $ fromMaybe (0) $ VU.findIndex (> o) nlOff
-      line    = (nlOff VU.! lineIdx)
-      col     = o - line - 1
-      in if lineIdx < 0
-         then " <no source info>"
-         else "\n" <> show lineIdx <> ":" <> show col <> ": \"" <> T.takeWhile (/= '\n') (T.drop o text) <> "\""
-  in
-     "\n" <> clRed ("No subtype: " <> msg <> ":")
-  <> srcLoc
-  <> "\n      " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } got)
-  <> "\n  <:? " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } exp)
-
-formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annotation: "
-  <>  "\n  inferred: " <> clGreen (prettyTy (ansiRender { bindSource = Just bindSrc }) inferredTy)
-  <>  "\n  expected: " <> clGreen (prettyTy (ansiRender { bindSource = Just bindSrc }) annTy)
-
-formatScopeError = \case
-  ScopeError h -> clRed "Not in scope: "      <> h
-  AmbigBind  h -> clRed "Ambiguous binding: " <> h
 
 judgeModule nBinds pm modIName nArgs hNames exts source = let
   modName = pm ^. P.moduleName
@@ -66,12 +29,11 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
   pBinds' = V.fromListN nBinds (pm ^. P.bindings)
   in runST $ do
     wip'      <- MV.replicate nBinds WIP
-    bis'      <- MV.new 0
---  bis'      <- MV.replicate 1 (BiSub [] [])
+    bis'      <- MV.new 64
     argVars'  <- MV.new nArgs
     biEqui'   <- MV.replicate nBinds (complement 0)
-
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
+--  st <- execStateT (judgeBind `mapM_` [nBinds-1 , nBinds-2..0]) $ TCEnvState
       { _pBinds   = pBinds'
       , _externs  = exts
       , _thisMod  = modIName
@@ -81,6 +43,7 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
       , _scopeFails = []
       , _checkFails = []
 
+      , _muInstances = mempty
       , _argVars  = argVars'
       , _bindWIP  = 0
       , _tmpFails = []
@@ -99,10 +62,9 @@ judgeModule nBinds pm modIName nArgs hNames exts source = let
 --    , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
 --    , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
-
     bis''    <- V.unsafeFreeze (st ^. bis)
     wip''    <- V.unsafeFreeze (st ^. wip)
-    pure $ (JudgedModule modIName modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
+    pure $ (JudgedModule modIName ((\case {Right m->m;Left m->m;}) modName) nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
 -- inference >> generalisation >> type checking of annotations
@@ -154,16 +116,16 @@ generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \
       (ty , free) <- case expr of
         Abs ars free x fnTy -> pure (coreTy , free)
         _ -> pure (coreTy , freeVs)
-      -- rec / mutual: if this bind : τ was used within itself , something bisubed with -τ
+      -- rec | mutual: if this bind : τ was used within itself , something bisubed with -τ
       use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
         TyGround [] -> BiEQ <$ MV.write v recTVar (BiSub ty (TyGround []))
         t           -> bisub ty (TyVar recTVar) -- ! this binding is recursive | mutual
       bl <- use blen
-      when global_debug $ use bis >>= \b -> [0..bl -1] `forM_`
-        \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
-      freeArgTVars <- use argVars >>= \argPerms -> bitSet2IntList freeVs `forM` \i -> MV.read argPerms i
+      when global_debug $ use bis >>= \b -> [0..bl -1] `forM_` \i ->
+        MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
+      freeArgTVars <- use argVars >>= \argPerms ->
+        bitSet2IntList freeVs `forM` \i -> MV.read argPerms i
       escaped <- use escapedVars
---    when (free == 0) (leakedVars .= 0) --svLeaked)
       generalise escaped recTVar <* when (free == 0) (clearBiSubs recTVar)
     t -> pure t
   l <- use leakedVars
@@ -175,21 +137,15 @@ generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \
     _                            -> pure inferred
   done <$ MV.write wip' m (BindOK done)
 
-checkAnnotation :: Type -> Type {--> [[P.TT]] -> V.Vector Type-} -> TCEnv s Type
-checkAnnotation annTy inferredTy {-mainArgTys argTys-} = do
+checkAnnotation :: Type -> Type -> TCEnv s Type
+checkAnnotation annTy inferredTy = do
   exts <- use externs
   unless (check exts mempty mempty inferredTy annTy)
-        (checkFails %= (CheckError inferredTy annTy:))
+         (checkFails %= (CheckError inferredTy annTy:))
 
   -- ? Prefer user's type annotation (esp type aliases) over the inferred one
-  -- ! we may have inferred some missing information
-  -- type families (gadts) are special: we need to insert the list of labels as retTy
+  -- ! we may have inferred some missing information (type holes)
   pure annTy
---  pure $ case getRetTy inferredTy of
-----  s@[THFam{}] -> case flattenArrowTy annTy of
-----    [THArrow d r] -> [THFam r d []]
-----    x -> s
---    _ -> annTy
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
@@ -310,7 +266,8 @@ infer = let
         <&> \cast -> Core (TTLens (Cast cast f) fields LensGet) (TyVar i)
 
       P.LensSet x  -> infer x <&> \case -- LeafTy -> Record -> Record & { path : LeafTy }
-        new@(Core newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (gotTy `mergeTypes` mkExpected newLeafTy)
+        -- + is right for mergeTypes since this is output
+        new@(Core newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (mergeTypes True gotTy (mkExpected newLeafTy))
         _ -> PoisonExpr
 
       P.LensOver x -> infer x >>= \fn -> do
@@ -364,9 +321,8 @@ infer = let
 -}
 
   P.Match alts catchAll -> use externs >>= \ext -> let
-    -- * desugar all patterns in the alt fns
-    -- * mk tuples out of those abstractions to represent the sum type
-    -- * ret type is a join of all the abs ret tys
+    -- * desugar all patterns in the alt fns (whose args are parameters of the label)
+    -- * ret type is a join of all the labels
     desugarFns = \(lname , free , pats , tt) -> let
       (args , _ , e) = patterns2TT False pats tt
       in (qName2Key (readLabel ext lname) , args , _ , e)
@@ -375,23 +331,19 @@ infer = let
     argTVars <- addArgTVars `mapM` args
     alts <- infer `mapM` exprs
     let poison = (\case { PoisonExpr -> True ; _ -> False }) `any` alts
-        altTys  = tyOfExpr <$> alts
-        retTy   = mergeTypeList altTys
-        altTys' = map (\argTVars -> TyGround [THTyCon$ THTuple $ V.fromList argTVars]) argTVars
-        scrutTy = TyGround [THTyCon $ THSumTy $ IM.fromList $ zip labels altTys']
+        retTys  = tyOfExpr <$> alts
+        retTy   = mergeTypeList True retTys -- + is right since this term is always output
+
+        altTys  = map (\argTVars -> TyGround [THTyCon $ THTuple $ V.fromList $ did_ argTVars]) argTVars
+        scrutTy = TyGround [THTyCon $ THSumTy $ IM.fromList $ zip labels altTys]
         matchTy = TyGround $ mkTyArrow [scrutTy] retTy
         argAndTys  = zipWith zip args argTVars
         altsMap = let
           addAbs ty (Core t _) args = Core (Abs args 0 t ty) ty
           addAbs ty PoisonExpr _ = PoisonExpr
-          in IM.fromList $ zip labels (zipWith3 addAbs altTys alts argAndTys)
+          in IM.fromList $ zip labels (zipWith3 addAbs retTys alts argAndTys)
     pure $ if poison then PoisonExpr else
       Core (Match retTy altsMap Nothing) matchTy
-
-  -- TODO merge (join) all the tys to produce the array ?
---P.LitArray literals -> let
---  ty = TyGround [typeOfLit (fromJust $ head literals)]
---  in pure $ Core (Lit . Array $ literals) (TyGround [THTyCon $ THArray ty])
 
   P.Lit l  -> pure $ Core (Lit l) (TyGround [typeOfLit l])
 

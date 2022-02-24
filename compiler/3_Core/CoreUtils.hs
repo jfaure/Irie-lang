@@ -7,6 +7,7 @@ import CoreSyn
 import ShowCore()
 import PrettyCore
 import Prim
+import Data.List (zipWith3 , partition)
 import qualified Data.IntMap as IM
 import qualified Data.Vector as V
 
@@ -39,7 +40,7 @@ mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
 
 getArrowArgs = \case
   TyGround [THTyCon (THArrow as r)] -> (as , r)
-  TyGround [THBi i m t] -> getArrowArgs t
+  TyGround [THBi i t] -> getArrowArgs t
   t -> trace ("not a function type: " <> prettyTyRaw t) ([] , t)
 
 -- appendArrowArgs [] = identity
@@ -54,14 +55,14 @@ prependArrowArgs :: [[TyHead]] -> [TyHead] -> [TyHead]
 prependArrowArgs [] = identity
 prependArrowArgs args = \case
   [THTyCon (THArrow as r)] -> [THTyCon $ THArrow ((TyGround <$> args) ++ as) r]
-  [THBi i m (TyGround t)] -> [THBi i m $ TyGround $ prependArrowArgs args t]
+  [THBi i (TyGround t)] -> [THBi i $ TyGround $ prependArrowArgs args t]
   x -> [THTyCon $ THArrow (TyGround <$> args) (TyGround x)]
 
 prependArrowArgsTy :: [Type] -> Type -> Type
 prependArrowArgsTy [] = identity
 prependArrowArgsTy args = \case
   TyGround [THTyCon (THArrow as r)] -> TyGround [THTyCon $ THArrow (args ++ as) r]
-  TyGround [THBi i m t] -> TyGround [THBi i m $ prependArrowArgsTy args t]
+  TyGround [THBi i t] -> TyGround [THBi i $ prependArrowArgsTy args t]
   x -> TyGround [THTyCon $ THArrow args x]
 
 isTyCon = \case
@@ -111,24 +112,23 @@ kindOf = \case
   THMuBound{} -> KRec
   _ -> KAny
 
-mergeTyUnions :: [TyHead] -> [TyHead] -> [TyHead]
-mergeTyUnions l1 l2 = let
+mergeTyUnions :: Bool -> [TyHead] -> [TyHead] -> [TyHead]
+mergeTyUnions pos l1 l2 = let
   cmp a b = case (a,b) of
     (THBound a' , THBound b') -> compare a' b'
     _ -> (kindOf a) `compare` (kindOf b)
-  in foldr mergeTyHeadType [] (sortBy cmp $ l2 ++ l1)
+  in foldr (mergeTyHeadType pos) [] (sortBy cmp $ l2 ++ l1)
 
-(+:) = mergeTyHeadType
+mergeTyHeadType :: Bool -> TyHead -> [TyHead] -> [TyHead]
+mergeTyHeadType pos newTy [] = [newTy]
+mergeTyHeadType pos newTy (ty:tys) = mergeTyHead pos newTy ty ++ tys
 
-mergeTyHeadType :: TyHead -> [TyHead] -> [TyHead]
-mergeTyHeadType newTy [] = [newTy]
-mergeTyHeadType newTy (ty:tys) = mergeTyHead newTy ty ++ tys
-
-mergeTyHead :: TyHead -> TyHead -> [TyHead]
-mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
+mergeTyHead :: Bool -> TyHead -> TyHead -> [TyHead]
+mergeTyHead pos t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   let join = [t1 , t2]
-      zM  :: Semialign f => f Type -> f Type -> f Type
-      zM  = alignWith (these identity identity mergeTypes)
+      zM  :: Semialign f => Bool -> f Type -> f Type -> f Type
+      zM pos' = alignWith (these identity identity (mergeTypes pos'))
+      mT = mergeTypes pos
   in case join of
   [THTop , THTop] -> [THTop]
   [THBot , THBot] -> [THBot]
@@ -141,11 +141,13 @@ mergeTyHead t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
   [THBound a , THBound b]     -> if a == b then [t1] else join
   [THExt a , THExt  b]        -> if a == b then [t1] else join
-  [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of -- TODO depends on polarity (!)
-    [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ IM.unionWith mergeTypes a b]
-    [THProduct a , THProduct b] -> [THTyCon $ THProduct $ IM.intersectionWith mergeTypes a b]
-    [THTuple a , THTuple b]     -> [THTyCon $ THTuple   $ zM a b]
-    [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM d1 d2) (mergeTypes r1 r2)]
+  [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of
+    [THSumTy a   , THSumTy b]   ->
+      [THTyCon $ THSumTy $ if pos then IM.unionWith mT a b else IM.intersectionWith mT a b]
+    [THProduct a , THProduct b] ->
+      [THTyCon $ THProduct $ if pos then IM.intersectionWith mT a b else IM.unionWith mT a b]
+    [THTuple a , THTuple b]     -> [THTyCon $ THTuple $ zM pos a b]
+    [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM (not pos) d1 d2) (mergeTypes pos r1 r2)]
     x -> join
   _ -> join
 
@@ -154,11 +156,12 @@ nullType = \case
   TyGround [] -> True
   _ -> False
 
-mergeTypeList :: [Type] -> Type
-mergeTypeList = foldr mergeTypes (TyGround [])
+mergeTypeList :: Bool -> [Type] -> Type
+mergeTypeList pos = foldr (mergeTypes pos) (TyGround [])
 
-rmMuBound m = \case
-  TyGround g -> TyGround $ filter (\case { THMuBound x -> x /= m ; _ -> True }) g
+rmMuBound m = let goGround = filter (\case { THMuBound x -> x /= m ; _ -> True }) in \case
+  TyGround g  -> TyGround (goGround g)
+  TyVars vs g -> TyVars vs (goGround g)
   t -> t
 
 rmTVar v = \case
@@ -170,18 +173,83 @@ mergeTVars vs = \case
   TyVar w     -> TyVars (vs `setBit` w) []
   TyVars ws g -> TyVars (ws .|. vs) g
   TyGround g  -> TyVars vs g
-mergeTypeGroundType a b = mergeTypes a (TyGround b)
+mergeTypeGroundType pos a b = mergeTypes pos a (TyGround b)
 mergeTVar v = \case
   TyVar w     -> TyVars (setBit 0 w `setBit` v) []
   TyVars ws g -> TyVars (ws `setBit` v) g
   TyGround g  -> TyVars (0  `setBit` v) g
-mergeTypes (TyGround a) (TyGround b)     = TyGround (mergeTyUnions a b)
-mergeTypes (TyVar v) t                   = mergeTVar v t
-mergeTypes t (TyVar v)                   = mergeTVar v t
-mergeTypes (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions g1 g2)
-mergeTypes (TyVars vs g1) (TyGround g2)  = TyVars vs (mergeTyUnions g1 g2)
-mergeTypes (TyGround g1) (TyVars vs g2)  = TyVars vs (mergeTyUnions g1 g2)
-mergeTypes a b = error $ "attempt to merge weird types: " <> show (a , b)
-  
+mergeTypes pos (TyGround a) (TyGround b)     = TyGround (mergeTyUnions pos a b)
+mergeTypes pos (TyVar v) t                   = mergeTVar v t
+mergeTypes pos t (TyVar v)                   = mergeTVar v t
+mergeTypes pos (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions pos g1 g2)
+mergeTypes pos (TyVars vs g1) (TyGround g2)  = TyVars vs (mergeTyUnions pos g1 g2)
+mergeTypes pos (TyGround g1) (TyVars vs g2)  = TyVars vs (mergeTyUnions pos g1 g2)
+mergeTypes pos a b = error $ "attempt to merge weird types: " <> show (a , b)
+
 -- TODO check at the same time if this did anything
-mergeTysNoop :: Type -> Type -> Maybe Type = \a b -> Just $ mergeTypes a b
+mergeTysNoop :: Bool -> Type -> Type -> Maybe Type = \pos a b -> Just $ mergeTypes pos a b
+
+-- Test if µ wrappers are unrollings of the recursive type
+--    [Cons : {A , µC.[Cons : {A , µC} | Nil : {}]} | Nil : {}]
+-- => µC.[Cons : {A , µC} | Nil : {}]
+-- To do this pre-process the µ by 'inverting' it to test each subsequent wrapping
+data InvMu = Leaf IName
+  | InvMu
+  { this    :: Type -- A subtree of the µ. test eq ignoring the rec branch we came from
+  , parents :: Maybe (Int , InvMu) -- Nothing if root, Int is the tycon rec branch
+  } deriving Show
+
+--invertMu :: Maybe (Int , Type) -> Type -> [InvMu]
+-- i is the wrapping tycon branch we recursed into to get here
+-- ie. it should be ignored when testing if the parent layer is an unrolling of this µ
+-- [InvMu]: one for each recursive var: eg. in µx.(x,x) we get 2 InvMus
+invertMu :: Maybe (Int , Type) -> Type -> [InvMu]
+invertMu parent this = let
+--go :: Type -> TyHead -> [Maybe (Int , Type)]
+  getI = case parent of { Just (i,_) -> i }
+  go this t = case t of
+    THTyCon tycon -> concat $ map (\(i,t) -> (InvMu this . Just . (i,) <$> t))
+      $ zipWith (\i t -> (i,) $ invertMu (Just (i , this)) t) [0..] $
+      case tycon of -- the order tycon subtypes are INamed is important:
+        THArrow ars r -> (r : ars)
+        THSumTy tys   -> IM.elems tys
+        THProduct tys -> IM.elems tys
+        THTuple tys   -> V.toList tys
+    THMu m t    -> [Leaf m]
+    THMuBound m -> [Leaf m]
+    _ -> [] -- no mus in this branch
+  in case this of
+  TyGround gs  -> concat (go this <$> gs)
+  TyVars vs gs -> concat (go this <$> gs)
+  TyVar v -> []
+
+-- test if an inverted Mu matches the next layer (a potential unrolling of the µ)
+-- This happens after type simplifications so there should be no tvars (besides escaped ones)
+-- Either (more wrappings to test) (end , True if wrapping is an unrolling)
+testWrapper :: InvMu -> Int -> Type -> Either InvMu Bool
+testWrapper (Leaf m) recBranch t = Right True
+--testWrapper (Leaf m) recBranch t = case t of
+--  TyGround [THMuBound x] | x == m -> Right True
+--  TyGround [THMu x _   ] | x == m -> Right True
+--  _ -> Right False
+testWrapper (InvMu this parent) recBranch t = case (this , t) of
+  (TyGround g1 , TyGround g2) -> let
+    partitionTyCons g = (\(t , o) -> ((\case {THTyCon tycon -> tycon ; _ -> error "wtf" }) <$> t , o))
+      $ partition (\case {THTyCon{}->True;_->False}) g
+    recBranch = fromMaybe (-1) (fst <$> parent)
+    ((t1 , o1) , (t2 , o2)) = (partitionTyCons g1 , partitionTyCons g2)
+    testGuarded t1 t2 = let go i t1 t2 = if i == recBranch then True else t1 == t2
+      in zipWith3 go [0..] t1 t2
+    muFail = case (t1 , t2) of
+      ([THArrow a1 r1] , [THArrow a2 r2]) -> testGuarded (r1 : a1) (r2 : a2)
+      ([THSumTy t1   ] , [THSumTy t2   ]) -> testGuarded (IM.elems t1) (IM.elems t2)
+      ([THProduct t1 ] , [THProduct t2 ]) -> testGuarded (IM.elems t1) (IM.elems t2)
+      ([THTuple t1   ] , [THTuple t2   ]) -> testGuarded (V.toList t1) (V.toList t2)
+      _ -> [False]
+    in if not (all identity muFail) {-|| o1 /= o2-} then Right False
+       else case parent of
+         Nothing -> Right True
+         Just (_ , Leaf{}) -> Right True
+         Just (i , nextInvMu) -> Left nextInvMu
+  _ -> Right False
+-- TODO TyVars (presumably only relevant for let-bindings)

@@ -32,6 +32,7 @@ data PrimType
  | PrimTuple    [PrimType]
  | PrimExtern   [PrimType]
  | PrimExternVA [PrimType]
+ | PrimCStruct
  | POSIXTy POSIXType
 
 data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
@@ -74,6 +75,7 @@ data PrimInstr
  -- conversion between primitive arrays and ADTs
  | UnFoldArr -- (Seed -> (Bool , A , Seed)) -> Seed -> %ptr(A)
  | NextElem  -- %ptr(A) -> (A , %ptr(A))
+ | ToCStruct | ToCStructPacked | FromCStruct | FromCStructPacked
 
  -- Posix instructions
  | GetCWD

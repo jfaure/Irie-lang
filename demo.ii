@@ -1,10 +1,13 @@
 --import imports/prelude
 --import imports/list
 --import imports/simpleTests
+module demo x =
 
--- when extruding v (bissubing it with an escaped variable):
--- => create a conservative approximation of v so later insantiations can receive additional constraints independently as long as they are within these approximating bounds
---
+--id x = x : a -> a
+--id : Π a -> a -> a
+id x = x
+-- TODO x is a VBind for some reason
+
 -- step dirp = case j (readdir dirp) of
 --   Nothing => Nothing
 --   Just a  => Just { val = a , seed = dirp }
@@ -34,14 +37,14 @@
 --  Cons x xs => foldl f (f s x) xs
 --  Nil => s
 
--- -- r = { next = r }
--- foldr f s l = case l of
---   Cons x xs => f x (foldr f s xs)
---   Nil       => s
--- 
--- append front back = foldr Cons back front
+--self x = x x -- Π A → (Π B → B) → A → A
 
--- concat = foldr append Nil
+--foldr f s l = case l of
+--  Cons x xs => f x (foldr f s xs)
+--  Nil       => s
+--append front back = foldr Cons back front
+--
+--concat = foldr append Nil
 
 -- The prefix in pretty-printing:
 -- when a dir is opened:

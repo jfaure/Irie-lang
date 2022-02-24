@@ -112,11 +112,17 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
 
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
-    -- temporarily mark field/label names (use 2 bits in the iname, need the module name to track their origin)
+    -- temporarily mark field/label names (use 2 bits from the iname, not the module name which tracks their origin)
     -- instead resolveName could use 3 maps, but would be slow since frequently entire maps would come back negative
     labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
     fields = IM.singleton modIName . (`setBit` fieldBit) <$> fieldMap
-    in M.unionsWith IM.union [((\iNm -> IM.singleton modIName iNm) <$> localNames) , curResolver , labels , fields]
+    -- Deleted names from the old module won't be overwritten so must be explicitly removed
+    rmStaleNames nameMap = let
+      collect = V.foldl (\stale nm -> if M.member nm localNames then stale else nm : stale) []
+      staleNames = fromMaybe [] ((collect . oldBindNames) <$> maybeOld) :: [HName]
+      in foldr (\staleName m -> M.update (Just . IM.filter (/= modIName)) staleName m) nameMap staleNames
+    in rmStaleNames $ M.unionsWith IM.union
+      [((\iNm -> IM.singleton modIName iNm) <$> localNames) , curResolver , labels , fields]
 
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
@@ -137,7 +143,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
 --    | True <- testBit iNm fieldBit -> Imported (Core (Field (mkQName modNm (clearBit iNm fieldBit)) []) [])
 --    labels are weird in that they sometimes look like normal bindings `n = Nil`
       | True <- testBit iNm labelBit -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) (TyGround []))
-      | Just True <- ((==modNm) <$> oldIName) -> ForwardRef iNm -- discard old stuff
+      | Just True <- ((==modNm) <$> oldIName) -> ForwardRef iNm -- overwrite (recompile) old stuff
       | True -> Importable modNm iNm
     (b , Just mfWords)
       | Nothing      <- b -> MixfixyVar $ Mixfixy Nothing              (flattenMFMap mfWords)
@@ -148,11 +154,11 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     -- leaving deleted names in the resolver is likely far cheaper than eagerly cleaning all names on recompile
     -- perhaps make a hmap of oldbindnames?
     -- TODO what if deleted name becomes false positive?
-    (Just [(am,ai) , (bm,bi)] , _) | Just old <- maybeOld ->
-      let isOldName = hNm `elem` oldBindNames old in
-      if      isOldName && am == oldModuleIName old then Importable bm bi
-      else if isOldName && bm == oldModuleIName old then Importable am ai
-      else AmbiguousBinding hNm
+--  (Just [(am,ai) , (bm,bi)] , _) | Just old <- maybeOld ->
+--    let isOldName = hNm `elem` oldBindNames old in
+--    if      isOldName && am == oldModuleIName old then Importable bm bi
+--    else if isOldName && bm == oldModuleIName old then Importable am ai
+--    else AmbiguousBinding hNm
     (Just many , _)                 -> AmbiguousBinding hNm
 
   -- convert noScopeNames map to a vector (Map HName IName -> Vector HName)
@@ -166,7 +172,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     v <- MV.unsafeNew (M.size localMap)
     let getQName hNm localName = case map M.!? hNm of -- if field imported, use that QName
           Just q | modName q /= modIName -> q -- iff not from the module we're recompiling
-          _ -> mkQName modIName localName     -- new field introduced here
+          _ -> mkQName modIName localName     -- new field introduced in this (modIName) module
     v <$ (\hNm localName -> MV.write v localName (getQName hNm localName))
          `M.traverseWithKey` localMap
 
@@ -197,12 +203,12 @@ addModName modIName modHName g = g
   }
 
 addDependency imported moduleIName r = r
---   { dependencies = let
---     ModDependencies deps dependents = if V.length (dependencies r) > moduleIName
---       then dependencies r V.! moduleIName
---       else ModDependencies emptyBitSet emptyBitSet
---     in updateVecIdx (ModDependencies 0 0) (dependencies r) moduleIName (ModDependencies (deps `setBit` imported) dependents)
---   }
+-- { dependencies = let
+--   ModDependencies deps dependents = if V.length (dependencies r) > moduleIName
+--     then dependencies r V.! moduleIName
+--     else ModDependencies emptyBitSet emptyBitSet
+--   in updateVecIdx (ModDependencies 0 0) (dependencies r) moduleIName (ModDependencies (deps `setBit` imported) dependents)
+-- }
 
 addModule2Resolver (GlobalResolver modCount modNames nameMaps l f modNamesV binds lh fh deps mfResolver)
   isRecompile modIName modHName newBinds lHNames fHNames labelNames fieldNames modDeps

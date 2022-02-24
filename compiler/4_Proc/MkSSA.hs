@@ -118,7 +118,7 @@ ssaTy = let
 --    t <- ssaTy t
 --    pure t
 
-    THBi y m t -> ssaTy t
+    THBi y t -> ssaTy t
     THBound b  -> pure TPoly
 --  THVar x    -> pure $ trace ("warning THVar: " <> show x :: Text) TPoly
 

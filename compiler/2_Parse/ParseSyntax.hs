@@ -16,14 +16,17 @@ type ImplicitArg  = (IName , Maybe TT) -- implicit (? no) arg with optional type
 type NameMap      = M.Map HName IName
 type SourceOffset = Int
 
-data Module = Module {
-   _moduleName :: HName
+data Module = Module { -- Contents of a File (Module = Function : _ → Record | Record)
+   _moduleName  :: Either HName HName -- Left is file_name , Right read from module Nm ..
 
- , _imports     :: [HName]
+ , _functor     :: Maybe FunctorModule
+ , _imports     :: [HName]   -- all imports used at any scope
  , _bindings    :: [TopBind] -- hNameBinds
 
  , _parseDetails :: ParseDetails
 }
+-- args and signature for the module (return type must be a record)
+data FunctorModule = FunctorModule [Pattern] (Maybe TT) SourceOffset
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {

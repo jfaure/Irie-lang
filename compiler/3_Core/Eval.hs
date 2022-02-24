@@ -119,7 +119,7 @@ simplifyBindings nArgs nBinds bindsV = do
   }
 
 identifyLabels :: Type -> SimplifierEnv s ()
-identifyLabels = _
+identifyLabels t = pure ()
 --identifyLabels (TyGround ty) = let
 --  isMuBound x = False -- \case { THMuBound x -> True ; _ -> False}
 --  goL [THTyCon (THTuple t)] = _ --(fst <$> V.filter (\(_,t) -> any isMuBound t) (V.imap (,) t))

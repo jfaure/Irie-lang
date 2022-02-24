@@ -7,7 +7,7 @@ module Parser (parseModule , parseMixFixDef) where
 -- * we cannot resolve externs (incl forward refs) or mixfixes yet.
 --
 -- Note: add corresponding bind immediately after adding an IName (can resort to recursiveDo)
--- 3 parts: 1.Module builder and parse state 2.Lexing 3.Parsing
+-- 3 parts: Module builder + parse state (scoping, free vars, desugaring), Lexing , Parsing
 
 import Prim
 import ParseSyntax as P
@@ -15,6 +15,7 @@ import MixfixSyn
 import DesugarParse
 import Text.Megaparsec-- hiding (State)
 import Text.Megaparsec.Char
+import System.FilePath.Posix as FilePath (dropExtension , takeFileName)
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
@@ -141,7 +142,7 @@ lookupImplicit h = do
   pd <- use $ moduleWIP . parseDetails
   case asum $ map (M.!? h) (pd ^. hNameArgs) of
     Just arg -> pure $ arg
-    Nothing  -> fail ("Not in scope: implicit arg '" ++ (T.unpack h) ++ "'")
+    Nothing  -> fail ("Not in scope: implicit arg '" <> toS h <> "'")
 
 -----------
 -- Lexer --
@@ -181,8 +182,8 @@ p `sepBy2` sep = (:) <$> p <*> (some (sep *> p))
 -----------
 -- Names --
 -----------
-reservedChars = ".'@(){};,\\\""
-reservedNames = S.fromList $ words "as set over type data record class foreign foreignVarArg let rec in where case \\case of _ import require \\ : :: = ? | λ =>"
+reservedChars = ".@(){};:,\\\""
+reservedNames = S.fromList $ words "let rec in \\case case as over foreign foreignVarArg where of _ module import require = ? | λ =>"
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c
@@ -246,26 +247,27 @@ linefold p = let
 -- Parser --
 ------------
 parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
-  = \nm txt ->
-  let startModule = Module {
-          _moduleName  = T.pack nm
-        , _imports     = []
-        , _bindings    = []
-        , _parseDetails = ParseDetails {
-            _hNameBinds     = (0 , M.empty)
-          , _hNameMFWords   = (0 , M.empty)
-          , _hNameArgs      = [] -- stack of lambda-bounds
-          , _hNameLocals    = []
-          , _freeVars       = 0 :: BitSet
-          , _nArgs          = 0
-          , _underscoreArgs = 0 :: BitSet
-          , _hNamesNoScope  = M.empty -- track VExterns
-          , _fields         = M.empty -- field names
-          , _labels         = M.empty -- explicit label names; note. `L a` is ambiguous
-          , _newLines       = []
-        }
-      }
-      end = (bindings %~ reverse)
+  = \nm txt -> let
+  startModule = Module {
+      _moduleName  = Left (toS (dropExtension $ takeFileName nm))
+    , _functor     = Nothing
+    , _imports     = []
+    , _bindings    = []
+    , _parseDetails = ParseDetails {
+        _hNameBinds     = (0 , M.empty)
+      , _hNameMFWords   = (0 , M.empty)
+      , _hNameArgs      = [] :: [M.Map HName IName] -- stack of lambda-bounds
+      , _hNameLocals    = [] :: [M.Map HName IName]
+      , _freeVars       = emptyBitSet
+      , _nArgs          = 0
+      , _underscoreArgs = 0 :: BitSet
+      , _hNamesNoScope  = M.empty -- track VExterns
+      , _fields         = M.empty -- field names
+      , _labels         = M.empty -- explicit label names; note. `L a` is ambiguous
+      , _newLines       = []
+    }
+  }
+  end = (bindings %~ reverse)
   in end <$> runParserT (scn *> doParse *> eof *> use moduleWIP) nm txt
   `evalState` ParseState {
        _indent      = mkPos 1
@@ -278,6 +280,7 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
 doParse = void $ decl `sepEndBy` (optional endLine *> scn) :: Parser ()
 decl = svIndent *> choice
    [ reserved "import" *> (iden >>= addImport)
+   , void functorModule
    , pForeign 
    , void (funBind True LetOrRec) <?> "binding"
    , void patBind
@@ -293,6 +296,22 @@ pForeign = do -- external function defined outside of Irie and opaque until link
   addBindName hNm
   ty <- reservedOp ":" *> tt
   addBind (FunBind $ FnDef hNm True Let Nothing mempty 0 [FnMatch [] [] (Foreign hNm ty)] (Just ty))
+
+functorModule :: Parser ()
+functorModule = reserved "module" *> do
+  mName     <- idenNo_
+  use (moduleWIP . moduleName) >>= \case
+    Right prevMName -> fail $ toS $ "Too many 'module' declarations in '" <> prevMName <> "'"
+    Left fName -> if mName /= fName
+      then fail $ toS $ "Module name '" <> mName <> "' does not match file name '" <> fName <> "'"
+--    else (moduleWIP . parseDetails . hNameArgs %= (M.empty :)) *> do -- TODO this is a weird first Half of a new-argnest
+      else void $ newArgNest $ do
+        moduleWIP . moduleName .= Right mName
+        o <- getOffset
+        args    <- some (pattern False)
+        sig     <- optional (reserved ":" *> tt)
+        unless (null args && isNothing sig) (moduleWIP . functor .= Just (FunctorModule args sig o))
+        reserved "="
 
 -------------------
 -- Function defs --
@@ -330,7 +349,7 @@ patBind = do
   mapM_ (\e -> addBind (FunBind $ FnDef "patBind" True LetOrRec Nothing [] 0 [FnMatch [] [] e] Nothing)) (body : lensedTTs)
 
 funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
-  [Just nm] -> VBind <$> funBind' isTop letRecT nm Nothing (symbol nm *> many (lexeme (singlePattern isTop)))
+  [Just nm] -> VBind <$> funBind' isTop letRecT nm Nothing (symbol nm *> many (lexeme (singlePattern False {-isTop-})))
   mfdefHNames -> let
     hNm = mixFix2Nm mfdefHNames
     pMixFixArgs = \case
@@ -357,7 +376,7 @@ funBind' isTop letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
       [ (:[]) <$> fnMatch (pure ars) (reserved "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
       , case (ars , ann) of
           ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
-          (x  , Just{})  -> fail $ "Expected function definition, got type annotation"
+          (x  , Just{})  -> fail $ "Expected function definition \" = _\" , got type annotation \" : _\"" -- f x : _
           (x  , Nothing) -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
       ]
     pure (implicits , pi , eqns , ty)
@@ -375,7 +394,7 @@ lambda = (reservedChar '\\' *>) $ do
   pure $ Abs $ FunBind $ FnDef "lambda" False LetOrRec Nothing [] free eqns Nothing
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
-  -- TODO is hoistLambda ideal here ?
+  -- TODO is hoistLambda ideal here ? (idea is to merge abs `f x = \y => _` into f x y = _
   let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case")
         *> (fnMatch (many (singlePattern False)) (reserved "=>"))
       normalFnMatch = FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
@@ -438,7 +457,7 @@ ttArg , tt :: Parser TT
    , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
    ] <?> "ttArg"
 
-  -- Catch potential implicit abstractions here parens
+  -- Catch potential implicit abstractions at each parens
   parensExpr = parens (choice [try piBinder , (tt >>= \t -> tuple t <|> typedTT t) , scn $> Cons []]) >>= catchUnderscoreAbs
   tuple t = (\ts -> Cons (zip [-1,-2..] (t:ts))) <$> some (reservedChar ',' *> arg)
   label i = lookupSLabel i >>= \case
@@ -478,7 +497,7 @@ ttArg , tt :: Parser TT
 
   doExpr = DoStmts <$> let
     doStmt = idenNo_ >>= \hNm -> choice
-      [ reservedName "->" *> addArgName hNm >>= \i -> tt <&> Bind i
+      [ reservedName "<-" *> addArgName hNm >>= \i -> tt <&> Bind i
       , lookupBindName hNm >>= \i -> tt <&> Sequence . \case
           App f ars -> App i (f : ars)
           expr      -> App i [expr]
