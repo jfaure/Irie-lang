@@ -1,9 +1,11 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cl.cam.ac.uk/~sd601/thesis.pdf
+-- * Identify recursive and mutual bindings
 module Infer where
 import Prim
 import BiUnify
 import qualified ParseSyntax as P
 import CoreSyn as C
+import TTCalculus
 import Errors
 import CoreUtils
 import TypeCheck
@@ -15,7 +17,7 @@ import Mixfix
 import Generalise --Substitute
 
 import Control.Lens
-import Data.List (unzip4, span , zipWith3)
+import Data.List (unzip4, zipWith3)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Map.Strict as M
@@ -84,8 +86,8 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
   WIP -> use wip >>= \wip' -> do
     abs   <- (V.! bindINm) <$> use pBinds
     svwip <- bindWIP <<.= bindINm
-    let freeVars = P.fnFreeVars (P.fnDef abs)
-        tyAnn    = P.fnSig (P.fnDef abs)
+    let freeVars = P.fnFreeVars abs
+        tyAnn    = P.fnSig abs
     freeTVars <- use argVars >>= \avs -> bitSet2IntList freeVars `forM` \i -> MV.read avs i
     svEscapes <- escapedVars <<%= (.|. intList2BitSet freeTVars)
     svLeaked  <- use leakedVars
@@ -157,7 +159,7 @@ infer = let
   -- App is the only place typechecking can fail
  biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
    (, TyVar retV) <$> bisub fTy (prependArrowArgsTy argTys (TyVar retV))
-   
+
  retCast rc tt = case rc of { BiEQ -> tt ; c -> case tt of { Core f ty -> Core (Cast c f) ty } }
 
  checkFails srcOff x = use tmpFails >>= \case
@@ -179,10 +181,10 @@ infer = let
      CastApp ac maybePap rc -> zipWith castArg args' (ac ++ repeat BiEQ) -- supplement paps with bieqs
      BiEQ -> args'
      x    -> _
-   in if any (\case {PoisonExpr{}->True ; _->False}) (f : args) then pure PoisonExpr else do
+   in if any isPoisonExpr (f : args) then pure PoisonExpr else do
      (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
      use tmpFails >>= \case
-       [] -> setRetTy retTy biret castArgs <$> ttApp judgeBind f args
+       [] -> setRetTy retTy biret castArgs <$> ttApp judgeBind handleExtern f args
        x  -> PoisonExpr <$ -- trace ("problem fn: " <> show f :: Text)
           ((tmpFails .= []) *> (biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
 
@@ -217,9 +219,8 @@ infer = let
     PoisonExpr -> PoisonExpr
     ty         -> Core (Var (VForeign i)) (fromMaybe (error $ "not a type: " <> show ty) (tyExpr ty))
 
-  P.Abs (P.FunBind (P.FnDef hNm isTop letRecT mf implicits freeVars matches tyAnn)) -> let
-    (mainArgs , mainArgTys , tt) = matches2TT False matches
-    args = (fst <$> implicits) ++ mainArgs
+  P.Abs (P.FnDef hNm letRecT mf freeVars matches tyAnn) -> let
+    (args , mainArgTys , tt) = matches2TT False matches
     in do
     argTVars  <- addArgTVars args
     infer tt <&> \case
@@ -248,10 +249,9 @@ infer = let
         fields = qName2Key . readField ext <$> fieldsLocal
     exprs <- infer `mapM` rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) ; x -> error $ show x }) <$> exprs
-        poison = (\case { PoisonExpr -> True ; _ -> False }) `any` exprs
         mkFieldCol = \a b -> TyGround [THFieldCollision a b]
         retTycon = THProduct (IM.fromListWith mkFieldCol $ zip fields tys)
-    pure $ if poison
+    pure $ if isPoisonExpr `any` exprs
       then PoisonExpr
       else Core (Cons (IM.fromList $ zip fields tts)) (TyGround [THTyCon retTycon])
 
@@ -297,28 +297,15 @@ infer = let
   P.Label localL tts -> use externs >>= \ext -> (infer `mapM` tts) <&> judgeLabel (readLabel ext localL)
 
   -- Sumtype declaration
-{-
-  P.TySum alts -> use externs >>= \ext -> do -- alts are function types
-    -- 1. Check against ann (retTypes must all subsume the signature)
-    -- 2. Create sigma type from the arguments
-    -- 3. Create proof terms from the return types
-    let go (l,ty,Nothing)      = pure (qName2Key (readLabel ext l) , [])
-        go (l,ty,Just (impls,gadt)) = (qName2Key (readLabel ext l),) <$> (mkSigma (map fst impls) =<< infer ty)
-        mkSigma impls ty = do
-          ty' <- expr2Ty judgeBind ty
-          pure $ case impls of
-            [] -> ty'
-            impls -> [THPi $ Pi (map (,[THSet 0]) impls) ty']
-    sumArgsMap <- go `mapM` alts
-    let sumTy = [THTyCon $ THSumTy $ IM.fromListWith (\a b -> [THFieldCollision a b]) sumArgsMap]
-        returnTypes = getFamilyTy . snd <$> sumArgsMap
-        getFamilyTy x = case getRetTy x of -- TODO currying ?
---        [THRecSi m ars] -> [THArrow (take (length ars) $ repeat [THSet 0]) sumTy]
---        [THRecSi m ars] -> [THFam sumTy (take (length ars) $ repeat [THSet 0]) []]
-          x -> sumTy
-        dataTy = foldl1 mergeTypes $ returnTypes
-    pure $ Ty sumTy
--}
+  P.Gadt alts -> use externs >>= \ext -> do
+    let getTy = fromMaybe (TyGround [THPoison]) . tyExpr
+        mkLabelCol a b = TyGround [THLabelCollision a b]
+    sumArgsMap <- alts `forM` \(l , tyParams , gadtSig@Nothing) -> do
+      params <- tyParams `forM` \t -> getTy <$> infer t
+      pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
+    pure $ Ty $ TyGround [THTyCon $ THSumTy $ IM.fromListWith mkLabelCol sumArgsMap]
+
+--P.Gadt alts ->
 
   P.Match alts catchAll -> use externs >>= \ext -> let
     -- * desugar all patterns in the alt fns (whose args are parameters of the label)
@@ -330,8 +317,7 @@ infer = let
     in do
     argTVars <- addArgTVars `mapM` args
     alts <- infer `mapM` exprs
-    let poison = (\case { PoisonExpr -> True ; _ -> False }) `any` alts
-        retTys  = tyOfExpr <$> alts
+    let retTys  = tyOfExpr <$> alts
         retTy   = mergeTypeList True retTys -- + is right since this term is always output
 
         altTys  = map (\argTVars -> TyGround [THTyCon $ THTuple $ V.fromList $ did_ argTVars]) argTVars
@@ -342,45 +328,9 @@ infer = let
           addAbs ty (Core t _) args = Core (Abs args 0 t ty) ty
           addAbs ty PoisonExpr _ = PoisonExpr
           in IM.fromList $ zip labels (zipWith3 addAbs retTys alts argAndTys)
-    pure $ if poison then PoisonExpr else
+    pure $ if isPoisonExpr `any` alts then PoisonExpr else
       Core (Match retTy altsMap Nothing) matchTy
 
   P.Lit l  -> pure $ Core (Lit l) (TyGround [typeOfLit l])
 
   x -> error $ "not implemented: inference of: " <> show x
-
------------------
--- TT Calculus --
------------------
--- How to handle Application of Exprs (mixture of types and terms)
-ttApp :: (Int -> TCEnv s Expr) -> Expr -> [Expr] -> TCEnv s Expr
-ttApp readBind fn args = let --trace (clYellow (show fn <> " $ " <> show args :: Text)) $ let
- ttApp' = ttApp readBind
- doApp coreFn args = let
-   (ars , end) = span (\case {Core{}->True ; _->False}) args
-   app = App coreFn $ (\(Core t _ty)->t) <$> ars -- drop argument types
-   in pure $ case end of
-     [] -> Core app _ -- don't forget to set retTy
-     PoisonExpr : _ -> PoisonExpr
-     x  -> error $ "term applied to type: " <> show app <> show x
-
- in case fn of
-   PoisonExpr -> pure PoisonExpr
-   ExprApp f2 args2 -> (ttApp' f2 args2) >>= \f' -> ttApp' f' args
-   Core cf ty -> case cf of
---   Var (VBind i) -> readBind i >>= \e -> case e of
---     Core (Var (VBind j)) ty | j == i -> doApp (Var (VBind j)) args
---     f -> ttApp' f args
---   Instr (MkPAp n) -> case args of
---     f : args' -> ttApp' f args'
-     Instr (TyInstr Arrow)  -> expr2Ty readBind `mapM` args <&> \case
-       { [a , b] -> Ty (TyGround (mkTyArrow [a] b)) }
-     Instr (TyInstr MkIntN) -> case args of
-       [Core (Lit (Int i)) ty] -> pure $ Ty (TyGround [THPrim (PrimInt $ fromIntegral i)])
-     coreFn -> doApp coreFn args
-   Ty f -> case f of -- always a type family
-     -- TODO match arities ?
---   [THFam f a ixs] -> pure $ Ty [THFam f (drop (length args) a) (ixs ++ args)]
---   x -> pure $ Ty [THFam f [] args]
-     x -> error $ "ttapp panic: " <> show x <> " $ " <> show args
-   _ -> error $ "ttapp: not a function: " <> show fn <> " $ " <> show args

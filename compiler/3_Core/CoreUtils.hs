@@ -11,12 +11,14 @@ import Data.List (zipWith3 , partition)
 import qualified Data.IntMap as IM
 import qualified Data.Vector as V
 
+isPoisonExpr :: Expr -> Bool = (\case { PoisonExpr -> True ; _ -> False })
+
 -- eqTypes a b = all identity (zipWith eqTyHeads a b) -- not zipwith !
 eqTypes (TyGround a) (TyGround b) = all identity (alignWith (these (const False) (const False) eqTyHeads) a b)
 
 eqTyHeads a b = kindOf a == kindOf b && case (a,b) of
   (THPrim a  , THPrim b)  -> a == b
-  (THTyCon a , THTyCon b) -> case did_ (a,b) of
+  (THTyCon a , THTyCon b) -> case (a,b) of
     (THSumTy a , THSumTy b) -> all identity $ IM.elems $ alignWith (these (const False) (const False) eqTypes) a b
     (THTuple a , THTuple b) -> all identity $ V.zipWith eqTypes a b
   _ -> False
@@ -72,8 +74,9 @@ isTyCon = \case
 tyOfTy :: Type -> Type
 tyOfTy t = TyGround [THSet 0]
 
-tyExpr = \case -- expr found as type, (note. raw exprs cannot be types however)
+tyExpr = \case -- get the type from an expr.
   Ty t -> Just t
+  Core e t -> Just (TyExpr e t)
   expr -> Nothing --error $ "expected type, got: " ++ show expr
 
 tyOfExpr  = \case

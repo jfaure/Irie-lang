@@ -27,8 +27,8 @@ since a- and a+ must have the same polymorphic rank
 # BiSubstitution
 find substitution solving constraints of the form t+ <= t-
 Atomic: (join/meet a type to the var)
-a  <= t- solved by [m- b = a n [b/a-]t- /a-] 
-t+ <= a  solved by [m+ b = a u [b/a+]t+ /a+] 
+a  <= t- solved by [m- b = a n [b/a-]t- /a-]
+t+ <= a  solved by [m+ b = a u [b/a+]t+ /a+]
 a  <= c  solved by [m- b = a n [b/a-]c  /a-] -- (or equivalently,  [a u b /b+])
 SubConstraints, eg: (t1- -> t1+ <= t2+ -> t2-) = {t2+ <= t1- , t+ <= t2-}
 
@@ -56,4 +56,4 @@ non-regular recursion ?
 eg. isorecursive non-regular: add opaque roll/unroll primitives
 
 The lambda-bound types here are flexible ie. subsumption can occur before beta-reduction. This can be weakened by instantiation to a (monomorphically abstracted) typing scheme.
-We have to unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred (cannot insert type abstractions) 
+We have to unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred (cannot insert type abstractions)

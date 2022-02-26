@@ -34,7 +34,7 @@ objPath      = ["./"]
 objDir       = ".irie-obj/@" -- prefix '@' to files in there
 getCachePath fName = objDir <> map (\case { '/' -> '%' ; x -> x} ) fName
 resolverCacheFName = getCachePath "resolver"
-doCacheCore  = False --True
+doCacheCore  = True
 
 deriving instance Generic GlobalResolver
 deriving instance Generic Externs
@@ -106,7 +106,7 @@ evalImports flags moduleIName resolver depStack fileNames = do
 -- Judge the module and update the global resolver
 inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule = let
   nBinds     = length $ parsed ^. P.bindings
-  hNames = let getNm (P.FunBind fnDef) = P.fnNm fnDef in getNm <$> V.fromListN nBinds (parsed ^. P.bindings)
+  hNames     = P.fnNm <$> V.fromListN nBinds (parsed ^. P.bindings)
   labelMap   = parsed ^. P.parseDetails . P.labels
   fieldMap   = parsed ^. P.parseDetails . P.fields
   labelNames = iMap2Vector labelMap

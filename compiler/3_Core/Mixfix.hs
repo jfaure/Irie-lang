@@ -123,7 +123,7 @@ solveMixfixes :: [Expr] -> Expr = let
     mkPrefixParser (QStartPrefix (MixfixDef mb mfWs fixity) qNm) =
       mfParts mb Nothing qNm fixity (drop 1 mfWs)
     mkPrefixParser _ = fail "not a prefix"
-    in choice (try . mkPrefixParser <$> mfWords) 
+    in choice (try . mkPrefixParser <$> mfWords)
       <|> maybe (fail "not a bindName") (\qvar -> mkApp . (QVar qvar :) <$> many arg) maybeBind
   expr = arg >>= \a -> option a (try $ startPostfix a Nothing)
   in \s -> case runParser expr "<mixfix resolver>" (JuxtStream $ s) of

@@ -13,7 +13,7 @@ import Control.Lens
 type TCEnv s a = StateT (TCEnvState s) (ST s) a
 data TCEnvState s = TCEnvState {
  -- in
-   _pBinds  :: V.Vector P.TopBind -- parsed module
+   _pBinds  :: V.Vector P.FnDef   -- parsed module
  , _externs :: Externs            -- imported bindings
  , _thisMod :: ModuleIName        -- used to make the QName for local bindings
 
@@ -50,15 +50,12 @@ data TCEnvState s = TCEnvState {
  , _recVars     :: Integer -- bitmask for recursive TVars
  , _coOccurs    :: MV.MVector s ([Type] , [Type]) -- (pos , neg) occurs are used to enable simplifications
 }
-
 makeLenses ''TCEnvState
-
---tcFail e = error $ e -- Poison e _ --(errors %= (e:)) *> pure (Fail e)
 
 clearBiSubs :: Int -> TCEnv s ()
 clearBiSubs n = (blen .= n) *> (deadVars .= 0)
 
--- spawn new tvars slots in the bisubs vector
+-- spawn new tvar slots in the bisubs vector
 freshBiSubs :: Int -> TCEnv s [Int]
 freshBiSubs n = do
   bisubs <- use bis

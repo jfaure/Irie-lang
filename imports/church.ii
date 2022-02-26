@@ -1,4 +1,4 @@
---Church : {l : Level} -> Set l -> Set l 
+--Church : {l : Level} -> Set l -> Set l
 Church A = (A -> A) -> (A -> A)
 
 Nat = Church Int
@@ -18,7 +18,7 @@ mul a b s z = b (a s) z
 -- First signs of the type growing:
 -- exp : {A : Set} -> Church A -> Church (A -> A) -> Church A
 exp : Nat -> Nat -> Nat
-exp a b = b a 
+exp a b = b a
 
 --tetr : Nat -> Nat₁ -> Nat
 --tetr k n = n (exp k) c1

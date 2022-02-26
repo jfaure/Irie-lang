@@ -6,10 +6,10 @@ import qualified Data.Vector as V
 type V = V.Vector
 
 data Module = Module {
-   modName  :: Text
- , typeDefs :: V.Vector Type
- , externs  :: V.Vector Function
- , locals   :: V.Vector Function
+   moduleName :: Text
+ , typeDefs   :: V.Vector Type
+ , externs    :: V.Vector Function
+ , locals     :: V.Vector Function
 }
 
 data Type
@@ -66,9 +66,9 @@ data Expr
 
  | UnUnion Int Type Expr
  | Load  Type Expr
- | Gep   Type Int Expr   -- &(->) Only TStruct and TSum
- | Index Type Int Expr   -- "->"
- | Extract Type Int Expr -- "."
+ | Gep   Type Int Expr   -- C"&(->)" Only TStruct and TSum
+ | Index Type Int Expr   -- C"->"
+ | Extract Type Int Expr -- C"."
  | Dup IName Int Expr
 
  | Let [(IName , Expr , Type)] Expr -- assign Args

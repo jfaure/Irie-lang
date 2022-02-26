@@ -38,7 +38,7 @@ deriving instance Generic FracInstrs
 deriving instance Generic ArrayInstrs
 deriving instance Generic TyInstrs
 deriving instance Generic BitInstrs
-deriving instance Generic NumInstrs 
+deriving instance Generic NumInstrs
 deriving instance Generic GMPSpecial
 deriving instance Generic POSIXType
 

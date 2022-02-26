@@ -4,7 +4,6 @@ module ParseSyntax where -- import qualified as PSyn
 import Prim
 import MixfixSyn
 import qualified Data.Map.Strict as M
-import qualified Data.Set as S
 import Control.Lens
 import Text.Megaparsec.Pos
 
@@ -12,16 +11,15 @@ type FName        = IName -- record  fields
 type LName        = IName -- sumtype labels
 type FreeVar      = IName -- non-local argument
 type FreeVars     = BitSet
-type ImplicitArg  = (IName , Maybe TT) -- implicit (? no) arg with optional type annotation
 type NameMap      = M.Map HName IName
 type SourceOffset = Int
 
 data Module = Module { -- Contents of a File (Module = Function : _ → Record | Record)
-   _moduleName  :: Either HName HName -- Left is file_name , Right read from module Nm ..
+   _moduleName  :: Either HName HName -- Left is file_name , Right read from a `module Nm .. =` declaration
 
  , _functor     :: Maybe FunctorModule
- , _imports     :: [HName]   -- all imports used at any scope
- , _bindings    :: [TopBind] -- hNameBinds
+ , _imports     :: [HName] -- all imports used at any scope
+ , _bindings    :: [FnDef] -- hNameBinds
 
  , _parseDetails :: ParseDetails
 }
@@ -43,20 +41,18 @@ data ParseDetails = ParseDetails {
  , _newLines       :: [Int]
 }
 
--- mark let origin ? `f = let g = G in F` => f.g = G
-data TopBind = FunBind { fnDef :: FnDef } -- | PatBind [Pattern] FnDef
+--newtype TopBind = FunBind { fnDef :: FnDef } -- | PatBind [Pattern] FnDef
 
+-- mark let origin ? `f = let g = G in F` => f.g = G
 data FnDef = FnDef {
    fnNm         :: HName
- , top          :: Bool            -- rm
  , fnRecType    :: !LetRecT        -- or mutual
  , fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
- , implicitArgs :: [ImplicitArg]   -- rm
  , fnFreeVars   :: FreeVars
  , fnMatches    :: [FnMatch]
- , fnSig        :: (Maybe TT)      -- rm
+ , fnSig        :: (Maybe TT)
 }
-data FnMatch = FnMatch [ImplicitArg] [Pattern] TT
+data FnMatch = FnMatch [Pattern] TT
 data LetRecT = Let | Rec | LetOrRec
 
 data TTName
@@ -64,8 +60,8 @@ data TTName
  | VLocal  IName
  | VExtern IName
 data LensOp a = LensGet | LensSet a | LensOver a deriving Show
-data DoStmt  = Sequence TT | Bind IName TT -- VLocal name
-data TT -- Type|Term; Parser Expressions (types and terms are syntactically equivalent)
+data DoStmt  = Sequence TT | Bind IName TT -- | Let
+data TT -- Type | Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
  | WildCard           -- "_" implicit lambda argument
  | Question           -- "?" ask to infer
@@ -73,13 +69,12 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
  | ForeignVA HName TT -- var-args for C externs
 
  -- lambda-calculus
- | Abs TopBind
- | App TT [TT]
+ | Abs FnDef
+ | App TT [TT] -- mixfixless Juxt (used for "case x of .." => "x > \case ")
  | Juxt SourceOffset [TT] -- may contain mixfixes to resolve
+ | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat ->'
 
  -- tt primitives (sum , product , list)
--- | Tuple  [TT]   -- like a C struct
--- | Idx    TT Int -- tuples & arrays
  | Cons   [(FName , TT)] -- can be used to type itself
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
@@ -91,18 +86,20 @@ data TT -- Type|Term; Parser Expressions (types and terms are syntactically equi
  | LitArray [Literal]
 
  -- type primitives
- | Quantified [IName] TT
  | TyListOf TT
- | TySum  [(LName , TT , Maybe ([ImplicitArg] , TT))] -- function signature , maybe gadt
-
- | DoStmts [DoStmt]
+ | Gadt [(LName , [TT] , Maybe TT)] -- Parameters and constructor signature (return type may be a subtype of the Gadt)
 
 -- patterns represent arguments of abstractions
+-- (a b c :: T) introduces implicit pi-bound arguments of type T. note. (a : _) == (a :: _) -> A
+data PiBound = PiBound [IName] TT
 data Pattern
  = PArg   IName -- introduce VLocal arguments
+ | PPi    PiBound
+ | PTyped IName TT
  | PComp  IName CompositePattern
+ | PGuard Pattern [Pattern] -- case .. of { pat | b <- pat0 , c <- pat1 .. }
 
-data CompositePattern
+data CompositePattern -- the pattern is INamed then split into components
  = PLabel LName [Pattern]
  | PCons  [(FName , Pattern)]
  | PTuple [Pattern]
@@ -110,16 +107,11 @@ data CompositePattern
  | PLit   Literal
 
 -- | PTT    TT
--- | PTyped Pattern TT
--- | PAs   IName Pattern
+-- | PAs   IName Pattern -- all patterns are INamed anyway so no need for this
 
--- N is mutual with its name-deps that have N in their name-deps.
--- since a direct search would be O(n!), let inference handle mutuals in O(1)
 data ParseState = ParseState {
    _indent      :: Pos    -- start of line indentation (need to save it for subparsers)
--- , _nameDeps    :: BitSet -- what bindings are used by this definition
- , _piBound     :: [[ImplicitArg]]
- , _tmpReserved :: [S.Set Text]
+ , _piBound     :: [[PiBound]]
 
  , _moduleWIP   :: Module -- result
 }
@@ -132,9 +124,8 @@ showL ind = Prelude.concatMap $ (('\n' : ind) <>) . show
 prettyModule m = show (m^.moduleName) <> " {\n"
     <> "imports: " <> showL "  " (m^.imports)  <> "\n"
     <> "binds:   " <> showL "  " (m^.bindings) <> "\n"
---  <> "locals:  " <> showL "  " (m^.locals)   <> "\n"
     <> show (m^.parseDetails) <> "\n}"
-prettyParseDetails p = Prelude.concatMap ("\n  " <>) 
+prettyParseDetails p = Prelude.concatMap ("\n  " <>)
     [ "binds:  "   <> show (p^.hNameBinds)
     , "args:   "   <> show (p^.hNameArgs)
     , "extern: "   <> show (p^.hNamesNoScope)
@@ -143,18 +134,19 @@ prettyParseDetails p = Prelude.concatMap ("\n  " <>)
     , "newlines: " <> show (p^.newLines)
     ]
 prettyTTName :: TTName -> Text = \case
-    VBind x   -> "π" <> show x 
+    VBind x   -> "π" <> show x
     VLocal  x -> "λ" <> show x
     VExtern x -> "?" <> show x
 
 --deriving instance Show Module
 deriving instance Show ParseDetails
 deriving instance Show FnDef
-deriving instance Show TopBind
+--deriving instance Show TopBind
 deriving instance Show TTName
-deriving instance Show FnMatch 
+deriving instance Show FnMatch
 deriving instance Show TT
 deriving instance Show DoStmt
 deriving instance Show CompositePattern
+deriving instance Show PiBound
 deriving instance Show Pattern
 deriving instance Show LetRecT

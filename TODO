@@ -8,19 +8,18 @@
   * show + repl typecase to print JIT results
   * provide Vector alternative for ADTs when names sequential (they frequently are) [n..m]
   * 'StrIntName' new datatype: growable vector + hashmap
-  * tycon let-bindings addresses (f = let l = .. in .. => `f.l`)
   * Linear types; dependent types required to quantify relative linearity `t ≥ f => t → u`
 ## Parse
   * don't allow mixing tabs and spaces
   * Pattern guards
   * List comprehensions
-  * rewrite patterns2TT & top level patterns; maybe exploit functor modules?
 ## Types
   * handle field name collisions (THFieldCollision)
   * Dependent normalisation & Staging (compile recursive defs when normalising)
   * first class polymorphism
   * mergetyhead should indicate if merge was a noop (so bisub knows it has already seen that input)
 ## Functor modules and records
+  * patterns in field assignments and top-level (patterns2TT)
   * imports allowed anywhere and treated as record
   * BName LName FName overlap & mixfix
   * Module = Fun | Record
@@ -40,15 +39,20 @@
   * case-of-case
   * static argument transformation
   * tycon promotion (promote single field /labels to value)
-  * recognize neutral elements (eg. 0 for addition , 1 for multiplication)
+  * case-merge
+  * exitification (float exit paths out of recursive functions)
+  * liberate-case (avoid repeated case on freevars by unrolling recursive fns once)
   * normalize fields/labels for codegen
+  * Maths: recognize series (sum/product) ; recognize neutral elements (0 for + , 1 for *)
 
 ## Unimportant
+  * tycon let-bindings addresses (f = let l = .. in .. => `f.l`)
+  * parser [IntMap Int] maybe faster as (IntMap (Int,Int))
   * error messages via prettyprinter Doc
   * mergeTypes indicates whether merge was noop
   * optimise instantiation
   * check let-rec / mutuals
-  * Repeat not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
+  * Collect repeated not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
   * make work module import loops
   * language server
   * optimize cached modules

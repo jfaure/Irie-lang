@@ -35,7 +35,7 @@ FP (in particular with subtyping) has access to information that proves incredib
 #### Priorities
 Since memory management corresponds to the problem of flattening tree structures (both datas and our call graph), it is generally impossible to avoid creating holes in memory, and we must at this stage assume there will be compromises. Thus it is important to set our priorities in order:
 * The compiler can generate bookkeeping code in the program for the allocator (malloc implementations often work hard to find their headers, or perhaps worse, put them in front of every returned chunk)
-* Don't track fragments individually: In FP we tend to generate many small pieces of data that 'belong' to a data structure (eg. List type). That data structure can usually manage it's fragments 
+* Don't track fragments individually: In FP we tend to generate many small pieces of data that 'belong' to a data structure (eg. List type). That data structure can usually manage it's fragments
 * Identify potential for implicit pointers (Eg. List a = Z | Next a (List a)) must become a flat stack/array.
 * No permanent damage: On return, functions cleanly recycle all memory they allocated
 * Shared data may require extra bookkeeping; Unshared data shouldn't have to pay for this.

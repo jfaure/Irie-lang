@@ -45,7 +45,7 @@ dependencies:
 # - traverse-with-class
 # - llvm-hs-pure >= 9.0.0
 # - llvm-hs >= 9.0.0
-# 
+#
 # - llvm-hs-pretty
 # - array
 - prettyprinter
@@ -84,7 +84,7 @@ default-extensions:
 ghc-options:  -Wno-deprecations -fdefer-typed-holes -Wno-typed-holes #-Wunused-imports -Wunused-binds -threaded
 executables:
   irie-exe:
-#   dependencies: irie 
+#   dependencies: irie
     source-dirs:
     - compiler/
     - compiler/1_Main/
@@ -102,4 +102,4 @@ executables:
 #    main:                Spec.hs
 #    source-dirs:         test
 #    ghc-options: -threaded
-#    #   dependencies: irie 
+#    #   dependencies: irie

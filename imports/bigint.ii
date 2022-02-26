@@ -1,0 +1,89 @@
+-- BigInt = List Int
+-- bitsPerLimb = 64
+
+-- Since zips are frequent, use foldl for fusion
+-- least significant limbs first
+addInt a int = add a (Singleton int)
+
+uAdd a b = let
+  collect (next , nextO) (prevLimbs , carry) = let
+    (this , thisCarry) = addOverflow next carry
+    in (Cons (next + carry) prevLimbs , nextCarry + thisCarry) -- | the carries
+  in foldl collect (alignWith identity identity addOverflow a b)
+
+-- Knowing the sign requires knowing a >? b
+-- limb length estimates give approximate bounds
+-- if that's inconclusive then finding the sign forces the bigint into memory
+sub a b = let
+  collect (next , next0) (prevLimbs , carry) =
+    (Cons (next - carry) prevLimbs , nextCarry - (next <? carry))
+  in foldl collect (alignWith identity identity subOverflow a b)
+
+-- only 'a' fusable since `map (_ * aVal)` requires entire b at each iteration
+-- therefore ideally b <? a && b small
+longMul a b = let
+   -- the nth summand must be left shifted by Base^n (=> _ ++ repeat n 0)
+  summands = concat (map (\aVal => map (_ * aVal) b) a)
+  in foldl _+_ (zipWith (\i n => n ++ replicate n 0) [0..] summands)
+
+karatsuba a b = let
+  l = min (length a // 2) (length b // 2)
+  (x0 , x1) = splitAt l a
+  (y0 , y1) = splitAt l b
+  (z0 , z1 , z2) =
+    ( x1 * y1
+    , (x0 - x1) * (y1 - y0) + z2 + z0 -- or x1 * y0 + x0 * y1
+    , x0 * y0)
+  in z0 + (z1 ++ replicate l 0) + (z2 ++ replicate l 0)
+
+-- tmp[0] = a[0]
+-- r[0]   = tmp // b
+-- tmp    = tmp - r[0] * b
+--
+-- tmp[1] = a[1]
+-- r[1]   = tmp // b
+-- tmp    = tmp - r[1] * b
+
+-- when no more a[n] , divMod = (r , tmp)
+
+-- O(M*Q)
+-- Division most significant limbs first
+--longDiv :: BigInt -> BigInt -> (BigInt , BigInt) -- a // b => (quotient , remainder)
+--longDiv a b = let
+--  go (lastResult , lastRem) nextA = let
+--    tmp = lastTMP ++ [nextA] -- "bring down" from a
+--    rem = longDiv tmp b
+--    in (lastResult ++ [rem] , tmp - r[1] * b)
+--  in foldl go a
+
+-- least significant limb first
+--Q := 0 , R := 0  -- Initialize quotient and remainder to zero
+--for i := n − 1 .. 0 do  -- Where n is number of bits in N
+--  R := R << 1           -- Left-shift R by 1 bit
+--  R(0) := N(i)          -- Set the least-significant bit of R equal to bit i of the numerator
+--  if R ≥ D then
+--    R := R − D
+--    Q(i) := 1
+-- schoolbook long division adapted to work from least significant digits first
+longDiv N D = let
+  go (lastQ , rem) nextA = let
+    remTMP = (Cons rem nextA)
+    if q < D then (Cons 0 q , remTMP) else (Cons q remTMP , remTMP - D)
+    in
+  in foldl0 go (0 , 0) N
+
+-- More devious versions
+
+--divMulInv =
+-- can do this with repeated 2x1 divisions high -> low
+
+--divNBy1 =
+
+-- 2NxN division => use long-div with N/2 limbs as base
+-- So multiplications that arise are (N/2)x(N/2)
+-- worthwhile only when N/2 > MUL_TOOM22_THRESHOLD
+-- O(M(N)*log(N)) where M(N) is time for NxN with FFT
+--dcDiv =
+
+-- largest divisions: invert the divisor
+-- blockwiseBarrett

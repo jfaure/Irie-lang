@@ -55,7 +55,7 @@ data GlobalResolver = GlobalResolver {
 primResolver :: GlobalResolver = let primModName = "(builtinPrimitives)" in
   GlobalResolver
   1 (M.singleton primModName 0) (IM.singleton 0 <$> primMap)
-  mempty mempty 
+  mempty mempty
   (V.singleton primModName)
   (V.singleton primBinds) -- primitive bindings
   (V.singleton mempty) (V.singleton mempty) (V.singleton (ModDependencies 0 0)) mempty
@@ -82,7 +82,11 @@ readField (Externs nms binds ils ifs) f = {-patchName labelBit $ -} if f < 0 the
 readQParseExtern thisModIName (Externs nms binds ils ifs) modNm iNm = if modNm == thisModIName
   then ForwardRef iNm -- ie. not actually an extern
   else Imported $ case snd ((binds V.! modNm) V.! iNm) of
-    Core f t -> Core (Var $ VQBind $ mkQName modNm iNm) t
+    e@(Core f t) -> case f of -- inline trivial things
+      Lit{}   -> e
+      Instr{} -> e
+      Var{}   -> e -- var indirection
+      _ -> Core (Var $ VQBind $ mkQName modNm iNm) t
     PoisonExpr -> PoisonExpr
     x -> error $ show x
 
@@ -120,13 +124,15 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     rmStaleNames nameMap = let
       collect = V.foldl (\stale nm -> if M.member nm localNames then stale else nm : stale) []
       staleNames = fromMaybe [] ((collect . oldBindNames) <$> maybeOld) :: [HName]
-      in foldr (\staleName m -> M.update (Just . IM.filter (/= modIName)) staleName m) nameMap staleNames
+      in case oldIName of
+        Just oldMod -> foldr (\staleName m -> M.update (Just . IM.filterWithKey (\k v -> k /= oldMod)) staleName m) nameMap staleNames
+        Nothing -> nameMap
     in rmStaleNames $ M.unionsWith IM.union
       [((\iNm -> IM.singleton modIName iNm) <$> localNames) , curResolver , labels , fields]
 
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
- 
+
   -- TODO filter modules in scope !
   -- TODO expand lambda-mixfixes with explicit holes
   -- TODO new Labels maybe already exist as imported labels!
@@ -136,30 +142,20 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     mfWords = IM.toList <$> (mfResolver M.!? hNm)
     flattenMFMap = concat . map snd
     in case (binds , mfWords) of
-    (Just [] , _)  -> error $ "impossible: empty imap ?!"
+    (Just [] , _)  -> NotInScope hNm -- this name was deleted from (all) modules error $ "impossible: empty imap ?!"
     -- substitute compiler primitives directly
     (Just [(0     , iNm)] , Nothing) -> Imported $ snd ((prevBinds V.! 0) V.! iNm)
     (Just [(modNm , iNm)] , Nothing)
---    | True <- testBit iNm fieldBit -> Imported (Core (Field (mkQName modNm (clearBit iNm fieldBit)) []) [])
---    labels are weird in that they sometimes look like normal bindings `n = Nil`
-      | True <- testBit iNm labelBit -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) (TyGround []))
-      | Just True <- ((==modNm) <$> oldIName) -> ForwardRef iNm -- overwrite (recompile) old stuff
-      | True -> Importable modNm iNm
+--    label applications look like normal bindings `n = Nil`
+      | True <- testBit iNm labelBit {-fieldBit-} -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) (TyGround []))
+      | True -> case snd ((prevBinds V.! modNm) V.! iNm) of
+--      e@(Core Var{} _) -> Imported $ did_ e -- substitute trivial binds directly
+        _ -> Importable modNm iNm
     (b , Just mfWords)
       | Nothing      <- b -> MixfixyVar $ Mixfixy Nothing              (flattenMFMap mfWords)
       | Just [(m,i)] <- b -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
-    (Nothing      , Nothing)         -> NotInScope hNm
-
-    -- 2 names found: possibly we're recompiling a module which used to contain a duplicate name
-    -- leaving deleted names in the resolver is likely far cheaper than eagerly cleaning all names on recompile
-    -- perhaps make a hmap of oldbindnames?
-    -- TODO what if deleted name becomes false positive?
---  (Just [(am,ai) , (bm,bi)] , _) | Just old <- maybeOld ->
---    let isOldName = hNm `elem` oldBindNames old in
---    if      isOldName && am == oldModuleIName old then Importable bm bi
---    else if isOldName && bm == oldModuleIName old then Importable am ai
---    else AmbiguousBinding hNm
-    (Just many , _)                 -> AmbiguousBinding hNm
+    (Nothing      , Nothing) -> NotInScope hNm
+    (Just many , _)          -> AmbiguousBinding hNm
 
   -- convert noScopeNames map to a vector (Map HName IName -> Vector HName)
   names :: Map HName Int -> V.Vector ExternVar

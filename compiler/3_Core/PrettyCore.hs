@@ -16,7 +16,7 @@ import Prettyprinter.Internal as P
 -- <a href="#Marker></a>
 -- <h1 id="Marker">There's a link to here!</h1>
 data Annotation
- = AArg IName | ABindName IName | AQBindName  QName | AQLabelName QName | AQFieldName QName -- Names
+ = ANone | AArg IName | ABindName IName | AQBindName  QName | AQLabelName QName | AQFieldName QName -- Names
  | AInstr | ALiteral | AType  | AAbs | AKeyWord | AExternType
 -- | ASrcLoc -- for clickable html
 
@@ -47,13 +47,14 @@ prettyBind flags showTerm nm b = render flags . layoutPretty defaultLayoutOption
 -- Add markup annotations based on flags (html / ansi color / no color / raw QNames / output for unit-tests)
 render :: RenderOptions -> SimpleDocStream Annotation -> TL.Text
 render flags = let
-  renderTree = \case
+  -- need to know the prev-ann so Ansi-color codes can emit the prev color
+  renderTree prevAnn = \case
     STEmpty            -> mempty
     STChar c           -> TLB.singleton c
     STText _ t         -> TLB.fromText t
     STLine i           -> "\n" <> TLB.fromText (textSpaces i)
-    STAnn ann contents -> doAnn ann (renderTree contents)
-    STConcat contents  -> foldMap renderTree contents
+    STAnn ann contents -> doAnn prevAnn ann (renderTree ann contents)
+    STConcat contents  -> foldMap (renderTree prevAnn) contents
 
   showRawQName q = show (modName q) <> "." <> show (unQName q)
   prettyQName :: Maybe (V.Vector (V.Vector HName)) -> QName -> T.Text
@@ -63,22 +64,27 @@ render flags = let
     then "!" <> show (unQName q)
     else maybe (showRawQName q) (showText q) names
 
-  addColor = if ansiColor flags then addAnsiColor else \a b -> b
-  doAnn :: Annotation -> Builder -> Builder
-  doAnn a b = case a of
-    AArg i        -> addColor ansiCLBlue    ("λ" <> fromString (show i) <> b)
-    AQBindName  q -> addColor ansiCLYellow $ case allNames <$> bindSource flags of
+  doAnn :: Annotation -> Annotation -> Builder -> Builder
+  doAnn prev a b = let
+    addColor cl b = if ansiColor flags then cl <> b <> getColor prev else b
+    getColor = \case { ANone -> ansiCLNormal ; AArg{} -> ansiCLBlue ; AQBindName{} -> ansiCLYellow
+      ; ALiteral -> ansiCLMagenta ; AInstr -> ansiCLMagenta ; AAbs -> ansiCLCyan ; AType -> ansiCLGreen
+      ; AKeyWord -> ansiCLMagenta ; _ -> ansiCLNormal }
+    in case a of
+    ANone         -> addColor (getColor a) b
+    AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
+    AQBindName  q -> addColor (getColor a) $ case allNames <$> bindSource flags of
       Nothing  -> "π" <> fromText (showRawQName q)
       Just nms -> fromText $ fst (nms V.! modName q V.! unQName q)
     AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcLabelNames <$> bindSource flags) q)
     AQFieldName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
-    ALiteral      -> addColor ansiCLMagenta b
-    AInstr        -> addColor ansiCLMagenta b
-    AAbs          -> addColor ansiCLCyan b
-    AType         -> addColor ansiCLGreen   b
---  AExternType i -> allNames <$> 
-    AKeyWord      -> addColor ansiCLMagenta b
-  in TLB.toLazyText . renderTree . treeForm
+    ALiteral      -> addColor (getColor a) b
+    AInstr        -> addColor (getColor a) b
+    AAbs          -> addColor (getColor a) b
+    AType         -> addColor (getColor a) b
+--  AExternType i -> allNames <$>
+    AKeyWord      -> addColor (getColor a) b
+  in TLB.toLazyText . renderTree ANone . treeForm
 
 addAnsiColor cl x = cl <> x <> ansiCLNormal
 ansiCLNormal  = "\x1b[0m"
@@ -115,6 +121,9 @@ pTy = let
   TyVars i []-> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
   TyVars i g -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> "&" <+> parens (pTyUnion g)
   TyGround u -> pTyUnion u
+  TyExpr term ty -> parens $ pTerm term <+> ":" <+> pTy ty
+--TyPi Pi
+--TySi Pi (IM.IntMap Expr)
 
 pTyHeadParens t = case t of
   THTyCon THArrow{} -> parens (pTyHead t)
@@ -134,7 +143,9 @@ pTyHead = let
 --THMuBound  t -> "µ" <> pretty (number2CapLetter t)
 --THExt      i -> "E" <> viaShow i
 --THExt      i -> pretty $ fst (primBinds V.! i)
-  THExt      i -> pTy $ (\(Ty t) -> t) $ snd (primBinds V.! i)
+  THExt      i -> case snd (primBinds V.! i) of
+    Ty t -> pTy t
+    x -> "<?? " <> viaShow x <> " ??>"
 
   THTyCon t -> case t of
     THArrow [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> prettyTy ansiRender ret <> ")"
@@ -229,7 +240,7 @@ pTerm = let
 
 -- Used to print error messages, but I don't like it
 clBlack   x = "\x1b[30m" <> x <> "\x1b[0m"
-clRed     x = "\x1b[31m" <> x <> "\x1b[0m" 
+clRed     x = "\x1b[31m" <> x <> "\x1b[0m"
 clGreen   x = "\x1b[32m" <> x <> "\x1b[0m"
 clYellow  x = "\x1b[33m" <> x <> "\x1b[0m"
 clBlue    x = "\x1b[34m" <> x <> "\x1b[0m"

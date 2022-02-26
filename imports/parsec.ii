@@ -33,7 +33,7 @@ either f g r = case r of
 
 _++_ = append
 parse (Parser parseFn) = parseFn
- 
+
 -- Parser A : { parse : String -> [{ ret : A , stream : String }]
 runParser (Parser parseFn) s = case parseFn s of
   Cons ({ ret , stream }) Nil => case stream of
@@ -62,7 +62,7 @@ _<*>_ = \(Parser cs1) (Parser cs2) => Parser \s1 =>
 _<|>_ = \p q => Parser \s => case parse p s of
   Nil      => parse q s
   Cons a b => Cons a b
---  
+--
 combine p q = Parser \s => parse p s ++ parse q s
 failure = Parser \cs => Nil
 option  p q = Parser \s =>
@@ -98,7 +98,7 @@ manyv v = ((\a b => Cons a b <$> v) <*> manyv v) <|> pure Nil
 -- -- ----p2    x = let y z = x z in y
 -- -- ----liftA2 f x = let g = (fmap f x) in <*> g
 -- -- ----lA2 f x y = y . ret . over (f (x . ret))
--- 
+--
 -- -- let generalization
 -- probe x = let b = x in b
 -- ff x = let y z = x z in y

@@ -1,12 +1,23 @@
---import imports/prelude
+import imports/prelude
 --import imports/list
 --import imports/simpleTests
 module demo x =
 
+--List A = | None | Some A (List A)
+List A = data
+  None
+  Some A (List A)
+
+--rect (P : Set) : Set = record
+--  f : Int
+--  g : Int
+
+--f (x : Int) = x
 --id x = x : a -> a
+
 --id : Π a -> a -> a
+--id : (a : Set) -> a
 id x = x
--- TODO x is a VBind for some reason
 
 -- step dirp = case j (readdir dirp) of
 --   Nothing => Nothing
@@ -14,42 +25,18 @@ id x = x
 -- j = Just
 
 -- ls dName = unfoldr step (opendir dName)
--- 
+--
 -- File = { basename = identity } --takeWhileEnd (/= '/') }
 -- Dir  = { pwd = getcwd , entries = ls }
--- 
+--
 -- -- tree : String -> IO ()
 -- tree rootPath = puts rootPath -- *> subTree "|-- " rootPath
--- 
 -- pp pre ent =  (append pre (File.basename (direntName ent)))
 -- subTree prefix path = map (pp prefix) (Dir.entries path)
---printList l = case l of
---  Nil => 0
---  Cons i ll => add (putNumber i) (printList ll)
-
--- fromMaybe l = case l of 
---   Maybe b => b
---   Nothing => 0
--- 
--- x a = ifThenElse a a 3 -- a & Bool -> a & Int
--- 
---foldl f s l = case l of
---  Cons x xs => foldl f (f s x) xs
---  Nil => s
-
---self x = x x -- Π A → (Π B → B) → A → A
-
---foldr f s l = case l of
---  Cons x xs => f x (foldr f s xs)
---  Nil       => s
---append front back = foldr Cons back front
---
---concat = foldr append Nil
-
 -- The prefix in pretty-printing:
 -- when a dir is opened:
 -- 1. replace preceeding "--" with spaces
--- 2. append if last dir then "`-- " else "|-- " to prefix, 
+-- 2. append if last dir then "`-- " else "|-- " to prefix,
 -- when a dir is closed, remove the "|-- "
 ----subTree : (String where size >= 4) -> String -> IO ()
 --subTree prefix path = let

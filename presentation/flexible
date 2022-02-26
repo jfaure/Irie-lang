@@ -61,7 +61,7 @@ MLF introduces a new type constructor (the flexible type variable) into the latt
 
 So we can entirely elide MLF's notions of 'equivalence under prefix' and carve out the subset of unique properties of Q that affect type checking, in particular, we know that we cannot eagerly β-reduce Q, for fear of loss of generality.
 
-Polytypes must be revealed explicitly before they can be instantiated. This is the role of oracles (type annotations indicating polytypes) in the term language. As in both [1] and MLF, typing schemes can only assign monotypes to lambda-bound variables (since we must guess their types from their use-sites) - notice that this doesn't prevent them from referring to type variables bound to polytypes however. 
+Polytypes must be revealed explicitly before they can be instantiated. This is the role of oracles (type annotations indicating polytypes) in the term language. As in both [1] and MLF, typing schemes can only assign monotypes to lambda-bound variables (since we must guess their types from their use-sites) - notice that this doesn't prevent them from referring to type variables bound to polytypes however.
 * β-reduce Q just before App (not before !)
 * generalize (compose Q's) just after function definitions
 * Q's can only be introduced by oracles, a denumerable collection of primitives of arity 1 present in the initial typing environment. `∃ Oracle : σ → (π(α:σ). Q α σ) ∈ Γ0`, which have the effect of creating flexible bindings, and must be applied explicitly in the term language. These primitives can be  instantiated before they are applied, but keep their revealing power (?!)

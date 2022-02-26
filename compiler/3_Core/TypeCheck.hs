@@ -32,11 +32,13 @@ check e ars labTys inferred gotRaw = let
 --       -> [TyHead] -> [TyHead] -> Bool
 check' es ars labTys (TyGround inferred) (TyGround gotTy) = let
   check'' = check' es ars labTys :: Type -> Type -> Bool
-  readExt es x = case readPrimExtern es x of
+  readExt x = case readPrimExtern es x of
     c@Core{} -> error $ "type expected, got: " <> show c
     Ty t -> t
   checkAtomic :: TyHead -> TyHead -> Bool
   checkAtomic inferred gotTy = case {-trace (prettyTyRaw [inferred] <> " <?: " <> prettyTyRaw [gotTy])-} (inferred , gotTy) of
+    (THExt i , t) -> check'' (readExt i) (TyGround [t])
+    (t , THExt i) -> check'' (TyGround [t]) (readExt i)
     (THBound x , THBound y) -> x == y
     (THSet l1, THSet l2)  -> l1 <= l2
     (THSet 0 , x)         -> True --case x of { THArrow{} -> False ; _ -> True }

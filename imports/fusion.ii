@@ -42,17 +42,17 @@ foldr f s l = case l of
 -- --  | Nil => 0
 -- --  | Cons i ll => add (putNumber i) (printList ll)
 -- --array = (Cons 9 Nil)
--- 
+--
 -- --addL l = case l of
 -- --  | Cons x xs => add x (addL xs)
--- 
+--
 -- --map f l = case l of
 -- --  | Cons x xs => Cons (f x) (map f xs)
 -- --  | Nil       => Nil
 -- --sumTo ls = foldr add 0 (map (add 8) ls)
--- 
+--
 -- --foldr = cata f [Nil , {A , x}]
--- 
+--
 -- foldl = stream > foldls
 -- foldls f z (Stream next s0) = go s0 where
 --   go s = case next s of
@@ -65,8 +65,8 @@ foldr f s l = case l of
 -- --  Done       -> z
 -- --  Skip s'    -> go s'
 -- --  Yield x s' -> f x (go s')
--- 
--- 
+--
+--
 -- --zipS (Stream an a0) (Stream bn b0) = let
 -- --  next as bs Empty = case an a of
 -- --    Done       -> Done

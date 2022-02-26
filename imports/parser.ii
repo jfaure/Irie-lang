@@ -61,7 +61,7 @@ u ls = concat (mapFold (\l => append l (c '\n' Nil)) ls)
 -- --x y = eq y 3
 -- xd c = satisfy (\x => eq x c)
 -- char c = satisfy (eq 'B')
--- 
+--
 -- -- --makeGlobP : String -> Parser [String]
 -- makeGlobP gs = let
 -- --globAny xs = let next = makeGlobP xs in next <|> many (notFollowedBy next > takeP 1)

@@ -23,7 +23,7 @@ type TVarSet = BitSet
 
 data VName
  = VBind    IName -- name defined within this module (probably deprecate this)
- | VQBind   QName -- qualified name (modulename << moduleBits | Iname)
+ | VQBind   QName -- qualified name (modulename << moduleBits | IName)
  | VArg     IName -- introduced by lambda abstractions
  | VExt     IName -- externs; primitives, mixfixwords and imported names
  | VForeign HName -- opaque name resolved at linktime
@@ -56,18 +56,20 @@ data Term -- β-reducable (possibly to a type)
  | PartialApp [Type] Term [Term] -- Top level PAp => Abs (no fresh argnames after parse)
  | BruijnAbs  Int Term -- debruijn abstraction
  | StreamCons (IM.IntMap Term) -- difference with Cons is that absent labels produce Nothing
- | Stream   Term -- Term is an abs with recursion removed
+ | Stream   Term -- Term is a non-recursive Abs
  | UnStream Term
-
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs idx for extracting field
 
 type Uni     = Int -- a universe of types
-type TyMinus = Type
-type TyPlus  = Type
- 
-type GroundType = [TyHead] -- True / + / output / join , False / - / input / meet
+type TyMinus = Type  -- input  types (lattice meet ∧) eg. args
+type TyPlus  = Type  -- output types (lattice join ∨)
+type GroundType = [TyHead]
+tyTop = TyGround []
+tyBot = TyGround []
+
+data Pi = Pi [(IName , Type)] Type deriving Eq -- pi binder Π (x : T) → F T
 
 -- Theoretically TVars have their own presence in the profinite distributive lattice of types
 -- The point is to pre-partition tvars since they are usually handled separately
@@ -75,16 +77,18 @@ data Type
  = TyGround GroundType
  | TyVar    Int -- generalizes to THBound if survives biunification and simplification
  | TyVars   BitSet GroundType
- deriving Eq
--- | TyMu Int Type
--- | TyQuantified Int Int GroundType
+ | TyExpr   Term Type       -- term should be lambda calculus
+ | TyPi Pi                  -- dependent function space, args are implicit (can be explicitly present as A -> T)
+ | TySi Pi (IM.IntMap Expr) -- Existential; (partial) application of pi type
 
-tyTop = TyGround []
-tyBot = TyGround []
-
---type Type    = TyPlus
---type TyMinus = [TyHead] -- input  types (lattice meet ∧) eg. args
---type TyPlus  = [TyHead] -- output types (lattice join ∨)
+-- equality of types minus dependent normalisation
+instance Eq Type where
+  TyGround g1 == TyGround g2 = g1 == g2
+  TyVar i == TyVar j = i == j
+  TyVars i g1 == TyVars j g2 = i == j && g1 == g2
+  TyVar i == TyVars j [] = j == (0 `setBit` i)
+  TyVars j [] == TyVar i = j == (0 `setBit` i)
+  _ == _ = False
 
 data TyCon -- Type constructors
  = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot -> top is the largest)
@@ -97,23 +101,19 @@ data TyCon -- Type constructors
 data TyHead
  = THPrim     PrimType
  | THExt      IName -- tyOf ix to externs
- | THSet      Uni   -- Type of types
+ | THSet      Uni
  | THPoison         -- marker for inconsistencies found during inference
  | THTop | THBot
 
- | THFieldCollision Type Type
+ | THFieldCollision Type Type | THLabelCollision Type Type
  | THTyCon !TyCon -- BitSet cache contained tvars?
 
  | THBi Int Type -- Π A → F(A) polymorphic type to be instantiated on each use
  | THMu Int Type -- µx.F(x) recursive type is instantiated same as Π A → A & F(A)`
--- | THPi Pi           -- dependent function space. (for explicit: `∏(x:_) x -> T`)
--- | THSi Pi (IM.IntMap Expr) -- (partial) application of pi type; existential
 
  | THBound   IName  -- Π-bound tvar; instantiating Π-binder involves sub with fresh tvars
  | THMuBound IName  -- µ-bound tvar (must be guarded and covariant)
  deriving Eq
-
-data Pi = Pi [(IName , Type)] Type deriving Eq
 
 data Expr
  = Core     Term Type
@@ -127,7 +127,7 @@ data Expr
  | ExprApp  Expr [Expr] -- output of solvemixfixes
 
 --data MixfixSolved
--- = QVar     (ModuleIName , IName)
+-- = QVar     QName
 -- | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
 -- | ExprApp  Expr [Expr] -- output of solvemixfixes
 -- | MFId     Expr
@@ -137,7 +137,7 @@ data Bind -- indexes in the bindmap
  | Guard     { mutuals :: [IName] , tvar :: IName }
  | Mutual    { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
 
- | Checking  { mutuals :: [IName] 
+ | Checking  { mutuals :: [IName]
              , monoMorphic :: Maybe Expr -- if set, shouldn't generalise itself (ask (the first seen) mutual bind do it)
              , doGen :: Bool
              , recTy :: Type

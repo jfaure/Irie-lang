@@ -7,7 +7,7 @@ import System.FilePath.Posix as FilePath
 findModule :: [FilePath] -> FilePath -> IO FilePath --(Maybe FilePath)
  = \searchPath fName -> let
    checkExists [] f = error $ "couldn't find " <> show f <> " in search path\n" <> show searchPath
-   checkExists (sp:x) fName = 
+   checkExists (sp:x) fName =
      let fPath = sp </> fName
      in Dir.doesFileExist fPath >>= \e -> if e
        then pure fPath

@@ -7,18 +7,11 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
 import qualified Data.Vector as V
 
--- Always inline simple functions
--- Constant fold casts and up to scrutinees as much as possible (can have huge impact)
--- Const args valuable for function
--- eta reduction on lambdas
-
--- Case merge
--- exitification (float exit paths out of recursive functions)
--- liberate-case (unroll recursive fns once to avoid repeated case on free vars)
--- Pow app
-
--- Maths
--- * recognize series; esp sum and product
+-- * inline small functions
+-- * speculatively inline data functions
+-- * constant fold tycons (casts/case/products) as much as possible
+-- * find constant arguments
+-- * commutative and associative folds/stream can be reversed
 
 -- Deriving build-catas
 -- * Ec = (∀α1..αn) ∀β -- constructor equation where B is the type parameter for recursion
@@ -28,45 +21,51 @@ import qualified Data.Vector as V
 --  2.2 immediately make a cata, then fuse the outer cata (higher-order fusion);
 -- * iff the recursive invocation needs an inherited attribute
 
--- 4 Cases
--- Stream -> Stream
--- fold   -> build
--- Stream -> Build  `foldl Cons` `zip`
--- fold   -> Stream `foldr Cons` (iff fold-build no fuse); inline builds and derive a stream
+-- Dynamic deforestation (multiple builds for right/left or both)
+-- buildFn = (a->b->b) -> b -> b
+-- List a = | Nil | Cons a (List a) | Build (R|L|B) buildFn buildFn
+-- foldr k z (Build g) = g k z
 
--- Fusion
--- * cata = same shape as recursive types: (nested recursion) (eg. fn a1 (recurse))
--- * simplify (cata - build) by replacing all constructors with the cata function
--- * Make stream (~unfoldr) versions for non cata functions
--- # Stream Build
---   if stream is required at some point (zip | foldl)
---   try to invert the foldr part of the stream
---   At worst have to reify a list (choose the smallest one) then stream it
--- # foldr Stream (also reverse = foldl (flip (:)) [])
---   Convert foldr to stream version. if foldr produces data, it can be fold-builded
--- # builder foldrs are streams and build-foldrs
--- # builder foldls are builds
--- # Streams writeable as foldr if the state has no accumulator (or reversible one like +)
-
--- foldr f s (build g) => g f s
--- stream (unstream s) => s
+-- Cases
+-- stream (unStream s) = s
+-- fold f z (build g)  = g f z (syntax translation (label -> Fn))
+-- Stream Build     syntax translation (label -> label)
+-- fold   unstream  (may as well do cata-build, and let the program stack recursive calls)
 --
--- Try to rewrite function as a foldr (iff recurses in same way as a recursive data)
--- Fallback to (unstream . fn' . stream) iff left-fold and|or multiple list args
+-- First order (no inherited attribute) Stream / Foldr can be used interchangeably
+-- fold f        -> Stream
+-- Stream next z -> fold
+
+-- Deriving plasma
+-- * cata-build needs to handle all nil/cons identically, so (tail (last) or foldr1 (first))
+-- * catas from fns with same shape as the recursive type
+-- * when the stream producer unknown, push as a dynamic choice inside the stream
+-- * ? Mixing of second order recursion direction (eg. randomly switching foldr and foldl)
+
 -- Stream a = ∃s. Stream (s → Step a s) s
--- Step a s =
---   | Done
---   | Skip  s
---   | Yield s a
+-- Step a s = | Done | Skip  s | Yield s a
 --
--- Cannot fuse when the stream producer is not known;
--- but can push this dynamic choice inside the stream
---
--- Tree a b = Leaf a | Fork b (Tree a b) (Tree a b)
--- Stream a b = ∃s. Stream (s -> Step a b s) s
--- Step a b s = SLeaf a | SFork b s s | Skip s
+-- stream :: [a] -> Stream a
+-- stream xs0 = Stream (\case { [] => Done ; x : xs => Yield x xs }) xs0
+-- unstream :: Stream a -> [a]
+-- unstream (Stream next0 s0) = let
+--   unfold s = case next0 s of
+--     Done       -> []
+--     Skip s'    -> unfold s'
+--     Yield x s' -> x : unfold s'
+--   in unfold s0
+-- * Thus 'stream' is a syntactic translation of [] and (:)
+-- * 'unstream' is an unfoldr of non-recursive [a] augmented with Skip
 
-conNothing : conJust : _ = [-1,-2..]
+-- Tree a b = Leaf a | Fork b (Tree a b) (Tree a b)
+-- TreeStream a b = ∃s. Stream (s -> Step a b s) s
+-- TreeStep a b s = Leaf a | Fork b s s | Skip s
+
+-- # Plan
+-- Derive (1. a cata) or a stream function
+-- * attempt to fuse everything with stream fusion
+-- * use cata-build only for second order cata
+-- * indexing functions = buildl | buildr
 
 type2ArgKind :: Type -> ArgKind
 type2ArgKind = _

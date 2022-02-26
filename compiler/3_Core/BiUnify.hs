@@ -115,7 +115,7 @@ doInstantiate tvars ty = let
     tvs = foldr (.|.) 0 tvars
     groundTys = concat ty
     in if tvs == 0 then TyGround groundTys else TyVars tvs groundTys
-  in case ty of 
+  in case ty of
     TyGround g -> instantiateGround g
     TyVars vs g -> mergeTypes True (TyVars vs []) <$> instantiateGround g -- TODO ! get the right polarity here
     TyVar v -> pure (TyVar v)

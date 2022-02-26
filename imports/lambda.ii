@@ -2,7 +2,7 @@
 
 I x = x
 K x y = x
-Y f = let g x = f (x x) in g g 
+Y f = let g x = f (x x) in g g
 f = \x => x
 Y2 f = (\ g => g g) (\ x => f (x x))
 

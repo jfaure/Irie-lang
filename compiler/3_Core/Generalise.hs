@@ -65,7 +65,7 @@ generalise escapees recTVar = let
   occurs     <- use coOccurs
   occLen     <- use blen
   when global_debug (traceCoocs occLen occurs)
-  leaks    <- use leakedVars 
+  leaks    <- use leakedVars
   tvarSubs <- coocVars occLen escapees leaks recursives <$> V.unsafeFreeze occurs
 
   when global_debug $ do
@@ -124,7 +124,7 @@ coocVars occLen escapees leaks recursives coocs = V.constructN occLen $ \prevSub
       wCoocs = coocs V.! w ; wCooc = if pos then fst wCoocs else snd wCoocs
       cooc w (vs , vTs) (ws , wTs) = if (collectCoocVs (vs ++ ws) `clearBit` v) /= 0
         then SubVar w else coocType vTs wTs
-      in {-d_ (v , w , pos) $-} 
+      in {-d_ (v , w , pos) $-}
       if null (fst wCoocs) || null (snd wCoocs)
       then Generalise -- don't merge with a polar (or recursive variable)
       else cooc w (if pos then (pVars , pTs) else (mVars , mTs))

@@ -161,7 +161,7 @@ _dgNew(size_t sz) { // sz already normalized
 }
 
 void
-sdgTrim(DataGroup d, size_t trimSz) { 
+sdgTrim(DataGroup d, size_t trimSz) {
   if (trimSz < MALLOC_ALIGNMENT)
     return;
 }

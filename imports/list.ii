@@ -6,26 +6,26 @@ import imports/prelude
 --  L a =
 --    | Nil : L
 --    | Cons : Arrow a (Arrow L L)
---  
+--
 --  --pure x v = { ret = x }
 --  ----pOK ps = ps . cok . set 1
---  
+--
 --  _>>_ = \f x a => x (f a)
 --  _<_  = \f x => f x
---  
+--
 --  z = add < 5
 
 printList l = case l of
   Nil => 0
   Cons i ll => add (putNumber i) (printList ll)
---  
+--
 --  Inc l = case l of
 --    Nil => Nil
 --    Cons i ll => Cons (add 1 i) (Inc ll)
---  
+--
 --  scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
 
-fromMaybe l = case l of 
+fromMaybe l = case l of
   Maybe b => b
   Nothing => 0
 
@@ -91,7 +91,7 @@ toCString str = let
 -- go sep l = case l of
 --   | Nil => Nil
 --   | Cons x xs => Cons sep (Cons x xs)
--- 
+--
 -- intersperse sep l = case l of
 --   | Nil => Nil
 --   | Cons x xs => Cons x (go sep xs)

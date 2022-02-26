@@ -12,7 +12,7 @@ module Parser (parseModule , parseMixFixDef) where
 import Prim
 import ParseSyntax as P
 import MixfixSyn
-import DesugarParse
+--import DesugarParse
 import Text.Megaparsec-- hiding (State)
 import Text.Megaparsec.Char
 import System.FilePath.Posix as FilePath (dropExtension , takeFileName)
@@ -69,7 +69,7 @@ insertOrRetrieveArg h sz argMaps = case argMaps of
 
 pd = moduleWIP . parseDetails
 addAnonArgName = moduleWIP . parseDetails . nArgs <<%= (1+)
-addArgName , addBindName , addUnknownName:: Text -> Parser IName
+addArgName , addBindName , addUnknownName :: Text -> Parser IName
 addArgName    h = do
   n <- use (moduleWIP . parseDetails . nArgs)
   pd . hNameArgs %%= insertOrRetrieveArg h n >>= \case
@@ -118,7 +118,7 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
 -- The names nest tracks the scope of local definitions
 newLetNest p = (moduleWIP . parseDetails . hNameLocals %= (M.empty :))
                *> p <* (moduleWIP . parseDetails . hNameLocals %= drop 1)
- 
+
 getFreeVars = use (moduleWIP . parseDetails . freeVars)
 
 -- Add an argMap to the argMaps stack and compute freeVars when this new nest returns
@@ -134,8 +134,6 @@ newArgNest p = let
     free    <- moduleWIP . parseDetails . freeVars <%= (\oldFree -> foldr (flip clearBit) oldFree (M.elems ourArgs))
     decArgNest
     pure (ret , free)
-
-withTmpReserved ms p = (tmpReserved %= (ms :)) *> p <* (tmpReserved %= drop 1)
 
 lookupImplicit :: Text -> Parser IName -- implicit args
 lookupImplicit h = do
@@ -240,7 +238,7 @@ linefold p = let
 --    (L.incorrectIndent GT prev cur) (alas GEQ is not an Ordering)
 --  indent .= cur
     p -- <* (indent .= prev)
-    <* lookAhead endLine -- make sure this was a linefold to not corrupt error messages
+    <* lookAhead (single '\n') --endLine -- make sure this was a linefold to not corrupt error messages
   in try doLinefold <|> p
 
 ------------
@@ -272,7 +270,6 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
   `evalState` ParseState {
        _indent      = mkPos 1
      , _moduleWIP   = startModule
-     , _tmpReserved = []
      , _piBound     = []
      }
 
@@ -281,21 +278,21 @@ doParse = void $ decl `sepEndBy` (optional endLine *> scn) :: Parser ()
 decl = svIndent *> choice
    [ reserved "import" *> (iden >>= addImport)
    , void functorModule
-   , pForeign 
+   , pForeign
    , void (funBind True LetOrRec) <?> "binding"
-   , void patBind
+-- , void patBind
    , bareTT <?> "repl expression"
    ] <?> "import , extern or local binding"
 
 -- for the repl
-bareTT = addAnonBindName *> ((\tt -> addBind (FunBind $ FnDef "replExpr" True LetOrRec Nothing [] 0 [FnMatch [] [] tt] Nothing)) =<< tt)
+bareTT = addAnonBindName *> ((\tt -> addBind (FnDef "replExpr" LetOrRec Nothing 0 [FnMatch [] tt] Nothing)) =<< tt)
 
 pForeign = do -- external function defined outside of Irie and opaque until link-time
   fn  <- ((Foreign <$ reserved "foreign") <|> (ForeignVA <$ reserved "foreignVA"))
   hNm <- iden
   addBindName hNm
   ty <- reservedOp ":" *> tt
-  addBind (FunBind $ FnDef hNm True Let Nothing mempty 0 [FnMatch [] [] (Foreign hNm ty)] (Just ty))
+  addBind (FnDef hNm Let Nothing 0 [FnMatch [] (Foreign hNm ty)] (Just ty))
 
 functorModule :: Parser ()
 functorModule = reserved "module" *> do
@@ -335,18 +332,17 @@ addMixfixWords m mfBind mfdef = let
 
 -- Top level pattern assignments: create a binding for the whole expression and extra bindings for each pattern arg
 -- TODO perhaps use a Functor module to get the pattern names out of an Abs like normal patterns work?
-patBind = do
-  p <- pattern True
-  reservedChar '='
-  exprBindName <- addAnonBindName
-  e <- tt
-  -- TODO write a better convpat; this attempt to convert a lambda into a top-level binding is hacky
-  let ([exprBind] , artys , App (Abs (fndef)) lensedTTs) = patterns2TT True [p] e :: ([IName] , [[Int]] , TT)
-      [FnMatch [] args body] = fnMatches (fnDef fndef)
-      patBindNames = (\(PArg i) -> i) <$> args
-      
-  -- ! depends on the bindNames being added in the same order as the lenses are added !
-  mapM_ (\e -> addBind (FunBind $ FnDef "patBind" True LetOrRec Nothing [] 0 [FnMatch [] [] e] Nothing)) (body : lensedTTs)
+--patBind = do
+--  p <- pattern True
+--  reservedChar '='
+--  exprBindName <- addAnonBindName
+--  e <- tt
+--  -- TODO write a better convpat; this attempt to convert a lambda into a top-level binding is hacky
+--  let ([exprBind] , artys , App (Abs (fndef)) lensedTTs) = patterns2TT True [p] e :: ([IName] , [[Int]] , TT)
+--      [FnMatch args body] = fnMatches fndef
+--      patBindNames = (\(PArg i) -> i) <$> args
+--  -- ! depends on the bindNames being added in the same order as the lenses are added !
+--  mapM_ (\e -> addBind (FnDef "patBind" LetOrRec Nothing 0 [FnMatch [] e] Nothing)) (body : lensedTTs)
 
 funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
   [Just nm] -> VBind <$> funBind' isTop letRecT nm Nothing (symbol nm *> many (lexeme (singlePattern False {-isTop-})))
@@ -367,71 +363,57 @@ funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pM
 funBind' :: Bool -> LetRecT -> Text -> Maybe MixfixDef -> Parser [Pattern] -> Parser IName
 funBind' isTop letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
   iNm <- addBindName nm -- handle recursive references
-    <* addBind (FunBind $ FnDef nm isTop letRecT mfDef (implicits ++ pi) free eqns ty)
-  ((implicits , pi , eqns , ty) , free) <- newArgNest $ do
+    <* addBind (FnDef nm letRecT mfDef {-(implicits ++ pi)-} free eqns ann)
+  ((implicits , pi , eqns , ann) , free) <- newArgNest $ do
     ars <- many (singlePattern False)
-    ann <- tyAnn
-    let (implicits , ty) = case ann of { Just (i,t) -> (i,Just t) ; _ -> ([],Nothing) }
-    (pi , eqns) <- getPiBounds $ choice
+    ann <- optional tyAnn
+    eqns <- choice
       [ (:[]) <$> fnMatch (pure ars) (reserved "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
       , case (ars , ann) of
-          ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
+          (x  , Nothing) -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") ) -- f = _
+          ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") ) -- f : T = _
           (x  , Just{})  -> fail $ "Expected function definition \" = _\" , got type annotation \" : _\"" -- f x : _
-          (x  , Nothing) -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") )
       ]
-    pure (implicits , pi , eqns , ty)
+    pure (implicits , pi , eqns , ann)
   pure iNm
 
-tyAnn :: Parser (Maybe ([ImplicitArg] , TT)) = let
-    implicitArg = (,) <$> (iden >>= addArgName) <*> optional (reservedChar ':' *> tt)
-  in {-newArgNest $-} do
-  optional (reserved "::" *> bracesn (implicitArg `sepBy` reserved ";")) >>= \case
-    Just implicits -> fmap (implicits,) <$> optional (reservedChar ':' *> tt)
-    Nothing        -> fmap ([],)        <$> optional (reservedChar ':' *> tt)
+tyAnn :: Parser TT = do {-newArgNest $-}
+  reservedChar ':'
+  (pi , ty) <- getPiBounds tt
+  -- no freeVars in a pi-binder
+  pure (Abs (FnDef "pi-binder" LetOrRec Nothing emptyBitSet [FnMatch (PPi <$> pi) ty] Nothing))
 
-lambda = (reservedChar '\\' *>) $ do
+lambda = do
   (eqns , free) <- newArgNest $ (:[]) <$> fnMatch (many (singlePattern False)) (reserved "=>")
-  pure $ Abs $ FunBind $ FnDef "lambda" False LetOrRec Nothing [] free eqns Nothing
+  pure $ Abs $ FnDef "lambda" LetOrRec Nothing free eqns Nothing
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ? (idea is to merge abs `f x = \y => _` into f x y = _
   let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case")
         *> (fnMatch (many (singlePattern False)) (reserved "=>"))
-      normalFnMatch = FnMatch [] <$> (pMFArgs <* lexemen sep) <*> tt
+      normalFnMatch = FnMatch <$> (pMFArgs <* lexemen sep) <*> tt
   in hoistLambda <|> normalFnMatch
 
 -- make a lambda around any '_' found within the tt eg. `(_ + 1)` => `\x => x + 1`
 catchUnderscoreAbs :: TT -> Parser TT
 catchUnderscoreAbs tt = use (moduleWIP . parseDetails . underscoreArgs) >>= \underscores ->
   if 0 == underscores then pure tt else
-  let eqns = [FnMatch [] (PArg <$> bitSet2IntList underscores) tt]
+  let eqns = [FnMatch (PArg <$> bitSet2IntList underscores) tt]
   in do
-    free <- getFreeVars -- Freevars are exactly those in the pares state, since we introduced none of them at this new Abs
-    Abs (FunBind $ FnDef "_abs" False LetOrRec Nothing [] free eqns Nothing) <$ (moduleWIP . parseDetails . underscoreArgs .= 0)
+    free <- getFreeVars -- Freevars are exactly those in the parse state, since we introduced none of them at this new Abs
+    Abs (FnDef "_abs" LetOrRec Nothing free eqns Nothing) <$ (moduleWIP . parseDetails . underscoreArgs .= 0)
 
 -- TT parser
 ttArg , tt :: Parser TT
 (ttArg , tt) = (arg , anyTT)
   where
-  anyTT = (tySum <|> appOrArg) >>= catchUnderscoreAbs >>= typedTT <?> "tt"
+  anyTT = ({-tySum <|>-} appOrArg) >>= catchUnderscoreAbs >>= typedTT <?> "tt"
    -- lens bind tighter than App
   argOrLens = arg       >>=                     \larg -> option larg (lens larg)
-  appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg
-    ( case larg of
---     Lit l -> LitArray . (l:) <$> some (lexeme $ try (literalP <* notFollowedBy iden))
---     -- Breaks `5 + 5`
-       P.Label l [] -> P.Label l <$> some (linefold argOrLens) --arg
-       fn -> (Juxt o . (fn:) <$> some (linefold argOrLens))
-    ) >>= \possibleForall -> option possibleForall $ reserved "=>" *> (do
-      actualTT <- anyTT
-      let getName = \case
-            Var (VExtern i) -> pure i
-            x -> fail $ "(TODO?) expected a quantified variable (VExtern), got : " <> show x
-      nms <- case possibleForall of 
-        Juxt s as -> getName `mapM` as
-        v         -> getName v <&> \x->[x]
-      pure (Quantified nms actualTT)
-      )
+  appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg $ case larg of
+--  Lit l -> LitArray . (l:) <$> some (lexeme $ try (literalP <* notFollowedBy iden)) -- Breaks `5 + 5`
+    P.Label l [] -> P.Label l <$> some (linefold argOrLens) --arg
+    fn -> (Juxt o . (fn:) <$> some (linefold argOrLens))
   lens :: TT -> Parser TT
   lens record = let
     lensNext path = getOffset >>= \o -> reservedChar '.' *> choice [
@@ -445,9 +427,12 @@ ttArg , tt :: Parser TT
    , reserved "?" $> WildCard
    , letIn
    , reserved "\\case" *> caseSplits
-   , lambda -- "\"
+   , (reservedChar '\\' <|> reservedChar 'λ') *> lambda
    , reserved "do" *> doExpr
-   , match      -- "case"
+   , reserved "case"   *> match
+   , reserved "record" *> tyRecord  -- multiline record decl
+   , reserved "data"   *> tySumData -- multiline sumdata decl
+-- , piBinder *> arg
    , con
    , Lit <$> lexeme (try (literalP <* notFollowedBy iden)) -- must be before Iden parsers
    , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x] -- varName -- incl. label
@@ -457,43 +442,35 @@ ttArg , tt :: Parser TT
    , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
    ] <?> "ttArg"
 
+  piBinder = reserved "Π" *> (many (iden >>= addArgName) >>= \pis -> addPiBound (PiBound pis WildCard))
   -- Catch potential implicit abstractions at each parens
-  parensExpr = parens (choice [try piBinder , (tt >>= \t -> tuple t <|> typedTT t) , scn $> Cons []]) >>= catchUnderscoreAbs
+  parensExpr = parens (choice [try piBound , (tt >>= \t -> tuple t <|> typedTT t) , scn $> Cons []]) >>= catchUnderscoreAbs
   tuple t = (\ts -> Cons (zip [-1,-2..] (t:ts))) <$> some (reservedChar ',' *> arg)
   label i = lookupSLabel i >>= \case
     Nothing -> P.Label <$ reserved "@" <*> newSLabel i <*> (many arg)
     Just l  -> pure $ P.Label l [] -- <$> many arg (converted in App)
 
-  tySum = TySum <$> let
-    adtAlts = do
-      hLabel <- iden
-      label  <- newSLabel hLabel
-      alt    <- tt
-      tyAnn >>= \case -- maybe type annotation
-        ann -> pure (label , alt , ann)
---       getPiBounds tyAnn >>= \case
--- --      (pis , Nothing)   -> fail $ "sumtype constructor '" <> T.unpack hLabel <> "' needs a type annotation"
---         (pis , Just (impls , ty)) -> pure (label , pis ++ impls , Just ty)
---         (pis , maybeGADT)         -> pure (label , pis , Nothing)
---  adtAlts = do
---    hLabel <- iden
-    adt = some $ try (scn *> (reservedChar '|' *> lexeme adtAlts))
---  gadt = do
---    reserved "type"
---    decl <- tt
---    reserved "where"
---    ref <- use indent <* scn
---    indentedItems ref scn gadtAlts
-    in adt
+  tySum = Gadt <$> let
+    adtAlts = (,,Nothing) <$> (iden >>= newSLabel) <*> many appOrArg
+    in some $ try (scn *> (reservedChar '|' *> lexeme adtAlts))
+
+  tySumData = Gadt <$> do
+    let labelDecl = (,,) <$> (iden >>= newSLabel) <*> many arg <*> optional tyAnn <?> "Label declaration"
+    ref <- scn *> use indent <* svIndent
+    indentedItems ref scn labelDecl (fail "")
+
+  tyRecord = Cons <$> let fieldDecl = (,) <$> (iden >>= newFLabel) <*> tyAnn <?> "Field declaration" in do
+    ref <- scn *> use indent <* svIndent
+    indentedItems ref scn fieldDecl (fail "")
 
   con = let
     fieldAssign = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> tt
-    conHash = do
-      string "##"
-      ref <- use indent <* scn
+    multilineAssign = do
+      reserved "mkRecord"
+      ref <- scn *> use indent <* svIndent
       indentedItems ref scn fieldAssign (fail "")
     conBraces = braces (fieldAssign `sepBy` reservedChar ',')
-    in Cons <$> (conHash <|> conBraces)
+    in Cons <$> (multilineAssign <|> conBraces)
 
   doExpr = DoStmts <$> let
     doStmt = idenNo_ >>= \hNm -> choice
@@ -532,7 +509,7 @@ ttArg , tt :: Parser TT
             , addAnonArgName <&> \a -> PComp a PWildCard
             ] >>= \pat -> (pat , ) <$> (reserved "=>" *> tt)
           pure (Match alts catchAll)
-  match = reserved "case" *> do
+  match = do
     scrut  <- tt
     reserved "of"
     (`App` [scrut]) <$> caseSplits
@@ -550,15 +527,15 @@ ttArg , tt :: Parser TT
             <|> (reserved "rec" *> pletBinds letStart Rec)
       pure inExpr
 
-  typedTT exp = tyAnn >>= \case --optional type annotation is parsed as anonymous let-binding
+  typedTT exp = optional tyAnn >>= \case --optional type annotation is parsed as anonymous let-binding
     Nothing -> pure exp
-    Just ([] , WildCard)  ->  pure exp -- don't bother if no info given (eg. pi binder)
-    Just (implicits , ty) -> case exp of
-      Var (VLocal l) -> addPiBound (l , Just ty) *> pure exp
+    Just WildCard  ->  pure exp -- don't bother if no info given (eg. pi binder)
+    Just ty -> case exp of
+      Var (VLocal l) -> addPiBound (PiBound [l] ty) *> pure exp
       x -> (Var . VBind <$> addAnonBindName)
-        <* addBind (FunBind $ FnDef "_:" False LetOrRec Nothing [] 0 [FnMatch [] [] exp] (Just ty))
+        <* addBind (FnDef "typed-expr" LetOrRec Nothing 0 [FnMatch [] exp] (Just ty))
 
-  piBinder = do
+  piBound = do
     i <- iden
     lookAhead (void (reservedChar ':') <|> reservedOp "::")
     (Var . VLocal <$> addArgName i) >>= typedTT
@@ -585,6 +562,7 @@ singlePattern isTop = let
   addName     = if isTop then addBindName else addArgName
   addAnonName = if isTop then addAnonBindName else addAnonArgName
   mkCompositePat cp = addAnonName <&> \a -> PComp a cp
+  tuple p = ((\tuplePats -> PTuple (p : tuplePats)) <$> some (reservedChar ',' *> pattern isTop)) >>= mkCompositePat
   in choice
   [ reservedChar '_' *> choice
     [ reservedName "as" *> lexeme idenNo_ >>= addName <&> PArg
@@ -599,8 +577,10 @@ singlePattern isTop = let
           ]
     in (PCons <$> braces (fieldPattern `sepBy` reservedChar ',')) >>= mkCompositePat
   , (PLit <$> try literalP) >>= mkCompositePat
-  , parens $ pattern isTop >>= \p -> option p
-      $ ((\tuplePats -> PTuple (p : tuplePats)) <$> some (reservedChar ',' *> pattern isTop)) >>= mkCompositePat
+  , parens $ pattern isTop >>= (\case
+      PArg i -> option (PArg i) (PTyped i <$> tyAnn)
+      p -> pure p
+    ) >>= \p -> option p (tuple p)
   ] <?> "pattern"
 
 ---------------------
@@ -615,7 +595,7 @@ literalP = let
   char :: Parser Char = between (single '\'') (single '\'') L.charLiteral
   stringLiteral :: Parser [Char] = choice
     [ single '"'      *> manyTill L.charLiteral (single '"')
-    , string "\"\"\"" *> manyTill L.charLiteral (string "\"\"\"")
+    , string "\"\"\"" *> manyTill L.charLiteral (string "\"\"\"") -- triple quotes """
     , string "''"     *> manyTill L.charLiteral (string "''")
     , string "$"      *> manyTill L.charLiteral endLine]
   intLiteral = choice
@@ -624,7 +604,7 @@ literalP = let
     , string "0x" *> L.hexadecimal
     , string "0o" *> L.octal
     ]
- in choice
+  in choice
    [ Char   <$> char
    , String <$> stringLiteral
    , Int    <$> intLiteral

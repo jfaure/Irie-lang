@@ -40,7 +40,7 @@ data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
 data POSIXType = DirP | DirentP
 
 ------------------
--- Instructions -- 
+-- Instructions --
 ------------------
 data PrimInstr
  = NumInstr   !NumInstrs
@@ -52,7 +52,7 @@ data PrimInstr
  | CallExt    Text
 
  | MkTop | MkBot -- no-op casts
- 
+
  | Zext | Sext
  | GMPZext Int | GMPSext Int -- take an i<64 to a gmp integer
 

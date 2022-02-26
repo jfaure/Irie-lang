@@ -14,7 +14,7 @@ prof:
 
 xprof:
 	stack -j9 build --ghc-options='-prof -fprof-auto -fprof-cafs -with-rtsopts=-xc'
-# --library-profiling 
+# --library-profiling
 
 #mk prof && .stack-work/dist/x86_64-linux-nix/Cabal-3.2.1.0/build/irie-exe/irie-exe demo.ii -p llvm-hs +RTS -p -xc
 
