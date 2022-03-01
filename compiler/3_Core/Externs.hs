@@ -65,39 +65,35 @@ primResolver :: GlobalResolver = let primModName = "(builtinPrimitives)" in
 -------------
 -- how to substitute P.VExtern during mixfix resolution
 data Externs = Externs {
-   extNames     :: V.Vector ExternVar
- , extBinds     :: V.Vector (V.Vector (HName , Expr)) -- all loaded bindings (same as in global resolver)
- , importLabels :: V.Vector QName
- , importFields :: V.Vector QName
+   extNames      :: V.Vector ExternVar
+ , extBinds      :: V.Vector (V.Vector (HName , Expr)) -- all loaded bindings (same as in global resolver)
+ , importLabels  :: V.Vector QName
+ , importFields  :: V.Vector QName
+ , eModNamesV    :: V.Vector HName
 } deriving Show
 
 readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
 
-patchName bit q = let (m,i) = (modName q , unQName q) in mkQName m (clearBit i bit)
 readLabel , readField :: Externs -> IName -> QName
-readLabel (Externs nms binds ils ifs) l = {-patchName labelBit $ -} if l < 0 then mkQName 0 (-1 - l) else ils V.! l
-readField (Externs nms binds ils ifs) f = {-patchName labelBit $ -} if f < 0 then mkQName 0 (-1 - f) else ifs V.! f
+readLabel (Externs nms binds ils ifs mNms) l = if l < 0 then mkQName 0 (-1 - l) else ils V.! l
+readField (Externs nms binds ils ifs mNms) f = if f < 0 then mkQName 0 (-1 - f) else ifs V.! f
 
 -- exported functions to resolve ParseSyn.VExterns
-readQParseExtern thisModIName (Externs nms binds ils ifs) modNm iNm = if modNm == thisModIName
-  then ForwardRef iNm -- ie. not actually an extern
-  else Imported $ case snd ((binds V.! modNm) V.! iNm) of
+readQParseExtern openMods thisModIName (Externs nms binds ils ifs mNms) modNm iNm = if
+  | modNm == thisModIName    -> ForwardRef iNm -- ie. not actually an extern
+  | openMods `testBit` modNm -> Imported $ case snd ((binds V.! modNm) V.! iNm) of
     e@(Core f t) -> case f of -- inline trivial things
       Lit{}   -> e
       Instr{} -> e
       Var{}   -> e -- var indirection
       _ -> Core (Var $ VQBind $ mkQName modNm iNm) t
     PoisonExpr -> PoisonExpr
-    x -> error $ show x
+    x -> x -- types and sets
+  | otherwise -> NotOpened (mNms V.! modNm) (fst ((binds V.! modNm) V.! iNm))
 
-readParseExtern thisModIName e@(Externs nms binds ils ifs) i = case nms V.! i of
-  Importable modNm iNm -> readQParseExtern thisModIName e modNm iNm
+readParseExtern openMods thisModIName e@(Externs nms binds ils ifs mNms) i = case nms V.! i of
+  Importable modNm iNm -> readQParseExtern openMods thisModIName e modNm iNm
   x -> x
---readParseExtern = \(Externs nms binds) i -> let (modNm , iNm) = nms V.! i
---  in if modNm >= V.length binds
---  then ForwardRef iNm
---  else Imported $ (binds V.! modNm) V.! iNm
---readMixfixExtern e (m,i) = (\(MFBind mfdef e) -> mfdef) $ (extBinds e V.! m) V.! i
 
 -- First resolve names for a module, then that module can be added to the resolver
 -- We need to resolve INames accross module boundaries.
@@ -133,9 +129,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
 
-  -- TODO filter modules in scope !
-  -- TODO expand lambda-mixfixes with explicit holes
-  -- TODO new Labels maybe already exist as imported labels!
+  -- TODO filter modules in scope & remove fields !
   resolveName :: HName -> ExternVar -- (ModuleIName , IName)
   resolveName hNm = let
     binds   = IM.toList <$> (resolver   M.!? hNm)
@@ -147,10 +141,9 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     (Just [(0     , iNm)] , Nothing) -> Imported $ snd ((prevBinds V.! 0) V.! iNm)
     (Just [(modNm , iNm)] , Nothing)
 --    label applications look like normal bindings `n = Nil`
-      | True <- testBit iNm labelBit {-fieldBit-} -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) (TyGround []))
-      | True -> case snd ((prevBinds V.! modNm) V.! iNm) of
---      e@(Core Var{} _) -> Imported $ did_ e -- substitute trivial binds directly
-        _ -> Importable modNm iNm
+      | True <- testBit iNm labelBit -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) (TyGround []))
+      | True <- testBit iNm fieldBit -> NotInScope hNm
+      | True -> Importable modNm iNm
     (b , Just mfWords)
       | Nothing      <- b -> MixfixyVar $ Mixfixy Nothing              (flattenMFMap mfWords)
       | Just [(m,i)] <- b -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
@@ -177,6 +170,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
                , extBinds = prevBinds
                , importLabels = mkTable l labelMap
                , importFields = mkTable f fieldMap
+               , eModNamesV   = modNamesV
                })
 
 -- Often we deal with incomplete vectors (with holes for modules in the pipeline eg. when processing dependencies)

@@ -27,6 +27,7 @@ partitionType = \case
   TyVars vs g -> (vs , g)
   TyGround g  -> (0  , g)
   TyVar v     -> (0 `setBit` v , [])
+  t -> error $ show t
 
 tyLatticeEmpty pos = \case
   TyGround [] -> TyGround [if pos then THBot else THTop] -- pure ty
@@ -76,7 +77,7 @@ tyOfTy t = TyGround [THSet 0]
 
 tyExpr = \case -- get the type from an expr.
   Ty t -> Just t
-  Core e t -> Just (TyExpr e t)
+  Core e t -> Just (TyTerm e t)
   expr -> Nothing --error $ "expected type, got: " ++ show expr
 
 tyOfExpr  = \case
@@ -98,7 +99,7 @@ expr2Ty judgeBind e = case e of
  x -> error $ "raw term cannot be a type: " ++ show x
 
 bind2Expr = \case
-  BindOK e    -> e
+  BindOK isRec e -> e
 
 ------------------------
 -- Type Manipulations --
@@ -192,38 +193,39 @@ mergeTypes pos a b = error $ "attempt to merge weird types: " <> show (a , b)
 -- TODO check at the same time if this did anything
 mergeTysNoop :: Bool -> Type -> Type -> Maybe Type = \pos a b -> Just $ mergeTypes pos a b
 
--- Test if µ wrappers are unrollings of the recursive type
+-- Test if µ wrappers are unrollings of the recursive type `see eg. mapFold f l = foldr (\x xs => Cons (f x) xs) Nil l`
 --    [Cons : {A , µC.[Cons : {A , µC} | Nil : {}]} | Nil : {}]
 -- => µC.[Cons : {A , µC} | Nil : {}]
--- To do this pre-process the µ by 'inverting' it to test each subsequent wrapping
-data InvMu = Leaf IName
+-- To do this pre-process the µ by 'inverting' it so we can incrementally test layers
+-- This 'is' a zipper; like the cursor in a text editor or the pwd in a file system
+data InvMu
+  = Leaf IName
   | InvMu
-  { this    :: Type -- A subtree of the µ. test eq ignoring the rec branch we came from
-  , parents :: Maybe (Int , InvMu) -- Nothing if root, Int is the tycon rec branch
+  { this      :: Type -- A subtree of the µ. test eq ignoring the rec branch we came from
+  , recBranch :: Int
+  , parent    :: InvMu -- Nothing if root, Int is the parents tycon rec branch we're in
   } deriving Show
 
---invertMu :: Maybe (Int , Type) -> Type -> [InvMu]
 -- i is the wrapping tycon branch we recursed into to get here
 -- ie. it should be ignored when testing if the parent layer is an unrolling of this µ
 -- [InvMu]: one for each recursive var: eg. in µx.(x,x) we get 2 InvMus
-invertMu :: Maybe (Int , Type) -> Type -> [InvMu]
-invertMu parent this = let
---go :: Type -> TyHead -> [Maybe (Int , Type)]
-  getI = case parent of { Just (i,_) -> i }
-  go this t = case t of
-    THTyCon tycon -> concat $ map (\(i,t) -> (InvMu this . Just . (i,) <$> t))
-      $ zipWith (\i t -> (i,) $ invertMu (Just (i , this)) t) [0..] $
-      case tycon of -- the order tycon subtypes are INamed is important:
+startInvMu m = Leaf m -- the outer µ-binder. We intend to wrap this in successive inverses
+invertMu :: InvMu -> Type -> [InvMu]
+invertMu inv cur = let
+  go cur t = case t of
+    THTyCon tycon -> concat -- $ map (\(i , subInvs) -> (\subInv -> InvMu cur i inv) <$> subInvs)
+      $ zipWith (\i t -> invertMu (InvMu cur i inv) t) [0..] $
+      case tycon of -- the order for tycon branches is important:
         THArrow ars r -> (r : ars)
         THSumTy tys   -> IM.elems tys
         THProduct tys -> IM.elems tys
         THTuple tys   -> V.toList tys
-    THMu m t    -> [Leaf m]
-    THMuBound m -> [Leaf m]
-    _ -> [] -- no mus in this branch
-  in case this of
-  TyGround gs  -> concat (go this <$> gs)
-  TyVars vs gs -> concat (go this <$> gs)
+    THMu m t    -> [inv] -- [Leaf m]
+    THMuBound m -> [inv] -- [Leaf m]
+    _ -> [] -- no mus in cur branch
+  in case cur of
+  TyGround gs  -> concat (go cur <$> gs)
+  TyVars vs gs -> concat (go cur <$> gs)
   TyVar v -> []
 
 -- test if an inverted Mu matches the next layer (a potential unrolling of the µ)
@@ -231,15 +233,11 @@ invertMu parent this = let
 -- Either (more wrappings to test) (end , True if wrapping is an unrolling)
 testWrapper :: InvMu -> Int -> Type -> Either InvMu Bool
 testWrapper (Leaf m) recBranch t = Right True
---testWrapper (Leaf m) recBranch t = case t of
---  TyGround [THMuBound x] | x == m -> Right True
---  TyGround [THMu x _   ] | x == m -> Right True
---  _ -> Right False
-testWrapper (InvMu this parent) recBranch t = case (this , t) of
+testWrapper (InvMu this r parent) recBranch t | r /= recBranch = Right False
+testWrapper (InvMu this r parent) recBranch t = case {-d_ (recBranch , this , parent)-} (this , t) of
   (TyGround g1 , TyGround g2) -> let
     partitionTyCons g = (\(t , o) -> ((\case {THTyCon tycon -> tycon ; _ -> error "wtf" }) <$> t , o))
       $ partition (\case {THTyCon{}->True;_->False}) g
-    recBranch = fromMaybe (-1) (fst <$> parent)
     ((t1 , o1) , (t2 , o2)) = (partitionTyCons g1 , partitionTyCons g2)
     testGuarded t1 t2 = let go i t1 t2 = if i == recBranch then True else t1 == t2
       in zipWith3 go [0..] t1 t2
@@ -251,8 +249,7 @@ testWrapper (InvMu this parent) recBranch t = case (this , t) of
       _ -> [False]
     in if not (all identity muFail) {-|| o1 /= o2-} then Right False
        else case parent of
-         Nothing -> Right True
-         Just (_ , Leaf{}) -> Right True
-         Just (i , nextInvMu) -> Left nextInvMu
+         Leaf{}    -> Right True
+         nextInvMu -> Left nextInvMu
   _ -> Right False
 -- TODO TyVars (presumably only relevant for let-bindings)

@@ -1,29 +1,16 @@
 import imports/prelude
---List =
---  | Nil : List
---  | Cons : Int -> (List -> List)
---
---  L a =
---    | Nil : L
---    | Cons : Arrow a (Arrow L L)
---
---  --pure x v = { ret = x }
---  ----pOK ps = ps . cok . set 1
---
---  _>>_ = \f x a => x (f a)
---  _<_  = \f x => f x
---
---  z = add < 5
 
+List A = data
+  Nil
+  Cons A (List A)
+Str = List Char
+
+printList : List Int -> Int
 printList l = case l of
   Nil => 0
   Cons i ll => add (putNumber i) (printList ll)
---
---  Inc l = case l of
---    Nil => Nil
---    Cons i ll => Cons (add 1 i) (Inc ll)
---
---  scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
+
+scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
 
 fromMaybe l = case l of
   Maybe b => b
@@ -51,10 +38,11 @@ foldl f s l = case l of
 
 c a b = Cons a b
 append front back = foldr c back front
+_++_ = append
 concat = foldr (append) Nil
 -- n = Cons '\n' Nil
 consF f x xs = Cons (f x) xs
-mapFold f l = foldr (consF f) Nil l
+mapFold f l = foldr (consF f) Nil l -- simple muroll test case
 map = mapFold
 concatMap f xs = foldr (\x b => foldr c b (f x)) Nil xs
 unlines ls = concat (mapFold (\l => append l (c '\n' Nil)) ls)

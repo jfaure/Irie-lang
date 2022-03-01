@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable, ForeignFunctionInterface, GeneralizedNewtypeDeriving #-}
 module X86JIT -- ( allocateMemory, codePtr, vecPtr , asciz, extern, getFunction, jit,)
 where
+import System.Info (os , arch) -- arch `elem` ["x86_64" , "x86"]
 import X86
 
 --import Data.Typeable

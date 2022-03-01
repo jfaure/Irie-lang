@@ -1,14 +1,18 @@
 ## Top Priority
   * languageDocumentation.md
-  * type annotations (polymorphic subsumption and aliases)
+  * type annotations
   * choice between (first order) foldl and foldr; ListFn => FoldL fl | FoldR fr | Array fl fr (| Ix)
   * toCStruct / fromCStruct / [ptr] : A -> CStruct
   * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals
+  * improve patterns2TT and eqn matches
 ## Top
   * show + repl typecase to print JIT results
   * provide Vector alternative for ADTs when names sequential (they frequently are) [n..m]
   * 'StrIntName' new datatype: growable vector + hashmap
   * Linear types; dependent types required to quantify relative linearity `t ≥ f => t → u`
+  * expand lambda-mixfixes with explicit holes & don't allow unsaturated mixfix words
+  * mixfix scope
+  * record type decls
 ## Parse
   * don't allow mixing tabs and spaces
   * Pattern guards
@@ -30,7 +34,7 @@
   * scoping of labelNames
   * use functions & records to manage names? (names , let-binds , etc..)
 ## Error messages
-  * Warn nonsense type joins
+  * Warn nonsense type joins / make a dependent type on the if/case statement
   * lone mfWords that aren't ambig-binds should error (also non-explicit partial apps like f = 3 <)
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
@@ -40,24 +44,23 @@
   * static argument transformation
   * tycon promotion (promote single field /labels to value)
   * case-merge
-  * exitification (float exit paths out of recursive functions)
-  * liberate-case (avoid repeated case on freevars by unrolling recursive fns once)
+  * exitification (separate code from recursive exit paths)
   * normalize fields/labels for codegen
   * Maths: recognize series (sum/product) ; recognize neutral elements (0 for + , 1 for *)
 
 ## Unimportant
-  * tycon let-bindings addresses (f = let l = .. in .. => `f.l`)
-  * parser [IntMap Int] maybe faster as (IntMap (Int,Int))
-  * error messages via prettyprinter Doc
-  * mergeTypes indicates whether merge was noop
+  * improve Generalise's handling of subbing a recvar with non-rec one (keep Recursive flag)
+  * Pattern PTT: custom unPat function to support any patterns
   * optimise instantiation
-  * check let-rec / mutuals
-  * Collect repeated not-in-scope errors (replace NotInScope with PoisonExpr on first fail?)
+  * avoid generalising type annotations; directly make a THBi rather than tvars
+  * tycon let-bindings addresses (f = let l = .. in .. => `f.l`)
+  * error messages via prettyprinter Doc
+  * mergeTypes indicate whether merge was noop
+  * check let-rec / mutual annotations
   * make work module import loops
   * language server
   * optimize cached modules
   * sh syntax `ls -lr` => `ls { l=True , r=True }`
   * engineer GlobalResolver to work concurrently
-  * when recompiling cached modules; remove deleted names
   * prefetch memory | loop unrolling
   * after function with no free-vars generalised, can trim but not fully clear bisubs!

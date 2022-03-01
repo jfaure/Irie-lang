@@ -1,3 +1,4 @@
+-- Optimiser: extremely aggressively attempt to bring eliminators next to introductions
 module Eval where
 import Prim
 import CoreSyn
@@ -7,11 +8,17 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
 import qualified Data.Vector as V
 
--- * inline small functions
--- * speculatively inline data functions
--- * constant fold tycons (casts/case/products) as much as possible
--- * find constant arguments
--- * commutative and associative folds/stream can be reversed
+-- * inline small functions & data functions
+-- * constant fold tycons (casts/case/products) as much as possible (eg. case-of-case)
+-- * static argument transformation => if args to a (local) fn are constant
+--     make them free (might avoid dup node)
+-- * push lambdas to avoid cloning `\b => (f b , f b)` = `(\b => f b , \b => f b)`
+-- * Mutual datafns: need to inline one into the other to minimise data
+
+-- # eliminate data fixpoints => Stream / Cata / Build
+-- # isolate tycons and fuse with their eliminators
+--   beta-reduce once all data args are available (successfully eliminated data)
+--   give up on excessively transitive data (too many large function calls before case)
 
 -- Deriving build-catas
 -- * Ec = (∀α1..αn) ∀β -- constructor equation where B is the type parameter for recursion
@@ -33,6 +40,7 @@ import qualified Data.Vector as V
 -- fold   unstream  (may as well do cata-build, and let the program stack recursive calls)
 --
 -- First order (no inherited attribute) Stream / Foldr can be used interchangeably
+-- Commutative and Associative folds/stream can be reversed
 -- fold f        -> Stream
 -- Stream next z -> fold
 
@@ -62,24 +70,24 @@ import qualified Data.Vector as V
 -- TreeStep a b s = Leaf a | Fork b s s | Skip s
 
 -- # Plan
--- Derive (1. a cata) or a stream function
+-- Derive a cata or a stream function
 -- * attempt to fuse everything with stream fusion
 -- * use cata-build only for second order cata
--- * indexing functions = buildl | buildr
+-- * indexing functions? = buildl | buildr
 
-type2ArgKind :: Type -> ArgKind
-type2ArgKind = _
+--type2ArgKind :: Type -> ArgKind
+--type2ArgKind = _
+--
+--data ArgKind
+--  = APrim PrimType
+--  | AFunction [ArgKind] ArgKind
+--  | ARecord   (IntMap ArgKind)
+--  | ASum      (IntMap SumRep)
+--  | APoly
+--  | ARec -- only in Array or Tree (also fn return | any covariant position?)
+--data SumRep = Enum | Peano | Wrap | Array [ArgKind] | Tree [ArgKind]
 
 type SimplifierEnv s = StateT (Simplifier s) (ST s)
-data ArgKind
-  = APrim PrimType
-  | AFunction [ArgKind] ArgKind
-  | ARecord   (IntMap ArgKind)
-  | ASum      (IntMap SumRep)
-  | APoly
-  | ARec -- only in Array or Tree (also fn return | any covariant position?)
-data SumRep = Enum | Peano | Wrap | Array [ArgKind] | Tree [ArgKind]
-
 data Simplifier s = Simplifier {
    cBinds      :: MV.MVector s Bind
  , nApps       :: Int
@@ -117,25 +125,6 @@ simplifyBindings nArgs nBinds bindsV = do
   , recLabels   = IM.empty
   }
 
-identifyLabels :: Type -> SimplifierEnv s ()
-identifyLabels t = pure ()
---identifyLabels (TyGround ty) = let
---  isMuBound x = False -- \case { THMuBound x -> True ; _ -> False}
---  goL [THTyCon (THTuple t)] = _ --(fst <$> V.filter (\(_,t) -> any isMuBound t) (V.imap (,) t))
---  go = mapM_ goTH
---  goTH = \case
---    THBi b m ty -> go ty
-----  THMu x ty   -> go ty
---    THTyCon s -> case s of
---      THSumTy ls -> do
---        let is = goL <$> ls
---        modify $ \x->x{recLabels = IM.union (recLabels x) $ is}
---      THTuple t   -> go `mapM_` t
---      THProduct t -> go `mapM_` t
---      THArrow t r -> (go `mapM_` t) *> go r
---    x -> pure ()
---  in go ty
-
 simpleBind :: Int -> SimplifierEnv s Bind
 simpleBind n = gets cBinds >>= \cb -> MV.read cb n >>= \b -> do
 --traceM "\n"
@@ -144,7 +133,7 @@ simpleBind n = gets cBinds >>= \cb -> MV.read cb n >>= \b -> do
   MV.write cb n (BindOpt (0xFFFFFF) (Core (Var (VBind n)) tyBot)) -- recursion guard
   new <- case b of
     BindOpt nApps body -> setNApps nApps *> pure body
-    BindOK (Core t ty) -> (identifyLabels ty *> {-(gets recLabels) *>-} simpleTerm t) <&> \case
+    BindOK isRec (Core t ty) -> simpleTerm t <&> \case
       -- catch top level partial application (ie. extra implicit args)
       App (Instr (MkPAp n)) (f2 : args2) -> let
         (arTs , retT) = getArrowArgs ty
@@ -194,10 +183,10 @@ simpleTerm t = let
       Nothing -> Label l      ars
       Just  i -> RecLabel l i ars
 
-  Match t branches d -> let
-    -- add recLabel information
-    go l (Core f t) = gets recLabels <&> (fromMaybe mempty . (IM.!? l)) >>= \is -> (\e' -> (is,Core e' t)) <$> simpleTerm f
-    in IM.traverseWithKey go branches <&> \branches' -> RecMatch branches' d
+--Match t branches d -> let
+--  -- add recLabel information
+--  go l (Core f t) = gets recLabels <&> (fromMaybe mempty . (IM.!? l)) >>= \is -> (\e' -> (is,Core e' t)) <$> simpleTerm f
+--  in IM.traverseWithKey go branches <&> \branches' -> RecMatch branches' d
 
   _ -> pure t
 

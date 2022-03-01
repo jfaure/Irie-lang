@@ -13,21 +13,19 @@ import Control.Lens
 type TCEnv s a = StateT (TCEnvState s) (ST s) a
 data TCEnvState s = TCEnvState {
  -- in
-   _pBinds  :: V.Vector P.FnDef   -- parsed module
- , _externs :: Externs            -- imported bindings
- , _thisMod :: ModuleIName        -- used to make the QName for local bindings
+   _pBinds      :: V.Vector P.FnDef -- parsed module
+ , _externs     :: Externs          -- imported bindings
+ , _thisMod     :: ModuleIName      -- used to make the QName for local bindings
+ , _openModules :: BitSet
 
  -- out
  , _wip         :: MV.MVector s Bind
- , _biFails     :: [BiSubError] -- inference failure
- , _scopeFails  :: [ScopeError] -- name not in scope
- , _checkFails  :: [CheckError] -- type annotation doesn't subsume the inferred one
+ , _errors      :: Errors
 
- -- Instantiation
- , _muInstances :: IM.IntMap Int -- not brilliant
+ , _muInstances :: IM.IntMap Int -- Instantiation of mu-types; not brilliant
 
  -- Biunification state
- , _bindWIP     :: IName              -- to identify recursion and mutuals
+ , _bindWIP     :: (IName , Bool)     -- to identify recursion and mutuals (Bool indicates recursion)
  , _tmpFails    :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen        :: Int                -- cursor for bis which may have spare space
  , _bis         :: MV.MVector s BiSub -- typeVars
@@ -39,18 +37,21 @@ data TCEnvState s = TCEnvState {
  , _leakedVars  :: BitSet  -- TVars bisubbed with escapedVars
  , _deadVars    :: BitSet  -- formerly leaked now fully captured
 
- -- Generalisation state
- , _muWrap      :: Maybe (IName , Type , [InvMu] , [InvMu])
+ -- Type Analysis phase (Gen + simplification)
+ , _recVars     :: Integer -- bitmask for recursive TVars
+ , _coOccurs    :: MV.MVector s ([Type] , [Type]) -- (pos , neg) occurs are used to enable simplifications
+}; makeLenses ''TCEnvState
+
+-- Generalisation state
+type GenEnv s a = StateT (GenEnvState s) (ST s) a
+data GenEnvState s = GenEnvState {
+   _muWrap      :: [(Int , IName , Type , [InvMu] , [InvMu])] -- (recBranch , muVar , muType , startInvMu , curInvMu)
+ -- ^ several tycon branches may contain a mu type , and a µtype may contain multiple fixpoints
  , _hasRecs     :: BitSet
  , _quants      :: Int  -- fresh names for generalised typevars [A..Z,A1..Z1..]
  , _quantsRec   :: Int  -- fresh names for generalised recursive typevars [x..y,x1..y1..]
  , _biEqui      :: MV.MVector s IName -- TVar -> THBound; complement 0 indicates not gen yet
-
- -- Type Analysis phase (Gen + simplification)
- , _recVars     :: Integer -- bitmask for recursive TVars
- , _coOccurs    :: MV.MVector s ([Type] , [Type]) -- (pos , neg) occurs are used to enable simplifications
-}
-makeLenses ''TCEnvState
+}; makeLenses ''GenEnvState
 
 clearBiSubs :: Int -> TCEnv s ()
 clearBiSubs n = (blen .= n) *> (deadVars .= 0)

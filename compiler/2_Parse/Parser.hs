@@ -69,12 +69,16 @@ insertOrRetrieveArg h sz argMaps = case argMaps of
 
 pd = moduleWIP . parseDetails
 addAnonArgName = moduleWIP . parseDetails . nArgs <<%= (1+)
-addArgName , addBindName , addUnknownName :: Text -> Parser IName
+addArgName , addNewArgName , addBindName , addUnknownName :: Text -> Parser IName
 addArgName    h = do
   n <- use (moduleWIP . parseDetails . nArgs)
   pd . hNameArgs %%= insertOrRetrieveArg h n >>= \case
     Left _sz -> moduleWIP . parseDetails . nArgs <<%= (1+)
     Right  x -> pure $ x
+addNewArgName h = do
+  n <- moduleWIP . parseDetails . nArgs <<%= (1+)
+  moduleWIP . parseDetails . hNameArgs %= (\(x:xs) -> M.insert h n x : xs)
+  pure n
 
 -- register an '_'; so () and funBind can make an implicit abstraction
 addUnderscoreArg i = Var (VLocal i) <$ (moduleWIP . parseDetails . underscoreArgs %= (`setBit` i))
@@ -113,7 +117,6 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
   in tryArg >>= \arg -> Var <$> case choice [arg , tryLet , tryTop] of
     Just i  -> pure i
     Nothing -> VExtern <$> addUnknownName h
-
 
 -- The names nest tracks the scope of local definitions
 newLetNest p = (moduleWIP . parseDetails . hNameLocals %= (M.empty :))
@@ -220,7 +223,7 @@ indentedItems prev scn p finished = let
   pos <- L.indentLevel
   [] <$ lookAhead (eof <|> finished) <|> if
  -- 'fail' here to backtrack the whitespace/newlines. Otherwise the App parser sees and eats things from later lines
-    | pos <= prev -> fail "end of indent" -- pure []
+    | pos <= prev -> fail $ ("end of indent: " <> show pos <> " <= " <> show prev)
     | pos == lvl  -> p >>= \ok -> option [ok] ((ok :) <$> try (go lvl))
     | otherwise   -> fail ("incorrect indentation, got " <> show pos <> ", expected <= " <> show prev <> " or == " <> show lvl)
      -- L.incorrectIndent EQ lvl pos
@@ -238,7 +241,7 @@ linefold p = let
 --    (L.incorrectIndent GT prev cur) (alas GEQ is not an Ordering)
 --  indent .= cur
     p -- <* (indent .= prev)
-    <* lookAhead (single '\n') --endLine -- make sure this was a linefold to not corrupt error messages
+    <* lookAhead (single '\n') -- make sure this was a linefold to not corrupt error messages
   in try doLinefold <|> p
 
 ------------
@@ -280,19 +283,17 @@ decl = svIndent *> choice
    , void functorModule
    , pForeign
    , void (funBind True LetOrRec) <?> "binding"
--- , void patBind
-   , bareTT <?> "repl expression"
+-- , bareTT <?> "repl expression"
    ] <?> "import , extern or local binding"
 
--- for the repl
-bareTT = addAnonBindName *> ((\tt -> addBind (FnDef "replExpr" LetOrRec Nothing 0 [FnMatch [] tt] Nothing)) =<< tt)
+--bareTT = addAnonBindName *> ((\tt -> addBind (FnDef "replExpr" LetOrRec Nothing 0 [FnMatch [] tt] Nothing)) =<< tt)
 
 pForeign = do -- external function defined outside of Irie and opaque until link-time
   fn  <- ((Foreign <$ reserved "foreign") <|> (ForeignVA <$ reserved "foreignVA"))
   hNm <- iden
   addBindName hNm
   ty <- reservedOp ":" *> tt
-  addBind (FnDef hNm Let Nothing 0 [FnMatch [] (Foreign hNm ty)] (Just ty))
+  addBind (FnDef hNm Let Nothing 0 (FnMatch [] (Foreign hNm ty) :| []) (Just ty))
 
 functorModule :: Parser ()
 functorModule = reserved "module" *> do
@@ -305,7 +306,7 @@ functorModule = reserved "module" *> do
       else void $ newArgNest $ do
         moduleWIP . moduleName .= Right mName
         o <- getOffset
-        args    <- some (pattern False)
+        args    <- some pattern
         sig     <- optional (reserved ":" *> tt)
         unless (null args && isNothing sig) (moduleWIP . functor .= Just (FunctorModule args sig o))
         reserved "="
@@ -326,79 +327,73 @@ addMixfixWords m mfBind mfdef = let
     Nothing  -> pure Nothing
   in case m of
     Just hNm           : mfp -> addMFWord hNm (StartPrefix mfdef)
-      >>= \w -> (Just w :) <$> addMFParts mfp
+      >>= \w -> (Just w : )              <$> addMFParts mfp
     Nothing : Just hNm : mfp -> addMFWord hNm (StartPostfix mfdef)
       >>= \w -> (Nothing :) . (Just w :) <$> addMFParts mfp
 
--- Top level pattern assignments: create a binding for the whole expression and extra bindings for each pattern arg
--- TODO perhaps use a Functor module to get the pattern names out of an Abs like normal patterns work?
---patBind = do
---  p <- pattern True
---  reservedChar '='
---  exprBindName <- addAnonBindName
---  e <- tt
---  -- TODO write a better convpat; this attempt to convert a lambda into a top-level binding is hacky
---  let ([exprBind] , artys , App (Abs (fndef)) lensedTTs) = patterns2TT True [p] e :: ([IName] , [[Int]] , TT)
---      [FnMatch args body] = fnMatches fndef
---      patBindNames = (\(PArg i) -> i) <$> args
---  -- ! depends on the bindNames being added in the same order as the lenses are added !
---  mapM_ (\e -> addBind (FnDef "patBind" LetOrRec Nothing 0 [FnMatch [] e] Nothing)) (body : lensedTTs)
-
 funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
-  [Just nm] -> VBind <$> funBind' isTop letRecT nm Nothing (symbol nm *> many (lexeme (singlePattern False {-isTop-})))
+  [Just nm] -> let pArgs = many (lexeme singlePattern) -- non-mixfix fn def can parse args immediately
+    in VBind <$> funBind' isTop pArgs letRecT nm Nothing (symbol nm *> pArgs)
   mfdefHNames -> let
     hNm = mixFix2Nm mfdefHNames
     pMixFixArgs = \case
-      []            -> pure []
+      []           -> pure []
       Just  nm : x -> symbol nm *> pMixFixArgs x
-      Nothing  : x -> (:) <$> lexeme (singlePattern False) <*> pMixFixArgs x
+      Nothing  : x -> (:) <$> lexeme singlePattern <*> pMixFixArgs x
     in mdo
-    prec <- fromMaybe (defaultPrec) <$> optional (braces parsePrec)
+    prec <- fromMaybe defaultPrec <$> optional (braces parsePrec)
     mfdefINames <- addMixfixWords mfdefHNames iNm mfdef
     let mfdef = MixfixDef iNm mfdefINames prec
-    iNm <- funBind' isTop letRecT (mixFix2Nm mfdefHNames) (Just mfdef) (pMixFixArgs mfdefHNames)
+    iNm <- funBind' isTop (pure []) letRecT (mixFix2Nm mfdefHNames) (Just mfdef) (pMixFixArgs mfdefHNames)
     pure (VBind iNm)
 
+some1 f = (:|) <$> f <*> many f
+
 -- parse a function definition (given a possible mixfix pattern parsed in the type annotation)
-funBind' :: Bool -> LetRecT -> Text -> Maybe MixfixDef -> Parser [Pattern] -> Parser IName
-funBind' isTop letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
-  iNm <- addBindName nm -- handle recursive references
-    <* addBind (FnDef nm letRecT mfDef {-(implicits ++ pi)-} free eqns ann)
-  ((implicits , pi , eqns , ann) , free) <- newArgNest $ do
-    ars <- many (singlePattern False)
-    ann <- optional tyAnn
-    eqns <- choice
-      [ (:[]) <$> fnMatch (pure ars) (reserved "=") -- (FnMatch [] ars <$> (lexemen (reservedOp "=") *> tt))
-      , case (ars , ann) of
-          (x  , Nothing) -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") ) -- f = _
-          ([] , Just{})  -> some $ try (endLine *> fnMatch pMFArgs (reserved "=") ) -- f : T = _
-          (x  , Just{})  -> fail $ "Expected function definition \" = _\" , got type annotation \" : _\"" -- f x : _
+-- => pMFArgs should be used to parse extra equations on subsequent lines
+-- If this is a mixfix, args will be [] at this point
+funBind' :: Bool -> Parser [Pattern] -> LetRecT -> Text -> Maybe MixfixDef -> Parser [Pattern] -> Parser IName
+funBind' isTop pArgs letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
+  iNm <- addBindName nm -- add in mfix in case of recursive references
+    <* addBind (FnDef nm letRecT mfDef free eqns ann)
+  ((eqns , ann) , free) <- newArgNest $ do
+    ann  <- optional tyAnn
+    eqns <- choice -- TODO maybe don't allow `_+_ a b = add a b`
+--    [ (:|) <$> (fnMatch pArgs (reserved "=")) <*> many (try (endLine *> fnMatch pMFArgs (reserved "=")))
+      [ (:|) <$> (fnMatch pArgs (reserved "="))
+             <*> many (try $ endLine *> scn *> svIndent *> fnMatch pMFArgs (reserved "="))
+      , case ([] , ann) of
+          (x  , Nothing) -> some1 $ try (endLine *> fnMatch pMFArgs (reserved "=") ) -- f = _
+          ([] , Just{})  -> some1 $ try (endLine *> fnMatch pMFArgs (reserved "=") ) -- f : T = _
+--        (x  , Just{})  -> fail  $ "Expected function definition \" = _\" , got type annotation \" : _\"" -- f x : _
       ]
-    pure (implicits , pi , eqns , ann)
+    pure (eqns , ann)
   pure iNm
 
 tyAnn :: Parser TT = do {-newArgNest $-}
   reservedChar ':'
   (pi , ty) <- getPiBounds tt
   -- no freeVars in a pi-binder
-  pure (Abs (FnDef "pi-binder" LetOrRec Nothing emptyBitSet [FnMatch (PPi <$> pi) ty] Nothing))
+  pure $ case pi of
+    [] -> ty
+    pi -> Abs (FnDef "pi-binder" LetOrRec Nothing emptyBitSet (FnMatch (PPi <$> pi) ty :| []) Nothing)
 
 lambda = do
-  (eqns , free) <- newArgNest $ (:[]) <$> fnMatch (many (singlePattern False)) (reserved "=>")
+  (eqns , free) <- newArgNest $ (:|[]) <$> fnMatch (many singlePattern) (reserved "=>")
   pure $ Abs $ FnDef "lambda" LetOrRec Nothing free eqns Nothing
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ? (idea is to merge abs `f x = \y => _` into f x y = _
   let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case")
-        *> (fnMatch (many (singlePattern False)) (reserved "=>"))
+        *> (fnMatch (many singlePattern)) (reserved "=>")
       normalFnMatch = FnMatch <$> (pMFArgs <* lexemen sep) <*> tt
-  in hoistLambda <|> normalFnMatch
+  in {-hoistLambda <|>-} normalFnMatch -- TODO reactivate
 
 -- make a lambda around any '_' found within the tt eg. `(_ + 1)` => `\x => x + 1`
 catchUnderscoreAbs :: TT -> Parser TT
 catchUnderscoreAbs tt = use (moduleWIP . parseDetails . underscoreArgs) >>= \underscores ->
   if 0 == underscores then pure tt else
-  let eqns = [FnMatch (PArg <$> bitSet2IntList underscores) tt]
+  let eqns = FnMatch (PArg <$> bitSet2IntList underscores) tt :| []
   in do
     free <- getFreeVars -- Freevars are exactly those in the parse state, since we introduced none of them at this new Abs
     Abs (FnDef "_abs" LetOrRec Nothing free eqns Nothing) <$ (moduleWIP . parseDetails . underscoreArgs .= 0)
@@ -491,7 +486,7 @@ ttArg , tt :: Parser TT
       svIndent
       lName <- idenNo_ >>= newSLabel
       ((pats , splitFn) , free) <- newArgNest $ do
-        pats  <- many (singlePattern False)
+        pats  <- many singlePattern
         reserved "=>"
         splitFn <- tt
         pure (pats , splitFn)
@@ -504,10 +499,7 @@ ttArg , tt :: Parser TT
         _  -> let finishEarly = void $ char ')' <|> lookAhead (reservedChar '_')
           in do  -- ')' and final match-all '_' can terminate indent
           alts     <- indentedItems ref scn split finishEarly
-          catchAll <- optional $ reservedChar '_' *> choice
-            [ reservedName "=" *> lexeme idenNo_ >>= addArgName <&> PArg
-            , addAnonArgName <&> \a -> PComp a PWildCard
-            ] >>= \pat -> (pat , ) <$> (reserved "=>" *> tt)
+          catchAll <- optional $ reservedChar ' ' *> reserved "=>" *> tt
           pure (Match alts catchAll)
   match = do
     scrut  <- tt
@@ -533,7 +525,7 @@ ttArg , tt :: Parser TT
     Just ty -> case exp of
       Var (VLocal l) -> addPiBound (PiBound [l] ty) *> pure exp
       x -> (Var . VBind <$> addAnonBindName)
-        <* addBind (FnDef "typed-expr" LetOrRec Nothing 0 [FnMatch [] exp] (Just ty))
+        <* addBind (FnDef "typed-expr" LetOrRec Nothing 0 (FnMatch [] exp :| []) (Just ty))
 
   piBound = do
     i <- iden
@@ -545,39 +537,35 @@ loneIden a i = lookupSLabel i <&> \case
   Just  l -> PComp a (PLabel l [])
 
 -- TODO parse patterns as TT's to handle pi-bound arguments
-pattern isTop = let
-  addName     = if isTop then addBindName else addArgName
-  addAnonName = if isTop then addAnonBindName else addAnonArgName
+pattern = let
   in choice
   [ try idenNo_ >>= \i -> choice -- addArgName i >>= \a -> choice
-     [ some (singlePattern isTop) >>= \args -> lookupSLabel i >>=
-         maybe (newSLabel i) pure >>= \f -> addAnonName <&> \a -> PComp a (PLabel f args)
-     , addName i >>= \a -> loneIden a i
+     [ some (singlePattern) >>= \args -> lookupSLabel i >>=
+         maybe (newSLabel i) pure >>= \f -> addAnonArgName <&> \a -> PComp a (PLabel f args)
+     , addNewArgName i >>= \a -> loneIden a i
      ]
-  , singlePattern isTop
+  , singlePattern
   ]
 
 -- Add anonymous arguments to prepare an extra Abs that accesses the patterns via lenses
-singlePattern isTop = let
-  addName     = if isTop then addBindName else addArgName
-  addAnonName = if isTop then addAnonBindName else addAnonArgName
-  mkCompositePat cp = addAnonName <&> \a -> PComp a cp
-  tuple p = ((\tuplePats -> PTuple (p : tuplePats)) <$> some (reservedChar ',' *> pattern isTop)) >>= mkCompositePat
+singlePattern = let
+  mkCompositePat cp = addAnonArgName <&> \a -> PComp a cp
+  tuple p = (\tuplePats -> PTuple (p : tuplePats)) <$> some (reservedChar ',' *> pattern) >>= mkCompositePat
   in choice
   [ reservedChar '_' *> choice
-    [ reservedName "as" *> lexeme idenNo_ >>= addName <&> PArg
-    , addAnonName <&> \a -> PComp a PWildCard
+    [ reservedName "as" *> lexeme idenNo_ >>= addNewArgName <&> PArg
+    , addAnonArgName <&> \a -> PComp a PWildCard
     ]
-  , try idenNo_ >>= \i -> addName i >>= \a -> loneIden a i
+  , try idenNo_ >>= \i -> addNewArgName i >>= \a -> loneIden a i
 
   -- Composites
   , let fieldPattern = lexeme idenNo_ >>= \iStr -> newFLabel iStr >>= \i -> (i,) <$> choice
-          [ reservedName "as" *> (pattern isTop)
-          , PArg <$> addName iStr -- { A } pattern is same as { A=A }
+          [ reservedName "as" *> pattern
+          , PArg <$> addNewArgName iStr -- { A } pattern is same as { A=A }
           ]
     in (PCons <$> braces (fieldPattern `sepBy` reservedChar ',')) >>= mkCompositePat
   , (PLit <$> try literalP) >>= mkCompositePat
-  , parens $ pattern isTop >>= (\case
+  , parens $ pattern >>= (\case
       PArg i -> option (PArg i) (PTyped i <$> tyAnn)
       p -> pure p
     ) >>= \p -> option p (tuple p)

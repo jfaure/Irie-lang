@@ -18,9 +18,9 @@ Subtyping examples:
 * Parameterized data (including GADTs): instead of `LC a = Var a | Abs (LC a) [LC a] | etc`, define `LC = VarString String | Abs LC [LC] | etc` then elsewhere substitute `VarString String` with eg. `VarInt Int`, when via subtyping the rest of the AST and many functions on it are reusable.
 * Subtyping relations on algebraic data (records and sum types) are useful for quantitative type theory (including proof irrelevance).
 * The dependent function space contains subtypes of the non-dependent function space
-* Subtyping polymorphism is a sweet spot between parametric polymorphism and ad-hoc polymorphism, which enables us to say exactly what we mean.
+* Subtyping polymorphism is the sweet spot between parametric polymorphism and ad-hoc polymorphism, being both simple and equally powerful
 * Bi-variant type parameters accurately describe structures where insertable types are different to extractable types; e.g. input of any graphical component into a list after which we can use only their 'onClick' functions
-* Automatic subtyping coercions can cleanly separate algorithms from opportunistic optimisations
+* Additional subtyping relations can enable automatic opportunistic optimisations
 
 ## Performance
 ### Fusion

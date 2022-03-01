@@ -23,6 +23,7 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
 
  , _parseDetails :: ParseDetails
 }
+
 -- args and signature for the module (return type must be a record)
 data FunctorModule = FunctorModule [Pattern] (Maybe TT) SourceOffset
 
@@ -40,16 +41,12 @@ data ParseDetails = ParseDetails {
  , _labels         :: NameMap
  , _newLines       :: [Int]
 }
-
---newtype TopBind = FunBind { fnDef :: FnDef } -- | PatBind [Pattern] FnDef
-
--- mark let origin ? `f = let g = G in F` => f.g = G
 data FnDef = FnDef {
    fnNm         :: HName
  , fnRecType    :: !LetRecT        -- or mutual
  , fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
  , fnFreeVars   :: FreeVars
- , fnMatches    :: [FnMatch]
+ , fnMatches    :: NonEmpty FnMatch
  , fnSig        :: (Maybe TT)
 }
 data FnMatch = FnMatch [Pattern] TT
@@ -78,7 +75,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Cons   [(FName , TT)] -- can be used to type itself
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
- | Match  [(LName , FreeVars , [Pattern] , TT)] (Maybe (Pattern , TT))
+ | Match  [(LName , FreeVars , [Pattern] , TT)] (Maybe TT)
  | List   [TT]
 
  -- term primitives
@@ -99,15 +96,12 @@ data Pattern
  | PComp  IName CompositePattern
  | PGuard Pattern [Pattern] -- case .. of { pat | b <- pat0 , c <- pat1 .. }
 
-data CompositePattern -- the pattern is INamed then split into components
+data CompositePattern -- the pattern is INamed then split into components (As pats use this IName)
  = PLabel LName [Pattern]
  | PCons  [(FName , Pattern)]
  | PTuple [Pattern]
  | PWildCard
  | PLit   Literal
-
--- | PTT    TT
--- | PAs   IName Pattern -- all patterns are INamed anyway so no need for this
 
 data ParseState = ParseState {
    _indent      :: Pos    -- start of line indentation (need to save it for subparsers)
@@ -115,10 +109,9 @@ data ParseState = ParseState {
 
  , _moduleWIP   :: Module -- result
 }
-
-makeLenses ''Module
-makeLenses ''ParseDetails
 makeLenses ''ParseState
+makeLenses ''ParseDetails
+makeLenses ''Module
 
 showL ind = Prelude.concatMap $ (('\n' : ind) <>) . show
 prettyModule m = show (m^.moduleName) <> " {\n"

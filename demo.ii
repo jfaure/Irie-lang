@@ -1,47 +1,60 @@
-import imports/prelude
+--import imports/prelude
 --import imports/list
 --import imports/simpleTests
 module demo x =
 
---List A = | None | Some A (List A)
-List A = data
-  None
-  Some A (List A)
+-- scansum: muroll & type intersection simplification
+--scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
+
+-- ? data args/ret & codata
+--foldl f s l = case l of
+--  Cons x xs => foldl f (f s x) xs
+--  Nil       => s
+--
+--enumFromTo a b = ifThenElse (gt a b) Nil (Cons a (enumFromTo (add 1 a) b))
+--
+--fuse = foldl add 0 (enumFromTo 0 10)
+
+--nextAppend (Left input) = case nextEnum input of
+--  Done       => Skip    (Right input2)
+--  Skip xs    => Skip    (Left xs)
+--  Yield x xs => Yield x (Left xs)
+--nextAppend (Right ys) = case nextEnum ys of
+--  Done       => Done
+--  Skip bs    => Skip    (Right bs)
+--  Yield x ys => Yield x (Right ys)
+sum z s = case nextEnum s of
+  Done      => z
+  Skip s    => sum z       s
+  Yield x s => sum (add z x) s
+nextEnum n = ifThenElse (ge n 10) Done (Yield n (add 1 n))
+
+-- [ Done : {}
+-- | Skip : {[Left : {A} | Right : {⊥}]}
+-- | Yield: {A , [Left : {%i32} | Right : {%i32}]}
+-- ]
+
+--sumAppend xs = go 0 (Left xs)
 
 --rect (P : Set) : Set = record
 --  f : Int
 --  g : Int
 
---f (x : Int) = x
---id x = x : a -> a
+--FileName  = { basename = identity } --takeWhileEnd (/= '/')
+--Directory = { pwd = getcwd , entries = ls }
 
---id : Π a -> a -> a
---id : (a : Set) -> a
-id x = x
+--Dir = data
+--  File CString
+--  Dir  CString (List Dir)
 
--- step dirp = case j (readdir dirp) of
---   Nothing => Nothing
---   Just a  => Just { val = a , seed = dirp }
--- j = Just
+--printDirTree : Str -> Dir -> CString
+--printDirTree prefix = \case
+--  File f => prefix ++ f
+--  Dir  d r => prefix ++ d ++ map (printDirTree (fromCString " |-- " ++ prefix)) r
 
--- ls dName = unfoldr step (opendir dName)
+--step dirp = case j (readdir dirp) of
+--  Nothing => Nothing
+--  Just a  => Just { val = a , seed = dirp }
+--j = Just
 --
--- File = { basename = identity } --takeWhileEnd (/= '/') }
--- Dir  = { pwd = getcwd , entries = ls }
---
--- -- tree : String -> IO ()
--- tree rootPath = puts rootPath -- *> subTree "|-- " rootPath
--- pp pre ent =  (append pre (File.basename (direntName ent)))
--- subTree prefix path = map (pp prefix) (Dir.entries path)
--- The prefix in pretty-printing:
--- when a dir is opened:
--- 1. replace preceeding "--" with spaces
--- 2. append if last dir then "`-- " else "|-- " to prefix,
--- when a dir is closed, remove the "|-- "
-----subTree : (String where size >= 4) -> String -> IO ()
---subTree prefix path = let
---  ents = filter (\e => e.0 =? '.') (Dir.entries path)
---  newPrefix  = dropTail 3 prefix ++ "   "
---  lastPrefix = dropTail 4 prefix ++ "`-- "
---  pp prefix ent = puts (prefix ++ File.basename ent) *> subTree (prefix ++ "|-- ") ent
---  in map (\e => pp newPrefix e) entries *> pp lastPrefix last
+--ls dName = unfoldr step (opendir dName)

@@ -8,8 +8,9 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V
 import qualified Data.IntMap as IM
 
--- Static argument transofrmation translates nested computations into nested recursive fns
--- specialisation on paps produces flat loops with mutually recursive functions
+-- Tree flattening matches how functions recurse
+-- Can we recover arbitrary nodes knowing the flatting strategy?
+
 type CGEnv s a = StateT (CGState s) (ST s) a
 data CGState s = CGState {
    wipBinds    :: MV.MVector s CGWIP
@@ -157,7 +158,7 @@ cgCore wip i nm b = let
 
 cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case
   WIPCore (nm , b) -> case b of
-    BindOK b    -> cgCore wip i nm b
+    BindOK isRec b -> cgCore wip i nm b
     BindOpt _ b -> cgCore wip i nm b
 --  Ty ty -> pure $ ssaTy ty
   x -> pure x

@@ -134,4 +134,5 @@ misc0 = (\x => (let y = (x x.v) in 0))                  -- ⊤ → %i1
 -- hp1 = (\f => { a = f 1 , b = f "a" }) (\x => x)
 
 -- Type Checking
-add1 : Int -> Int = \a => add a 1
+add1 : Int -> Int = \a => add a 1  -- %i32 → %i32
+identity : (a : Set) -> a = \x => x -- ∏ A → A → A

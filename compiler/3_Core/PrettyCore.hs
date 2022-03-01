@@ -74,7 +74,7 @@ render flags = let
     ANone         -> addColor (getColor a) b
     AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
     AQBindName  q -> addColor (getColor a) $ case allNames <$> bindSource flags of
-      Nothing  -> "π" <> fromText (showRawQName q)
+      Nothing  -> "π(" <> (fromText (showRawQName q)) <> ")"
       Just nms -> fromText $ fst (nms V.! modName q V.! unQName q)
     AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcLabelNames <$> bindSource flags) q)
     AQFieldName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
@@ -112,18 +112,21 @@ number2xyz i = let
 pTy :: Type -> Doc Annotation
 --pTy (TyUnion t) = case t of
 pTy = let
+  pPiArg (arg , ty) = viaShow arg <+> ":" <+> pTy ty
   pTyUnion = \case
     [] -> "_"
     [x] -> pTyHead x
     ts  -> parens $ hsep (punctuate " &" (pTyHeadParens <$> ts))
   in \case
-  TyVar  i   -> "τ" <> viaShow i
-  TyVars i []-> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
-  TyVars i g -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> "&" <+> parens (pTyUnion g)
-  TyGround u -> pTyUnion u
-  TyExpr term ty -> parens $ pTerm term <+> ":" <+> pTy ty
---TyPi Pi
---TySi Pi (IM.IntMap Expr)
+  TyAlias q   -> annotate (AQBindName q) ""
+  TyVar  i    -> "τ" <> viaShow i
+  TyVars i [] -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
+  TyVars i g  -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> "&" <+> parens (pTyUnion g)
+  TyGround u  -> pTyUnion u
+  TyIndexed t ars -> pTy t <+> (hsep $ parens . pExpr <$> ars)
+  TyTerm term ty -> parens $ pTerm term <+> ":" <+> pTy ty
+  TyPi (Pi args ty) -> "Π" <> parens (hsep $ pPiArg <$> args) <+> pTy ty
+  TySi (Pi args ty) tyIndexes -> _
 
 pTyHeadParens t = case t of
   THTyCon THArrow{} -> parens (pTyHead t)
@@ -140,9 +143,6 @@ pTyHead = let
   THPrim     p -> pretty (prettyPrimType p)
   THBound    i -> pretty (number2CapLetter i)
   THMuBound  t -> pretty (number2xyz t)
---THMuBound  t -> "µ" <> pretty (number2CapLetter t)
---THExt      i -> "E" <> viaShow i
---THExt      i -> pretty $ fst (primBinds V.! i)
   THExt      i -> case snd (primBinds V.! i) of
     Ty t -> pTy t
     x -> "<?? " <> viaShow x <> " ??>"
@@ -152,7 +152,7 @@ pTyHead = let
     THArrow args ret -> hsep $ punctuate " →" ((parensIfArrow <$> args) <> [pTy ret])
     THSumTy l -> let
       prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> " : " <> pTy ty
-      in enclose "[" "]" (hsep $ punctuate " |" (prettyLabel <$> IM.toList l))
+      in enclose "[" "]" (hsep $ punctuate (" |") (prettyLabel <$> IM.toList l))
     THProduct l -> let
       prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy ty
       in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> IM.toList l))
@@ -176,18 +176,19 @@ pBind nm showTerm bind = pretty nm <> " = " <> case bind of
   Guard m tvar      -> "GUARD : "   <> viaShow m <> viaShow tvar
   Mutual m free isRec tvar tyAnn -> "MUTUAL: " <> viaShow m <> viaShow isRec <> viaShow tvar <> viaShow tyAnn
   WIP -> "WIP"
-  BindOK expr -> if showTerm then pExpr expr else pExprType expr
-  BindOpt complex expr -> parens (viaShow complex) <> pExpr expr
+  BindOK isRec expr -> let recKW = if isRec && case expr of {Core{}->True;_->False} then annotate AKeyWord "rec " else ""
+    in if showTerm then recKW <> pExpr expr else pExprType expr
+  BindOpt complex expr -> parens ("nApps: " <> viaShow complex) <+> pExpr expr
 
 pExprType = \case
   Core term ty -> annotate AType (pTy ty)
-  Ty t         -> " =: " <> annotate AType (pTy t)
+  Ty t         -> " type " <> annotate AType (pTy t)
   ExprApp f a -> pExpr f <> enclose "[" "]" (hsep $ pExpr <$> a)
   e -> viaShow e
 
 pExpr = \case
   Core term ty -> pTerm term <> softline <> " : " <> annotate AType (pTy ty)
-  Ty t         -> " =: " <> annotate AType (pTy t)
+  Ty t         -> "type" <+> annotate AType (pTy t)
   ExprApp f a -> pExpr f <> enclose "[" "]" (hsep $ pExpr <$> a)
   e -> viaShow e
 
@@ -204,27 +205,30 @@ pTerm = let
 --Hole -> " _ "
   Question -> " ? "
   Var     v -> pVName v
-  Lit     l -> annotate ALiteral (viaShow l)
+  Lit     l -> annotate ALiteral $ parens (viaShow l)
   Abs ars free term ty -> let
     prettyArg (i , ty) = viaShow i
     prettyFree x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
     in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFree free <> " => " <> pTerm term
 --   <> ": " <> annotate AType (pTy ty)
-  App f args -> parens (pTerm f <+> sep (pTerm <$> args))
+  RecApp f args -> parens (annotate AKeyWord "recApp" <+> pTerm f <+> sep (pTerm <$> args))
+  App f args    -> let parensF = case f of { Abs{} -> parens ; _ -> identity }
+    in parens (parensF (pTerm f) <+> sep (pTerm <$> args))
   PartialApp extraTs fn args -> "PartialApp " <> viaShow extraTs <> parens (pTerm fn <> fillSep (pTerm <$> args))
   Instr   p -> annotate AInstr (viaShow p)
   Cast  i t -> parens (viaShow i) <> enclose "<" ">" (viaShow t)
 
   Cons    ts -> let
-    doField (field , val) = prettyField (QName field) <> "@" <> pTerm val
+    doField (field , val) = prettyField (QName field) <> ".=" <> pTerm val
     in enclose "{ " " }" (hsep $ punctuate ";" (doField <$> IM.toList ts))
-  Label   l t    -> prettyLabel l <> "@" <> hsep (parens . pExpr <$> t)
+  Label   l []   -> "@" <> prettyLabel l
+  Label   l t    -> "@" <> prettyLabel l <> hsep (parens . pExpr <$> t)
 --RecLabel l i t -> prettyLabel l <> parens (viaShow i) <> "@" <> hsep (parens . pExpr <$> t)
   Match caseTy ts d -> let
-    showLabel l t = indent 2 $ prettyLabel (QName l) <> softline <> indent 2 (pExpr t)
+    showLabel l t = indent 2 $ prettyLabel (QName l) <> indent 2 (pExpr t)
     in annotate AKeyWord "\\case " <> (" : " <> annotate AType (pTy caseTy)) <> hardline
       <> vsep ((IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
---    <> maybe "%Default" pExpr d <> hardline
+      <> maybe "" (\catchAll -> hardline <> indent 2 ("_ => " <> pExpr catchAll)) d
 --RecMatch ts d -> let
 --  showLabel l (i,t) = prettyLabel (QName l) <> "(" <> viaShow i<> ") => " <> pE' "   " t
 --  in clMagenta "\\recCase " <> "\n      "
@@ -237,6 +241,7 @@ pTerm = let
       LensSet  tt      -> " . set "  <> parens (pExpr tt)
       LensOver cast tt -> " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr tt)
     in pTerm r <> " . " <> hsep (punctuate "." $ prettyField <$> target) <> pLens ammo
+  x -> error $ show x
 
 -- Used to print error messages, but I don't like it
 clBlack   x = "\x1b[30m" <> x <> "\x1b[0m"

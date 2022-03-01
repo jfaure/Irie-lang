@@ -51,13 +51,14 @@ data Term -- β-reducable (possibly to a type)
  | Match   Type (IM.IntMap Expr) (Maybe Expr) -- Type is the return type
 
  -- Extra info built by the simplifier
+ | RecApp Term [Term]
+ | Stream   Term -- Term is a non-recursive Abs
+ | UnStream Term
+ | Foldr
+
  | RecLabel ILabel (V.Vector Int) [Expr] -- annotate where fixpoints are
  | RecMatch (IM.IntMap (V.Vector Int , Expr)) (Maybe Expr)
  | PartialApp [Type] Term [Term] -- Top level PAp => Abs (no fresh argnames after parse)
- | BruijnAbs  Int Term -- debruijn abstraction
- | StreamCons (IM.IntMap Term) -- difference with Cons is that absent labels produce Nothing
- | Stream   Term -- Term is a non-recursive Abs
- | UnStream Term
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs idx for extracting field
@@ -77,9 +78,11 @@ data Type
  = TyGround GroundType
  | TyVar    Int -- generalizes to THBound if survives biunification and simplification
  | TyVars   BitSet GroundType
- | TyExpr   Term Type       -- term should be lambda calculus
- | TyPi Pi                  -- dependent function space, args are implicit (can be explicitly present as A -> T)
- | TySi Pi (IM.IntMap Expr) -- Existential; (partial) application of pi type
+ | TyTerm   Term Type       -- term should be lambda calculus or product/sum calculus
+ | TyAlias  QName
+ | TyPi Pi                  -- dependent function space, implicit args (can be explicitly present as A -> T)
+ | TySi Pi (IM.IntMap Expr) -- Existential: some TT and a function of those TT (used as partial app)
+ | TyIndexed Type [Expr]    -- Indexed family
 
 -- equality of types minus dependent normalisation
 instance Eq Type where
@@ -100,7 +103,8 @@ data TyCon -- Type constructors
 -- Head constructors in the profinite distributive lattice of types
 data TyHead
  = THPrim     PrimType
- | THExt      IName -- tyOf ix to externs
+ | THExt      IName -- ix to builtins (use getExprType to get Type from Expr) -- rm
+ | THAlias    QName
  | THSet      Uni
  | THPoison         -- marker for inconsistencies found during inference
  | THTop | THBot
@@ -143,7 +147,7 @@ data Bind -- indexes in the bindmap
              , recTy :: Type
              }
  | BindKO -- failed typecheck
- | BindOK    Expr
+ | BindOK    Bool Expr -- isRec
 
  | BindMutuals [Expr]
  | BindOpt   Complexity Expr -- optimized binding
@@ -153,6 +157,7 @@ data ExternVar
  | Imported   Expr
 
  | NotInScope       HName
+ | NotOpened        HName HName
  | AmbiguousBinding HName -- same level binding overlap / overwrite
 
  | Importable ModuleIName IName -- read allBinds

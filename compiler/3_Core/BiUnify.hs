@@ -91,7 +91,6 @@ doInstantiate :: IM.IntMap Int -> Type -> TCEnv s Type
 doInstantiate tvars ty = let
   keyNotFound = fromMaybe (error "panic: muvar not found")
   mapFn = let r = doInstantiate tvars in \case
---  THBound i   -> pure (0 `setBit` (tvarStart + i - IM.size muVars) , [])
     THBound i   -> pure (0 `setBit` (keyNotFound $ tvars IM.!? i)  , [])
     THMuBound i -> use muInstances >>= \muVars -> case muVars IM.!? i of
       Just m -> pure (0 `setBit` m , [])
@@ -116,9 +115,13 @@ doInstantiate tvars ty = let
     groundTys = concat ty
     in if tvs == 0 then TyGround groundTys else TyVars tvs groundTys
   in case ty of
-    TyGround g -> instantiateGround g
-    TyVars vs g -> mergeTypes True (TyVars vs []) <$> instantiateGround g -- TODO ! get the right polarity here
-    TyVar v -> pure (TyVar v)
+  TyGround g -> instantiateGround g
+  TyVars vs g -> mergeTypes True (TyVars vs []) <$> instantiateGround g -- TODO ! get the right polarity here
+  TyVar v -> pure (TyVar v)
+  TyPi (Pi ars t)   -> (doInstantiate tvars t) <&> (\t -> TyPi (Pi ars t)  )
+  TySi (Pi ars t) e -> (doInstantiate tvars t) <&> (\t -> TySi (Pi ars t) e)
+  TyTerm{} -> pure ty
+  x -> error $ show x
 
 atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
 atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
@@ -135,6 +138,7 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THBound i , x) -> error $ "unexpected THBound: " <> show i
   (x , THBound i) -> error $ "unexpected THBound: " <> show i
   (x , THBi nb y) -> error $ "unexpected THBi: "      <> show (p,m)
+  (t@THMu{} , y) -> instantiate 0 (TyGround [t]) >>= \x -> biSubType x (TyGround [y]) -- TODO not ideal
 
   (THBi nb p , m) -> do
     instantiated <- instantiate nb p

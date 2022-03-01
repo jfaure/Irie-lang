@@ -1,9 +1,28 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Errors where
 import CoreSyn
 import Data.Text as T
+import qualified Data.Text.Lazy as TL
 import Data.Vector as V
 import Data.Vector.Unboxed as VU
 import PrettyCore
+import Control.Lens
+
+data Errors = Errors
+  { _biFails      :: [BiSubError]
+  , _checkFails   :: [CheckError]
+  , _scopeFails   :: [ScopeError]
+  , _typeAppFails :: [TypeAppError]
+--  , _tmpFails     :: [TmpBiSubError]
+  }
+emptyErrors = Errors [] [] [] []
+data BiSubError = BiSubError SrcOff TmpBiSubError
+data CheckError = CheckError { inferredType :: Type , annotationType :: Type }
+data ScopeError
+  = ScopeError Text
+  | ScopeNotImported HName HName
+  | AmbigBind  Text
+data TypeAppError = BadTypeApp { typeOperator :: Type , typeArgs :: [Expr] }
 
 data BiFail
   = TextMsg     Text
@@ -12,13 +31,9 @@ data BiFail
   | TyConMismatch
 
 data TmpBiSubError = TmpBiSubError { msg :: BiFail , got :: Type , expected :: Type }
-data BiSubError = BiSubError SrcOff TmpBiSubError
-data CheckError = CheckError { inferredType :: Type , annotationType :: Type }
-data ScopeError
-  = ScopeError Text
-  | AmbigBind  Text
-data TCErrors = TCErrors [ScopeError] [BiSubError] [CheckError]
+--data TCErrors = TCErrors [ScopeError] [BiSubError] [CheckError]
 
+makeLenses ''Errors
 deriving instance Show BiFail
 deriving instance Show BiSubError
 deriving instance Show TmpBiSubError
@@ -56,4 +71,11 @@ formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annota
 
 formatScopeError = \case
   ScopeError h -> clRed "Not in scope: "      <> h
+  ScopeNotImported h m -> clRed "Not in scope " <> show h <> clBlue "\nnote. ∃: "
+    <> show m <> "." <> show h
   AmbigBind  h -> clRed "Ambiguous binding: " <> h
+
+formatTypeAppError = \case
+  BadTypeApp f args -> clRed "Cannot normalise type operator application: "
+    <> "\n    " <> prettyTy ansiRender f
+    <> "\n  < " <> TL.intercalate "\n < " (prettyExpr ansiRender <$> args)

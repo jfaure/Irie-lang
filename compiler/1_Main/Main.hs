@@ -43,8 +43,7 @@ instance DB.Binary GlobalResolver
 instance DB.Binary Externs
 instance DB.Binary ModDependencies
 
--- For use in GHCI; It's convenient to run tests without a full recompile
--- This is all dead code so should be removed at linktime
+-- <dead code> for use in ghci
 demoFile   = "demo.ii"
 sh         = main' . Data.List.words
 shL        = main' . (["-p" , "llvm-hs"] ++ ) . Data.List.words
@@ -63,7 +62,7 @@ main' args = parseCmdLine args >>= \cmdLine -> do
     then DB.decodeFile resolverCacheFName :: IO GlobalResolver
     else pure primResolver
   unless (null (strings cmdLine)) $ [strings cmdLine] `forM_` \e ->
-    text2Core cmdLine Nothing resolver 0 "CmdLineBindings" (toS e) >>= handleJudgedModule
+    text2Core cmdLine Nothing resolver 0 "CmdLineBindings" (toS e) >>= putResults . handleJudgedModule
   files cmdLine `forM_` doFileCached cmdLine True resolver 0
   when (repl cmdLine || null (files cmdLine) && null (strings cmdLine)) (replCore cmdLine)
 
@@ -76,7 +75,7 @@ doFileCached :: CmdLine -> Bool -> GlobalResolver -> ModDeps -> FilePath -> IO (
 doFileCached flags isMain resolver depStack fName = let
   cached            = getCachePath fName
   isCachedFileFresh = (<) <$> getModificationTime fName <*> getModificationTime cached
-  go resolver modNm = T.IO.readFile fName >>= text2Core flags modNm resolver depStack fName >>= handleJudgedModule
+  go resolver modNm = T.IO.readFile fName >>= text2Core flags modNm resolver depStack fName >>= putResults . handleJudgedModule
   go' resolver = go resolver Nothing
   didIt = modNameMap resolver M.!? toS fName
   in case didIt of
@@ -103,16 +102,34 @@ evalImports flags moduleIName resolver depStack fileNames = do
       r' = foldl (\r imported -> addDependency imported moduleIName r) r importINames
   pure (r' , modDeps)
 
+-- Parse , judge , simplify a module (depending on cmdline flags)
+--text2Core :: CmdLine -> Maybe OldCachedModule -> GlobalResolver -> ModDeps -> FilePath -> Text
+--  -> IO (CmdLine, [Char], JudgedModule, GlobalResolver, Externs , Errors , Maybe SrcInfo)
+text2Core flags maybeOldModule resolver' depStack fName progText = do
+  -- Just moduleIName indicates this module was already cached, so don't allocate a new module iname for it
+  let modIName = maybe (modCount resolver') oldModuleIName maybeOldModule
+      resolver = if isJust maybeOldModule then resolver' else addModName modIName (T.pack fName) resolver'
+  when ("source" `elem` printPass flags) (putStr =<< readFile fName)
+  parsed <- case parseModule fName progText of
+    Left e  -> (putStrLn $ errorBundlePretty e) *> exitWith (ExitFailure 1) -- ExitSuccess
+    Right r -> pure r
+  when ("parseTree" `elem` printPass flags) (putStrLn (P.prettyModule parsed))
+
+  (modResolver , modDeps) <- evalImports flags modIName resolver (setBit depStack modIName) (parsed ^. P.imports)
+  pure $ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule
+
 -- Judge the module and update the global resolver
+inferResolve :: CmdLine -> [Char] -> Int -> GlobalResolver -> ModDependencies -> P.Module -> Text -> Maybe OldCachedModule
+  -> (CmdLine , [Char] , JudgedModule , GlobalResolver , Externs , Errors , Maybe SrcInfo)
 inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule = let
-  nBinds     = length $ parsed ^. P.bindings
-  hNames     = P.fnNm <$> V.fromListN nBinds (parsed ^. P.bindings)
-  labelMap   = parsed ^. P.parseDetails . P.labels
-  fieldMap   = parsed ^. P.parseDetails . P.fields
-  labelNames = iMap2Vector labelMap
-  nArgs      = parsed ^. P.parseDetails . P.nArgs
-  srcInfo    = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
-  isRecompile= isJust maybeOldModule
+  nBinds      = length $ parsed ^. P.bindings
+  hNames      = P.fnNm <$> V.fromListN nBinds (parsed ^. P.bindings)
+  labelMap    = parsed ^. P.parseDetails . P.labels
+  fieldMap    = parsed ^. P.parseDetails . P.fields
+  labelNames  = iMap2Vector labelMap
+  nArgs       = parsed ^. P.parseDetails . P.nArgs
+  srcInfo     = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
+  isRecompile = isJust maybeOldModule
 
   (tmpResolver  , exts) = resolveImports
     modResolver modIName
@@ -121,57 +138,46 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
     (parsed ^. P.parseDetails . P.hNameMFWords . _2) -- mixfix names
     (parsed ^. P.parseDetails . P.hNamesNoScope)     -- unknownNames not in local scope
     maybeOldModule
-  (judgedModule , errors) = judgeModule nBinds parsed modIName nArgs hNames exts srcInfo
+  (judgedModule , errors) = judgeModule nBinds parsed (deps modDeps) modIName nArgs hNames exts srcInfo
   JudgedModule _modIName modNm nArgs' bindNames a b judgedBinds = judgedModule
 
   newResolver = addModule2Resolver tmpResolver isRecompile modIName (T.pack fName)
          (V.zip bindNames (bind2Expr <$> judgedBinds)) labelNames (iMap2Vector fieldMap) labelMap fieldMap modDeps
   in (flags , fName , judgedModule , newResolver , exts , errors , srcInfo)
 
--- Parse , judge , simplify a module (depending on cmdline flags)
-text2Core :: CmdLine -> Maybe OldCachedModule -> GlobalResolver -> ModDeps -> FilePath -> Text
-  -> IO (CmdLine, [Char], JudgedModule, GlobalResolver, Externs, TCErrors, Maybe SrcInfo)
-text2Core flags maybeOldModule resolver' depStack fName progText = do
-  -- Just moduleIName indicates this module was already cached, so don't allocate a new module iname for it
-  let modIName = maybe (modCount resolver') oldModuleIName maybeOldModule
-      resolver = if isJust maybeOldModule then resolver' else addModName modIName (T.pack fName) resolver'
-  when ("source" `elem` printPass flags) (putStr =<< readFile fName)
-  parsed <- case parseModule fName progText of
-    Left e  -> (putStrLn $ errorBundlePretty e) *> die ""
-    Right r -> pure r
-  when ("parseTree" `elem` printPass flags) (putStrLn (P.prettyModule parsed))
-
-  (modResolver , modDeps)  <- evalImports flags modIName resolver (setBit depStack modIName) (parsed ^. P.imports)
-  pure $ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule
-
 handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors , srcInfo) = let
-  JudgedModule modIName modNm nArgs bindNames a b judgedBinds = judgedModule
-  TCErrors scopeErrors biunifyErrors checkErrors = errors
+  JudgedModule modI modNm nArgs bindNames a b judgedBinds = judgedModule
   nameBinds showTerm bs = let
     prettyBind' = prettyBind ansiRender { bindSource = Just bindSrc , ansiColor = not (noColor flags) }
     in (\(nm,j) -> (prettyBind' showTerm nm j)) <$> bs
   bindNamePairs = V.zip bindNames judgedBinds
   bindSrc = BindSource _ bindNames _ (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
+  coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
+    && null (errors ^. checkFails) && null (errors ^. typeAppFails)
+  simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
+      simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
+  judgedFinal = JudgedModule modI modNm nArgs bindNames a b simpleBinds
+  oTypes = if "types"  `elem` printPass flags && not (quiet flags) then Just $ nameBinds False bindNamePairs else Nothing
+  oCore  = if "core"   `elem` printPass flags && not (quiet flags) then Just $ nameBinds True  bindNamePairs else Nothing
+  oSimple= if "simple" `elem` printPass flags && not (quiet flags) then Just $ nameBinds True  (V.zip bindNames simpleBinds) else Nothing
+  in (flags , coreOK , errors , bindSrc , srcInfo , fName , newResolver , judgedFinal , (oTypes , oCore , oSimple))
+
+putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oTypes , oCore , oSimple)) = let
+  handleErrors = do
+    (T.IO.putStrLn   . formatError bindSrc srcInfo) `mapM_` (errors ^. biFails)
+    (T.IO.putStrLn   . formatScopeError)            `mapM_` (errors ^. scopeFails)
+    (TL.IO.putStrLn  . formatCheckError bindSrc)    `mapM_` (errors ^. checkFails)
+    (TL.IO.putStrLn  . formatTypeAppError)          `mapM_` (errors ^. typeAppFails)
   in do
-  when ("types"  `elem` printPass flags && not (quiet flags)) (TL.IO.putStrLn `mapM_` nameBinds False bindNamePairs)
-  when ("core"   `elem` printPass flags && not (quiet flags)) (TL.IO.putStrLn `mapM_` nameBinds True  bindNamePairs)
-
-  let handleErrors = (null biunifyErrors && null scopeErrors && null checkErrors) <$ do
-        (T.IO.putStrLn  . formatError bindSrc srcInfo) `mapM_` biunifyErrors
-        (T.IO.putStrLn  . formatScopeError)            `mapM_` scopeErrors
-        (TL.IO.putStrLn . formatCheckError bindSrc)    `mapM_` checkErrors
-  coreOK <- handleErrors
-
-  let simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
-          simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
-      judgedFinal = JudgedModule modIName modNm nArgs bindNames a b simpleBinds
---when ("simple" `elem` printPass flags) (TL.IO.putStrLn `mapM_` namedBinds True simpleBinds)-- (V.zip bindNames simpleBinds))
-
+  handleErrors
   -- half-compiled modules `not coreOK` should also be cached (since heir names were pre-added to the resolver)
+  maybe (pure ()) (TL.IO.putStrLn `mapM_`) oCore
+  maybe (pure ()) (TL.IO.putStrLn `mapM_`) oTypes
+  maybe (pure ()) (TL.IO.putStrLn `mapM_`) oSimple
   when (doCacheCore && not (noCache flags))
-    $ DB.encodeFile resolverCacheFName newResolver *> cacheFile fName judgedFinal
-  T.IO.putStrLn $ show fName <> " " <> "(" <> show modIName <> ") " <> (if coreOK then "OK" else "KO")
-  pure (newResolver , judgedFinal)
+    $ DB.encodeFile resolverCacheFName r *> cacheFile fName j
+  T.IO.putStrLn $ show fName <> " " <> "(" <> show (modIName j) <> ") " <> (if coreOK then "OK" else "KO")
+  pure (r , j)
 
 ---------------------------------
 -- Phase 2: codegen, linking, jit
@@ -198,7 +204,7 @@ replWith startState fn = let
 replCore :: CmdLine -> IO ()
 replCore cmdLine = let
   doLine l = text2Core cmdLine Nothing primResolver 0 "<stdin>" l
-    >>= handleJudgedModule
+    >>= putResults . handleJudgedModule
     >>= codegen cmdLine
     >>= print . V.last . allBinds . fst
   in void $ replWith cmdLine $ \cmdLine line -> cmdLine <$ doLine line

@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-module Prelude ( module Protolude , module Data.Align , module Data.These , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_)
+module Prelude ( module Protolude , module Data.Align , module Data.These , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -27,6 +27,8 @@ type HName  = Text
 fromJust = fromMaybe (panic "fromJust")
 
 popCnt b = let i64List = unfoldr (\b -> if b /= 0 then Just (fromInteger b :: Int64 , b `shift` 64) else Nothing) b in sum $ popCount <$> i64List
+
+foldl1 f (x :| xs) = foldl' f x xs
 
 emptyBitSet = 0 :: Integer
 setNBits n = (1 `shiftL` n) - 1 -- setNBits 2 = 0b11
@@ -59,4 +61,13 @@ d_ x   = let --if not global_debug then identity else let
 did_ x = d_ x x
 dv_ f = traceShowM =<< V.freeze f
 
+anyM :: Monad m => (a -> m Bool) -> [a] -> m Bool
+anyM f = \case
+  []   -> pure False
+  x:xs -> do f x >>= \b -> if b then pure True else anyM f xs
+
+allM :: Monad m => (a -> m Bool) -> [a] -> m Bool
+allM f = \case
+  []   -> pure True
+  b:bs -> f b >>= \bv -> if bv then allM f bs else pure False
 

@@ -1,72 +1,73 @@
-module TypeCheck where
+module TypeCheck (check) where
 import Prim
 import CoreSyn as C
---import CoreUtils
+import TCState
 import PrettyCore
 import Externs
+import TTCalculus
 import qualified Data.Vector as V
+import qualified Data.IntMap as IM
 
---------------
--- Checking --
---------------
--- biunification solves constraints `t+ <= t-` ,
--- checking has the form `t- <= t+` (the inferred type must subsume the annotation)
---
--- given f : t, we require that f by polymorphic in a;
--- we are not searching for a particular a, but making a statement true for all a
--- need reduced form (unroll recursive types and merge records)
--- {l:a} & {l:b , x:b} & mu g. a -> g => {l : a & b} & a -> (mu g. a -> g)
---
--- we have `t1<=t2 and t1<=t3 ==> t1 <= t2ut3`
--- additionally, subsumption <===> equivalence of typing schemes
--- ie. to decide [d1]t1 <= [d2]t2,
---   * check alpha-equivalence of [d1 n d2]t1 u t2 with [d2]t2
-check :: Externs -> V.Vector Type -> V.Vector (Maybe Type)
-     -> Type -> Type -> Bool
-check e ars labTys inferred gotRaw = let
-  go = check' e ars labTys inferred gotRaw
+-- Biunification solves constraints `t+ <= t-` whereas subsumption compares t+ <:? t+
+-- Type annotations may be subtypes (less general) than inferred signatures
+-- Check must fill in any holes present in the type annotation
+check :: (ExternVar -> TCEnv s Expr) -> Externs -> Type -> Type -> TCEnv s Bool
+check handleExtern e inferred gotRaw = let
+  go = check' handleExtern e inferred gotRaw
   in if global_debug -- True {-debug getGlobalFlags-}
   then trace ("check: " <> prettyTyRaw inferred <> "\n   <?: " <> prettyTyRaw gotRaw) go else go
 
---check' :: Externs -> V.Vector [TyHead]
---       -> [TyHead] -> [TyHead] -> Bool
-check' es ars labTys (TyGround inferred) (TyGround gotTy) = let
-  check'' = check' es ars labTys :: Type -> Type -> Bool
+check' :: (ExternVar -> TCEnv s Expr) -> Externs -> Type -> Type -> TCEnv s Bool
+check' handleExtern es (TyGround inferred) (TyGround gotTy) = let
   readExt x = case readPrimExtern es x of
     c@Core{} -> error $ "type expected, got: " <> show c
     Ty t -> t
-  checkAtomic :: TyHead -> TyHead -> Bool
-  checkAtomic inferred gotTy = case {-trace (prettyTyRaw [inferred] <> " <?: " <> prettyTyRaw [gotTy])-} (inferred , gotTy) of
-    (THExt i , t) -> check'' (readExt i) (TyGround [t])
-    (t , THExt i) -> check'' (TyGround [t]) (readExt i)
-    (THBound x , THBound y) -> x == y
-    (THSet l1, THSet l2)  -> l1 <= l2
-    (THSet 0 , x)         -> True --case x of { THArrow{} -> False ; _ -> True }
-    (x , THSet 0)         -> True --case x of { THArrow{} -> False ; _ -> True }
---  (THVar x , gTy)       -> True -- check'' (bis V.! x) [gTy]
---  (lTy , THVar x)       -> False
-    (THPrim x , THPrim y) -> x `primSubtypeOf` y
-    (THMu x _ , THMuBound y) -> y == x
+  dbgCheck inferred gotTy = identity --trace (prettyTyRaw (TyGround [inferred]) <> " <?: " <> prettyTyRaw (TyGround [gotTy])) 
+  checkAtomic :: (ExternVar -> TCEnv s Expr) -> TyHead -> TyHead -> TCEnv s Bool
+  checkAtomic handleExtern inferred gotTy = let
+    check'' = check' handleExtern es
+    end x = if x then pure True else d_ (inferred , gotTy) (pure False)
+    in case dbgCheck inferred gotTy (inferred , gotTy) of
+    (_ , THTop) -> end True
+    (THBot , _) -> end True
+    (THExt i , t)  -> check'' (readExt i) (TyGround [t])
+    (t , THExt i)  -> check'' (TyGround [t]) (readExt i)
+    (THBound x , THBound y)     -> pure $ x == y
+    (THMuBound x , THMuBound y) -> pure $ x == y
+    (THBi b1 x , THBi b2 y) -> if b1 == b2 then check'' x y else end False
+    (THSet l1, THSet l2)  -> end $ l1 <= l2
+--  (THSet 0 , x)         -> end True
+--  (x , THSet 0)         -> end True
+    (THPrim x , THPrim y) -> end $ x `primSubtypeOf` y
+    (THMu x _ , THMuBound y) -> end $ y == x
     (THTyCon t1 , THTyCon t2) -> case (t1,t2) of
-      (THArrow a1 r1 , THArrow a2 r2) -> let -- handle differing arities (since currying is allowed)
-        -- note. (a->(b->c)) is eq to (a->b->c) via currying
-        go (x:xs) (y:ys) = check'' y x && go xs ys
+      (THArrow a1 r1 , THArrow a2 r2) -> let -- differing arities may still match via currying
+        go (x:xs) (y:ys) = (&&) <$> check'' y x <*> go xs ys
         go [] [] = check'' r1 r2
         go [] y  = check'' r1 (TyGround [THTyCon $ THArrow y r2])
         go x []  = check'' (TyGround [THTyCon $ THArrow x r1]) r2
         in go a1 a2
-      (THSumTy labels , t@THArrow{}) -> False
-      (THSumTy x , THSumTy y)     -> all identity (alignWith (these (const False) (const False) check'') x y)
-      (THTuple x , THTuple y)     -> all identity (alignWith (these (const False) (const False) check'') x y)
-      (THProduct x , THProduct y) -> all identity (alignWith (these (const False) (const False) check'') x y)
-      _ -> False
+      (THSumTy x , THSumTy y)     -> allM (\case { (k , These a b) -> check'' a b ; _ -> pure False }) $ IM.toList (align x y)
+      (THProduct x , THProduct y) -> allM (\case { (k , These a b) -> check'' a b ; _ -> pure False }) $ IM.toList (align x y)
+      (THTuple x , THTuple y)     -> allM (\case { These a b -> check'' a b ; _ -> pure False }) $ V.toList (align x y)
+      _ -> end False
 
---  (t , THPi [] ty tyArgs) -> check'' [t] (tyAp ty tyArgs)
---  (THPi [] ty tyArgs , t) -> check'' (tyAp ty tyArgs) [t]
-    x -> False
+    -- for cases that reduce to `x <:? ⊤`
+    (a , THMu m b) -> check'' (TyGround [a]) b
+    (THMu m a , b) -> check'' a (TyGround [b])
+    x -> end False
   in case inferred of
-    []   -> False
-    tys  -> all (\t -> any (checkAtomic t) gotTy) $ tys
+  []   -> pure False
+  tys  -> allM (\t -> anyM (checkAtomic handleExtern t) gotTy) $ tys
+
+check' handleExtern es t1 (TyGround [THTop]) = pure True
+check' handleExtern es t1@(TyIndexed{}) t2 = normaliseType handleExtern mempty t1 >>= \case
+  loop@TyIndexed{} -> error $ "cannot normalise TyIndexed: " <> show loop
+  unaliased        -> check' handleExtern es unaliased t2
+--check' handleExtern es t1 t2@(TyAlias{}) = normaliseType handleExtern mempty t2 >>= \unaliased ->
+--  check' handleExtern es t1 unaliased
+
+check' handleExtern es t1 t2 = error $ show (t1 , t2)
 
 {-
 alignMu :: Int -> TyHead -> TyHead -> TyHead -> Bool

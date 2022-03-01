@@ -11,6 +11,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 
 -- Messy because it copies part of handleJudgedModule which otherwise prints everything instead of returning Text
+-- TODO use updated handleJudgedModule
 runTest (expr , expectedType)  = let
   -- a bit of a hack to get the raw types as Text before they are printed
   getType expr = text2Core defaultCmdLine{noColor = True} Nothing primResolver 0 "testExpr" (toS expr)
