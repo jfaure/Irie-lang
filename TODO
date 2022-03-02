@@ -6,7 +6,7 @@
   * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals
   * improve patterns2TT and eqn matches
 ## Top
-  * show + repl typecase to print JIT results
+  * show (esp for repl JIT) + subtyping typeclasses
   * provide Vector alternative for ADTs when names sequential (they frequently are) [n..m]
   * 'StrIntName' new datatype: growable vector + hashmap
   * Linear types; dependent types required to quantify relative linearity `t ≥ f => t → u`
@@ -19,7 +19,7 @@
   * List comprehensions
 ## Types
   * handle field name collisions (THFieldCollision)
-  * Dependent normalisation & Staging (compile recursive defs when normalising)
+  * Dependent normalisation
   * first class polymorphism
   * mergetyhead should indicate if merge was a noop (so bisub knows it has already seen that input)
 ## Functor modules and records
@@ -34,7 +34,7 @@
   * scoping of labelNames
   * use functions & records to manage names? (names , let-binds , etc..)
 ## Error messages
-  * Warn nonsense type joins / make a dependent type on the if/case statement
+  * Warn nonsense type joins / infer a dependent type
   * lone mfWords that aren't ambig-binds should error (also non-explicit partial apps like f = 3 <)
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
@@ -49,6 +49,7 @@
   * Maths: recognize series (sum/product) ; recognize neutral elements (0 for + , 1 for *)
 
 ## Unimportant
+  * cache version
   * improve Generalise's handling of subbing a recvar with non-rec one (keep Recursive flag)
   * Pattern PTT: custom unPat function to support any patterns
   * optimise instantiation

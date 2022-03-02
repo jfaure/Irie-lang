@@ -23,16 +23,23 @@ module demo x =
 --  Done       => Done
 --  Skip bs    => Skip    (Right bs)
 --  Yield x ys => Yield x (Right ys)
+
+ifCase scrut a b = case scrut of
+  True  => a
+  False => b
+
+bool2Bool i = ifThenElse i True False
+
 sum z s = case nextEnum s of
   Done      => z
-  Skip s    => sum z       s
+  Skip s    => sum z         s
   Yield x s => sum (add z x) s
-nextEnum n = ifThenElse (ge n 10) Done (Yield n (add 1 n))
 
--- [ Done : {}
--- | Skip : {[Left : {A} | Right : {⊥}]}
--- | Yield: {A , [Left : {%i32} | Right : {%i32}]}
--- ]
+--nextEnum n = ifThenElse (ge n 10) Done (Yield n (add 1 n))
+--nextEnum n = ifCase (bool2Bool (ge n 10)) Done (Yield n (add 1 n))
+nextEnum n = case (bool2Bool (ge n 10)) of
+  True  => Done
+  False => Yield n (add 1 n)
 
 --sumAppend xs = go 0 (Left xs)
 

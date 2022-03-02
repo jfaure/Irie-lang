@@ -34,7 +34,8 @@ objPath      = ["./"]
 objDir       = ".irie-obj/@" -- prefix '@' to files in there
 getCachePath fName = objDir <> map (\case { '/' -> '%' ; x -> x} ) fName
 resolverCacheFName = getCachePath "resolver"
-doCacheCore  = True
+doCacheCore  = False
+cacheVersion = 0
 
 deriving instance Generic GlobalResolver
 deriving instance Generic Externs
@@ -154,8 +155,8 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
   bindSrc = BindSource _ bindNames _ (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
-  simpleBinds = runST $ V.thaw judgedBinds >>= \cb ->
-      simplifyBindings nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
+  simpleBinds = runST $ V.unsafeThaw judgedBinds >>= \cb ->
+      simplifyBindings modI nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
   judgedFinal = JudgedModule modI modNm nArgs bindNames a b simpleBinds
   oTypes = if "types"  `elem` printPass flags && not (quiet flags) then Just $ nameBinds False bindNamePairs else Nothing
   oCore  = if "core"   `elem` printPass flags && not (quiet flags) then Just $ nameBinds True  bindNamePairs else Nothing
@@ -176,7 +177,7 @@ putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oType
   maybe (pure ()) (TL.IO.putStrLn `mapM_`) oSimple
   when (doCacheCore && not (noCache flags))
     $ DB.encodeFile resolverCacheFName r *> cacheFile fName j
-  T.IO.putStrLn $ show fName <> " " <> "(" <> show (modIName j) <> ") " <> (if coreOK then "OK" else "KO")
+  T.IO.putStrLn $ show fName <> " " <> "(" <> show (modIName j) <> ") " <> (if coreOK then "OK" <> (if isJust oSimple then " Simplified" else " Raw") else "KO")
   pure (r , j)
 
 ---------------------------------

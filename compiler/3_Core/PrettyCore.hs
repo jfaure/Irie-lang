@@ -201,6 +201,11 @@ pTerm = let
     VForeign i -> "foreign " <> viaShow i
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
+  prettyMatch caseTy ts d = let
+    showLabel l t = indent 2 (prettyLabel (QName l)) <+> indent 2 (pExpr t)
+    in annotate AKeyWord "\\case " <> hardline -- (" : " <> annotate AType (pTy caseTy)) <> hardline
+      <> vsep ((IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
+      <> maybe "" (\catchAll -> hardline <> indent 2 ("_ => " <> pExpr catchAll)) d
   in \case
 --Hole -> " _ "
   Question -> " ? "
@@ -212,6 +217,7 @@ pTerm = let
     in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFree free <> " => " <> pTerm term
 --   <> ": " <> annotate AType (pTy ty)
   RecApp f args -> parens (annotate AKeyWord "recApp" <+> pTerm f <+> sep (pTerm <$> args))
+  App (Match caseTy ts d) args -> sep (pTerm <$> args) <+> " > " <+> prettyMatch caseTy ts d
   App f args    -> let parensF = case f of { Abs{} -> parens ; _ -> identity }
     in parens (parensF (pTerm f) <+> sep (pTerm <$> args))
   PartialApp extraTs fn args -> "PartialApp " <> viaShow extraTs <> parens (pTerm fn <> fillSep (pTerm <$> args))
@@ -224,11 +230,7 @@ pTerm = let
   Label   l []   -> "@" <> prettyLabel l
   Label   l t    -> "@" <> prettyLabel l <> hsep (parens . pExpr <$> t)
 --RecLabel l i t -> prettyLabel l <> parens (viaShow i) <> "@" <> hsep (parens . pExpr <$> t)
-  Match caseTy ts d -> let
-    showLabel l t = indent 2 $ prettyLabel (QName l) <> indent 2 (pExpr t)
-    in annotate AKeyWord "\\case " <> (" : " <> annotate AType (pTy caseTy)) <> hardline
-      <> vsep ((IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
-      <> maybe "" (\catchAll -> hardline <> indent 2 ("_ => " <> pExpr catchAll)) d
+  Match caseTy ts d -> prettyMatch caseTy ts d
 --RecMatch ts d -> let
 --  showLabel l (i,t) = prettyLabel (QName l) <> "(" <> viaShow i<> ") => " <> pE' "   " t
 --  in clMagenta "\\recCase " <> "\n      "

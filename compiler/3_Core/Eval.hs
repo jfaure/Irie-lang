@@ -1,138 +1,61 @@
--- Optimiser: extremely aggressively attempt to bring eliminators next to introductions
 module Eval where
+import FusionEnv
 import Prim
 import CoreSyn
 import CoreUtils
 import ShowCore()
 import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
-import qualified Data.Vector as V
+--import qualified Data.Vector as V
+import Control.Lens
 
--- * inline small functions & data functions
--- * constant fold tycons (casts/case/products) as much as possible (eg. case-of-case)
--- * static argument transformation => if args to a (local) fn are constant
---     make them free (might avoid dup node)
--- * push lambdas to avoid cloning `\b => (f b , f b)` = `(\b => f b , \b => f b)`
--- * Mutual datafns: need to inline one into the other to minimise data
+-- Which args does a function case-split
+data FuseArg
+ = NoBranch  -- Not case-split in this function (Presumably its built into the result and may be case-split later)
+ | CaseArg   -- arg is case-split
+ | CaseFnArg [IName] -- arg is a fn whose result is case-split
+ -- ^ We will want to know which partial applications of this produce a constant label
+ -- This means knowing which Set of Args need to also be constant for this CaseFnArg to make a constant label
+ | LensedArg {- Lens -} -- What structure of the arg must be known to fuse with a case
 
--- # eliminate data fixpoints => Stream / Cata / Build
--- # isolate tycons and fuse with their eliminators
---   beta-reduce once all data args are available (successfully eliminated data)
---   give up on excessively transitive data (too many large function calls before case)
-
--- Deriving build-catas
--- * Ec = (∀α1..αn) ∀β -- constructor equation where B is the type parameter for recursion
--- 1. extract wrapper-worker functions, substitute wrapper freely in the worker
--- 2. worker has an outer case over an argument; attempt to fuse with the copy function
---  2.1 distrubute the id cata accross the case, then make a single cata
---  2.2 immediately make a cata, then fuse the outer cata (higher-order fusion);
--- * iff the recursive invocation needs an inherited attribute
-
--- Dynamic deforestation (multiple builds for right/left or both)
--- buildFn = (a->b->b) -> b -> b
--- List a = | Nil | Cons a (List a) | Build (R|L|B) buildFn buildFn
--- foldr k z (Build g) = g k z
-
--- Cases
--- stream (unStream s) = s
--- fold f z (build g)  = g f z (syntax translation (label -> Fn))
--- Stream Build     syntax translation (label -> label)
--- fold   unstream  (may as well do cata-build, and let the program stack recursive calls)
---
--- First order (no inherited attribute) Stream / Foldr can be used interchangeably
--- Commutative and Associative folds/stream can be reversed
--- fold f        -> Stream
--- Stream next z -> fold
-
--- Deriving plasma
--- * cata-build needs to handle all nil/cons identically, so (tail (last) or foldr1 (first))
--- * catas from fns with same shape as the recursive type
--- * when the stream producer unknown, push as a dynamic choice inside the stream
--- * ? Mixing of second order recursion direction (eg. randomly switching foldr and foldl)
-
--- Stream a = ∃s. Stream (s → Step a s) s
--- Step a s = | Done | Skip  s | Yield s a
---
--- stream :: [a] -> Stream a
--- stream xs0 = Stream (\case { [] => Done ; x : xs => Yield x xs }) xs0
--- unstream :: Stream a -> [a]
--- unstream (Stream next0 s0) = let
---   unfold s = case next0 s of
---     Done       -> []
---     Skip s'    -> unfold s'
---     Yield x s' -> x : unfold s'
---   in unfold s0
--- * Thus 'stream' is a syntactic translation of [] and (:)
--- * 'unstream' is an unfoldr of non-recursive [a] augmented with Skip
-
--- Tree a b = Leaf a | Fork b (Tree a b) (Tree a b)
--- TreeStream a b = ∃s. Stream (s -> Step a b s) s
--- TreeStep a b s = Leaf a | Fork b s s | Skip s
-
--- # Plan
--- Derive a cata or a stream function
--- * attempt to fuse everything with stream fusion
--- * use cata-build only for second order cata
--- * indexing functions? = buildl | buildr
-
---type2ArgKind :: Type -> ArgKind
---type2ArgKind = _
---
---data ArgKind
---  = APrim PrimType
---  | AFunction [ArgKind] ArgKind
---  | ARecord   (IntMap ArgKind)
---  | ASum      (IntMap SumRep)
---  | APoly
---  | ARec -- only in Array or Tree (also fn return | any covariant position?)
---data SumRep = Enum | Peano | Wrap | Array [ArgKind] | Tree [ArgKind]
-
-type SimplifierEnv s = StateT (Simplifier s) (ST s)
-data Simplifier s = Simplifier {
-   cBinds      :: MV.MVector s Bind
- , nApps       :: Int
--- , argTable :: MV.MVector s [(ArgKind , Term)] -- used for eta reduction
- , argTable    :: MV.MVector s [Term] -- used for eta reduction
- , self        :: Int -- the bind we're simplifying (is probably recursive)
- , caseCount   :: Int -- unique ident for every case in the function
- , streamCases :: [Term]
- , streamOK    :: Bool -- indicate if suitable for stream transformation
- , recLabels   :: IM.IntMap (V.Vector Int)
-}
-
-setNApps :: Int -> SimplifierEnv s ()
-setNApps n = (modify $ \x->x{nApps = n})
-zeroNApps :: SimplifierEnv s Int
-zeroNApps= gets nApps <* (modify $ \x->x{nApps = 0})
-incNApps :: SimplifierEnv s ()
-incNApps = modify $ \x->x{nApps = 1 + nApps x}
-getNewCaseNumber :: SimplifierEnv s Int
-getNewCaseNumber = gets caseCount <* modify (\x->x{caseCount = caseCount x - 1})
-addStreamCase :: Term -> SimplifierEnv s ()
-addStreamCase c = modify $ \x->x{streamCases = c : streamCases x}
-
-simplifyBindings :: Int -> Int -> MV.MVector s Bind -> ST s (Simplifier s)
-simplifyBindings nArgs nBinds bindsV = do
-  argEtas <- MV.replicate nArgs []
+-- η-reduction => f x = g x     ⊢ f = g
+-- β-reduction => (\x => f x) y ⊢ f y
+-- The env contains a map of β-reducing args
+simplifyBindings :: IName -> Int -> Int -> MV.MVector s Bind -> ST s (Simplifier s)
+simplifyBindings modIName nArgs nBinds bindsV = do
+  argSubs <- MV.generate nArgs (\i -> Var (VArg i))
   execStateT (simpleBind `mapM` [0 .. nBinds-1]) Simplifier {
-    cBinds      = bindsV
-  , nApps       = 0 -- measure the size of the callgraph
-  , argTable    = argEtas
-  , self        = -1
-  , caseCount   = -1 -- counts negative labels
-  , streamCases = []
-  , streamOK    = True
-  , recLabels   = IM.empty
+    _thisMod     = modIName
+  , _extBinds    = _ --allBinds
+  , _cBinds      = bindsV
+  , _nApps       = 0 -- measure the size of the callgraph
+  , _argTable    = argSubs
+  , _betaStack   = 0
+  , _self        = _
+
+  , _caseArgs    = emptyBitSet
+  , _caseFnArgs  = emptyBitSet
+
+  , _caseCount   = -1 -- counts negative labels
+  , _streamCases = []
+  , _streamOK    = True
+  , _recLabels   = IM.empty
   }
 
+-- very brutal; don't use this
+inline :: QName -> SimplifierEnv s Term
+inline q = use thisMod >>= \mod -> if modName q == mod
+  then simpleBind (unQName q) <&> \(BindOpt nApps (Core t ty)) -> t
+  else _
+
 simpleBind :: Int -> SimplifierEnv s Bind
-simpleBind n = gets cBinds >>= \cb -> MV.read cb n >>= \b -> do
+simpleBind n = use cBinds >>= \cb -> MV.read cb n >>= \b -> do
 --traceM "\n"
-  svN <- zeroNApps
-  modify $ \x->x{self = n}
-  MV.write cb n (BindOpt (0xFFFFFF) (Core (Var (VBind n)) tyBot)) -- recursion guard
+  svN <- nApps <<.= 0
+  self .= n
+  MV.write cb n (BindOpt (complement 0) (Core (Var (VBind n)) tyBot)) -- recursion guard
   new <- case b of
-    BindOpt nApps body -> setNApps nApps *> pure body
+    BindOpt nA body -> (nApps .= nA) *> pure body
     BindOK isRec (Core t ty) -> simpleTerm t <&> \case
       -- catch top level partial application (ie. extra implicit args)
       App (Instr (MkPAp n)) (f2 : args2) -> let
@@ -141,65 +64,115 @@ simpleBind n = gets cBinds >>= \cb -> MV.read cb n >>= \b -> do
         in Core (PartialApp arTs f2 args2) retT
       newT -> Core newT ty
     x -> pure $ PoisonExpr
-  napps <- gets nApps <* setNApps svN
+  napps <- nApps <<.= svN
   let b = BindOpt napps new
   MV.write cb n (BindOpt napps new)
   pure b
 
 simpleTerm :: Term -> SimplifierEnv s Term
 simpleTerm t = let
-  foldAbs argDefs' free body ty args = let
-    (argDefs , trailingArgs , etaReducable) = partitionThese (align argDefs' args)
-    in gets argTable >>= \aT -> do
-      etaReducable `forM` \((i,ty) , arg) -> MV.modify aT (arg:) i
-      tRaw <- simpleTerm body
-      let t = case trailingArgs of { [] -> body ; ars -> App body ars }
-      etaReducable `forM` \((i,ty) , arg) -> MV.modify aT (drop 1) i -- TODO what if stacking insertions ?
-      pure $ case argDefs of
-        []      -> t
   in case t of
   Var v -> case v of
-    VBind i -> simpleBind i <&> \case
+    VBind i  -> simpleBind i <&> \case
       BindOpt napps (Core new t) -> if False && napps < 1
         then new else Var (VBind i) -- directly inline small callgraphs
-    VArg  i -> gets argTable >>= \at -> MV.read at i <&> fromMaybe t . head
-    x -> pure (Var x)
+    VArg  i  -> use argTable >>= \at -> MV.read at i
+    VQBind i -> pure (Var (VQBind i)) --inline i
+    _ -> pure t
 
   Cast c a -> pure t
 
-  Abs argDefs' free body ty -> simpleTerm body <&> \b -> Abs argDefs' free b ty
+  Abs argDefs free body ty -> simpleTerm body <&> \b -> Abs argDefs free b ty
+  App f args    -> simpleApp f args
+  RecApp f args -> simpleApp f args
 
-  App f args -> incNApps *> case f of
-    Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
-    Instr i -> (simpleTerm `mapM` args) <&> \args -> simpleInstr i args
---  Match retT branches d | [arg] <- args -> _-- mkSvState retT branches d arg
-    fn -> simpleTerm fn >>= \case
-      Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
-      fn -> App fn <$> (simpleTerm `mapM` args)
+  Cons fields -> Cons <$> (simpleTerm `traverse` fields)
+  TTLens (Cons fields) [f] op -> let
+    fromMaybeF = fromMaybe (error $ "Type inference fail: field not present")
+    in case op of
+    LensGet   -> pure (fromMaybeF (fields IM.!? qName2Key f))
+--  LensSet v -> simpleTerm v <&> (IM.insert (qName2Key f) v fields)
 
-  Label l a -> do
-    ars <- a `forM` \(Core f t) -> (`Core` t) <$> simpleTerm f
-    gets recLabels <&> (IM.!? qName2Key l) <&> \case
-      Nothing -> Label l      ars
-      Just  i -> RecLabel l i ars
-
---Match t branches d -> let
---  -- add recLabel information
---  go l (Core f t) = gets recLabels <&> (fromMaybe mempty . (IM.!? l)) >>= \is -> (\e' -> (is,Core e' t)) <$> simpleTerm f
---  in IM.traverseWithKey go branches <&> \branches' -> RecMatch branches' d
+  Label l ars -> Label l <$> ((\(Core t ty) -> (`Core` ty) <$> simpleTerm t) `traverse` ars)
+  Match ty branches d -> error "Unsaturated Match"
 
   _ -> pure t
+
+foldAbs argDefs free body ty args = use argTable >>= \aT -> let
+  ([] , trailingArgs , etaReducable) = partitionThese (align argDefs args)
+  in do
+  -- TODO If we're stacking β-reductions of a function, need to reset its args
+  etaReducable `forM` \((i,ty) , arg) -> MV.write aT i arg
+  bodyOpt <- simpleTerm body
+  etaReducable `forM` \((i,ty) , arg) -> MV.write aT i (Var (VArg i))
+  pure $ case trailingArgs of
+    []  -> bodyOpt
+    ars -> App bodyOpt ars
+
+-- (do partial) β-reduction
+simpleApp f args = (nApps %= (1+)) *> case f of
+  Abs argDefs free body ty -> foldAbs argDefs free body ty args
+  Instr i -> (simpleTerm `mapM` args) <&> \args -> simpleInstr i args
+  Match retT branches d | [scrut] <- args -> fuseMatch retT scrut branches d
+  fn -> simpleTerm fn >>= \case
+    Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
+    fn -> App fn <$> (simpleTerm `mapM` args)
+
+-- Fusing Matches with constant labels is the main point of this exercise
+fuseMatch :: Type -> Term -> IntMap Expr -> Maybe Expr -> SimplifierEnv s Term
+fuseMatch ty scrut' branches d = simpleTerm scrut' >>= \scrut -> let this = App (Match ty branches d) [scrut]
+  in case scrut of
+  -- Ideal: case-of-label
+  Label l params -> let getTerm (Just (Core t ty)) = t
+    in pure $ App (getTerm ((branches IM.!? qName2Key l) <|> d)) ((\(Core t ty) -> t) <$> params)
+
+  -- Near-Ideal: case-of-case: push outer case into each branch of the inner Case
+  -- frequently the inner case can directly fuse with the outer cases output labels
+  App (Match ty2 innerBranches innerDefault) [innerScrut] -> let
+    pushCase (Core (Abs ars free body ty) _ty) = do
+      branch <- simpleApp (Match ty branches d) [body] >>= simpleTerm -- TODO why is this necessary
+      let newTy = case branch of { Abs _ _ _ t -> t ; _ -> tyBot } -- don't gamble with the actual ty
+      pure   (Core (Abs ars free branch newTy) newTy)
+    in do
+      optBranches <- innerBranches `forM` pushCase
+      optD <- maybe (pure Nothing) (fmap Just . pushCase) d
+      pure (App (Match ty2 optBranches optD) [innerScrut])
+
+  -- case-of-App: Hope to get a constant label after beta-reduction
+  App (Var (VQBind caseFnArg)) ars -> inline caseFnArg >>= \f -> simpleApp f ars >>= \scrutInline ->
+    fuseMatch ty scrutInline branches d
+
+  -- vv Require ourselves to be inlined at call-sites
+
+  -- case-of-Arg: β-reduction on this Arg will fuse
+  -- case-merge: Check if any branches also case this Arg
+  Var (VArg caseArg) -> this <$ (caseArgs %= (`setBit` caseArg))
+
+  -- case-of-AppArg:
+  -- Now both the fn Arg and (some of) these current args must be known
+  -- Fn may be able to produce a constant label given only some constant args
+--App (Var (VArg caseFnArg)) ars -> this <$ (caseFnArgs %= (`setBit` caseFnArg))
+
+  -- Any simple (esp TTCalculus) function of an Arg is worth noting
+  -- if the arg is static up-to this lens/prism, it will fuse on β-reducing this F
+  -- ~ ac is some lens/prism on the Arg that we need to know
+--_ | Just ac <- getLens scrut ->
+
+  _ -> pure this
+
+-- Try derive a Lens into an Arg
+getLens :: Term -> Maybe Term = const Nothing
 
 {-
 -- a Case on one of the arguments
 mkSvState retT branches d arg = mdo
-  newCase <- getNewCaseNumber
+  newCase <- caseCount <<%= (1+)
 --addStreamCase c
 
   bs <- branches `forM` \b -> simpleTerm b >>= \(Abs ars is t ty) -> do
     -- pack all needed state
-    this <- gets self
-    vars <- gets caseState
+    this <- use self
+    vars <- use caseState
     resetCaseState
     let new = case t of
           -- Match over labels is perfect for stream fusion

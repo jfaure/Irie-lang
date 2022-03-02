@@ -42,7 +42,7 @@ data Term -- β-reducable (possibly to a type)
  | Abs     [(IName , Type)] BitSet Term Type -- arg inames, types, freevars, term ty
  | App     Term [Term]    -- IName [Term]
 
- | Tuple   (V.Vector Term)
+ | Tuple   (V.Vector Term) -- Alternate version of Cons where indexes are sequential
  | Idx     Term Int
  | Cons    (IM.IntMap Term)
  | TTLens  Term [IField] LensOp
@@ -50,48 +50,50 @@ data Term -- β-reducable (possibly to a type)
  | Label   ILabel [Expr]
  | Match   Type (IM.IntMap Expr) (Maybe Expr) -- Type is the return type
 
- -- Extra info built by the simplifier
- | RecApp Term [Term]
- | Stream   Term -- Term is a non-recursive Abs
- | UnStream Term
- | Foldr
-
- | RecLabel ILabel (V.Vector Int) [Expr] -- annotate where fixpoints are
+ -- Extra info built by the fusion reactor
+ | RecApp   Term [Term] -- direct recursion
+ -- annotate where fixpoints are
+ | RecLabel ILabel (V.Vector Int) [Expr]
  | RecMatch (IM.IntMap (V.Vector Int , Expr)) (Maybe Expr)
- | PartialApp [Type] Term [Term] -- Top level PAp => Abs (no fresh argnames after parse)
+
+ | PartialApp [Type] Term [Term] --Top level PAp => Abs (only parse generates fresh argnames)
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
-data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr -- lensover needs idx for extracting field
+-- lensover needs idx for extracting field (??)
+data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr
 
-type Uni     = Int -- a universe of types
-type TyMinus = Type  -- input  types (lattice meet ∧) eg. args
-type TyPlus  = Type  -- output types (lattice join ∨)
+type Uni     = Int  -- a universe of types
+type TyMinus = Type -- input  types (lattice meet ∧) eg. args
+type TyPlus  = Type -- output types (lattice join ∨)
 type GroundType = [TyHead]
 tyTop = TyGround []
 tyBot = TyGround []
 
-data Pi = Pi [(IName , Type)] Type deriving Eq -- pi binder Π (x : T) → F T
-
 -- Theoretically TVars have their own presence in the profinite distributive lattice of types
 -- The point is to pre-partition tvars since they are usually handled separately
+data Pi = Pi [(IName , Type)] Type deriving Eq -- pi binder Π (x : T) → F T
 data Type
  = TyGround GroundType
+
+ -- vv tvars are temporary artefacts of inference
  | TyVar    Int -- generalizes to THBound if survives biunification and simplification
  | TyVars   BitSet GroundType
- | TyTerm   Term Type       -- term should be lambda calculus or product/sum calculus
+
+ -- vv Only occur in user type annotations
  | TyAlias  QName
- | TyPi Pi                  -- dependent function space, implicit args (can be explicitly present as A -> T)
- | TySi Pi (IM.IntMap Expr) -- Existential: some TT and a function of those TT (used as partial app)
- | TyIndexed Type [Expr]    -- Indexed family
+ | TyTerm   Term Type       -- term should be lambda calculus or product/sum calculus
+ | TyPi Pi                  -- dependent functions, implicit args (explicit as: Arg -> T)
+ | TySi Pi (IM.IntMap Expr) -- Existential: some TT and a function of them (~partial app)
+ | TyIndexed Type [Expr]    -- Indexed family (raw Terms can only exist here after normalisation)
 
 -- equality of types minus dependent normalisation
 instance Eq Type where
   TyGround g1 == TyGround g2 = g1 == g2
-  TyVar i == TyVar j = i == j
+  TyVar i     == TyVar j     = i == j
   TyVars i g1 == TyVars j g2 = i == j && g1 == g2
-  TyVar i == TyVars j [] = j == (0 `setBit` i)
-  TyVars j [] == TyVar i = j == (0 `setBit` i)
-  _ == _ = False
+  TyVar i     == TyVars j [] = j == (0 `setBit` i)
+  TyVars j [] == TyVar i     = j == (0 `setBit` i)
+  _           == _           = False
 
 data TyCon -- Type constructors
  = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot -> top is the largest)
@@ -149,7 +151,7 @@ data Bind -- indexes in the bindmap
  | BindKO -- failed typecheck
  | BindOK    Bool Expr -- isRec
 
- | BindMutuals [Expr]
+ | BindMutuals (V.Vector Expr)
  | BindOpt   Complexity Expr -- optimized binding
 
 data ExternVar
