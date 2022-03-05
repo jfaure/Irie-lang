@@ -31,8 +31,8 @@ ansiRender = RenderOptions {
  , bindSource = Nothing
  }
 
-prettyTyRaw :: Type -> T.Text
-prettyTyRaw = toS . prettyTy ansiRender
+prettyTyRaw :: Type -> T.Text = toS . prettyTy ansiRender
+prettyTermRaw :: Term -> T.Text = toS . prettyTerm ansiRender
 
 prettyTy   flags      = render flags . layoutPretty defaultLayoutOptions . pTy
 prettyTerm flags      = render flags . layoutPretty defaultLayoutOptions . pTerm
@@ -151,7 +151,9 @@ pTyHead = let
     THArrow [] ret -> error $ toS $ "panic: fntype with no args: [] → (" <> prettyTy ansiRender ret <> ")"
     THArrow args ret -> hsep $ punctuate " →" ((parensIfArrow <$> args) <> [pTy ret])
     THSumTy l -> let
-      prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> " : " <> pTy ty
+      prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> case ty of
+        TyGround [THTyCon (THTuple v)] | V.null v -> ""
+        _ -> space <> pTy ty
       in enclose "[" "]" (hsep $ punctuate (" |") (prettyLabel <$> IM.toList l))
     THProduct l -> let
       prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy ty
@@ -195,31 +197,35 @@ pExpr = \case
 pTerm = let
   pVName = \case
     VArg i     -> annotate (AArg i)       ""
-    VBind i    -> error $ "not a QBind: " <> show i --annotate (ABindName i)  ""
+    VBind i    -> "VBind" <> viaShow i -- error $ "not a QBind: " <> show i --annotate (ABindName i)  ""
     VQBind q   -> annotate (AQBindName q) ""
     VExt i     -> "E" <> viaShow i -- <> dquotes (toS $ (srcExtNames bindSrc) V.! i)
     VForeign i -> "foreign " <> viaShow i
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
   prettyMatch caseTy ts d = let
-    showLabel l t = indent 2 (prettyLabel (QName l)) <+> indent 2 (pExpr t)
-    in annotate AKeyWord "\\case " <> hardline -- (" : " <> annotate AType (pTy caseTy)) <> hardline
-      <> vsep ((IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
-      <> maybe "" (\catchAll -> hardline <> indent 2 ("_ => " <> pExpr catchAll)) d
+--  showLabel l t = indent 2 (prettyLabel (QName l)) <+> indent 2 (pExpr t)
+    showLabel l t = prettyLabel (QName l) <+> pExpr t
+    in annotate AKeyWord "\\case " <> nest 2 ( -- (" : " <> annotate AType (pTy caseTy)) <> hardline
+      hardline <> (vsep (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
+      <> maybe "" (\catchAll -> hardline <> ("_ => " <> pExpr catchAll)) d
+      )
   in \case
 --Hole -> " _ "
   Question -> " ? "
   Var     v -> pVName v
+  VBruijn b -> "VBruijn" <> viaShow b
   Lit     l -> annotate ALiteral $ parens (viaShow l)
   Abs ars free term ty -> let
     prettyArg (i , ty) = viaShow i
     prettyFree x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
     in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFree free <> " => " <> pTerm term
+  BruijnAbs n body -> parens $ "λB(" <> viaShow n <> ")" <+> pTerm body
 --   <> ": " <> annotate AType (pTy ty)
   RecApp f args -> parens (annotate AKeyWord "recApp" <+> pTerm f <+> sep (pTerm <$> args))
   App (Match caseTy ts d) args -> sep (pTerm <$> args) <+> " > " <+> prettyMatch caseTy ts d
   App f args    -> let parensF = case f of { Abs{} -> parens ; _ -> identity }
-    in parens (parensF (pTerm f) <+> sep (pTerm <$> args))
+    in parens (parensF (pTerm f) <+> nest 2 (sep (pTerm <$> args)))
   PartialApp extraTs fn args -> "PartialApp " <> viaShow extraTs <> parens (pTerm fn <> fillSep (pTerm <$> args))
   Instr   p -> annotate AInstr (viaShow p)
   Cast  i t -> parens (viaShow i) <> enclose "<" ">" (viaShow t)
@@ -228,7 +234,7 @@ pTerm = let
     doField (field , val) = prettyField (QName field) <> ".=" <> pTerm val
     in enclose "{ " " }" (hsep $ punctuate ";" (doField <$> IM.toList ts))
   Label   l []   -> "@" <> prettyLabel l
-  Label   l t    -> "@" <> prettyLabel l <> hsep (parens . pExpr <$> t)
+  Label   l t    -> parens $ "@" <> prettyLabel l <+> hsep (parens . pTerm <$> t)
 --RecLabel l i t -> prettyLabel l <> parens (viaShow i) <> "@" <> hsep (parens . pExpr <$> t)
   Match caseTy ts d -> prettyMatch caseTy ts d
 --RecMatch ts d -> let
@@ -243,6 +249,10 @@ pTerm = let
       LensSet  tt      -> " . set "  <> parens (pExpr tt)
       LensOver cast tt -> " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr tt)
     in pTerm r <> " . " <> hsep (punctuate "." $ prettyField <$> target) <> pLens ammo
+
+  LetSpecs ts t -> "letSpecs:" <+> viaShow ts <> hardline <> pTerm t
+  Spec i args   -> "Spec:" <+> viaShow i <+> nest 2 (sep (pTerm <$> args))
+
   x -> error $ show x
 
 -- Used to print error messages, but I don't like it
@@ -255,4 +265,3 @@ clMagenta x = "\x1b[35m" <> x <> "\x1b[0m"
 clCyan    x = "\x1b[36m" <> x <> "\x1b[0m"
 clWhite   x = "\x1b[37m" <> x <> "\x1b[0m"
 clNormal = "\x1b[0m"
-

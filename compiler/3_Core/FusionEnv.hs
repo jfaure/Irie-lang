@@ -7,17 +7,17 @@ import qualified Data.IntMap as IM
 import qualified Data.Vector as V
 import Control.Lens
 
--- Fusion: extremely aggressively attempt to bring eliminations in contact with introductions
+-- Fusion: extremely aggressively attempt to connect Matches to Labels
 -- # Prep phase
 -- eliminate data fixpoints => Stream / Cata / Build
 -- Identify small functions which we intend to always inline
--- Identify 'CaseArgs' (when (partially) constant, folds a branch)
--- lift Case-args to top "let-binds", to avoid traversing entire expr
+-- Identify CaseArgs CaseArgApp and CaseLensArgs => these require inlining into callsites
 
 -- # Elimination phase
 -- Proceed top-down pushing constants and constant labels inwards
 -- eg. go z x@(Right ys) => if x is caseArg => inline go and fuse the case
---
+
+-- Need to specialise; so recursive calls can bypass a Con > Match
 -- case-of-label: constant fold
 -- case-of-case : push outer case into each branch => many case-of-label
 -- case-of-arg:
@@ -26,18 +26,22 @@ import Control.Lens
 --   Want an arg that produces a constant label:
 --     !Not all arguments to arg need to be constant for this to be fusable
 --     Need to inline F into call-sites (partial specialisation | static arg)
+--   Partial application (incl. freeVars):
+--     | static arg => lift fnArg from recursive calls; so it can be binded to a non-Arg
+--     | pap-spec   => conv fnArg to a PAp of a statically known function
 
 -- # Other improvements
 -- case-merge: extract sub-cases that scrutinize the same variable
 -- case-liberate: unroll rec fns once to avoid repeated case on free-vars
--- -spec-constr:  specialise recursive functions once a case becomes redundant
 -- Multi-if-folding: `case x - 10 of { 10 -> _ }` => `case x of { 20 -> _ }`
 
 -- # Unboxed values
 -- always-inline small functions
 -- Lambda-of-Con: dup lambda to avoid duping args: (?!)
 --   `\b => (f b , g b)` => `(\b0 => f b0 , \b1 => g b1)`
--- Mutuals: perhaps can make a double loop
+-- Mutuals: perhaps better as a double loop
+-- Recognize series (sum/product)
+-- Recognize neutral elements (0 for + , 1 for *)
 
 -- Derivation
 -- 1. try distrubute the id cata accross the case, then make a single cata
@@ -87,6 +91,17 @@ import Control.Lens
 -- * second order Catas must fuse with cata-build
 -- * indexing functions? = buildl | buildr
 
+-- # Specialisation: bypass `Match over Label` for constant structure passed to Abs
+-- No-rec functions: it is enough to inline and re-simplify to obtain a specialisation
+-- Recursive specs must be Named since they can (maybe mutually) recurse with other specialisations of themselves
+
+-- # Layered specs: Fn = spec layers, each bypassing subsequent Match
+-- * spec leaf Matches `case x of { _ -> f (case y of {}) }`
+-- * need to find appropriate Match to constant fold
+-- % fully unpack args => (partially) repack if didn't fuse
+
+-- Term | LetSpecs [Term.Abs] Term | Spec IName | Unpacked Term
+
 data RecFn
  = Cata    Term -- term successfully rewritten as a (higher-order) Cata
  | Stream  Term -- ie. unstream < f < stream
@@ -107,16 +122,17 @@ data Simplifier s = Simplifier {
    _thisMod     :: IName
  , _extBinds    :: V.Vector (V.Vector Expr)
  , _cBinds      :: MV.MVector s Bind
- , _nApps       :: Int
- , _argTable    :: MV.MVector s Term -- used for eta reduction `(ArgKind , Term)` ?
- , _betaStack   :: BitSet -- list of fn binds being beta-reduced (check for stacked reductions of same fn)
- , _self        :: Int -- the bind we're simplifying (is probably recursive)
+ , _nApps       :: Int -- approximate complexity rating of a function
+ , _argTable    :: MV.MVector s Term -- used for β reduction
+ , _bruijnArgs  :: V.Vector Term
+ , _self        :: Int    -- the bind we're simplifying
+
+ , _nSpecs      :: Int
+ , _tmpSpecs    :: MV.MVector s (QName , Int , [Term]) -- recursive specialisations (of q over a new debruijnAbs)
+ , _letSpecs    :: MV.MVector s (Maybe Term {-.Abs-})
+ , _specStack   :: BitSet
+ , _inlineStack :: BitSet
 
  , _caseArgs    :: BitSet
  , _caseFnArgs  :: BitSet
-
- , _caseCount   :: Int -- unique i for every case in the function
- , _streamCases :: [Term]
- , _streamOK    :: Bool -- indicate if suitable for stream transformation
- , _recLabels   :: IM.IntMap (V.Vector Int)
 }; makeLenses ''Simplifier

@@ -1,13 +1,14 @@
 ## Top Priority
   * languageDocumentation.md
-  * type annotations
+  * improve type annotations
   * choice between (first order) foldl and foldr; ListFn => FoldL fl | FoldR fr | Array fl fr (| Ix)
   * toCStruct / fromCStruct / [ptr] : A -> CStruct
   * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals
-  * improve patterns2TT and eqn matches
+  * improve patterns2TT (add tuple of label) and eqn matches
+  * normalize fields/labels for codegen
+  * Improve identifying specialised Apps
 ## Top
   * show (esp for repl JIT) + subtyping typeclasses
-  * provide Vector alternative for ADTs when names sequential (they frequently are) [n..m]
   * 'StrIntName' new datatype: growable vector + hashmap
   * Linear types; dependent types required to quantify relative linearity `t ≥ f => t → u`
   * expand lambda-mixfixes with explicit holes & don't allow unsaturated mixfix words
@@ -17,15 +18,18 @@
   * don't allow mixing tabs and spaces
   * Pattern guards
   * List comprehensions
+  * improve linefolds
+  * mutual let-bindings
 ## Types
-  * handle field name collisions (THFieldCollision)
+  * THFieldCollision
   * Dependent normalisation
   * first class polymorphism
   * mergetyhead should indicate if merge was a noop (so bisub knows it has already seen that input)
 ## Functor modules and records
+  * THProduct Vector alternative for ADTs when names sequential [n..m]
   * patterns in field assignments and top-level (patterns2TT)
   * imports allowed anywhere and treated as record
-  * BName LName FName overlap & mixfix
+  * BindName LName FName overlap & mixfix FNames
   * Module = Fun | Record
   * Module = Vector Bind & [HNames] & [MixfixNames] (vs IntMap Expr)
   * Records = sparse array of file-scoped names
@@ -38,15 +42,6 @@
   * lone mfWords that aren't ambig-binds should error (also non-explicit partial apps like f = 3 <)
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
-## Simplifier
-  * constructor specialisation
-  * case-of-case
-  * static argument transformation
-  * tycon promotion (promote single field /labels to value)
-  * case-merge
-  * exitification (separate code from recursive exit paths)
-  * normalize fields/labels for codegen
-  * Maths: recognize series (sum/product) ; recognize neutral elements (0 for + , 1 for *)
 
 ## Unimportant
   * cache version

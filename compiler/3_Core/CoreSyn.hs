@@ -28,8 +28,6 @@ data VName
  | VExt     IName -- externs; primitives, mixfixwords and imported names
  | VForeign HName -- opaque name resolved at linktime
 
- | VBruijn  IName -- debruijn arg (only built by the simplifier)
-
 data Term -- β-reducable (possibly to a type)
  = Var     !VName
  | Lit     !Literal
@@ -47,14 +45,23 @@ data Term -- β-reducable (possibly to a type)
  | Cons    (IM.IntMap Term)
  | TTLens  Term [IField] LensOp
 
- | Label   ILabel [Expr]
+ | Label   ILabel [Term] --[Expr]
  | Match   Type (IM.IntMap Expr) (Maybe Expr) -- Type is the return type
 
- -- Extra info built by the fusion reactor
+ -----------------------------------------------
+ -- Extra info built for/by simplification --
+ -----------------------------------------------
  | RecApp   Term [Term] -- direct recursion
  -- annotate where fixpoints are
  | RecLabel ILabel (V.Vector Int) [Expr]
  | RecMatch (IM.IntMap (V.Vector Int , Expr)) (Maybe Expr)
+
+ -- Named Specialised recursive fns can (mutually) recurse with themselves
+ | LetSpecs [Term{-.Abs-}] Term
+ | Spec IName [Term] -- args with no constant label structure
+
+ | VBruijn IName
+ | BruijnAbs Int Term
 
  | PartialApp [Type] Term [Term] --Top level PAp => Abs (only parse generates fresh argnames)
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
@@ -214,7 +221,7 @@ data OldCachedModule = OldCachedModule {
  , oldBindNames   :: V.Vector HName -- to check if ambiguous names were deleted
 } deriving Show
 
--- only used by prettyCore functions
+-- only used by prettyCore functions and the error formatter
 data BindSource = BindSource {
    srcArgNames     :: V.Vector HName
  , srcBindNames    :: V.Vector HName

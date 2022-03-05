@@ -106,7 +106,7 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
 
     MV.write wip' bindINm (Mutual jb freeVars isRec tvarIdx typeAnn)
     if minimum (bindINm:ms) /= bindINm then pure jb
-    else (fromJust . head <$> generaliseBinds svEscapes svLeaked bindINm ms)
+    else (fromJust . head <$> generaliseBinds svEscapes svLeaked bindINm ms) -- <* clearBiSubs 0
 
 generaliseBinds :: BitSet -> BitSet -> Int -> [Int] -> TCEnv s [Expr]
 generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m >>= \case
@@ -126,7 +126,8 @@ generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \
         freeArgTVars <- use argVars >>= \argPerms ->
           bitSet2IntList freeVs `forM` \i -> MV.read argPerms i
         escaped <- use escapedVars
-        generalise escaped (Left recTVar) <* when (free == 0) (clearBiSubs recTVar)
+        generalise escaped (Left recTVar)
+          <* when (free == 0 && null ms) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
       Ty t -> pure $ Ty $ if not isRec then t else case t of
         -- v should µbinder be inside the pi type ?
         TyPi (Pi ars t)   -> TyPi (Pi ars (TyGround [THMu 0 t]))
@@ -141,7 +142,7 @@ generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \
       (Just ann , Core e inferredTy) -> Core e <$> checkAnnotation ann inferredTy
       _                              -> pure inferred
     done <$ MV.write wip' m (BindOK isRec done)
-  BindOK r e -> e <$ traceM ("odd, BindOK instead of Mutual: " <> show e :: Text)
+  BindOK r e -> pure e -- An already handled mutual
 
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
 -- ! we may have inferred some missing information in type holes
@@ -213,7 +214,9 @@ infer = let
 
  judgeLabel qNameL exprs = let
    labTy = TyGround [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
-   in Core (Label qNameL exprs) (TyGround [THTyCon $ THSumTy $ IM.singleton (qName2Key qNameL) labTy])
+-- in Core (Label qNameL exprs) (TyGround [THTyCon $ THSumTy $ IM.singleton (qName2Key qNameL) labTy])
+   es = (\(Core t ty) -> t) <$> exprs
+   in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ IM.singleton (qName2Key qNameL) labTy])
 
  in \case
   P.WildCard -> pure $ Core Question (TyGround [])

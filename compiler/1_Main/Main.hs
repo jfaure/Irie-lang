@@ -158,9 +158,11 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
   simpleBinds = runST $ V.unsafeThaw judgedBinds >>= \cb ->
       simplifyBindings modI nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
   judgedFinal = JudgedModule modI modNm nArgs bindNames a b simpleBinds
-  oTypes = if "types"  `elem` printPass flags && not (quiet flags) then Just $ nameBinds False bindNamePairs else Nothing
-  oCore  = if "core"   `elem` printPass flags && not (quiet flags) then Just $ nameBinds True  bindNamePairs else Nothing
-  oSimple= if "simple" `elem` printPass flags && not (quiet flags) then Just $ nameBinds True  (V.zip bindNames simpleBinds) else Nothing
+
+  testPass p = coreOK && p `elem` printPass flags && not (quiet flags)
+  oTypes  = if testPass "types"  then Just $ nameBinds False bindNamePairs else Nothing
+  oCore   = if testPass "core"   then Just $ nameBinds True  bindNamePairs else Nothing
+  oSimple = if testPass "simple" then Just $ nameBinds True  (V.zip bindNames simpleBinds) else Nothing
   in (flags , coreOK , errors , bindSrc , srcInfo , fName , newResolver , judgedFinal , (oTypes , oCore , oSimple))
 
 putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oTypes , oCore , oSimple)) = let

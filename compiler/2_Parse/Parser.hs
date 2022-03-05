@@ -491,7 +491,7 @@ ttArg , tt :: Parser TT
         splitFn <- tt
         pure (pats , splitFn)
       pure (lName , free , pats , splitFn)
-    in do
+    splitIndent = do
       ref <- use indent <* scn
       L.indentLevel >>= \i -> case compare i ref of
         LT -> fail $ "new case statement is less indented than the reference indent: "
@@ -501,6 +501,8 @@ ttArg , tt :: Parser TT
           alts     <- indentedItems ref scn split finishEarly
           catchAll <- optional $ reservedChar ' ' *> reserved "=>" *> tt
           pure (Match alts catchAll)
+    splitBraces = fail "" --braces $ 
+    in splitBraces <|> splitIndent
   match = do
     scrut  <- tt
     reserved "of"

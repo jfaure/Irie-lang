@@ -16,7 +16,7 @@ module demo x =
 --fuse = foldl add 0 (enumFromTo 0 10)
 
 --nextAppend (Left input) = case nextEnum input of
---  Done       => Skip    (Right input2)
+--  Done       => Skip    (Right 0 5)
 --  Skip xs    => Skip    (Left xs)
 --  Yield x xs => Yield x (Left xs)
 --nextAppend (Right ys) = case nextEnum ys of
@@ -24,24 +24,61 @@ module demo x =
 --  Skip bs    => Skip    (Right bs)
 --  Yield x ys => Yield x (Right ys)
 
-ifCase scrut a b = case scrut of
-  True  => a
-  False => b
+{-
+fromMaybe x = case x of
+  Nothing => 0
 
-bool2Bool i = ifThenElse i True False
-
-sum z s = case nextEnum s of
-  Done      => z
-  Skip s    => sum z         s
-  Yield x s => sum (add z x) s
-
---nextEnum n = ifThenElse (ge n 10) Done (Yield n (add 1 n))
---nextEnum n = ifCase (bool2Bool (ge n 10)) Done (Yield n (add 1 n))
-nextEnum n = case (bool2Bool (ge n 10)) of
+nextEnum n = case bool2Bool (ge n 10) of
   True  => Done
   False => Yield n (add 1 n)
+bool2Bool i = ifThenElse i True False
 
---sumAppend xs = go 0 (Left xs)
+nextConcatMap i Nothing = case nextEnum i of
+  Done   => Done
+  Skip i => Skip i Nothing
+  Yield x i => let
+    nextRet x True  = Yield (mul x x) False
+    nextRet x False = Done
+    in Skip i (Just (Stream (nextRet x) True))
+nextConcatMap i (Just (Stream next s0)) = case next s0 of
+  Done      => Skip i Nothing
+  Skip s    => Skip i (Just (Stream next s))
+  Yield y s => Yield y i (Just (Stream next s))
+
+go z s0 s1 = case nextConcatMap s0 s1 of
+  Done        => z
+  Skip s q    => go z s q
+  Yield x s q => go (add z x) s q
+
+sumAppend = go 0 1 Nothing
+-}
+
+-- Mutual specialisation
+bool2N = \case
+  True  => 1
+  False => 0
+
+go2 z i next s = case next s of
+  Done      => go1 z i
+  Skip s h  => go2 z i next s
+  Yield x s => go2 (add z x) i next s
+
+go1 z i = let
+  nextRet x = case x of
+    True  => Yield (mul i i) False
+    False => Done
+  in ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet) True)
+
+-- End goal
+--n = 10
+--go1 z k = ifThenElse (ge k n) z (go2 z k (add k 1) 1)
+--go2 z k k' m = ifThenElse (ge m k) (go1 z k')
+--  (go2 (add z (mul k m)) k k' (add 1 m))
+
+--testParity n = 
+--  isEven n = ifThenElse (eq n 0) 1 (isOdd (sub n 1))
+--  isOdd n  = ifThenElse (eq n 0) 0 (isEven (sub n 1))
+--  in isEven n
 
 --rect (P : Set) : Set = record
 --  f : Int

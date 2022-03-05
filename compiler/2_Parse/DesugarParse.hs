@@ -48,7 +48,7 @@ convPat = \case
     PTuple  fields -> \t -> let
     -- Note the convention that negative numbers indicate tuple indexing
       mkProj l (PArg i) = (i , TTLens 0 thisArg [l] LensGet) -- (i , Idx thisArg l)
-      mkProj _ p = error $ "not ready for patterns within tuples" <> show p
+      mkProj _ p = error $ "not ready for patterns within tuples: " <> show p
       (fieldArgs , projs) = unzip $ zipWith mkProj [-1,-2..] fields
       fArgs = PArg <$> fieldArgs
       abs = Abs (FnDef "tupleProj" Let Nothing 0 (FnMatch fArgs t :| []) Nothing)
