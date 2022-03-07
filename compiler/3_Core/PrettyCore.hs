@@ -174,13 +174,14 @@ pTyHead = let
   x -> viaShow x
 
 pBind nm showTerm bind = pretty nm <> " = " <> case bind of
-  Checking m e g ty     -> "CHECKING: " <> viaShow m <> viaShow e <> viaShow g <> " : " <> viaShow ty
   Guard m tvar      -> "GUARD : "   <> viaShow m <> viaShow tvar
   Mutual m free isRec tvar tyAnn -> "MUTUAL: " <> viaShow m <> viaShow isRec <> viaShow tvar <> viaShow tyAnn
-  WIP -> "WIP"
+  Queued -> "Queued"
   BindOK isRec expr -> let recKW = if isRec && case expr of {Core{}->True;_->False} then annotate AKeyWord "rec " else ""
     in if showTerm then recKW <> pExpr expr else pExprType expr
-  BindOpt complex expr -> parens ("nApps: " <> viaShow complex) <+> pExpr expr
+  BindOpt complex specs expr -> let
+    showSpecs = if specs == 0 then "" else space <> parens "specs: " <> viaShow (bitSet2IntList specs)
+    in parens ("nApps: " <> viaShow complex) <> showSpecs <+> pExpr expr
 
 pExprType = \case
   Core term ty -> annotate AType (pTy ty)
@@ -195,12 +196,15 @@ pExpr = \case
   e -> viaShow e
 
 pTerm = let
+  parensAbs f = case f of { Abs{} -> parens ; _ -> identity }
+  parensApp f = case f of { App{} -> parens ; _ -> identity }
   pVName = \case
     VArg i     -> annotate (AArg i)       ""
     VBind i    -> "VBind" <> viaShow i -- error $ "not a QBind: " <> show i --annotate (ABindName i)  ""
     VQBind q   -> annotate (AQBindName q) ""
     VExt i     -> "E" <> viaShow i -- <> dquotes (toS $ (srcExtNames bindSrc) V.! i)
     VForeign i -> "foreign " <> viaShow i
+  prettyFreeArgs x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
   prettyMatch caseTy ts d = let
@@ -218,16 +222,14 @@ pTerm = let
   Lit     l -> annotate ALiteral $ parens (viaShow l)
   Abs ars free term ty -> let
     prettyArg (i , ty) = viaShow i
-    prettyFree x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
-    in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFree free <> " => " <> pTerm term
-  BruijnAbs n body -> parens $ "λB(" <> viaShow n <> ")" <+> pTerm body
+    in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " => " <> pTerm term
+  BruijnAbs n free body -> parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> pTerm body
 --   <> ": " <> annotate AType (pTy ty)
   RecApp f args -> parens (annotate AKeyWord "recApp" <+> pTerm f <+> sep (pTerm <$> args))
-  App (Match caseTy ts d) args -> sep (pTerm <$> args) <+> " > " <+> prettyMatch caseTy ts d
-  App f args    -> let parensF = case f of { Abs{} -> parens ; _ -> identity }
-    in parens (parensF (pTerm f) <+> nest 2 (sep (pTerm <$> args)))
+  App (Match caseTy ts d) args -> sep ((\t -> (parensApp t) (pTerm t)) <$> args) <+> " > " <+> prettyMatch caseTy ts d
+  App f args    -> parens ((parensAbs f) (pTerm f) <+> nest 2 (sep (pTerm <$> args)))
   PartialApp extraTs fn args -> "PartialApp " <> viaShow extraTs <> parens (pTerm fn <> fillSep (pTerm <$> args))
-  Instr   p -> annotate AInstr (viaShow p)
+  Instr   p -> annotate AInstr (prettyInstr p)
   Cast  i t -> parens (viaShow i) <> enclose "<" ">" (viaShow t)
 
   Cons    ts -> let
@@ -254,6 +256,13 @@ pTerm = let
   Spec i args   -> "Spec:" <+> viaShow i <+> nest 2 (sep (pTerm <$> args))
 
   x -> error $ show x
+
+prettyInstr = \case
+  NumInstr i -> case i of
+    PredInstr GECmp -> "_>_"
+    IntInstr Add -> "_+_"
+    IntInstr Mul -> "_*_"
+  p -> viaShow p
 
 -- Used to print error messages, but I don't like it
 clBlack   x = "\x1b[30m" <> x <> "\x1b[0m"

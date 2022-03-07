@@ -16,7 +16,6 @@ global_debug = False
 type ExtIName    = Int -- VExterns
 type BiSubName   = Int -- index into bisubs
 type SrcOff      = Int -- offset into the source file
-type Complexity  = Int -- number of Apps in the Term
 type IField  = QName
 type ILabel  = QName
 type TVarSet = BitSet
@@ -40,9 +39,8 @@ data Term -- β-reducable (possibly to a type)
  | Abs     [(IName , Type)] BitSet Term Type -- arg inames, types, freevars, term ty
  | App     Term [Term]    -- IName [Term]
 
- | Tuple   (V.Vector Term) -- Alternate version of Cons where indexes are sequential
- | Idx     Term Int
  | Cons    (IM.IntMap Term)
+ | Tuple   (V.Vector Term) -- Alternate version of Cons where indexes are sequential
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Term] --[Expr]
@@ -61,7 +59,7 @@ data Term -- β-reducable (possibly to a type)
  | Spec IName [Term] -- args with no constant label structure
 
  | VBruijn IName
- | BruijnAbs Int Term
+ | BruijnAbs Int BitSet Term
 
  | PartialApp [Type] Term [Term] --Top level PAp => Abs (only parse generates fresh argnames)
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
@@ -146,20 +144,20 @@ data Expr
 -- | MFId     Expr
 
 data Bind -- indexes in the bindmap
- = WIP
- | Guard     { mutuals :: [IName] , tvar :: IName }
- | Mutual    { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
+ = Queued
+ | Guard  { mutuals :: [IName] , tvar :: IName } -- Inference in progress; possibly a stack of its dependencies
+ -- v Marker for an inferred type waiting for generalisation (waiting for all mutual binds to be inferred)
+ | Mutual { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
 
- | Checking  { mutuals :: [IName]
-             , monoMorphic :: Maybe Expr -- if set, shouldn't generalise itself (ask (the first seen) mutual bind do it)
-             , doGen :: Bool
-             , recTy :: Type
-             }
- | BindKO -- failed typecheck
- | BindOK    Bool Expr -- isRec
+ | BindKO -- failed type
+ | BindOK Bool Expr -- isRec
 
- | BindMutuals (V.Vector Expr)
- | BindOpt   Complexity Expr -- optimized binding
+-- | BindMutuals (V.Vector Expr)
+
+ | BindOpt Complexity Specs Expr
+
+type Complexity = Int -- number of Apps in the Term
+type Specs      = BitSet
 
 data ExternVar
  = ForwardRef IName -- not extern
@@ -177,6 +175,7 @@ data Mixfixy = Mixfixy
  }
 
 type ASMIdx = IName -- Field|Label-> Idx in sorted list (the actual index used at runtime)
+-- Various casts inserted by inference
 data BiCast
  = BiEQ
  | CastInstr PrimInstr

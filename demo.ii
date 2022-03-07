@@ -53,23 +53,39 @@ go z s0 s1 = case nextConcatMap s0 s1 of
 sumAppend = go 0 1 Nothing
 -}
 
--- Mutual specialisation
+{-
+-- Wrapped
+bool2N = \case
+  True  => 1
+  False => 0
+
+go2 z i (Wrap next) s = case next s of
+  Done      => go1 z i
+  Yield x s => go2 (add z x) i (Wrap next) s
+
+go1 z i = let
+  nextRet x = case x of
+    True  => Yield (mul i i) False
+    False => Done
+  in ifThenElse (ge i 10) z (go2 z (add i 1) (Wrap nextRet) True)
+-}
+
+-- Unwrapped
 bool2N = \case
   True  => 1
   False => 0
 
 go2 z i next s = case next s of
   Done      => go1 z i
-  Skip s h  => go2 z i next s
   Yield x s => go2 (add z x) i next s
 
 go1 z i = let
   nextRet x = case x of
     True  => Yield (mul i i) False
     False => Done
-  in ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet) True)
+  in ifThenElse (ge i 10) z (go2 z (add i 1) nextRet True)
 
--- End goal
+-- sum [ k ∗ m | k ← [1..n], m ← [1..k] ]
 --n = 10
 --go1 z k = ifThenElse (ge k n) z (go2 z k (add k 1) 1)
 --go2 z k k' m = ifThenElse (ge m k) (go1 z k')

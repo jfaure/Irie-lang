@@ -92,21 +92,53 @@ import Control.Lens
 -- * indexing functions? = buildl | buildr
 
 -- # Specialisation: bypass `Match over Label` for constant structure passed to Abs
--- No-rec functions: it is enough to inline and re-simplify to obtain a specialisation
--- Recursive specs must be Named since they can (maybe mutually) recurse with other specialisations of themselves
-
--- # Layered specs: Fn = spec layers, each bypassing subsequent Match
--- * spec leaf Matches `case x of { _ -> f (case y of {}) }`
--- * need to find appropriate Match to constant fold
--- % fully unpack args => (partially) repack if didn't fuse
-
--- Term | LetSpecs [Term.Abs] Term | Spec IName | Unpacked Term
+-- Specialisation: IntMap IBind SpecI
+-- Order of operations
 
 data RecFn
  = Cata    Term -- term successfully rewritten as a (higher-order) Cata
  | Stream  Term -- ie. unstream < f < stream
  | Unboxed Term -- no data
  | Weird   Term -- mixes second-order cata and stream
+
+-- The big question: How much arg structure is needed for a specialisation to fuse something
+data FuseArg -- Which args are case-split and how
+ = NoBranch  -- Not case-split in this function (Presumably its built into the result and may be case-split later)
+ | CaseArg   -- arg is case-split
+ | CaseFnArg FuseArg -- arg is a fn whose result is case-split (upto given structure)
+
+ | LensedArg {- Lens -} -- What structure of the arg must be known to fuse with a case
+
+type SimplifierEnv s = StateT (Simplifier s) (ST s)
+data Simplifier s = Simplifier {
+   _thisMod     :: IName
+ , _extBinds    :: V.Vector (V.Vector Expr)
+ , _cBinds      :: MV.MVector s Bind
+ , _nApps       :: Int -- approximate complexity rating of a function
+ , _argTable    :: MV.MVector s Term -- used for β reduction
+ , _useArgTable :: Bool -- App (Abs args body) for β-reduction must simplify body
+ , _bruijnArgs  :: V.Vector Term
+ , _self        :: Int    -- the bind we're simplifying
+
+ , _nSpecs      :: Int -- cursor for allocating new specialisations
+ , _prevSpecs   :: Int -- specialisations already computed; new requests are: [prevSpecs .. nSpecs-1]
+ , _tmpSpecs    :: MV.MVector s (Either QName IName , Int , [Term]) -- requested specialisations of q (bind) or i (spec)
+ , _letSpecs    :: MV.MVector s (Maybe Term {-.Abs-})  -- specialisations
+ , _bindSpecs   :: MV.MVector s BitSet -- specialisation INames for each bind (to avoid respecialising things)
+ -- recursive specialisations
+ , _thisSpec    :: IName  -- wip spec
+ , _recSpecs    :: BitSet -- specialisations that contain themselves (don't inline these)
+
+  -- collect fns using specialisations not yet generated; will have to resimplify later
+ , _hasSpecs    :: BitSet
+ , _reSpecs     :: [IName] -- , BitSet)] -- Bindings contain un-inlined specialisations
+
+ , _specStack   :: BitSet -- Avoid recursive inline
+ , _inlineStack :: BitSet -- Avoid recursive inline
+
+ , _caseArgs    :: BitSet
+ , _caseFnArgs  :: BitSet
+}; makeLenses ''Simplifier
 
 --data ArgKind
 --  = APrim PrimType
@@ -116,23 +148,3 @@ data RecFn
 --  | APoly
 --  | ARec -- only in Array or Tree (also fn return | any covariant position?)
 --data SumRep = Enum | Peano | Wrap | Array [ArgKind] | Tree [ArgKind]
-
-type SimplifierEnv s = StateT (Simplifier s) (ST s)
-data Simplifier s = Simplifier {
-   _thisMod     :: IName
- , _extBinds    :: V.Vector (V.Vector Expr)
- , _cBinds      :: MV.MVector s Bind
- , _nApps       :: Int -- approximate complexity rating of a function
- , _argTable    :: MV.MVector s Term -- used for β reduction
- , _bruijnArgs  :: V.Vector Term
- , _self        :: Int    -- the bind we're simplifying
-
- , _nSpecs      :: Int
- , _tmpSpecs    :: MV.MVector s (QName , Int , [Term]) -- recursive specialisations (of q over a new debruijnAbs)
- , _letSpecs    :: MV.MVector s (Maybe Term {-.Abs-})
- , _specStack   :: BitSet
- , _inlineStack :: BitSet
-
- , _caseArgs    :: BitSet
- , _caseFnArgs  :: BitSet
-}; makeLenses ''Simplifier

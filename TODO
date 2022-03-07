@@ -14,6 +14,7 @@
   * expand lambda-mixfixes with explicit holes & don't allow unsaturated mixfix words
   * mixfix scope
   * record type decls
+  * delay inserting QNames to maximise bitset use
 ## Parse
   * don't allow mixing tabs and spaces
   * Pattern guards
@@ -39,7 +40,7 @@
   * use functions & records to manage names? (names , let-binds , etc..)
 ## Error messages
   * Warn nonsense type joins / infer a dependent type
-  * lone mfWords that aren't ambig-binds should error (also non-explicit partial apps like f = 3 <)
+  * Unsaturated (incl. lone) mfWords that aren't ambig-binds should error
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
 

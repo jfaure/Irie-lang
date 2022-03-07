@@ -30,7 +30,7 @@ judgeModule nBinds pm importedModules modIName nArgs hNames exts source = let
   nLabels = M.size (pm ^. P.parseDetails . P.labels)
   pBinds' = V.fromListN nBinds (pm ^. P.bindings)
   in runST $ do
-    wip'      <- MV.replicate nBinds WIP
+    wip'      <- MV.replicate nBinds Queued
     bis'      <- MV.new 64
     argVars'  <- MV.new nArgs
     st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
@@ -77,7 +77,7 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
       MV.modify wip' (\(Guard ms tv) -> Guard (bindINm:ms) tv) this
     pure $ Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)
 
-  WIP -> use wip >>= \wip' -> do
+  Queued -> use wip >>= \wip' -> do
     abs   <- (V.! bindINm) <$> use pBinds
     svwip <- bindWIP <<.= (bindINm , False)
     let freeVars = P.fnFreeVars abs

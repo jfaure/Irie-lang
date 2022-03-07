@@ -11,7 +11,7 @@ import CoreBinary()
 import CoreUtils (bind2Expr)
 import PrettyCore
 import Infer
-import Eval
+import Fuse
 import MkSSA
 import C
 

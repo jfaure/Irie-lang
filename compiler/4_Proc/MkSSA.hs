@@ -159,7 +159,7 @@ cgCore wip i nm b = let
 cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case
   WIPCore (nm , b) -> case b of
     BindOK isRec b -> cgCore wip i nm b
-    BindOpt _ b -> cgCore wip i nm b
+    BindOpt _ _ b  -> cgCore wip i nm b
 --  Ty ty -> pure $ ssaTy ty
   x -> pure x
 
@@ -168,7 +168,6 @@ cgExpr t = let
   cgName = \case
     VBind b -> pure (Extern b) -- fnDecl <$> cgBind b
     VArg  i -> gets argTable >>= \at -> fst <$> MV.read at i
-      -- pure $ Arg i
   in case t of
   Var vNm -> cgName vNm
   Lit l   -> pure $ LitE l
