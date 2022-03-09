@@ -9,6 +9,7 @@ import CoreUtils
 import ShowCore()
 import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
+import qualified Data.Map as M
 import qualified Data.Vector as V
 import Data.List (unzip3)
 import Control.Lens
@@ -21,6 +22,7 @@ simplifyBindings modIName nArgs nBinds bindsV = do
   letSpecs'   <- MV.replicate 32 Nothing
   tmpSpecs'   <- MV.new 32
   bindSpecs'  <- MV.replicate nBinds emptyBitSet
+  cachedSpecs'<- MV.replicate nBinds mempty
   argSubs     <- MV.generate nArgs (\i -> Var (VArg i))
   (simpleBind `mapM` [0 .. nBinds-1] *> doReSpecs) `execStateT` Simplifier {
     _thisMod     = modIName
@@ -36,6 +38,7 @@ simplifyBindings modIName nArgs nBinds bindsV = do
   , _prevSpecs   = 0 -- lags behind nSpecs
   , _letSpecs    = letSpecs'
   , _bindSpecs   = bindSpecs'
+  , _cachedSpecs = cachedSpecs'
   , _tmpSpecs    = tmpSpecs'
   , _thisSpec    = -1
   , _recSpecs    = emptyBitSet
@@ -88,7 +91,7 @@ simpleBind bindN = use cBinds >>= \cb -> MV.read cb bindN >>= \b -> do
   MV.write cb bindN (BindOpt (complement 0) emptyBitSet (Core (Var (VBind bindN)) tyBot)) -- recursion guard
 
   new' <- case b of
-    BindOpt nA bindSpecs body -> (nApps .= nA) *> pure body
+    BindOpt nA bs body -> (nApps .= nA) *> pure body
     BindOK isRec (Core t ty) -> simpleTerm t <&> \case
       -- catch top level partial application (ie. extra implicit args)
       App (Instr (MkPAp n)) (f2 : args2) -> let
@@ -112,8 +115,8 @@ simpleBind bindN = use cBinds >>= \cb -> MV.read cb bindN >>= \b -> do
   new <- case new' of { Core thisF ty -> simpleTerm thisF <&> \tok -> Core tok ty }
 
   nApps .= svN
-  let bindSpecs = case b of { BindOpt _ s _ -> s ; _ -> emptyBitSet }
-      newB = BindOpt napps bindSpecs new
+  let bs = case b of { BindOpt _ s _ -> s ; _ -> emptyBitSet }
+      newB = BindOpt napps bs new
   newB <$ MV.write cb bindN newB
 
 -- Binds request specialisations which are derived here
@@ -122,8 +125,9 @@ specialiseRequests bindN mod new' = use nSpecs >>= \nspecs -> (prevSpecs <<.= ns
     respecs <- [prevspecs .. nspecs - 1] `forM` \i -> MV.read t i >>= \(q , bruijnN , argStructure) -> case q of
       Left q  -> specialiseBind bindN mod thisF q i bruijnN argStructure
       Right j -> do -- specialise specialisation
+        -- TODO merge specs and check the cache
         Just specF <- use letSpecs >>= \ls -> MV.read ls j
-        spec <- specialiseTerm i bruijnN specF argStructure
+        spec <- specialiseTerm i bruijnN specF (getArgShape <$> argStructure) argStructure
         traceM $ "specialised " <> show i <> " (specialisation " <> show j <> ") " <> prettyTermRaw spec <> "\n"
         pure []
     thisSpec .= -1
@@ -133,24 +137,29 @@ specialiseRequests bindN mod new' = use nSpecs >>= \nspecs -> (prevSpecs <<.= ns
     specStack   .= emptyBitSet
     inlineStack .= emptyBitSet
 
-specialiseTerm i bruijnN specF argStructure = let
+specialiseTerm i bruijnN specF argShapes argStructure = let
   free = case specF of { Abs ars free t ty -> free ; BruijnAbs bn free t -> free ; _ -> emptyBitSet }
   in do
+  thisSpec .= i
   spec <- BruijnAbs bruijnN free <$> simpleApp specF argStructure
+  traceM $ "specialised " <> show i <> prettyTermRaw spec <> "\n"
   spec <$ (use letSpecs >>= \ls -> MV.write ls i (Just spec))
 
-specialiseBind bindN mod thisF q i bruijnN argStructure = let unQ = unQName q in do
+specialiseBind bindN mod thisF q i bruijnN argStructure = let
+  unQ = unQName q
+  argShapes = getArgShape <$> argStructure
+  cacheSpec s = use cachedSpecs >>= \cs -> MV.modify cs (M.insert argShapes i) bindN
+  in do
   specF <- if modName q == mod && unQName q == bindN then pure thisF else inline q
   specStack .= emptyBitSet
-  traceM ("specialising " <> show i <> ": " <> prettyTermRaw specF <> "\n on:") *> (argStructure `forM` (traceM . prettyTermRaw))
-  when (modName q == mod) $ use bindSpecs >>= \v -> do
-    MV.modify v (`setBit` i) unQ
-  thisSpec .= i
-
-  spec <- specialiseTerm i bruijnN specF argStructure
-  traceM $ "specialised " <> show i <> prettyTermRaw spec <> "\n"
---when (i == 1) (error "end")
-  pure (if modName q == mod && unQ == bindN then [] else [unQ])
+--traceM ("specialising " <> show i <> ": " <> prettyTermRaw specF <> "\n on:")*>(argStructure `forM` (traceM . prettyTermRaw))
+  if modName q == mod && unQ == bindN
+    then [] <$ (specialiseTerm i bruijnN specF argShapes argStructure >>= cacheSpec)
+    else use bindSpecs >>= \bs -> MV.read bs bindN >>= \bindspecs -> use letSpecs >>= \ls -> do
+      MV.modify bs (`setBit` i) unQ
+      use cachedSpecs >>= \cs -> MV.read cs unQ <&> (M.!? argShapes) >>= \case
+        Just reuse -> [unQ] <$ MV.write ls i (Just (Spec reuse)) <* traceM ("re-use specialisation: " <> show i <> " => " <> show reuse)
+        Nothing    -> [unQ] <$ specialiseTerm i bruijnN specF argShapes argStructure
 
 -- Recurse everywhere trying to fuse Matches with Labels
 -- ! Simplifying a term twice can be flat out incorrect since Arg subs can contain functions of 'themselves'
@@ -167,14 +176,7 @@ simpleTerm t = -- (traceM $ (prettyTermRaw t) <> "\n\n") *>
     _ -> pure t
   VBruijn i -> use bruijnArgs <&> \v -> if V.length v /= 0 then (v V.! i) else VBruijn i
 
-  Spec i args -> (specStack <<%= (`setBit` i)) >>= \sp -> use thisSpec >>= \this -> let
-    noInline = Spec i <$> (simpleTerm `traverse` args)
-    testRec = when (this == i) (recSpecs %= (`setBit` i))
-    in testRec *> use letSpecs >>= \ls -> use recSpecs >>= \recs -> if not (null args) && any isSpecArg args
-      then mkSpecialisation (Right i) args -- can further specialise a specialisation (it was inlined and an arg became known)
-      else MV.read ls i >>= \got -> case got of
-        Just spec | not (sp `testBit` i || recs `testBit` i) -> simpleApp spec args -- Inlined a specialisation
-        _   -> noInline
+  Spec i -> pure t
 
   Abs argDefs free body ty -> simpleTerm body <&> \b -> Abs argDefs free b ty
   BruijnAbs n free body -> simpleTerm body <&> BruijnAbs n free
@@ -206,7 +208,7 @@ simpleTerm t = -- (traceM $ (prettyTermRaw t) <> "\n\n") *>
 mkSpecialisation :: Either QName IName -> [Term] -> SimplifierEnv s Term
 mkSpecialisation q args = let
   -- replace all Label args with new deBruijn ArgNames , pass those to the specialisation
-  -- TODO also handle VQBinds and Cons !
+  -- TODO also handle Cons !
   unPackArg :: Int -> Term -> (Int , [Term] , Term) -- bruijnN , (new Args(label sub-exprs) , abstracted args
   unPackArg argCount = \case
     Label l ars -> let
@@ -230,7 +232,7 @@ mkSpecialisation q args = let
   in do -- d_ (args , (bruijnN , unStructuredArgs , repackedArgs)) $
     i <- addTmpSpec q bruijnN (reverse repackedArgs)
     hasSpecs %= (`setBit` i)
-    pure (Spec i (concat unStructuredArgs))
+    pure (App (Spec i) (concat unStructuredArgs))
   -- once this rec-fn is simplfied once, need to simplify its specialisations `App q repackedArgs` then sub them in
 
 -- Perform β-reduction on an Abs
@@ -258,8 +260,8 @@ foldBruijn n body args = let
   bruijnArgs .= argSubs
   if n == 0 then pure body else simpleTerm body <* (bruijnArgs .= V.empty)
 
--- Constants | Labels | Matches (case-of-case)
-isSpecArg = \case { Label{}->True ; Match{}->True ; Var (VQBind{})->True ; Cons fs -> any isSpecArg fs ; _->False}
+-- Constants | Labels
+isSpecArg = \case { Label{}->True ; {- Match{}->True ; -} Var (VQBind{})->True ; Cons fs -> any isSpecArg fs ; _->False}
 
 -- (do partial) β-reduction
 simpleRecApp f argsRaw = simpleTerm f >>= \f' -> (simpleTerm `traverse` argsRaw) >>= simpleApp' True  f'
@@ -280,7 +282,14 @@ simpleApp' isRec f args = (nApps %= (1+)) *> case f of
     Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
     Var (VBind i ) | hasSpecArgs -> use thisMod >>= \m -> mkSpecialisation (Left (mkQName m i)) args
     Var (VQBind q) | hasSpecArgs -> mkSpecialisation (Left q) args
---  Spec i args    | hasSpecArgs -> mkSpecialisation (Right i) args
+    Spec i -> (specStack <<%= (`setBit` i)) >>= \sp -> use thisSpec >>= \this -> let
+      testRec = when (this == i) (recSpecs %= (`setBit` i))
+      in testRec *> use letSpecs >>= \ls -> use recSpecs >>= \recs -> if not (null args) && any isSpecArg args
+        then mkSpecialisation (Right i) args -- can further specialise a specialisation (it was inlined and an arg became known)
+        else MV.read ls i >>= \got -> case got of
+          Just spec | not (sp `testBit` i || recs `testBit` i) -> simpleApp spec args -- Inlined a specialisation
+          _   -> pure (app fn args)
+
     _ -> pure (app fn args)
 
 -- Fusing Matches with constant labels is the main goal

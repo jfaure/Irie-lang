@@ -5,8 +5,9 @@
   * toCStruct / fromCStruct / [ptr] : A -> CStruct
   * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals
   * improve patterns2TT (add tuple of label) and eqn matches
-  * normalize fields/labels for codegen
-  * Improve identifying specialised Apps
+  * normalize fields/labels for codegen (mainly make sure the order is predictable)
+  * Function = Constructor + rewrite rules ?
+  * ! mk all spec args VBruijns to maximise spec re-use
 ## Top
   * show (esp for repl JIT) + subtyping typeclasses
   * 'StrIntName' new datatype: growable vector + hashmap
@@ -14,18 +15,15 @@
   * expand lambda-mixfixes with explicit holes & don't allow unsaturated mixfix words
   * mixfix scope
   * record type decls
-  * delay inserting QNames to maximise bitset use
 ## Parse
   * don't allow mixing tabs and spaces
   * Pattern guards
-  * List comprehensions
   * improve linefolds
   * mutual let-bindings
 ## Types
   * THFieldCollision
   * Dependent normalisation
   * first class polymorphism
-  * mergetyhead should indicate if merge was a noop (so bisub knows it has already seen that input)
 ## Functor modules and records
   * THProduct Vector alternative for ADTs when names sequential [n..m]
   * patterns in field assignments and top-level (patterns2TT)
@@ -45,6 +43,7 @@
   * mixfix parser errors & locations
 
 ## Unimportant
+  * List comprehensions
   * cache version
   * improve Generalise's handling of subbing a recvar with non-rec one (keep Recursive flag)
   * Pattern PTT: custom unPat function to support any patterns
@@ -60,4 +59,5 @@
   * sh syntax `ls -lr` => `ls { l=True , r=True }`
   * engineer GlobalResolver to work concurrently
   * prefetch memory | loop unrolling
+  * mergetyhead could indicate if merge was a noop (so bisub knows it has already seen that input)
   * after function with no free-vars generalised, can trim but not fully clear bisubs!

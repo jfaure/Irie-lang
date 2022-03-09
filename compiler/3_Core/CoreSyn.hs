@@ -56,7 +56,7 @@ data Term -- β-reducable (possibly to a type)
 
  -- Named Specialised recursive fns can (mutually) recurse with themselves
  | LetSpecs [Term{-.Abs-}] Term
- | Spec IName [Term] -- args with no constant label structure
+ | Spec IName -- spec number and the Bind it came from
 
  | VBruijn IName
  | BruijnAbs Int BitSet Term

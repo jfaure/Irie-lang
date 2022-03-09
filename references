@@ -1,5 +1,23 @@
 'it is not the case that Prop : Prop, that would be inconsistent. Rather quantifications over all propositions is again a proposition'
 
+The Abstract Calculus
+https://medium.com/@maiavictor/the-abstract-calculus-fe8c46bcf39c
+
+A Denotational Semantics for the Symmetric Interaction Combinators
+http://logica.uniroma3.it/files/CombSemantics.pdf
+
+The Optimal implementation of functional programming languages
+https://www.researchgate.net/publication/235778993_The_optimal_implementation_of_functional_programming_languages
+
+Lambdascope Another optimal implementation of the lambda-calculus
+https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.109.3616&rep=rep1&type=pdf
+
+About the efficient reduction of lambda terms
+https://arxiv.org/pdf/1701.04240.pdf
+
+An Algorithm for Optimal Lambda Calculus Reduction
+https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.90.2386&rep=rep1&type=pdf
+
 Extensible records with scoped labels
 https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/scopedlabels.pdf
 

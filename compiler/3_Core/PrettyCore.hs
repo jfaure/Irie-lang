@@ -253,7 +253,8 @@ pTerm = let
     in pTerm r <> " . " <> hsep (punctuate "." $ prettyField <$> target) <> pLens ammo
 
   LetSpecs ts t -> "letSpecs:" <+> viaShow ts <> hardline <> pTerm t
-  Spec i args   -> "Spec:" <+> viaShow i <+> nest 2 (sep (pTerm <$> args))
+--Spec i args   -> "Spec:" <+> viaShow i <+> nest 2 (sep (pTerm <$> args))
+  Spec i    -> "Spec:" <+> viaShow i
 
   x -> error $ show x
 

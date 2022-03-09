@@ -3,11 +3,44 @@ module FusionEnv where
 import CoreSyn
 import ShowCore()
 import qualified Data.Vector.Mutable as MV
-import qualified Data.IntMap as IM
 import qualified Data.Vector as V
+import qualified Data.Map as M
 import Control.Lens
 
--- Fusion: extremely aggressively attempt to connect Matches to Labels
+-- # β-reduction
+-- ! Do not duplicate applications unless they represent different work
+-- * duplicate Abs without duplicating body
+-- * U → V may create redexes of type U or V
+-- * amount of sharing can be so large it cannot be handled in elementary time in term size
+--
+-- Term |= S (inc all VBruijns found within / throw away the topmost argument)
+
+-- Symmetric Interaction Calculus
+-- a ~> b means a reduces to b
+-- a <~ b means a is replaced by b
+-- term
+--   = λx. term      -- function
+--   | (term term)   -- application
+--   | x             -- variable
+--   | x = term      -- definition
+--   | term & term   -- superposition
+-- Lambda application:
+--   ((λx. body) arg) ~> body
+--   x                <~ arg
+-- Superposed application:
+--   ((f0 & f1) x) ~> f0 K & f1 K
+--                 <~ K = x
+-- Lambda copy:
+--   (v = λx. body) ~> v = body
+--   v              <~ (λx0. v)
+--   v              <~ (λx1. v)
+--   x              <~ (x0 & x1)
+-- Superposed copy:
+--   (v = x0 & x1) ~>
+--   v             <~ x0
+--   v             <~ x1
+
+-- # Fusion: extremely aggressively attempt to connect Matches to Labels
 -- # Prep phase
 -- eliminate data fixpoints => Stream / Cata / Build
 -- Identify small functions which we intend to always inline
@@ -109,6 +142,18 @@ data FuseArg -- Which args are case-split and how
 
  | LensedArg {- Lens -} -- What structure of the arg must be known to fuse with a case
 
+-- Re-use specialisations if the structure is identical
+data ArgShape
+ = ShapeNone
+ | ShapeLabel ILabel [ArgShape]
+ | ShapeQBind QName
+ deriving (Eq , Ord , Show)
+
+getArgShape = \case
+  Label l params -> ShapeLabel l (getArgShape <$> params)
+  Var (VQBind q) -> ShapeQBind q
+  _ -> ShapeNone
+
 type SimplifierEnv s = StateT (Simplifier s) (ST s)
 data Simplifier s = Simplifier {
    _thisMod     :: IName
@@ -116,22 +161,23 @@ data Simplifier s = Simplifier {
  , _cBinds      :: MV.MVector s Bind
  , _nApps       :: Int -- approximate complexity rating of a function
  , _argTable    :: MV.MVector s Term -- used for β reduction
- , _useArgTable :: Bool -- App (Abs args body) for β-reduction must simplify body
+ , _useArgTable :: Bool -- toggle for bypassing argTable (ie. if not simplifying the body of an App)
  , _bruijnArgs  :: V.Vector Term
  , _self        :: Int    -- the bind we're simplifying
 
  , _nSpecs      :: Int -- cursor for allocating new specialisations
  , _prevSpecs   :: Int -- specialisations already computed; new requests are: [prevSpecs .. nSpecs-1]
  , _tmpSpecs    :: MV.MVector s (Either QName IName , Int , [Term]) -- requested specialisations of q (bind) or i (spec)
- , _letSpecs    :: MV.MVector s (Maybe Term {-.Abs-})  -- specialisations
+ , _letSpecs    :: MV.MVector s (Maybe Term)  -- specialisations
  , _bindSpecs   :: MV.MVector s BitSet -- specialisation INames for each bind (to avoid respecialising things)
+ , _cachedSpecs :: MV.MVector s (M.Map [ArgShape] IName) -- recover specialisations for same arg shapes
  -- recursive specialisations
  , _thisSpec    :: IName  -- wip spec
  , _recSpecs    :: BitSet -- specialisations that contain themselves (don't inline these)
 
   -- collect fns using specialisations not yet generated; will have to resimplify later
  , _hasSpecs    :: BitSet
- , _reSpecs     :: [IName] -- , BitSet)] -- Bindings contain un-inlined specialisations
+ , _reSpecs     :: [IName] -- Bindings containing un-inlined specialisations
 
  , _specStack   :: BitSet -- Avoid recursive inline
  , _inlineStack :: BitSet -- Avoid recursive inline

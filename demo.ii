@@ -53,7 +53,6 @@ go z s0 s1 = case nextConcatMap s0 s1 of
 sumAppend = go 0 1 Nothing
 -}
 
-{-
 -- Wrapped
 bool2N = \case
   True  => 1
@@ -68,8 +67,8 @@ go1 z i = let
     True  => Yield (mul i i) False
     False => Done
   in ifThenElse (ge i 10) z (go2 z (add i 1) (Wrap nextRet) True)
--}
 
+{-
 -- Unwrapped
 bool2N = \case
   True  => 1
@@ -84,6 +83,7 @@ go1 z i = let
     True  => Yield (mul i i) False
     False => Done
   in ifThenElse (ge i 10) z (go2 z (add i 1) nextRet True)
+  -}
 
 -- sum [ k ∗ m | k ← [1..n], m ← [1..k] ]
 --n = 10
