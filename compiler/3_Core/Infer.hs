@@ -157,7 +157,7 @@ checkAnnotation annTy inferredTy = do
  -- TODO don't allow `bind = lonemixfixword`
 handleExtern = let mfwOK = True in \case
   ForwardRef b       -> judgeLocalBind b -- was a forward reference not an extern
-  Imported e         -> pure $ e
+  Imported e         -> pure e
   NotOpened m h      -> PoisonExpr <$ (errors . scopeFails %= (ScopeNotImported h m:))
   NotInScope  h      -> PoisonExpr <$ (errors . scopeFails %= (ScopeError h:))
   AmbiguousBinding h -> PoisonExpr <$ (errors . scopeFails %= (AmbigBind h :))
@@ -221,7 +221,7 @@ infer = let
  in \case
   P.WildCard -> pure $ Core Question (TyGround [])
   P.Var v -> case v of -- vars : lookup in appropriate environment
-    P.VLocal l     -> use argVars >>= (`MV.read` l) <&> \t -> Core (Var (VArg l)) (TyVar t) -- [THVar l]
+    P.VLocal l     -> use argVars >>= (`MV.read` l) <&> \t -> Core (Var (VArg l)) (TyVar t)
     P.VBind b      -> use bindWIP >>= \(this , _) -> when (this == b) (bindWIP . _2 .= True) *> judgeLocalBind b >>= \case
       -- don't inline type aliases; we want to reuse them to improve error messages
       Ty{} -> use thisMod <&> \mod -> Ty (TyAlias (mkQName mod b))

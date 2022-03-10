@@ -1,13 +1,16 @@
 ## Top Priority
+  * conv Record | Sums to Vector with BitSet to map back to LNames/FNames & unify with module
+  * Module = (Term.(Cons{} or Abs _ Cons{}) , ImportList , HNames , MixfixNames , LinSubs)
   * languageDocumentation.md
   * improve type annotations
   * choice between (first order) foldl and foldr; ListFn => FoldL fl | FoldR fr | Array fl fr (| Ix)
-  * toCStruct / fromCStruct / [ptr] : A -> CStruct
+  * (toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A})
   * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals
   * improve patterns2TT (add tuple of label) and eqn matches
   * normalize fields/labels for codegen (mainly make sure the order is predictable)
   * Function = Constructor + rewrite rules ?
   * ! mk all spec args VBruijns to maximise spec re-use
+  * Instantiation & Generalisation is also beta-reduction and could be improved
 ## Top
   * show (esp for repl JIT) + subtyping typeclasses
   * 'StrIntName' new datatype: growable vector + hashmap

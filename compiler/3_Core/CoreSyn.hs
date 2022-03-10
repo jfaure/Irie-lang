@@ -5,6 +5,7 @@ import Prim
 import QName
 import MixfixSyn
 import Control.Lens hiding (List)
+import qualified BitSetMap           as BSM
 import qualified Data.Vector         as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
@@ -13,12 +14,13 @@ import qualified Data.Map.Strict as M
 global_debug = False
 --global_debug = True
 
-type ExtIName    = Int -- VExterns
-type BiSubName   = Int -- index into bisubs
-type SrcOff      = Int -- offset into the source file
-type IField  = QName
-type ILabel  = QName
-type TVarSet = BitSet
+type ExtIName  = Int -- VExterns
+type BiSubName = Int -- index into bisubs
+type SrcOff    = Int -- offset into the source file
+type IField    = QName
+type ILabel    = QName
+type TVarSet   = BitSet
+type LiName    = IName -- linear names
 
 data VName
  = VBind    IName -- name defined within this module (probably deprecate this)
@@ -39,16 +41,22 @@ data Term -- β-reducable (possibly to a type)
  | Abs     [(IName , Type)] BitSet Term Type -- arg inames, types, freevars, term ty
  | App     Term [Term]    -- IName [Term]
 
- | Cons    (IM.IntMap Term)
+ | Cons    (BSM.BitSetMap) -- (IM.IntMap Term)
  | Tuple   (V.Vector Term) -- Alternate version of Cons where indexes are sequential
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Term] --[Expr]
- | Match   Type (IM.IntMap Expr) (Maybe Expr) -- Type is the return type
+ | Match   Type (BSM.BitSetMap Expr) (Maybe Expr) -- Type is the return type
+-- | Match   Type (IM.IntMap Expr) (Maybe Expr) -- Type is the return type
 
  -----------------------------------------------
  -- Extra info built for/by simplification --
  -----------------------------------------------
+ | Erase         -- Indicates a LiName (instead of substituting , free if Erase <- term)
+ | Lin LiName    -- Lambda-bound var used once. Other names are DupPtrs or Erase
+ | DupPtr Int    -- points to a branch of a dup-node
+ | Sup Term Term -- lambda arg in a duplicated lambda
+
  | RecApp   Term [Term] -- direct recursion
  -- annotate where fixpoints are
  | RecLabel ILabel (V.Vector Int) [Expr]
@@ -120,7 +128,7 @@ data TyHead
  | THTyCon !TyCon -- BitSet cache contained tvars?
 
  | THBi Int Type -- Π A → F(A) polymorphic type to be instantiated on each use
- | THMu Int Type -- µx.F(x) recursive type is instantiated same as Π A → A & F(A)`
+ | THMu Int Type -- µx.F(x) recursive type is instantiated as Π A → A & F(A)`
 
  | THBound   IName  -- Π-bound tvar; instantiating Π-binder involves sub with fresh tvars
  | THMuBound IName  -- µ-bound tvar (must be guarded and covariant)
@@ -161,14 +169,15 @@ type Specs      = BitSet
 
 data ExternVar
  = ForwardRef IName -- not extern
- | Imported   Expr
+ | Imported   Expr  -- Inlined
 
  | NotInScope       HName
  | NotOpened        HName HName
  | AmbiguousBinding HName -- same level binding overlap / overwrite
 
- | Importable ModuleIName IName -- read allBinds
- | MixfixyVar Mixfixy -- for solvemixfixes
+ | Importable ModuleIName IName -- Available externally but not obviously worth inlining
+ | MixfixyVar Mixfixy           -- temp data fed to solvemixfixes
+
 data Mixfixy = Mixfixy
  { ambigBind   :: Maybe QName
  , ambigMFWord :: [QMFWord]

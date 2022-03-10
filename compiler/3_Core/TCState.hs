@@ -10,6 +10,10 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.IntMap as IM
 import Control.Lens
 
+-- Convert QNames to VArgs so bindings can also be beta-reduced optimally
+-- Convert VArgs to Lin by inserting Dups
+-- this produces an "import signature" for the module
+
 type TCEnv s a = StateT (TCEnvState s) (ST s) a
 data TCEnvState s = TCEnvState {
  -- in
@@ -21,6 +25,10 @@ data TCEnvState s = TCEnvState {
  -- out
  , _wip         :: MV.MVector s Bind
  , _errors      :: Errors
+
+ -- Linearisation
+-- , nameMap :: M.Map VName LiName
+-- , counts  :: MV.MVector s Int -- count occurences of a LiName, to insert appropriate amount of dups
 
  , _muInstances :: IM.IntMap Int -- Instantiation of mu-types; not brilliant
 

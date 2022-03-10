@@ -1,4 +1,5 @@
 module Parser (parseModule , parseMixFixDef) where
+-- The initial parse is context-insensitive: forward / mutual definitions and mixfixes are resolved later
 -- Parsing converts all text names to ints and doesn't require importing or reading other modules
 --   1. VBind:   top-level let bindings
 --   2. VLocal:  lambda-bound arguments
@@ -120,7 +121,7 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
 
 -- The names nest tracks the scope of local definitions
 newLetNest p = (moduleWIP . parseDetails . hNameLocals %= (M.empty :))
-               *> p <* (moduleWIP . parseDetails . hNameLocals %= drop 1)
+       *> p <* (moduleWIP . parseDetails . hNameLocals %= drop 1)
 
 getFreeVars = use (moduleWIP . parseDetails . freeVars)
 
