@@ -5,22 +5,19 @@
 
 packages:
 - completed:
-    hackage: llvm-hs-pretty-0.9.0.0@sha256:b7a5de5f3dd97893d19d2b47af1e4dd8d075a5cf57062180a912d1f3ef1def60,1671
+    name: protolude
+    version: 0.3.1
+    git: https://github.com/protolude/protolude.git
     pantry-tree:
-      size: 4685
-      sha256: 8cf6d628bb4f962575ad0993bb1010e9989cea00b325b8a45ac35ac201061386
+      size: 3146
+      sha256: 685ed0191298da9540e772ffa746eb078d4f4a77ed8012a9933d3c79644b1054
+    commit: 3e249724fd0ead27370c8c297b1ecd38f92cbd5b
   original:
-    hackage: llvm-hs-pretty-0.9.0.0@sha256:b7a5de5f3dd97893d19d2b47af1e4dd8d075a5cf57062180a912d1f3ef1def60,1671
-- completed:
-    hackage: base-noprelude-4.13.0.0@sha256:3cccbfda38e1422ca5cc436d58858ba51ff9114d2ed87915a6569be11e4e5a90,6842
-    pantry-tree:
-      size: 112
-      sha256: 90db92c8401880187ce642c5345407bcbd9546ea235524dd445cab2566ee3db1
-  original:
-    hackage: base-noprelude-4.13.0.0@sha256:3cccbfda38e1422ca5cc436d58858ba51ff9114d2ed87915a6569be11e4e5a90,6842
+    git: https://github.com/protolude/protolude.git
+    commit: 3e249724fd0ead27370c8c297b1ecd38f92cbd5b
 snapshots:
 - completed:
-    size: 587546
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/10.yaml
-    sha256: 88b4f81e162ba3adc230a9fcccc4d19ac116377656bab56c7382ca88598b257a
-  original: lts-18.10
+    size: 618683
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/19/4.yaml
+    sha256: d4ee004c46ba878d2f304f5d748d493057be579192a8d148527f3ba55c9df57f
+  original: lts-19.4

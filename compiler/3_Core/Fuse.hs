@@ -8,6 +8,7 @@ import PrettyCore
 import CoreUtils
 import ShowCore()
 import qualified Data.Vector.Mutable as MV
+import qualified BitSetMap as BSM
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import qualified Data.Vector as V
@@ -187,7 +188,7 @@ simpleTerm t = -- (traceM $ (prettyTermRaw t) <> "\n\n") *>
   TTLens (Cons fieldsRaw) [f] op -> (simpleTerm `traverse` fieldsRaw) >>= \fields -> let
     fromMaybeF = fromMaybe (error $ "Type inference fail: field not present")
     in case op of
-    LensGet   -> pure (fromMaybeF (fields IM.!? qName2Key f))
+    LensGet   -> pure (fromMaybeF (fields BSM.!? qName2Key f))
 --  LensSet v -> simpleTerm v <&> (IM.insert (qName2Key f) v fields)
 
   Label l ars -> Label l <$> (simpleTerm `traverse` ars)
@@ -293,7 +294,7 @@ simpleApp' isRec f args = (nApps %= (1+)) *> case f of
     _ -> pure (app fn args)
 
 -- Fusing Matches with constant labels is the main goal
-fuseMatch :: Type -> Term -> IntMap Expr -> Maybe Expr -> SimplifierEnv s Term
+fuseMatch :: Type -> Term -> BSM.BitSetMap Expr -> Maybe Expr -> SimplifierEnv s Term
 fuseMatch ty scrut branches d = -- simpleTerm scrut' >>= \scrut ->
 --((\(Core t ty) -> (`Core` ty) <$> simpleTerm t) `traverse` branchesRaw) >>= \branches -> let
   let this = App (Match ty branches d) [scrut]
@@ -301,7 +302,7 @@ fuseMatch ty scrut branches d = -- simpleTerm scrut' >>= \scrut ->
   -- Ideal: case-of-label
   Label l params -> let getTerm (Just (Core t ty)) = t
 --  in simpleApp' False (getTerm ((branches IM.!? qName2Key l) <|> d)) params
-    in simpleApp (getTerm ((branches IM.!? qName2Key l) <|> d)) params
+    in simpleApp (getTerm ((branches BSM.!? qName2Key l) <|> d)) params
 
   -- Near-Ideal: case-of-case: push outer case into each branch of the inner Case
   -- frequently the inner case can directly fuse with the outer cases output labels

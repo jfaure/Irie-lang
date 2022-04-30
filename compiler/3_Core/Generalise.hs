@@ -9,7 +9,8 @@ import Control.Lens
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V
 import qualified Data.Text as T
-import qualified Data.IntMap as IM (mapAccum , elems)
+--import qualified Data.IntMap as IM (mapAccum , elems)
+import qualified BitSetMap as BSM (mapAccum , elems)
 
 -- Generalisation allows polymorphic types to be instantiated with fresh tvars on each use.
 -- This means some tvars are to be promoted to polymorphic vars
@@ -224,7 +225,7 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
     THBi b ty -> (,[]) . THBi b <$> goType pos ty
 --  THMu m (TyGround [mu@(THMu n t)]) | m == n -> pure (mu , [])
     -- for tycons, collect the branch ids so rollMu knows which recursive branch the mu came from
-    THTyCon t   -> let addBranches = snd . IM.mapAccum (\n val -> (n+1 , (n,val))) 0
+    THTyCon t   -> let addBranches = snd . BSM.mapAccum (\n val -> (n+1 , (n,val))) 0
       in (\(t,m) -> (THTyCon t , m)) <$> case t of
       THArrow ars r -> do
         branches <- traverse (uncurry (goGuarded (not pos))) (zip [1..] ars)
@@ -235,10 +236,10 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
         pure (THTuple (fst <$> branches) , concat (V.toList (snd <$> branches)))
       THProduct   r -> do
         branches <- traverse (\(i,t) -> goGuarded pos i t) (addBranches r)
-        pure (THProduct (fst <$> branches) , concat (snd <$> IM.elems branches))
+        pure (THProduct (fst <$> branches) , concat (snd <$> BSM.elems branches))
       THSumTy     r -> do
         branches <- traverse (\(i,t) -> goGuarded pos i t) (addBranches r)
-        pure (THSumTy (fst <$> branches) , concat (snd <$> IM.elems branches))
+        pure (THSumTy (fst <$> branches) , concat (snd <$> BSM.elems branches))
     x -> pure (x , [])
   in (fst <$> goGuarded True 0 raw) >>= \done -> use quants <&> \q ->
     if q > 0 then TyGround [THBi q done] else done

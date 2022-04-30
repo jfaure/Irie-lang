@@ -1,4 +1,7 @@
-:l Prelude
+:load Prelude
+import Prelude
+:set -XImplicitPrelude
+
 -- :set -fobject-code
 :set -ferror-spans
 :set -fbreak-on-error

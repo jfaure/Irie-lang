@@ -16,7 +16,7 @@ description:         Please see the README on GitHub at <https://github.com/jfau
 
 dependencies:
 - unix
-- base-noprelude
+- base
 - pretty-simple
 - protolude
 - prettyprinter
@@ -42,12 +42,6 @@ dependencies:
 - directory
 - haskeline
 - process
-# - traverse-with-class
-# - llvm-hs-pure >= 9.0.0
-# - llvm-hs >= 9.0.0
-#
-# - llvm-hs-pretty
-# - array
 - prettyprinter
 
 default-extensions:
@@ -70,7 +64,7 @@ default-extensions:
 # - GADTs
 # - PolyKinds
 # - DataKinds
-#- NoImplicitPrelude
+# - NoImplicitPrelude
 
 # library:
 #  source-dirs:

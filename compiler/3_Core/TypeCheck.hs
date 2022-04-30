@@ -6,6 +6,7 @@ import PrettyCore
 import Externs
 import TTCalculus
 import qualified Data.Vector as V
+import qualified BitSetMap as BSM
 import qualified Data.IntMap as IM
 
 -- Biunification solves constraints `t+ <= t-` whereas subsumption compares t+ <:? t+
@@ -47,8 +48,8 @@ check' handleExtern es (TyGround inferred) (TyGround gotTy) = let
         go [] y  = check'' r1 (TyGround [THTyCon $ THArrow y r2])
         go x []  = check'' (TyGround [THTyCon $ THArrow x r1]) r2
         in go a1 a2
-      (THSumTy x , THSumTy y)     -> allM (\case { (k , These a b) -> check'' a b ; _ -> pure False }) $ IM.toList (align x y)
-      (THProduct x , THProduct y) -> allM (\case { (k , These a b) -> check'' a b ; _ -> pure False }) $ IM.toList (align x y)
+      (THSumTy x , THSumTy y)     -> allM (\case { (k , These a b) -> check'' a b ; _ -> pure False }) $ BSM.toList (align x y)
+      (THProduct x , THProduct y) -> allM (\case { (k , These a b) -> check'' a b ; _ -> pure False }) $ BSM.toList (align x y)
       (THTuple x , THTuple y)     -> allM (\case { These a b -> check'' a b ; _ -> pure False }) $ V.toList (align x y)
       _ -> end False
 

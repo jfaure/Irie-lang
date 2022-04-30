@@ -1,4 +1,9 @@
-'it is not the case that Prop : Prop, that would be inconsistent. Rather quantifications over all propositions is again a proposition'
+it is not the case that Prop : Prop, that would be inconsistent. Rather quantifications over all propositions is again a proposition
+
+The danger inherent in higher order programming is well testified by a long series
+of studies relating complexity classes to hierarchies of terms with increasing type
+rank (see e.g. [Gurevich 1983; Goerdt 1992; Goerdt and Seidl 1990; Hillebrand and
+Kanellakis 1996; Asperti 2015])
 
 The Abstract Calculus
 https://medium.com/@maiavictor/the-abstract-calculus-fe8c46bcf39c

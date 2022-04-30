@@ -6,6 +6,7 @@ import CoreSyn hiding (Type , Expr)
 import ShowCore()
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V
+import qualified BitSetMap as BSM
 import qualified Data.IntMap as IM
 
 -- Tree flattening matches how functions recurse
@@ -101,7 +102,7 @@ ssaTy = let
       THSumTy t   -> mdo
         td <- newTypeDef
         addTypeDef typeDecl -- enforce ordering
-        typeDecl <- (TSum td . V.fromList <$> (ssaTy `mapM` IM.elems t))
+        typeDecl <- (TSum td . V.fromList <$> (ssaTy `mapM` BSM.elems t))
         pure typeDecl
       THTuple t   -> mdo
         td <- newTypeDef
@@ -201,8 +202,8 @@ cgExpr t = let
 cgApp f ars = case f of
 --Match ty alts d | [a] <- ars -> cgExpr a >>= \scrut ->
 --  emitMatchApp scrut ty alts d
-  RecMatch alts d | [a] <- ars -> cgExpr a >>= \scrut ->
-    emitMatchApp scrut alts d
+--RecMatch alts d | [a] <- ars -> cgExpr a >>= \scrut ->
+--  emitMatchApp scrut alts d
   Instr i -> Call (Prim i) <$> (cgExpr `mapM` ars)
   Var (VBind i) -> do
     decl <- cgBind i <&> \case

@@ -5,6 +5,7 @@ import CoreSyn
 import ShowCore()
 import qualified Data.Vector as V
 import qualified Data.Text as T
+import qualified BitSetMap as BSM
 import Data.Text.Lazy as TL
 import Data.Text.Lazy.Builder as TLB
 import Data.IntMap as IM
@@ -154,10 +155,10 @@ pTyHead = let
       prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> case ty of
         TyGround [THTyCon (THTuple v)] | V.null v -> ""
         _ -> space <> pTy ty
-      in enclose "[" "]" (hsep $ punctuate (" |") (prettyLabel <$> IM.toList l))
+      in enclose "[" "]" (hsep $ punctuate (" |") (prettyLabel <$> BSM.toList l))
     THProduct l -> let
       prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy ty
-      in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> IM.toList l))
+      in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> BSM.toList l))
     THTuple  l  -> enclose "{" "}" (hsep $ punctuate " ," (pTy <$> V.toList l))
 --  THArray    t -> "Array " <> viaShow t
 
@@ -211,7 +212,8 @@ pTerm = let
 --  showLabel l t = indent 2 (prettyLabel (QName l)) <+> indent 2 (pExpr t)
     showLabel l t = prettyLabel (QName l) <+> pExpr t
     in annotate AKeyWord "\\case " <> nest 2 ( -- (" : " <> annotate AType (pTy caseTy)) <> hardline
-      hardline <> (vsep (IM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
+--    hardline <> (vsep (BSM.foldrWithKey (\l k -> (showLabel l k :)) [] ts))
+      hardline <> (vsep (Prelude.foldr (\(l,k) -> (showLabel l k :)) [] (BSM.toList ts)))
       <> maybe "" (\catchAll -> hardline <> ("_ => " <> pExpr catchAll)) d
       )
   in \case
@@ -234,7 +236,7 @@ pTerm = let
 
   Cons    ts -> let
     doField (field , val) = prettyField (QName field) <> ".=" <> pTerm val
-    in enclose "{ " " }" (hsep $ punctuate ";" (doField <$> IM.toList ts))
+    in enclose "{ " " }" (hsep $ punctuate ";" (doField <$> BSM.toList ts))
   Label   l []   -> "@" <> prettyLabel l
   Label   l t    -> parens $ "@" <> prettyLabel l <+> hsep (parens . pTerm <$> t)
 --RecLabel l i t -> prettyLabel l <> parens (viaShow i) <> "@" <> hsep (parens . pExpr <$> t)

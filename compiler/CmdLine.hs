@@ -41,7 +41,7 @@ printPasses = T.words "args source parseTree types core simple ssa C" :: [Text]
 parsePrintPass :: ReadM [Text]
 parsePrintPass = eitherReader $ \str -> let
   passesStr = split (==',') (toS str)
-  checkAmbiguous s = case Prelude.filter (isInfixOf s) printPasses of
+  checkAmbiguous s = case Prelude.filter (T.isInfixOf s) printPasses of
     []  -> Left $ "Unrecognized print pass: '" <> str <> "'"
     [p] -> Right p
     tooMany -> Left $ "Ambiguous print pass: '" <> str <> "' : " <> show tooMany

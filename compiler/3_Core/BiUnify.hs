@@ -9,6 +9,7 @@ import PrettyCore
 import Externs
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
+import qualified BitSetMap as BSM
 import qualified Data.IntMap as IM
 import Control.Lens
 
@@ -164,8 +165,8 @@ getTVarsTyHead :: TyHead -> BitSet
 getTVarsTyHead = \case
   THTyCon t -> case t of
     THArrow ars r -> foldr (.|.) 0 (getTVarsType r : (getTVarsType <$> ars) )
-    THProduct   r -> foldr (.|.) 0 (getTVarsType <$> IM.elems r)
-    THSumTy     r -> foldr (.|.) 0 (getTVarsType <$> IM.elems r)
+    THProduct   r -> foldr (.|.) 0 (getTVarsType <$> BSM.elems r)
+    THSumTy     r -> foldr (.|.) 0 (getTVarsType <$> BSM.elems r)
     THTuple     r -> foldr (.|.) 0 (getTVarsType <$> r)
 --THBi _ t -> getTVarsType t
   x -> 0
@@ -182,9 +183,10 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
   (THArrow ars ret ,  THSumTy x) -> pure BiEQ --_
   (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSubType x y
   (THProduct x , THProduct y) -> let --use normFields >>= \nf -> let -- record: fields in the second must all be in the first
-    merged     = IM.mergeWithKey (\k a b -> Just (Both a b)) (fmap LOnly) (IM.mapWithKey ROnly) x y
+    merged     = BSM.mergeWithKey (\k a b -> Just (Both a b)) (fmap LOnly) (BSM.mapWithKey ROnly) x y
+--  merged     = BSM.mergeWithKey (\k a b -> Both a b) (const LOnly) (ROnly) x y
 --  normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
-    normalized = V.fromList $ IM.elems merged -- $ IM.mapKeys (nf VU.!) merged
+    normalized = V.fromList $ BSM.elems merged -- $ IM.mapKeys (nf VU.!) merged
     go leafCasts normIdx ty = case ty of
       LOnly a   {- drop     -} -> pure $ leafCasts --(field : drops , leafCasts)
       ROnly f a {- no subty -} -> leafCasts <$ failBiSub (AbsentField (QName f)) tyP tyM
@@ -196,16 +198,16 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
        else let leaves = snd <$> leafCasts
        in if all (\case {BiEQ->True;_->False}) leaves then BiEQ else CastLeaves leaves
   (THSumTy x , THSumTy y) -> let
-    go label subType = case y IM.!? label of -- y must contain supertypes of all x labels
+    go label subType = case y BSM.!? label of -- y must contain supertypes of all x labels
       Nothing -> failBiSub (AbsentLabel (QName label)) tyP tyM
       Just superType -> biSubType subType superType
-    in BiEQ <$ (go `IM.traverseWithKey` x) -- TODO bicasts
-  (THSumTy s , THArrow args retT) | [(lName , tuple)] <- IM.toList s -> -- singleton sumtype => Partial application of Label
+    in BiEQ <$ (go `BSM.traverseWithKey` x) -- TODO bicasts
+  (THSumTy s , THArrow args retT) | [(lName , tuple)] <- BSM.toList s -> -- singleton sumtype => Partial application of Label
     let t' = TyGround $ case tuple of
                TyGround [THTyCon (THTuple x)] -> [THTyCon $ THTuple (x V.++ V.fromList args)]
                x                              -> [THTyCon $ THTuple (V.fromList (x : args))]
-    in biSubType (TyGround [THTyCon (THSumTy $ IM.singleton lName t')]) retT
-  (THSumTy s , THArrow{}) | [single] <- IM.toList s -> failBiSub (TextMsg "Note. Labels must be fully applied to avoid ambiguity") tyP tyM
+    in biSubType (TyGround [THTyCon (THSumTy $ BSM.singleton lName t')]) retT
+  (THSumTy s , THArrow{}) | [single] <- BSM.toList s -> failBiSub (TextMsg "Note. Labels must be fully applied to avoid ambiguity") tyP tyM
   (a , b)         -> failBiSub TyConMismatch tyP tyM
 
 arrowBiSub (argsp,argsm) (retp,retm) = let

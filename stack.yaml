@@ -1,13 +1,12 @@
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-#resolver: lts-14.20
-#resolver: lts-18.19
+#resolver: lts-19.1
 ghc-build: standard
-resolver: lts-18.10
-#system-ghc: true
+resolver: lts-19.4
+system-ghc: true
 #compiler: ghc-8.10.4
 
-allow-newer: true
+allow-newer: false
 nix:
  enable: false
  pure: false
@@ -28,15 +27,15 @@ nix:
 #  - wai
 packages:
 - .
-# Dependency packages to be pulled from upstream that are not in the resolver
-# using the same syntax as the packages field.
-# (e.g., acme-missiles-0.3)
-extra-deps:
- - llvm-hs-pretty-0.9.0.0@sha256:b7a5de5f3dd97893d19d2b47af1e4dd8d075a5cf57062180a912d1f3ef1def60,1671
- - base-noprelude-4.13.0.0@sha256:3cccbfda38e1422ca5cc436d58858ba51ff9114d2ed87915a6569be11e4e5a90,6842
 
-#- llvm-pretty-0.7.1.1@sha256:e0cf52185e804e2f83c495d6dad1eca6845e8a509353bdbff12388e554caf137,1334
-#- monadLib-3.10@sha256:21dc120625bd612527b372e54251fd8358270effe263023d40d8e5892d24531c,653
+# Dependency packages to be pulled from upstream that are not in the resolver
+extra-deps:
+#- base-noprelude-4.13.0.0@sha256:3cccbfda38e1422ca5cc436d58858ba51ff9114d2ed87915a6569be11e4e5a90,6842
+- git: https://github.com/protolude/protolude.git
+  commit: 3e249724fd0ead27370c8c297b1ecd38f92cbd5b
+
+#- protolude-0.3.0@sha256:8361b811b420585b122a7ba715aa5923834db6e8c36309bf267df2dbf66b95ef,2693
+
 
 # Override default flag values for local packages and extra-deps
 # flags: {}

@@ -4,7 +4,7 @@
   * languageDocumentation.md
   * improve type annotations
   * choice between (first order) foldl and foldr; ListFn => FoldL fl | FoldR fr | Array fl fr (| Ix)
-  * (toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A})
+  * toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals
   * improve patterns2TT (add tuple of label) and eqn matches
   * normalize fields/labels for codegen (mainly make sure the order is predictable)

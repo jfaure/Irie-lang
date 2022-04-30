@@ -6,6 +6,7 @@ module Builtins (primBinds , primMap , typeOfLit) where
 import Prim
 import CoreSyn
 --import CoreUtils
+import qualified BitSetMap as BSM
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
 import qualified Data.IntMap as IM
@@ -60,7 +61,7 @@ tyFns = [
 
 -- tuples are THProducts with negative indices;
 -- this makes typing tuple access far simpler than introducing a new subtyping relation on records
-mkTHTuple vs = THTyCon $ THProduct $ IM.fromList (zip (qName2Key . mkQName 0 <$> [0..]) vs)
+mkTHTuple vs = THTyCon $ THProduct $ BSM.fromList (zip (qName2Key . mkQName 0 <$> [0..]) vs)
 
 mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
 mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (TyGround . singleton <$> args) (TyGround $ [retTy])

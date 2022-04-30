@@ -21,7 +21,8 @@ import Data.List (unzip4, zipWith3)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Map.Strict as M
-import qualified Data.IntMap as IM
+--import qualified Data.IntMap as IM
+import qualified BitSetMap as BSM
 
 judgeModule nBinds pm importedModules modIName nArgs hNames exts source = let
   modName = pm ^. P.moduleName
@@ -216,7 +217,7 @@ infer = let
    labTy = TyGround [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
 -- in Core (Label qNameL exprs) (TyGround [THTyCon $ THSumTy $ IM.singleton (qName2Key qNameL) labTy])
    es = (\(Core t ty) -> t) <$> exprs
-   in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ IM.singleton (qName2Key qNameL) labTy])
+   in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  in \case
   P.WildCard -> pure $ Core Question (TyGround [])
@@ -271,16 +272,16 @@ infer = let
     exprs <- infer `mapM` rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) ; x -> error $ show x }) <$> exprs
         mkFieldCol = \a b -> TyGround [THFieldCollision a b]
-        retTycon = THProduct (IM.fromListWith mkFieldCol $ zip fields tys)
+        retTycon = THProduct (BSM.fromListWith mkFieldCol $ zip fields tys)
     pure $ if isPoisonExpr `any` exprs
       then PoisonExpr
-      else Core (Cons (IM.fromList $ zip fields tts)) (TyGround [THTyCon retTycon])
+      else Core (Cons (BSM.fromList $ zip fields tts)) (TyGround [THTyCon retTycon])
 
   P.TTLens o tt fieldsLocal maybeSet -> use externs >>= \ext -> infer tt >>= \record -> let
       fields = readField ext <$> fieldsLocal
       recordTy = tyOfExpr record
       mkExpected :: Type -> Type
-      mkExpected dest = foldr (\fName ty -> TyGround [THTyCon $ THProduct (IM.singleton (qName2Key fName) ty)]) dest fields
+      mkExpected dest = foldr (\fName ty -> TyGround [THTyCon $ THProduct (BSM.singleton (qName2Key fName) ty)]) dest fields
     in (>>= checkFails o) $ case record of
     e@(Core f gotTy) -> case maybeSet of
       P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (TyVar i))
@@ -322,7 +323,7 @@ infer = let
     sumArgsMap <- alts `forM` \(l , tyParams , gadtSig@Nothing) -> do
       params <- tyParams `forM` \t -> getTy <$> infer t
       pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
-    pure $ Ty $ TyGround [THTyCon $ THSumTy $ IM.fromListWith mkLabelCol sumArgsMap]
+    pure $ Ty $ TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap]
 
   P.Match alts catchAll -> use externs >>= \ext -> let
     -- * desugar all patterns in the alt fns (whose args are parameters of the label)
@@ -340,13 +341,13 @@ infer = let
         retTy   = mergeTypeList True retTys -- + is right since this term is always output
 
         altTys  = map (\argTVars -> TyGround [THTyCon $ THTuple $ V.fromList $ argTVars]) argTVars
-        scrutTy = TyGround [THTyCon $ THSumTy $ IM.fromList $ zip labels altTys]
+        scrutTy = TyGround [THTyCon $ THSumTy $ BSM.fromList $ zip labels altTys]
         matchTy = TyGround $ mkTyArrow [scrutTy] retTy
         argAndTys  = zipWith zip args argTVars
         altsMap = let
           addAbs ty (Core t _) args = Core (Abs args 0 t ty) ty
           addAbs ty PoisonExpr _ = PoisonExpr
-          in IM.fromList $ zip labels (zipWith3 addAbs retTys alts argAndTys)
+          in BSM.fromList $ zip labels (zipWith3 addAbs retTys alts argAndTys)
     pure $ if isPoisonExpr `any` alts then PoisonExpr else
       Core (Match retTy altsMap def) matchTy
 

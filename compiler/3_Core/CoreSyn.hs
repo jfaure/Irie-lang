@@ -41,26 +41,23 @@ data Term -- β-reducable (possibly to a type)
  | Abs     [(IName , Type)] BitSet Term Type -- arg inames, types, freevars, term ty
  | App     Term [Term]    -- IName [Term]
 
- | Cons    (BSM.BitSetMap) -- (IM.IntMap Term)
+ | Cons    (BSM.BitSetMap Term) -- (IM.IntMap Term)
  | Tuple   (V.Vector Term) -- Alternate version of Cons where indexes are sequential
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Term] --[Expr]
  | Match   Type (BSM.BitSetMap Expr) (Maybe Expr) -- Type is the return type
--- | Match   Type (IM.IntMap Expr) (Maybe Expr) -- Type is the return type
 
  -----------------------------------------------
  -- Extra info built for/by simplification --
  -----------------------------------------------
- | Erase         -- Indicates a LiName (instead of substituting , free if Erase <- term)
- | Lin LiName    -- Lambda-bound var used once. Other names are DupPtrs or Erase
- | DupPtr Int    -- points to a branch of a dup-node
- | Sup Term Term -- lambda arg in a duplicated lambda
+ | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
+ | LinAbs [(LiName , Bool , Type)] Term Type -- indicate if dups its arg
 
  | RecApp   Term [Term] -- direct recursion
  -- annotate where fixpoints are
  | RecLabel ILabel (V.Vector Int) [Expr]
- | RecMatch (IM.IntMap (V.Vector Int , Expr)) (Maybe Expr)
+ | RecMatch (BSM.BitSetMap (V.Vector Int , Expr)) (Maybe Expr)
 
  -- Named Specialised recursive fns can (mutually) recurse with themselves
  | LetSpecs [Term{-.Abs-}] Term
@@ -111,8 +108,8 @@ instance Eq Type where
 data TyCon -- Type constructors
  = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot -> top is the largest)
  | THTuple    (V.Vector  TyPlus) -- ordered form of THproduct
- | THProduct  (IntMap TyPlus)
- | THSumTy    (IntMap TyPlus)
+ | THProduct  (BSM.BitSetMap TyPlus)
+ | THSumTy    (BSM.BitSetMap TyPlus)
  deriving Eq
 
 -- Head constructors in the profinite distributive lattice of types
