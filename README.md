@@ -3,7 +3,8 @@ Subtyping calculus of inductive constructions for high-performance (and eventual
 
 ![logo](https://cdn.discordapp.com/attachments/631043990879338496/756673093497520138/logo.png)
 ## [Tutorial (TODO)](tutorial.md)
-## [Language documentation](languageDocumentation.md)
+## [Language documentation (WIP)](languageDocumentation.md)
+## [Compiler Internals](compiler/README.md)
 
 ## Origin
 Irie is the first pure functional language with first-class subtyping and an extreme emphasis on performance. The philosophy is to focus on a simple but powerful core language capable of naturally expressing additional desirable features: The subtyping calculus of constructions.
@@ -24,7 +25,7 @@ Subtyping examples:
 
 ## Performance
 ### Fusion
-Cata-Build and stream fusion are techniques for automatically eliminating many intermediate datastructures. The only limitation for fusing traversals is that sequential higher order traversals must happen in the same direction (for lists this is the difference between foldl and foldr), since these otherwise inspect the 'opposite' end of the data.
+Cata-Build and stream fusion are techniques for automatically eliminating many intermediate datastructures. Catamorphisms can fuse with anything, however this direction of travel cannot fuse zips or other functions of multiple datas. Stream fusion is more powerful, but more difficult to implement since it depends on co-recursion and general compiler optimisations and in particular specialisation of partial applications. Both of these fusion framewords traditionally require functions to be written in a restricted form, but this form can often be automatically derived from general recursive definitions. See "Stream Fusion: From Lists to Streams to Nothing at All" and "Warm Fusion: Deriving Build-Catas from Recursive definitions"
 
 ### Memory
 Memory locality has become a key factor for performance (cpu cache misses can be 10 to 10000+ times slower than a cpu instruction). Functional compilers take on the responsibility of managing all memory for the programmer, who has historically had good reason to distrust them. However they have enough information to do a better job than even a C programmer using malloc could realistically maintain. For the next generation of functional compilers, both a GC and excessive reference counting are no longer acceptable. Irie aims to compile all data driven functions with essentially a custom allocator, which emphasizes arena style blanket-frees to completely clean up the data-stack when data falls out of scope, as well as a tailored memory representation for recursive datas. For example, the familiar list type: `List a = Empty | Next a (List a)` the (List a) pointer can be made implicit by use of an array. Indeed all recursive data structures can exploit one implicit pointer, or in the case of Peano arithmetic, directly become machine numbers. I note here that in the interests of scalability it is essential to optimize such data structures directly rather than force users to use an opaque datatype (eg. `Vector a`).

@@ -9,7 +9,8 @@ import Data.List(span)
 import qualified Data.IntMap as IM
 import Control.Lens
 
--- Application of TTs: TTs can be promoted to higher universes, but not demoted
+-- Application of TTs (combinations of terms and types)
+-- TTs can be promoted to higher universes, but not demoted
 -- Types can be indexed by Terms, the resulting expression is a Type
 -- Lambda calculus TTs are ambiguous, eg. 'f x = x' could be a type or a term
 -- Terms that need to become types need to have potential fixed points converted to µ types

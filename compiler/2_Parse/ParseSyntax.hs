@@ -2,6 +2,7 @@
 {-# OPTIONS  -funbox-strict-fields #-}
 module ParseSyntax where -- import qualified as PSyn
 import Prim
+import QName
 import MixfixSyn
 import qualified Data.Map.Strict as M
 import Control.Lens
@@ -20,6 +21,8 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
  , _functor     :: Maybe FunctorModule
  , _imports     :: [HName] -- all imports used at any scope
  , _bindings    :: [FnDef] -- hNameBinds
+
+ , _liNames     :: [TTName] -- TTNames may be duplicated
 
  , _parseDetails :: ParseDetails
 }
@@ -40,6 +43,7 @@ data ParseDetails = ParseDetails {
  , _fields         :: NameMap
  , _labels         :: NameMap
  , _newLines       :: [Int]
+ , _liCount        :: Int
 }
 data FnDef = FnDef {
    fnNm         :: HName
@@ -60,6 +64,8 @@ data LensOp a = LensGet | LensSet a | LensOver a deriving Show
 data DoStmt  = Sequence TT | Bind IName TT -- | Let
 data TT -- Type | Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
+ | Lin QName -- modName used to differentiate dups
+
  | WildCard           -- "_" implicit lambda argument
  | Question           -- "?" ask to infer
  | Foreign   HName TT -- no definition, and we have to trust the user given type

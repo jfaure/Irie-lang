@@ -25,6 +25,7 @@ module demo x =
 --  Yield x ys => Yield x (Right ys)
 
 {-
+-- Full example
 fromMaybe x = case x of
   Nothing => 0
 

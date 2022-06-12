@@ -110,7 +110,7 @@ solveMixfixes :: [Expr] -> Expr = let
         then fail $ "operator not associative: " <> show qNml
         else if (qNml == qNmr && assoc fixityL /= AssocRight) || prec fixityL >= prec fixityR
         then (\x -> appendArg x larg) <$> mfParts mb Nothing qNmr fixityR contMFWs
-        else case larg of -- `l_ _r` => r gets l's last arg, l gets all of r instead
+        else case larg of -- `l_ _r` => r gets l's last arg, l gets all of r
           ExprApp f ars -> (\r -> ExprApp f (DL.init ars ++ [r]))
             <$> mfParts mb (Just (DL.last ars)) qNmr fixityR contMFWs
           _ -> error "impossible, fixity given for nonexistent left App"
@@ -120,9 +120,9 @@ solveMixfixes :: [Expr] -> Expr = let
       <|> maybe (fail ("not a bindName: " <> show mfWords)) (\qvar -> mkApp . ([larg , QVar qvar ] ++) <$> many arg) maybeBind
 
   startPrefix = mfExpr >>= \(Mixfixy maybeBind mfWords) -> let
-    mkPrefixParser (QStartPrefix (MixfixDef mb mfWs fixity) qNm) =
-      mfParts mb Nothing qNm fixity (drop 1 mfWs)
-    mkPrefixParser _ = fail "not a prefix"
+    mkPrefixParser = \case
+      QStartPrefix (MixfixDef mb mfWs fixity) qNm -> mfParts mb Nothing qNm fixity (drop 1 mfWs)
+      _ -> fail "not a prefix"
     in choice (try . mkPrefixParser <$> mfWords)
       <|> maybe (fail "not a bindName") (\qvar -> mkApp . (QVar qvar :) <$> many arg) maybeBind
   expr = arg >>= \a -> option a (try $ startPostfix a Nothing)

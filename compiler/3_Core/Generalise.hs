@@ -50,7 +50,7 @@ generalise escapees rawType = let
   in do
   when global_debug (traceM $ "Gen: " <> show rawType)
 
-  coocLen <- use bis <&> (100+) . MV.length -- + space for let-bound instantiatables TODO
+  coocLen <- use bis <&> (900+) . MV.length -- + space for spawning let-bound instantiatables TODO
   (coOccurs .=) =<< MV.replicate coocLen ([],[])
   recVars .= 0
   -- merge with recTVar in case of direct recursion `r = { next = r } : µx.{next : x}`

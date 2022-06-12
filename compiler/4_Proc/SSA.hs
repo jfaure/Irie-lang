@@ -1,4 +1,29 @@
--- Optimized cpu form ready to be converted 1:1 to C or llvm
+-- Optimized cpu form designed to be easily converted to C or llvm or wasm
+
+-- Runtime fusion
+-- Reflection: Runtime beta-optimality (pap-reduce) & GPU/distribution => lib JIT ?
+-- Memory: non-fusible | duped Labels
+-- Mem-layout , label subtyping
+-- Clone Lazy-incremental
+-- Allocator
+-- When to free
+
+-- # Mem-layout , label subtyping , cloning
+-- Labels have their own run of memory in case they need to grow (64 elems + bitset)
+-- All labels could be part of a recursive type: BitSet header indicating variant element
+-- Finalize: when a tree is unlinked without deleting the end
+-- Header: (Duping | Linear) & Tag bitset & chunksize
+
+-- Ops (upstack is always free mem):
+-- newlink: wrap data in more data; inc stack and connect branches
+-- unlink:  dec stack and read branch ptrs
+-- relink:  re-write head (if dupped then newlink)
+-- dup:
+
+-- CArray:   { Ptr , Len , (mmap | malloc | const) }
+-- IrieTree: { Ptr , Len , [ Tag , elemSize ] }
+-- IrieArray
+
 module SSA where
 import Prim
 import qualified Data.Vector as V
@@ -27,9 +52,9 @@ data Type
  | TVoid -- no ty
 
 data FunctionDecl = FunctionDecl {
-   name :: Text
- , args :: [Type]
- , retTy:: Type
+   name  :: Text
+ , args  :: [Type]
+ , retTy :: Type
 }
 
 data Function = Function {

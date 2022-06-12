@@ -20,7 +20,12 @@ type SrcOff    = Int -- offset into the source file
 type IField    = QName
 type ILabel    = QName
 type TVarSet   = BitSet
-type LiName    = IName -- linear names
+
+-- Module = function of LiNames applied to everything in scope
+-- names in this module with QTT info
+-- ? occurs in different case-branches (ie. still linear)
+type LiName  = QName -- here the module name is used to indicate dups number
+type LiTable = V.Vector (Int , VName)
 
 data VName
  = VBind    IName -- name defined within this module (probably deprecate this)
@@ -38,7 +43,8 @@ data Term -- β-reducable (possibly to a type)
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
- | Abs     [(IName , Type)] BitSet Term Type -- arg inames, types, freevars, term ty
+ -- Should add Lin info?
+ | Abs     [(IName , Type)] BitSet Term Type -- arg inames, types, freevars, term, ty
  | App     Term [Term]    -- IName [Term]
 
  | Cons    (BSM.BitSetMap Term) -- (IM.IntMap Term)

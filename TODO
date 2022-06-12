@@ -1,3 +1,6 @@
+## ?
+  * Linear variables (vbruijn | sourceArg | binding | literal | Extern [ | Field | Label ]) + occurs + src Info (all β-subbed with Term)
+  * pap-spec spawns new specs under bindings (& new VBruijn args)
 ## Top Priority
   * conv Record | Sums to Vector with BitSet to map back to LNames/FNames & unify with module
   * Module = (Term.(Cons{} or Abs _ Cons{}) , ImportList , HNames , MixfixNames , LinSubs)
@@ -7,18 +10,19 @@
   * toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals
   * improve patterns2TT (add tuple of label) and eqn matches
-  * normalize fields/labels for codegen (mainly make sure the order is predictable)
+  * normalize fields/labels for codegen (make sure order is predictable)
   * Function = Constructor + rewrite rules ?
   * ! mk all spec args VBruijns to maximise spec re-use
   * Instantiation & Generalisation is also beta-reduction and could be improved
 ## Top
   * show (esp for repl JIT) + subtyping typeclasses
   * 'StrIntName' new datatype: growable vector + hashmap
-  * Linear types; dependent types required to quantify relative linearity `t ≥ f => t → u`
+  * Linear types; dependent types required to quantify relative linearity `Lin t ≥ Lin f => t → u`
   * expand lambda-mixfixes with explicit holes & don't allow unsaturated mixfix words
   * mixfix scope
   * record type decls
 ## Parse
+  * Pap object; allow inspection of papped args
   * don't allow mixing tabs and spaces
   * Pattern guards
   * improve linefolds
@@ -44,6 +48,9 @@
   * Unsaturated (incl. lone) mfWords that aren't ambig-binds should error
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
+## Beta-optimality:
+  * Partial applications extracted and specialised for beta optimality
+  * Fns passed as args must have an extra interpretable format
 
 ## Unimportant
   * List comprehensions
@@ -59,7 +66,7 @@
   * make work module import loops
   * language server
   * optimize cached modules
-  * sh syntax `ls -lr` => `ls { l=True , r=True }`
+  * sh syntax `ls -lr` => `ls { l=True , r=True }` (Str2Label primitives?)
   * engineer GlobalResolver to work concurrently
   * prefetch memory | loop unrolling
   * mergetyhead could indicate if merge was a noop (so bisub knows it has already seen that input)

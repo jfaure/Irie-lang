@@ -25,7 +25,7 @@ simplifyBindings modIName nArgs nBinds bindsV = do
   bindSpecs'  <- MV.replicate nBinds emptyBitSet
   cachedSpecs'<- MV.replicate nBinds mempty
   argSubs     <- MV.generate nArgs (\i -> Var (VArg i))
-  (simpleBind `mapM` [0 .. nBinds-1] *> doReSpecs) `execStateT` Simplifier {
+  (simpleBind `mapM` [0 .. nBinds-1] {-*> doReSpecs-}) `execStateT` Simplifier {
     _thisMod     = modIName
   , _extBinds    = _ --allBinds
   , _cBinds      = bindsV
@@ -55,7 +55,7 @@ simplifyBindings modIName nArgs nBinds bindsV = do
   , _caseFnArgs  = emptyBitSet
   }
 
-doReSpecs = use reSpecs >>= \re -> re `forM` \i -> (specStack .= emptyBitSet) *> reSimpleBind i
+--doReSpecs = use reSpecs >>= \re -> re `forM` \i -> (specStack .= emptyBitSet) *> reSimpleBind i
 
 addTmpSpec :: Either QName IName -> IName -> [Term] -> SimplifierEnv s IName
 addTmpSpec q bruijnN args = do
@@ -73,12 +73,12 @@ inline q = use thisMod >>= \mod -> use inlineStack >>= \is -> let
   then (inlineStack %= (`setBit` unQ)) *> simpleBind unQ <&> \(BindOpt nApps nSpecs (Core t ty)) -> t
   else pure (Var (VQBind q))
 
-reSimpleBind bindN = traceM ("re: " <> show bindN) *> use cBinds >>= \cb -> MV.read cb bindN >>= \(BindOpt n s (Core t ty)) -> do
-  mod <- use thisMod
-  specialiseRequests bindN mod (Core t ty)
-  simple <- simpleTerm t
-  let done = BindOpt n s (Core simple ty)
-  done <$ MV.write cb bindN done
+--reSimpleBind bindN = traceM ("re: " <> show bindN) *> use cBinds >>= \cb -> MV.read cb bindN >>= \(BindOpt n s (Core t ty)) -> do
+--  mod <- use thisMod
+--  specialiseRequests bindN mod (Core t ty)
+--  simple <- simpleTerm t
+--  let done = BindOpt n s (Core simple ty)
+--  done <$ MV.write cb bindN done
 
 simpleBind :: Int -> SimplifierEnv s Bind
 simpleBind bindN = use cBinds >>= \cb -> MV.read cb bindN >>= \b -> do
@@ -132,20 +132,23 @@ specialiseRequests bindN mod new' = use nSpecs >>= \nspecs -> (prevSpecs <<.= ns
         traceM $ "specialised " <> show i <> " (specialisation " <> show j <> ") " <> prettyTermRaw spec <> "\n"
         pure []
     thisSpec .= -1
-    (concat respecs) `forM` simpleBind -- ? why does this do anything
+    (concat respecs) `forM` simpleBind -- inlines specialisations
 
     -- re-simplify this to inline and further simplify the spec we just derived
     specStack   .= emptyBitSet
     inlineStack .= emptyBitSet
 
+specialiseTerm :: IName -> Int -> Term -> p -> [Term] -> SimplifierEnv s Term
 specialiseTerm i bruijnN specF argShapes argStructure = let
   free = case specF of { Abs ars free t ty -> free ; BruijnAbs bn free t -> free ; _ -> emptyBitSet }
-  in do
-  thisSpec .= i
-  spec <- BruijnAbs bruijnN free <$> simpleApp specF argStructure
-  traceM $ "specialised " <> show i <> prettyTermRaw spec <> "\n"
-  spec <$ (use letSpecs >>= \ls -> MV.write ls i (Just spec))
+  in simpleApp specF argStructure >>= \case -- specBody
+  -- TODO should avoid producing this in the first place perhaps
+--  App (Spec proxy) [] -> (BruijnAbs bruijnN free (Spec proxy)) <$ traceM ("proxy " <> show i <> " == " <> show proxy)
+    specBody -> let spec = BruijnAbs bruijnN free specBody in do
+      traceM $ "specialised " <> show i <> prettyTermRaw spec <> "\n"
+      spec <$ (use letSpecs >>= \ls -> MV.write ls i (Just spec))
 
+specialiseBind :: IName -> ModIName -> Term -> QName -> IName -> Int -> [Term] -> SimplifierEnv s [Int]
 specialiseBind bindN mod thisF q i bruijnN argStructure = let
   unQ = unQName q
   argShapes = getArgShape <$> argStructure

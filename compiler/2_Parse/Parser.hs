@@ -33,6 +33,9 @@ type Parser = ParsecT Void Text (Prelude.State ParseState)
 --------------------------
 -- Parsestate functions --
 --------------------------
+--addLiName     = moduleWIP . parseDetails . liCount <<%= (+1)
+--addLiVar v    = moduleWIP . liNames    %= (v:)
+
 addBind b     = moduleWIP . bindings   %= (b:)
 addImport i   = moduleWIP . imports    %= (i:)
 addPiBound  p = piBound %= \(x:xs)->(p:x):xs
@@ -255,6 +258,7 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
     , _functor     = Nothing
     , _imports     = []
     , _bindings    = []
+    , _liNames     = []
     , _parseDetails = ParseDetails {
         _hNameBinds     = (0 , M.empty)
       , _hNameMFWords   = (0 , M.empty)
@@ -267,6 +271,7 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
       , _fields         = M.empty -- field names
       , _labels         = M.empty -- explicit label names; note. `L a` is ambiguous
       , _newLines       = []
+      , _liCount        = 0
     }
   }
   end = (bindings %~ reverse)
@@ -332,9 +337,10 @@ addMixfixWords m mfBind mfdef = let
     Nothing : Just hNm : mfp -> addMFWord hNm (StartPostfix mfdef)
       >>= \w -> (Nothing :) . (Just w :) <$> addMFParts mfp
 
+funBind :: Bool -> LetRecT -> Parser ()
 funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
   [Just nm] -> let pArgs = many (lexeme singlePattern) -- non-mixfix fn def can parse args immediately
-    in VBind <$> funBind' isTop pArgs letRecT nm Nothing (symbol nm *> pArgs)
+    in void $ funBind' isTop pArgs letRecT nm Nothing (symbol nm *> pArgs)
   mfdefHNames -> let
     hNm = mixFix2Nm mfdefHNames
     pMixFixArgs = \case
@@ -346,7 +352,7 @@ funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pM
     mfdefINames <- addMixfixWords mfdefHNames iNm mfdef
     let mfdef = MixfixDef iNm mfdefINames prec
     iNm <- funBind' isTop (pure []) letRecT (mixFix2Nm mfdefHNames) (Just mfdef) (pMixFixArgs mfdefHNames)
-    pure (VBind iNm)
+    pure ()
 
 some1 f = (:|) <$> f <*> many f
 

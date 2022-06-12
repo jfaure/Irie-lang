@@ -173,7 +173,7 @@ putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oType
     (TL.IO.putStrLn  . formatTypeAppError)          `mapM_` (errors ^. typeAppFails)
   in do
   handleErrors
-  -- half-compiled modules `not coreOK` should also be cached (since heir names were pre-added to the resolver)
+  -- half-compiled modules `not coreOK` should also be cached (since their names were pre-added to the resolver)
   maybe (pure ()) (TL.IO.putStrLn `mapM_`) oCore
   maybe (pure ()) (TL.IO.putStrLn `mapM_`) oTypes
   maybe (pure ()) (TL.IO.putStrLn `mapM_`) oSimple
