@@ -1,0 +1,10 @@
+index-state: 2022-06-12T00:00:00Z
+
+packages: ./irie.cabal
+
+-- Always build tests and benchmarks.
+tests: true
+benchmarks: true
+
+-- The only sensible test display option
+test-show-details: direct

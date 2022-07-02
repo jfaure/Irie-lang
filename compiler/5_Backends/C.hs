@@ -101,8 +101,8 @@ emitBody ssaMod = let
 --FromPoly t e  -> "({ union { TPoly in; " <> emitType t <> " out;} ret; ret.in = " <> emitBody' e <> ";ret.out ;})"
   FromPoly t e  -> "FromPoly(" <> emitType t <> " , " <> emitBody' e <> ")"
   ToPoly t e  -> "(TPoly)"   <> emitBody' e
-  ToPoly t e@Struct{}  -> "(TPoly)"   <> emitBody' e
-  ToPoly t e    -> "ToPoly("   <> emitType t <> " , (" <> emitBody' e <> "))"
+--ToPoly t e@Struct{}  -> "(TPoly)"   <> emitBody' e
+--ToPoly t e    -> "ToPoly("   <> emitType t <> " , (" <> emitBody' e <> "))"
   UnUnion tag branchTy val -> emitBody' val <> ".b" <> fromString (show tag)
     -- fromChar '(' <> fromString (show i) <> " + "<> emitBody' e <> fromChar ')'
   Ret e -> "return " <> emitBody' e <> ";"

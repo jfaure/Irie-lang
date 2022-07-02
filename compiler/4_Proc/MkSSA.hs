@@ -99,11 +99,11 @@ ssaTy = let
   singleT2ssa = \case
     THPrim p  -> pure $ TPrim p
     THTyCon t -> case t of
-      THSumTy t   -> mdo
-        td <- newTypeDef
-        addTypeDef typeDecl -- enforce ordering
-        typeDecl <- (TSum td . V.fromList <$> (ssaTy `mapM` BSM.elems t))
-        pure typeDecl
+--    THSumTy t   -> mdo
+--      td <- newTypeDef
+--      addTypeDef typeDecl -- enforce ordering
+--      typeDecl <- (TSum td . (ssaTy `mapM` BSM.elems t))
+--      pure typeDecl
       THTuple t   -> mdo
         td <- newTypeDef
         addTypeDef typeDecl -- enforce ordering

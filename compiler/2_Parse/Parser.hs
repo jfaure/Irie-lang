@@ -113,7 +113,7 @@ lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
       Just n  -> pure $ Just $ VLocal n
       Nothing -> case asum $ (M.!? h) <$> prevFrames of
         Just upStackArg -> do
-          moduleWIP .parseDetails . freeVars %= (`setBit` upStackArg)
+          moduleWIP . parseDetails . freeVars %= (`setBit` upStackArg)
           pure $ Just $ VLocal upStackArg
         Nothing -> pure Nothing
   tryLet = VBind  <$> (asum $ (M.lookup h) `map` (p ^. hNameLocals))

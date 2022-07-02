@@ -8,7 +8,6 @@ import qualified Data.Text as T
 import qualified BitSetMap as BSM
 import Data.Text.Lazy as TL
 import Data.Text.Lazy.Builder as TLB
-import Data.IntMap as IM
 import Prettyprinter
 import Prettyprinter.Render.Util.SimpleDocTree
 import Prettyprinter.Internal as P

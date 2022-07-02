@@ -1,29 +1,35 @@
-# stack is very slow to realize that sometimes no work is necessary
 NAME	=	irie
 SrcDir	= 	compiler/
 
-EXE	=	$$(stack path --local-install-root)/bin/$(NAME)-exe
+EXE	=	$$(cabal exec which irie-exe)
 SRC	:=	$(shell find $(SrcDir) -type f -name '*.hs')
 
 all: $(NAME)
-fast: $(SRC)
-#stack -j9 ghci --ghci-options "-interactive-print=Text.Pretty.Simple.pPrint" --system-ghc --no-build --ghc-options="-j -fbyte-code -dynamic +RTS -A128m -n2m -RTS"
-	stack -j9 ghci --system-ghc --no-build --ghc-options="-j -fbyte-code -dynamic +RTS -A128m -n2m -RTS -XNoImplicitPrelude"
-prof:
-	stack -j9 build --system-ghc --executable-profiling --ghc-options="-fprof-auto -fprof-cafs -with-rtsopts=-xc"
-
-xprof:
-	stack -j9 build --ghc-options='-prof -fprof-auto -fprof-cafs -with-rtsopts=-xc'
-# --library-profiling
-
-#mk prof && .stack-work/dist/x86_64-linux-nix/Cabal-3.2.1.0/build/irie-exe/irie-exe demo.ii -p llvm-hs +RTS -p -xc
-
-opt:  $(SRC)
-	stack -j9 build --system-ghc --ghc-options="-O3" &&\
-	ln -sf $(EXE) ./$(NAME)
-
 $(NAME): $(SRC)
-	stack -j9 build --system-ghc --fast --ghc-options="-dynamic" &&\
-	ln -sf $(EXE) ./$(NAME)
-#|| echo "If you don't have nixos, set enable: false in the stack.yaml:15 (and make sure you have llvm installed)"
-	@touch $(NAME) # since stack does nothing if you modify a file without changing code
+fast: $(SRC) requires_nix_shell
+	cabal repl
+build: all
+	cabal build && ln -sf $(EXE) ./$(NAME)
+
+# --ghci-options "-interactive-print=Text.Pretty.Simple.pPrint" --system-ghc --no-build --ghc-options="-j -fbyte-code -dynamic +RTS -A128m -n2m -RTS"
+# --ghc-options="-j -fbyte-code -dynamic +RTS -A128m -n2m -RTS -XNoImplicitPrelude"
+#
+
+requires_nix_shell:
+	@ [ "$(IN_NIX_SHELL)" ] || echo "The $(MAKECMDGOALS) target must be run from inside a nix shell"
+	@ [ "$(IN_NIX_SHELL)" ] || (echo "    run 'nix develop' first" && false)
+
+haddock: requires_nix_shell
+	cabal haddock --haddock-executables --haddock-html --haddock-hoogle --builddir=haddock
+
+hoogleUnified: requires_nix_shell
+	-pkill hoogle
+	hoogle generate --local="$$(dirname $$(dirname $$(readlink $$(which hoogle))))"/share/doc/hoogle/ --local=haddock --database=hoo/loc.hoo
+	hoogle server --local --database=hoo/loc.hoo -p 8082 >> /dev/null &
+
+hoogle: requires_nix_shell
+	-pkill hoogle
+	cp "/nix/store/pclnj2dnx8h2xszcsi3mapdr52c7yrnl-hoogle-with-packages/share/doc/hoogle/default.hoo" hoo/local.hoo
+	hoogle generate --local=haddock --database=hoo/local.hoo
+	hoogle server --local -p 8080 >> /dev/null &
+	hoogle server --local --database=hoo/local.hoo -p 8081 >> /dev/null &

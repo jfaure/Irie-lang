@@ -8,7 +8,6 @@ import ShowCore()
 import PrettyCore
 import Prim
 import Data.List (zipWith3 , partition)
-import qualified Data.IntMap as IM
 import qualified BitSetMap as BSM
 import qualified Data.Vector as V
 
@@ -20,7 +19,8 @@ eqTypes (TyGround a) (TyGround b) = all identity (alignWith (these (const False)
 eqTyHeads a b = kindOf a == kindOf b && case (a,b) of
   (THPrim a  , THPrim b)  -> a == b
   (THTyCon a , THTyCon b) -> case (a,b) of
-    (THSumTy a , THSumTy b) -> all identity $ BSM.elems $ alignWith (these (const False) (const False) eqTypes) a b
+--  (THSumTy a , THSumTy b) -> all identity $ BSM.elems $ alignWith (these (const False) (const False) eqTypes) a b
+    (THSumTy a , THSumTy b) -> all identity $ BSM.elems $ BSM.intersectionWith eqTypes a b
     (THTuple a , THTuple b) -> all identity $ V.zipWith eqTypes a b
   _ -> False
 
@@ -218,8 +218,8 @@ invertMu inv cur = let
       $ zipWith (\i t -> invertMu (InvMu cur i inv) t) [0..] $
       case tycon of -- the order for tycon branches is important:
         THArrow ars r -> (r : ars)
-        THSumTy tys   -> BSM.elems tys
-        THProduct tys -> BSM.elems tys
+        THSumTy tys   -> V.toList $ BSM.elems tys
+        THProduct tys -> V.toList $ BSM.elems tys
         THTuple tys   -> V.toList tys
     THMu m t    -> [inv] -- [Leaf m]
     THMuBound m -> [inv] -- [Leaf m]
@@ -240,14 +240,13 @@ testWrapper (InvMu this r parent) recBranch t = case {-d_ (recBranch , this , pa
     partitionTyCons g = (\(t , o) -> ((\case {THTyCon tycon -> tycon ; _ -> error "wtf" }) <$> t , o))
       $ partition (\case {THTyCon{}->True;_->False}) g
     ((t1 , o1) , (t2 , o2)) = (partitionTyCons g1 , partitionTyCons g2)
-    testGuarded t1 t2 = let go i t1 t2 = if i == recBranch then True else t1 == t2
-      in zipWith3 go [0..] t1 t2
+    testGuarded t1 t2 = let go i t1 t2 = i == recBranch || t1 == t2 in V.izipWith go t1 t2
     muFail = case (t1 , t2) of
-      ([THArrow a1 r1] , [THArrow a2 r2]) -> testGuarded (r1 : a1) (r2 : a2)
+      ([THArrow a1 r1] , [THArrow a2 r2]) -> testGuarded (V.fromList $ r1 : a1) (V.fromList $ r2 : a2)
       ([THSumTy t1   ] , [THSumTy t2   ]) -> testGuarded (BSM.elems t1) (BSM.elems t2)
       ([THProduct t1 ] , [THProduct t2 ]) -> testGuarded (BSM.elems t1) (BSM.elems t2)
-      ([THTuple t1   ] , [THTuple t2   ]) -> testGuarded (V.toList t1) (V.toList t2)
-      _ -> [False]
+      ([THTuple t1   ] , [THTuple t2   ]) -> testGuarded t1 t2
+      _ -> V.singleton False
     in if not (all identity muFail) {-|| o1 /= o2-} then Right False
        else case parent of
          Leaf{}    -> Right True

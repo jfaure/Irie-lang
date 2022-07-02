@@ -9,7 +9,6 @@ import CoreUtils
 import ShowCore()
 import qualified Data.Vector.Mutable as MV
 import qualified BitSetMap as BSM
-import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import qualified Data.Vector as V
 import Data.List (unzip3)
@@ -283,7 +282,7 @@ simpleApp' isRec f args = (nApps %= (1+)) *> case f of
     app f a = if isRec then RecApp f a else App f a
     hasSpecArgs = not (null args) && any isSpecArg args
     in case fn of
-    Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
+--  Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
     Var (VBind i ) | hasSpecArgs -> use thisMod >>= \m -> mkSpecialisation (Left (mkQName m i)) args
     Var (VQBind q) | hasSpecArgs -> mkSpecialisation (Left q) args
     Spec i -> (specStack <<%= (`setBit` i)) >>= \sp -> use thisSpec >>= \this -> let

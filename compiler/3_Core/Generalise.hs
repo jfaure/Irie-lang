@@ -1,5 +1,5 @@
 -- Biunfication records constraints , generalisation makes sense of them
-module Generalise (generalise) where
+module Generalise (generalise,) where
 import CoreSyn
 import CoreUtils
 import PrettyCore

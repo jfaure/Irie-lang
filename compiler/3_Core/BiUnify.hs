@@ -183,10 +183,11 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
   (THArrow ars ret ,  THSumTy x) -> pure BiEQ --_
   (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSubType x y
   (THProduct x , THProduct y) -> let --use normFields >>= \nf -> let -- record: fields in the second must all be in the first
-    merged     = BSM.mergeWithKey (\k a b -> Just (Both a b)) (fmap LOnly) (BSM.mapWithKey ROnly) x y
+    merged     = BSM.mergeWithKey' (\k a b -> Just (Both a b)) (\k v -> LOnly v) (ROnly) x y
+--  merged     = BSM.mergeWithKey (\k a b -> Just (Both a b)) (fmap LOnly) (BSM.mapWithKey ROnly) x y
 --  merged     = BSM.mergeWithKey (\k a b -> Both a b) (const LOnly) (ROnly) x y
 --  normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
-    normalized = V.fromList $ BSM.elems merged -- $ IM.mapKeys (nf VU.!) merged
+    normalized = BSM.elems merged -- $ IM.mapKeys (nf VU.!) merged
     go leafCasts normIdx ty = case ty of
       LOnly a   {- drop     -} -> pure $ leafCasts --(field : drops , leafCasts)
       ROnly f a {- no subty -} -> leafCasts <$ failBiSub (AbsentField (QName f)) tyP tyM

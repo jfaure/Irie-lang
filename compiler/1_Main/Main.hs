@@ -191,7 +191,7 @@ codegen flags input@(resolver , jm@(JudgedModule modINm modNm nArgs bindNms a b 
   in do
     when ("ssa" `elem` printPass flags) $ T.IO.putStrLn (show ssaMod)
     when ("C"   `elem` printPass flags) $ let str = mkC ssaMod
-      in BSL.IO.putStrLn str *> BSL.IO.writeFile "/tmp/aryaOut.c" str
+      in BSL.IO.putStr str *> BSL.IO.putStr "\n" *> BSL.IO.writeFile "/tmp/aryaOut.c" str
     pure input
 
 ----------

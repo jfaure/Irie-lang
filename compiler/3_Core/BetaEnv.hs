@@ -75,20 +75,78 @@ import Control.Lens
 
 RetPtr: arena pre-allocated (or stack memory); Prepared by a Cons containing subdata
 
+! x86 instrs: BT , Test , pdep
 ? Region -> Run bitMask
 ? Merge regions
   Sumdatas within sumdatas (chk sz lookup)
 ? Dups
 ? Record subtyping
 ? poly
+? cyclic
+? dynamic fusion
+? record field assign gets bigger
+? data Tree = Int ; { Int ; Tree } -- mu-knot is nested; lift to top of structure ?
+? Flatten all record structure
+  { { x , y } , { a , b} } = { x , y , a , b } => record field assign got bigger
+  want to sequence chunks ; linked list ?
+? polymorphic functions that rearrange memory
+! Tree alloc = keep splitting a run to continue exploiting implicit pointer (alloc schemes)
+! Flatten + sort records
+? drop bit from record
+? sort record fields based on size
+? Insert into array/tree
 
-@ Cons
-  0. retptr is region ptr
-  1. merge arg runs
-  2. alloc from merged run
-@ UnCons
-  0. read into regs + erase unused parts (compute bitmask to free multiple chunks at once)
-  1. jemalloc free
+@ Fn
+  * lookup µ-binder at fn calls (recursion only happens through fns)
+  * tupled with size_t indicating passdown required
+  * small structs in registers , large structs in retPtr (if sumtype > 1 alt also BitTag)
+  * passdown mem for all flattened records (calculated from polysize args) + BitTag (if sumtypes | poly) + FieldMarks
+@ Cons  : retptr => merge arg runs (HeteroList + Runs + record of sizes (run lookup table) 
+  * Wrap-rec
+  * In-rec
+@ UnCons: read , erase unused parts , free node
+@ Embed : Make new larger BitTag to cover all possible alts (? may have to ptr if >regSize)
+@ Drop  : Set bit in FieldMarks
+@ Insert: iff changes size, Copy whole record.
+@ Join  : Copy records
+@ Lens  : consult sorted and uniformized list of labels to find offset
+
+-- drop fields & insert (resize) field & inline subrecords
+-- ! ret-subtype by passdown of fieldMask (passdown enough mem anyway in case fn needs it)
+-- ! byte align fields
+-- ! retPtr indicates pre-dropped fields (should check statically if fn benefits from skipping computations)
+Record = record
+  FieldMarks -- (Iff record > 4 regs) 64-bit header indicating bytes skipped over by record sumtyping
+  BitTags    -- N x ntags taglist for sumtypes contained within
+  userdata
+
+-- * Embed (subtype into larger sumdata) = copy bittags into larger header (run-length encoded ?)
+SumData = data 
+  | Single         -- parameterised by sizes of poly / recursive holes (No need to label until subtype embeds it)
+                   -- >0 , start-run = run-size , end has new tag + explicit pointer
+                   -- <0 , custom labels
+    userdata
+  | Recursive
+    NextRegion     -- iff same size (iff at run alignment need to check if ok)
+    Header         -- (List run + sumdata tags)
+
+
+
+
+
+Allocator:
+NewRetPtr : Sz -> Run
+mergeRuns : Run -> Run -> Run
+erase     : Arg -> ()
+
+CHUNKSZ = 0x1000000 -- 4MiB
+PAGESZ  = 0x1000    -- 4KiB
+Run    = { inUseRegions : BitMask , runMerges : [Run] }
+Chunk  = { pageMap : PageMeta X (CHUNKSZ / PAGESZ) }
+RetPtr = ?
+
+! BLCS = set lowest clear bit
+! nthSet : BitSet -> Nat -> Nat = \b n => tzcnt (pdep (1 `shiftL` n) x)
 --------------
 -- Jemalloc --
 --------------

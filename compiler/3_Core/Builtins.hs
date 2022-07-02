@@ -9,7 +9,6 @@ import CoreSyn
 import qualified BitSetMap as BSM
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
-import qualified Data.IntMap as IM
 
 mkExtTy x = [THExt x]
 getPrimIdx = (primMap M.!?)
