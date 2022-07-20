@@ -6,8 +6,8 @@ import Blaze.ByteString.Builder.Char8
 import qualified Data.Vector as V
 import qualified Data.Text as T
 
---toLazyByteString
-
+-- toLazyByteString
+-- #define transmute(v,to) ((union {typeof(v) from; to to_;}{.from=v}).to_
 mkC ssaMod = toLazyByteString $
      "#include <stdint.h>\n"
   <> "#include <stdio.h>\n"
@@ -76,9 +76,10 @@ emitBody ssaMod = let
   in \case
   Arg i    -> fromString $ 'a' : show i
   Local i  -> fromString $ 'l' : show i
-  Extern i -> _
+  Extern i -> fromString (show i)
   LitE l   -> emitLiteral ssaMod l
 
+--ECallable c -> emitCallable c
   Call c ops -> let
     emitCall f argList = f <> "(" <> mconcat (intersperse "\n  , " argList) <> ")"
     in case c of
@@ -96,7 +97,8 @@ emitBody ssaMod = let
   Load t e      -> emitBody' e <> "[0]" -- "*(" <> emitBody' e <> ")"
   Index t i e   -> emitBody' e <> "->f" <> fromString (show i)
   Extract t i e -> emitBody' e <> ".f" <> fromString (show i)
-  Gep t i e     -> "(&" <> emitBody' (Index t i e) <> ")"
+  Gep t i e    -> "(&" <> emitBody' (Index t i e) <> ")"
+  Next t e     -> "(&" <> emitBody' e <> ")[1]"
   BitCast t e   -> "((" <> emitType t <> ")" <> emitBody' e <> ")"
 --FromPoly t e  -> "({ union { TPoly in; " <> emitType t <> " out;} ret; ret.in = " <> emitBody' e <> ";ret.out ;})"
   FromPoly t e  -> "FromPoly(" <> emitType t <> " , " <> emitBody' e <> ")"
@@ -109,9 +111,9 @@ emitBody ssaMod = let
 --SumData t tag val -> "{" <> emitBody' tag <> " , " <> emitBody' val <> "}"
   SumData t tag (Struct st vals) -> "{" <> emitBody' tag <> " , " <> mintersperse " , " (V.toList $ emitBody' <$> vals) <> "}"
   Switch scrut brs d -> let
-    emitBranch (const , val) = "case " <> fromString (show const) <> ":\n"
+    emitBranch (const , val) = "case " <> fromString (show const) <> ": "
       <> emitBody' val
-      <> "; break;\n"
+      <> case val of { Ret{} -> "\n" ; _ -> "; break;\n" }
     emitBranches = mconcat $ emitBranch <$> brs
     emitDefault = case d of { Void -> mempty ; Ret (Void) -> mempty ; x -> "default:\n" <> emitBody' x }
     in "switch (" <> emitBody' scrut <> ") {\n" <> emitBranches <> emitDefault <> "}"
@@ -189,3 +191,5 @@ emitPrimType = \case
   PrimNat 8  -> "uint8_t"
   PrimNat 32 -> "uint32_t"
   PrimNat 64 -> "uint64_t"
+  PtrTo p    -> emitPrimType p <> "*"
+  x -> error ("C-emitprimtype: " <> show x)

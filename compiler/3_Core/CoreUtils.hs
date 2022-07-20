@@ -24,10 +24,12 @@ eqTyHeads a b = kindOf a == kindOf b && case (a,b) of
     (THTuple a , THTuple b) -> all identity $ V.zipWith eqTypes a b
   _ -> False
 
+partitionType :: Type -> (BitSet , GroundType)
 partitionType = \case
   TyVars vs g -> (vs , g)
   TyGround g  -> (0  , g)
   TyVar v     -> (0 `setBit` v , [])
+--pi@TyPi{}   -> (0 , [pi]) -- TODO ok?
   t -> error $ show t
 
 tyLatticeEmpty pos = \case
@@ -101,6 +103,8 @@ expr2Ty judgeBind e = case e of
 
 bind2Expr = \case
   BindOK isRec e -> e
+  BindOpt _ _ e -> e
+  x -> error (show x)
 
 ------------------------
 -- Type Manipulations --

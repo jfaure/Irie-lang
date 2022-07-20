@@ -1,7 +1,11 @@
 ## ?
   * Linear variables (vbruijn | sourceArg | binding | literal | Extern [ | Field | Label ]) + occurs + src Info (all β-subbed with Term)
   * pap-spec spawns new specs under bindings (& new VBruijn args)
+  * Cache monomorphisations (pap specs etc..)
+## SSA
+  * local/extern names in ssa form
 ## Top Priority
+  * λ Minimise normal forms on composition: Lambda encoding + lifting + sharing
   * switch to codeberg
   * Arg shapes -> a
   * conv Record | Sums to Vector with BitSet to map back to LNames/FNames & unify with module
@@ -16,6 +20,7 @@
   * ! mk all spec args VBruijns to maximise spec re-use
   * Instantiation & Generalisation is also beta-reduction and could be improved
   * in Label replace [Term] with Product field list
+  * rm Tuple (Bitsetmap should be almost equal performance)
 ## Top
   * show (esp for repl JIT) + subtyping typeclasses
   * 'StrIntName' new datatype: growable vector + hashmap
@@ -23,7 +28,7 @@
   * expand lambda-mixfixes with explicit holes & don't allow unsaturated mixfix words
   * mixfix scope
   * record type decls
-  * Intrinsics (eg. getFnName , getLine , getFile etc..)
+  * Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
 ## Parse
   * Pap object; allow inspection of papped args
   * don't allow mixing tabs and spaces
@@ -35,8 +40,7 @@
   * Dependent normalisation
   * first class polymorphism
 ## Functor modules and records
-  * Move THProduct to array and lookup via dichotomy
-  * THProduct Vector alternative for ADTs when names sequential [n..m]
+  * BitSetMap upgrades for [0..64] and sequential names [n..m]
   * patterns in field assignments and top-level (patterns2TT)
   * imports allowed anywhere and treated as record
   * BindName LName FName overlap & mixfix FNames

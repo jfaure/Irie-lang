@@ -1,6 +1,6 @@
-index-state: 2022-06-12T00:00:00Z
+index-state: 2022-07-18T00:00:00Z
 
-packages: ./irie.cabal
+packages: ./.
 
 -- Always build tests and benchmarks.
 tests: true

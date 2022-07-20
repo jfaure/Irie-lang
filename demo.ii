@@ -1,10 +1,18 @@
 --import imports/prelude
 --import imports/list
 --import imports/simpleTests
+--import imports/parser
+--import imports/prelude
 module demo x =
 
--- scansum: muroll & type intersection simplification
 --scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
+
+printList l = case l of
+  Nil => 2
+  Cons i ll => add (putNumber i) (printList ll)
+
+-- scansum: muroll & type intersection simplification
+-- scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
 
 -- ? data args/ret & codata
 --foldl f s l = case l of
@@ -71,6 +79,7 @@ go1 z i = let
   in ifThenElse (ge i 10) z (go2 z (add i 1) (Wrap nextRet) True)
 -}
 
+{-
 -- Unwrapped
 bool2N = \case
   True  => 1
@@ -85,6 +94,7 @@ go1 z i = let
     True  => Yield (mul i i) False
     False => Done
   in ifThenElse (ge i 10) z (go2 z (add i 1) nextRet True)
+-}
 
 -- sum [ k ∗ m | k ← [1..n], m ← [1..k] ]
 --n = 10

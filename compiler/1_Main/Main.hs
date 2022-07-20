@@ -10,6 +10,7 @@ import Errors
 import CoreBinary()
 import CoreUtils (bind2Expr)
 import PrettyCore
+import qualified PrettySSA
 import Infer
 import Fuse
 import MkSSA
@@ -19,6 +20,7 @@ import Text.Megaparsec hiding (many)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy.IO as TL.IO
+import qualified Data.Text.Lazy as TL
 import qualified Data.ByteString.Lazy as BSL.IO
 import qualified Data.Vector as V
 import qualified Data.Map    as M
@@ -63,7 +65,9 @@ main' args = parseCmdLine args >>= \cmdLine -> do
     then DB.decodeFile resolverCacheFName :: IO GlobalResolver
     else pure primResolver
   unless (null (strings cmdLine)) $ [strings cmdLine] `forM_` \e ->
-    text2Core cmdLine Nothing resolver 0 "CmdLineBindings" (toS e) >>= putResults . handleJudgedModule
+    text2Core cmdLine Nothing resolver 0 "CmdLineBindings" (toS e)
+      >>= putResults . handleJudgedModule
+      >>= codegen cmdLine
   files cmdLine `forM_` doFileCached cmdLine True resolver 0
   when (repl cmdLine || null (files cmdLine) && null (strings cmdLine)) (replCore cmdLine)
 
@@ -76,7 +80,10 @@ doFileCached :: CmdLine -> Bool -> GlobalResolver -> ModDeps -> FilePath -> IO (
 doFileCached flags isMain resolver depStack fName = let
   cached            = getCachePath fName
   isCachedFileFresh = (<) <$> getModificationTime fName <*> getModificationTime cached
-  go resolver modNm = T.IO.readFile fName >>= text2Core flags modNm resolver depStack fName >>= putResults . handleJudgedModule
+  go resolver modNm = T.IO.readFile fName
+    >>= text2Core flags modNm resolver depStack fName
+    >>= putResults . handleJudgedModule
+    >>= codegen flags
   go' resolver = go resolver Nothing
   didIt = modNameMap resolver M.!? toS fName
   in case didIt of
@@ -99,7 +106,7 @@ evalImports flags moduleIName resolver depStack fileNames = do
   (r , importINames) <- let
     inferImport (res,imports) path = (\(a,j)->(a,modIName j: imports)) <$> doFileCached flags False res depStack path
     in foldM inferImport (resolver , []) importPaths
-  let modDeps = ModDependencies { deps = (foldl setBit emptyBitSet importINames) , dependents = emptyBitSet }
+  let modDeps = ModDependencies { deps = foldl setBit emptyBitSet importINames , dependents = emptyBitSet }
       r' = foldl (\r imported -> addDependency imported moduleIName r) r importINames
   pure (r' , modDeps)
 
@@ -112,7 +119,7 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
       resolver = if isJust maybeOldModule then resolver' else addModName modIName (T.pack fName) resolver'
   when ("source" `elem` printPass flags) (putStr =<< readFile fName)
   parsed <- case parseModule fName progText of
-    Left e  -> (putStrLn $ errorBundlePretty e) *> exitWith (ExitFailure 1) -- ExitSuccess
+    Left e  -> putStrLn (errorBundlePretty e) *> exitWith (ExitFailure 1) -- ExitSuccess
     Right r -> pure r
   when ("parseTree" `elem` printPass flags) (putStrLn (P.prettyModule parsed))
 
@@ -146,18 +153,22 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
          (V.zip bindNames (bind2Expr <$> judgedBinds)) labelNames (iMap2Vector fieldMap) labelMap fieldMap modDeps
   in (flags , fName , judgedModule , newResolver , exts , errors , srcInfo)
 
+handleJudgedModule :: (CmdLine, f, JudgedModule, GlobalResolver, e1, Errors, e2)
+  -> ( CmdLine, Bool, Errors, BindSource, e2, f, GlobalResolver, JudgedModule
+     , (Maybe (V.Vector TL.Text), Maybe (V.Vector TL.Text), Maybe (V.Vector TL.Text)))
 handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors , srcInfo) = let
   JudgedModule modI modNm nArgs bindNames a b judgedBinds = judgedModule
   nameBinds showTerm bs = let
     prettyBind' = prettyBind ansiRender { bindSource = Just bindSrc , ansiColor = not (noColor flags) }
-    in (\(nm,j) -> (prettyBind' showTerm nm j)) <$> bs
+--  in (\(nm,j) -> (prettyBind' showTerm nm j)) <$> bs
+    in uncurry (prettyBind' showTerm) <$> bs
   bindNamePairs = V.zip bindNames judgedBinds
   bindSrc = BindSource _ bindNames _ (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
   simpleBinds = runST $ V.unsafeThaw judgedBinds >>= \cb ->
       simplifyBindings modI nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
-  judgedFinal = JudgedModule modI modNm nArgs bindNames a b simpleBinds
+  judgedFinal = JudgedModule modI modNm nArgs bindNames a b (if noFuse flags then judgedBinds else simpleBinds)
 
   testPass p = coreOK && p `elem` printPass flags && not (quiet flags)
   oTypes  = if testPass "types"  then Just $ nameBinds False bindNamePairs else Nothing
@@ -189,7 +200,7 @@ putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oType
 codegen flags input@(resolver , jm@(JudgedModule modINm modNm nArgs bindNms a b judgedBinds)) = let
   ssaMod = mkSSAModule jm
   in do
-    when ("ssa" `elem` printPass flags) $ T.IO.putStrLn (show ssaMod)
+    when ("ssa" `elem` printPass flags) $ TL.IO.putStrLn (PrettySSA.prettySSAModule PrettySSA.ansiRender ssaMod)
     when ("C"   `elem` printPass flags) $ let str = mkC ssaMod
       in BSL.IO.putStr str *> BSL.IO.putStr "\n" *> BSL.IO.writeFile "/tmp/aryaOut.c" str
     pure input

@@ -5,20 +5,12 @@
 -- Memory: non-fusible | duped Labels
 -- Mem-layout , label subtyping
 -- Clone Lazy-incremental
--- Allocator
--- When to free
 
 -- # Mem-layout , label subtyping , cloning
 -- Labels have their own run of memory in case they need to grow (64 elems + bitset)
 -- All labels could be part of a recursive type: BitSet header indicating variant element
 -- Finalize: when a tree is unlinked without deleting the end
 -- Header: (Duping | Linear) & Tag bitset & chunksize
-
--- Ops (upstack is always free mem):
--- newlink: wrap data in more data; inc stack and connect branches
--- unlink:  dec stack and read branch ptrs
--- relink:  re-write head (if dupped then newlink)
--- dup:
 
 -- CArray:   { Ptr , Len , (mmap | malloc | const) }
 -- IrieTree: { Ptr , Len , [ Tag , elemSize ] }
@@ -27,6 +19,9 @@
 module SSA where
 import Prim
 import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as MV
+import qualified CoreSyn
+import qualified ShowCore()
 
 type V = V.Vector
 
@@ -83,7 +78,9 @@ data Expr
  | SumData (V Type) Expr Expr -- tag and value
  | Boxed Type Expr    -- malloced node
 
- | Ret   Expr          -- indicate top-level expr
+ | ROSexpr ROS   -- record-of-sum
+
+ | Ret   Expr          -- wraps a top-level expr
  | BitCast Type Expr
 
  | FromPoly Type Expr
@@ -92,6 +89,7 @@ data Expr
  | UnUnion Int Type Expr
  | Load  Type Expr
  | Gep   Type Int Expr   -- C"&(->)" Only TStruct and TSum
+ | Next  Type Expr       -- C"(&t)[1]" Only TStruct and TSum
  | Index Type Int Expr   -- C"->"
  | Extract Type Int Expr -- C"."
  | Dup IName Int Expr
@@ -104,6 +102,37 @@ sumTag_t = TPrim (PrimInt 32)
 
 builtins = V.fromList [
  ]
+
+type Off = Expr
+type ROS = V ROSField
+data ROSField
+ = ROSFieldMem { fieldOffset :: Off  , sumOffset :: Maybe Off } -- record of sum
+ | ROSFloats   { fieldFloat  :: Expr , sumTag :: Maybe Expr }
+ deriving Show
+
+-----------------------
+-- Generation: MkSSA --
+-----------------------
+type CGEnv s a = StateT (CGState s) (ST s) a
+data CGState s = CGState {
+   wipBinds    :: MV.MVector s CGWIP
+ , typeDef     :: Int -- typedef counter
+ , wipTypeDefs :: [Type]
+ , top         :: Bool -- for inserting Rets
+ , locCount    :: Int
+ , argTable    :: MV.MVector s (Expr , Type)
+ , muDefs      :: IntMap Int
+ , expectedTy  :: Type
+ , thisMod     :: CoreSyn.ModIName
+ }
+
+data CGWIP
+  = WIPCore  (HName , CoreSyn.Bind)
+--  | WIPConst SSALiteral
+  | WIPFn    Function
+  | WIPDecl  FunctionDecl
+  | WIPTy    IName -- index to typedef map
+  deriving Show
 
 deriving instance Show Expr
 deriving instance Show Callable

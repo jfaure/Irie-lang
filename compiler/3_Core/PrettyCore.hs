@@ -264,6 +264,7 @@ prettyInstr = \case
     PredInstr GECmp -> "_>_"
     IntInstr Add -> "_+_"
     IntInstr Mul -> "_*_"
+    x -> viaShow x
   p -> viaShow p
 
 -- Used to print error messages, but I don't like it

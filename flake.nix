@@ -4,7 +4,7 @@
   inputs = {
     haskell-nix.url = "github:input-output-hk/haskell.nix";
     nixpkgs.follows = "haskell-nix/nixpkgs-unstable";
-    haskell-nix.inputs.nixpkgs.follows = "haskell-nix/nixpkgs-2105";
+    haskell-nix.inputs.nixpkgs.follows = "haskell-nix/nixpkgs-unstable";
     flake-compat-ci.url = "github:hercules-ci/flake-compat-ci";
     flake-compat = {
       url = "github:edolstra/flake-compat";
@@ -16,7 +16,7 @@
   outputs = { self, nixpkgs, haskell-nix, flake-compat, flake-compat-ci, flake-utils }:
     let
       supportedSystems = [ "x86_64-linux" ];
-      compiler-nix-name = "ghc922";
+      compiler-nix-name = "ghc923";
       perSystem = nixpkgs.lib.genAttrs supportedSystems;
       nixpkgsFor = system:
         import nixpkgs {
@@ -50,12 +50,12 @@
               [
                 pkgs.gnumake
                 pkgs.cabal-install
-                pkgs.hlint
+#               pkgs.hlint
 #               (fourmoluFor system)
-                pkgs.nixpkgs-fmt
-                pkgs.haskellPackages.cabal-fmt
-                pkgs.haskellPackages.apply-refact
-                pkgs.fd
+#               pkgs.nixpkgs-fmt
+#               pkgs.haskellPackages.cabal-fmt
+#               pkgs.haskellPackages.apply-refact
+#               pkgs.fd
               ];
           };
         };

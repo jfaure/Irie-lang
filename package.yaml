@@ -43,6 +43,10 @@ dependencies:
 - haskeline
 - process
 - prettyprinter
+- tasty
+- tasty-hunit
+- sydtest
+- raw-strings-qq
 
 default-extensions:
 - LambdaCase
@@ -84,7 +88,6 @@ executables:
     - compiler/1_Main/
     - compiler/2_Parse/
     - compiler/3_Core/
-#   - compiler/4_LLVM/
     - compiler/4_Proc/
     - compiler/5_Backends/
 

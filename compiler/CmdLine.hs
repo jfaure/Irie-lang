@@ -11,6 +11,7 @@ data CmdLine = CmdLine
   , optlevel       :: Word
   , threads        :: Int
   , noPrelude      :: Bool
+  , noFuse         :: Bool
   , noCache        :: Bool
 --  , reportErrors   :: Bool -- print an error summary (not doing so is probably only useful for the test suite)
   , recompile      :: Bool   -- recompile even if cached
@@ -28,6 +29,7 @@ defaultCmdLine = CmdLine -- Intended for use from ghci
   , optlevel       = 0
   , threads        = 1
   , noPrelude      = False
+  , noFuse         = False
   , noCache        = False
   , recompile      = False
   , quiet          = False
@@ -73,6 +75,9 @@ cmdLineDecls = CmdLine
   <*> switch
       (short 'n' <> long "no-prelude"
       <> help "Don't import prelude implicitly")
+  <*> switch
+      (             long "no-fuse"
+      <> help "Don't perform fusion")
   <*> switch
       (             long "no-cache"
       <> help "Don't save or re-use compiled files")

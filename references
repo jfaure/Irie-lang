@@ -1,3 +1,15 @@
+Profunctor optics: a categorical update
+https://arxiv.org/pdf/2001.07488.pdf
+
+SIMD at Insomniac
+https://deplinenoise.files.wordpress.com/2015/03/gdc2015_afredriksson_simd.pdf
+
+quickcheck generator Compiler testing
+https://dl.acm.org/doi/10.1145/3110259
+
+compiler testing
+https://dl.acm.org/doi/10.1145/3363562
+
 it is not the case that Prop : Prop, that would be inconsistent. Rather quantifications over all propositions is again a proposition
 
 The danger inherent in higher order programming is well testified by a long series

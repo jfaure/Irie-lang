@@ -105,7 +105,7 @@ RetPtr: arena pre-allocated (or stack memory); Prepared by a Cons containing sub
   * Wrap-rec
   * In-rec
 @ UnCons: read , erase unused parts , free node
-@ Embed : Make new larger BitTag to cover all possible alts (? may have to ptr if >regSize)
+@ Embed : Make new larger BitTag + header to cover all possible alts (? may have to ptr if >regSize)
 @ Drop  : Set bit in FieldMarks
 @ Insert: iff changes size, Copy whole record.
 @ Join  : Copy records
@@ -116,7 +116,7 @@ RetPtr: arena pre-allocated (or stack memory); Prepared by a Cons containing sub
 -- ! byte align fields
 -- ! retPtr indicates pre-dropped fields (should check statically if fn benefits from skipping computations)
 Record = record
-  FieldMarks -- (Iff record > 4 regs) 64-bit header indicating bytes skipped over by record sumtyping
+  FieldMarks -- ! Copy is better; (Iff record > 4 regs) 64-bit header indicating bytes skipped over by record sumtyping
   BitTags    -- N x ntags taglist for sumtypes contained within
   userdata
 

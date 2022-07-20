@@ -39,8 +39,8 @@ _>_  { a1 } = \a f => f a
 
 if_then_else_ { l0 } = ifThenElse
 
-identity (a : Set) -> a
-identity x = x
+--identity (a : Set) -> a
+--identity x = x
 
 {-
 -- mixfix tests

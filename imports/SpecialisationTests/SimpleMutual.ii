@@ -1,0 +1,15 @@
+-- Mutual specialisation
+bool2N = \case
+  True  => 1
+  False => 0
+
+go2 z i next s = case next s of
+  Done      => go1 z i
+  Skip s h  => go2 z i next s
+  Yield x s => go2 (add z x) i next s
+
+go1 z i = let
+  nextRet x = case x of
+    True  => Yield (mul i i) False
+    False => Done
+  in ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet) True)
