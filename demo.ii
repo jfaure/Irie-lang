@@ -5,11 +5,15 @@
 --import imports/prelude
 module demo x =
 
---scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
-
+{-
 printList l = case l of
   Nil => 2
   Cons i ll => add (putNumber i) (printList ll)
+
+scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
+
+main = printList (scanSum 4 Nil)
+-}
 
 -- scansum: muroll & type intersection simplification
 -- scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
@@ -111,21 +115,21 @@ go1 z i = let
 --  f : Int
 --  g : Int
 
---FileName  = { basename = identity } --takeWhileEnd (/= '/')
---Directory = { pwd = getcwd , entries = ls }
+import imports/prelude
+--import imports/list
+--import imports/ls
 
---Dir = data
---  File CString
---  Dir  CString (List Dir)
-
+{-
 --printDirTree : Str -> Dir -> CString
---printDirTree prefix = \case
---  File f => prefix ++ f
---  Dir  d r => prefix ++ d ++ map (printDirTree (fromCString " |-- " ++ prefix)) r
+printDirTree prefix = \case
+  File f => f -- prefix ++ f
+  Dir  d r => prefix ++ d ++ map (printDirTree (fromCString " |-- " ++ prefix)) r
+-}
 
---step dirp = case j (readdir dirp) of
---  Nothing => Nothing
---  Just a  => Just { val = a , seed = dirp }
---j = Just
---
---ls dName = unfoldr step (opendir dName)
+filter pred l = case l of
+  Nil => Nil
+  Cons x xs => if pred x then Cons x (filter pred xs) else filter pred xs
+
+scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
+
+-- ls = scanSum 5 Nil

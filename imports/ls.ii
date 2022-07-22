@@ -1,0 +1,17 @@
+import imports/prelude
+import imports/list
+--FileName  = { basename = identity } --takeWhileEnd (/= '/')
+--Directory = { pwd = getcwd , entries = ls }
+
+Dir = data
+  File CString
+  Dir  CString (List Dir)
+
+step dirp = case j (readdir dirp) of
+  Nothing => Nothing
+  Just a  => Just { val = a , seed = dirp }
+j = Just
+
+ls dName = unfoldr step (opendir dName)
+
+

@@ -14,6 +14,7 @@ import qualified ParseSyntax as P
 import CoreSyn
 import MixfixSyn
 import ShowCore()
+import qualified BitSetMap as BSM
 import qualified Data.Map.Strict as M
 import qualified Data.IntMap as IM
 import qualified Data.Vector as V
@@ -141,7 +142,8 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     (Just [(0     , iNm)] , Nothing) -> Imported $ snd ((prevBinds V.! 0) V.! iNm)
     (Just [(modNm , iNm)] , Nothing)
 --    label applications look like normal bindings `n = Nil`
-      | True <- testBit iNm labelBit -> Imported (Core (Label (mkQName modNm (clearBit iNm labelBit)) []) (TyGround []))
+      | True <- testBit iNm labelBit -> let q = mkQName modNm (clearBit iNm labelBit)
+        in Imported (Core (Label q []) (TyGround [THTyCon $ THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))]))
       | True <- testBit iNm fieldBit -> NotInScope hNm
       | True -> Importable modNm iNm
     (b , Just mfWords)

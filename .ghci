@@ -12,7 +12,8 @@ import Prelude
 :def n (\_->pure ":set args imports/parser.ii -p types \n:r\n main\n")
 
 :def z (\i -> pure (":r\n" ++ i))
+:def core (\_->pure ":r\n sh \"demo.ii --no-fuse -p core\"\n")
 :def go (\_->pure ":r\n opt\n")
 :def types (\_->pure ":r\n types\n")
+:def emitSSA (\_->pure ":r\n ssa\n")
 :def emitC (\_->pure ":r\n emitC\n")
-

@@ -34,7 +34,7 @@ judgeModule nBinds pm importedModules modIName nArgs hNames exts source = let
     wip'      <- MV.replicate nBinds Queued
     bis'      <- MV.new 64
     argVars'  <- MV.new nArgs
-    st <- execStateT (judgeBind `mapM_` [0 .. nBinds-1]) $ TCEnvState
+    st <- execStateT (judgeBind pBinds' wip' `mapM_` [0 .. nBinds-1]) $ TCEnvState
 --  st <- execStateT (judgeBind `mapM_` [nBinds-1 , nBinds-2..0]) $ TCEnvState
       { _pBinds   = pBinds'
       , _externs  = exts
@@ -59,15 +59,14 @@ judgeModule nBinds pm importedModules modIName nArgs hNames exts source = let
 --    , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
 --    , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
-    bis''    <- V.unsafeFreeze (st ^. bis)
     wip''    <- V.unsafeFreeze (st ^. wip)
-    pure $ (JudgedModule modIName ((\case {Right m->m;Left m->m;}) modName) nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
+    pure (JudgedModule modIName (either identity identity modName) nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , st ^. errors) --TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
 -- inference >> generalisation >> type checking of annotations
 -- This stacks inference of forward references and handles mutual binds
-judgeBind :: IName -> TCEnv s Expr
-judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.read` bindINm) >>= \case
+judgeBind :: V.Vector P.FnDef -> MV.MVector s Bind -> IName -> TCEnv s Expr
+judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' ->-} (wip' `MV.read` bindINm) >>= \case
   BindOK isRec e -> pure e
   Mutual e freeVs isRec tvar tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)) -- pure e
 
@@ -78,11 +77,13 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
       MV.modify wip' (\(Guard ms tv) -> Guard (bindINm:ms) tv) this
     pure $ Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)
 
-  Queued -> use wip >>= \wip' -> do
-    abs   <- (V.! bindINm) <$> use pBinds
-    svwip <- bindWIP <<.= (bindINm , False)
-    let freeVars = P.fnFreeVars abs
-        tyAnn    = P.fnSig abs
+  Queued -> use wip >>= \wip' -> let
+    abs      = ttBinds V.! bindINm
+    freeVars = P.fnFreeVars abs
+    tyAnn    = P.fnSig abs
+    in do
+--  abs   <- (V.! bindINm) <$> use pBinds
+    svwip     <- bindWIP <<.= (bindINm , False)
     freeTVars <- use argVars >>= \avs -> bitSet2IntList freeVars `forM` \i -> MV.read avs i
     svEscapes <- escapedVars <<%= (.|. intList2BitSet freeTVars)
     svLeaked  <- use leakedVars
@@ -99,9 +100,13 @@ judgeBind bindINm = use thisMod >>= \modINm -> use wip >>= \wip' -> (wip' `MV.re
     -- This will also simplify | normalise the type
     typeAnn <- case tyAnn of
       Nothing -> pure Nothing
-      Just t@P.Abs{} -> fmap tyExpr $ infer t >>= \case
-        Core t ty -> Core t <$> generalise svEscapes (Right ty)
-        Ty ty     -> Ty     <$> generalise svEscapes (Right ty)
+      Just t@P.Abs{} -> let
+        genGroundType t = case t of
+          TyGround{} -> generalise svEscapes (Right t)
+          t -> pure t -- may need to generalise under complex types
+        in fmap tyExpr $ infer t >>= \case
+        Core t ty -> Core t <$> genGroundType ty
+        Ty ty     -> Ty     <$> genGroundType ty
         x -> pure x
       Just t -> tyExpr <$> infer t -- no need to generalise if not Abs since no pi bounds
 
@@ -165,7 +170,7 @@ handleExtern = let mfwOK = True in \case
   MixfixyVar m       -> if mfwOK then pure $ MFExpr m
     else PoisonExpr <$ (errors . scopeFails %= (ScopeError "(mixfix word cannot be a binding)" :))
 
-judgeLocalBind b = use thisMod >>= \modINm -> judgeBind b <&> \case
+judgeLocalBind b = use thisMod >>= \modINm -> use wip >>= \wip' -> use pBinds >>= \binds -> judgeBind binds wip' b <&> \case
   Core e ty -> Core (Var $ VQBind (mkQName modINm b)) ty -- no need to inline the body yet
   t -> t
 
@@ -207,9 +212,11 @@ infer = let
    checkRec e = pure e
 
    in if any isPoisonExpr (f : args) then pure PoisonExpr else do
+     wip' <- use wip
+     pBinds' <- use pBinds
      (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
      use tmpFails >>= \case
-       [] -> castRet biret castArgs <$> (ttApp retTy judgeBind handleExtern f args >>= checkRec)
+       [] -> castRet biret castArgs <$> (ttApp retTy (judgeBind pBinds' wip') handleExtern f args >>= checkRec)
        x  -> PoisonExpr <$ -- trace ("problem fn: " <> show f :: Text)
          ((tmpFails .= []) *> (errors . biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
 
@@ -240,7 +247,7 @@ infer = let
   -- TODO shouldn't be tyAnn here if it is ignored
   P.Abs (P.FnDef hNm letRecT mf freeVars matches tyAnn) -> let
     (argsAndTys , tt) = matches2TT matches
-    (args , argAnns)    = unzip argsAndTys
+    (args , argAnns)  = unzip argsAndTys
     in do
     argTVars <- getArgTVars args
     infer tt <&> \case
@@ -258,7 +265,7 @@ infer = let
     inferExprApp srcOff = \case
       ExprApp fE [] -> panic "impossible: empty expr App"
       ExprApp fE argsE -> inferExprApp srcOff fE >>= \case
-        Core (Label iLabel ars) _ -> (inferExprApp srcOff `mapM`  argsE) <&> judgeLabel iLabel
+        Core (Label iLabel ars) _ -> (inferExprApp srcOff `mapM` argsE) <&> judgeLabel iLabel
         f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
       QVar q -> use thisMod >>= \modIName -> use externs >>= \e -> use openModules >>= \open ->
         handleExtern (readQParseExtern open modIName e (modName q) (unQName q))
@@ -276,6 +283,15 @@ infer = let
     pure $ if isPoisonExpr `any` exprs
       then PoisonExpr
       else Core (Cons (BSM.fromList $ zip fields tts)) (TyGround [THTyCon retTycon])
+
+--P.Cons construct -> let
+--  (fieldsLocal , rawTTs) = unzip construct
+--  fields = qName2Key . readField ext <$> fieldsLocal
+--  fieldBinds = rawTTs <&> \tt -> P.FnDef { fnFreeVars = mempty , fnMatches = [FnMatch [] tt] , fnSig = Nothing }
+--  in do
+--  ext   <- use externs
+--  wip'  <- MV.replicate (BSM.size rawTTs) Queued
+--  exprs <- uncurry (\(i , tt) -> judgeBind fieldBinds wip') `imapM` construct
 
   P.TTLens o tt fieldsLocal maybeSet -> use externs >>= \ext -> infer tt >>= \record -> let
       fields = readField ext <$> fieldsLocal

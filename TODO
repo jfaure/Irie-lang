@@ -5,6 +5,8 @@
 ## SSA
   * local/extern names in ssa form
 ## Top Priority
+  * Append functions (case branches , specialisations)
+  * Fix scansum type inferene
   * λ Minimise normal forms on composition: Lambda encoding + lifting + sharing
   * switch to codeberg
   * Arg shapes -> a
@@ -80,3 +82,4 @@
   * mergetyhead could indicate if merge was a noop (so bisub knows it has already seen that input)
   * Completion based on types (Type -> Bind)
   * after function with no free-vars generalised, can trim but not fully clear bisubs!
+  * optimise co-occurences by merging instantly

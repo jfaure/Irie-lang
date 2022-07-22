@@ -33,10 +33,11 @@ import Data.List (words)
 
 searchPath   = ["./" , "Library/"]
 objPath      = ["./"]
-objDir       = ".irie-obj/@" -- prefix '@' to files in there
+objDir'      = ".irie-obj/"
+objDir       = objDir' <> "@" -- prefix '@' to files in there
 getCachePath fName = objDir <> map (\case { '/' -> '%' ; x -> x} ) fName
 resolverCacheFName = getCachePath "resolver"
-doCacheCore  = False
+doCacheCore  = True
 cacheVersion = 0
 
 deriving instance Generic GlobalResolver
@@ -60,8 +61,9 @@ emitC      = sh $ demoFile <> " -p C"
 main = getArgs >>= main'
 main' args = parseCmdLine args >>= \cmdLine -> do
   when ("args" `elem` printPass cmdLine) (print cmdLine)
+  when doCacheCore (createDirectoryIfMissing False objDir')
   resolverExists <- doesFileExist resolverCacheFName
-  resolver       <- if doCacheCore && resolverExists
+  resolver       <- if doCacheCore && not (noCache cmdLine) && resolverExists
     then DB.decodeFile resolverCacheFName :: IO GlobalResolver
     else pure primResolver
   unless (null (strings cmdLine)) $ [strings cmdLine] `forM_` \e ->
@@ -87,7 +89,7 @@ doFileCached flags isMain resolver depStack fName = let
   go' resolver = go resolver Nothing
   didIt = modNameMap resolver M.!? toS fName
   in case didIt of
-    Just modI | not doCacheCore -> error $ "compiling a module twice without cache is unsupported: " <> show fName
+    Just modI | not doCacheCore || noCache flags -> error $ "compiling a module twice without cache is unsupported: " <> show fName
     Just modI | depStack `testBit` modI -> error $ "Import loop: "
       <> toS (T.intercalate " <- " (show . (modNamesV resolver V.!) <$> bitSet2IntList depStack))
     _         | not doCacheCore -> go' resolver
@@ -178,10 +180,10 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
 
 putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oTypes , oCore , oSimple)) = let
   handleErrors = do
-    (T.IO.putStrLn   . formatError bindSrc srcInfo) `mapM_` (errors ^. biFails)
-    (T.IO.putStrLn   . formatScopeError)            `mapM_` (errors ^. scopeFails)
-    (TL.IO.putStrLn  . formatCheckError bindSrc)    `mapM_` (errors ^. checkFails)
-    (TL.IO.putStrLn  . formatTypeAppError)          `mapM_` (errors ^. typeAppFails)
+    T.IO.putStr  $ T.intercalate  "\n\n" $ formatError bindSrc srcInfo <$> (errors ^. biFails)
+    T.IO.putStr  $ T.intercalate  "\n\n" $ formatScopeError            <$> (errors ^. scopeFails)
+    TL.IO.putStr $ TL.intercalate "\n\n" $ formatCheckError bindSrc    <$> (errors ^. checkFails)
+    TL.IO.putStr $ TL.intercalate "\n\n" $ formatTypeAppError          <$> (errors ^. typeAppFails)
   in do
   handleErrors
   -- half-compiled modules `not coreOK` should also be cached (since their names were pre-added to the resolver)

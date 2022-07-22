@@ -1,0 +1,134 @@
+cabal-version: 3.6
+
+name:           irie
+version:        0.1.0.0
+synopsis:       Array oriented calculus of inductive constructions
+description:    Please see the README on GitHub at <https://github.com/jfaure/irie#readme>
+category:       Compilers
+homepage:       https://github.com/jfaure/irie#readme
+bug-reports:    https://github.com/jfaure/irie/issues
+author:         James Faure
+maintainer:     james.faure@epitech.eu
+copyright:      2019 James Faure
+license:        BSD-3-Clause
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+
+source-repository head
+  type: git
+  location: https://github.com/jfaure/irie
+
+executable irie-exe
+  mixins: 
+      base (Prelude as BasePrelude)
+    , base hiding (Prelude)
+  main-is: Main.hs
+  other-modules:
+      BitSetMap
+      CmdLine
+      LiName
+      Prelude
+      Prim
+      QName
+      ModulePaths
+      Tests
+      DesugarParse
+      Parser
+      ParseSyntax
+      Beta
+      BetaEnv
+      BiUnify
+      Builtins
+      CoreBinary
+      CoreSyn
+      CoreUtils
+      Errors
+      Externs
+      Fuse
+      FusionEnv
+      Generalise
+      Infer
+      Mixfix
+      MixfixSyn
+      PrettyCore
+      Record
+      ShowCore
+      SimplifyInstr
+      TCState
+      TTCalculus
+      TypeCheck
+      MkSSA
+      SSA
+      Memory
+      C
+      X86
+      X86JIT
+      PrettySSA
+      Paths_irie
+  hs-source-dirs:
+      compiler/
+      compiler/1_Main/
+      compiler/2_Parse/
+      compiler/3_Core/
+      compiler/4_Proc/
+      compiler/5_Backends/
+  default-extensions:
+      LambdaCase
+      EmptyCase
+      ViewPatterns
+      StandaloneDeriving
+      MultiWayIf
+      PartialTypeSignatures
+      ScopedTypeVariables
+      RankNTypes
+      FlexibleContexts
+      TupleSections
+      ConstraintKinds
+      RecursiveDo
+      OverloadedStrings
+      DeriveDataTypeable
+      DeriveGeneric
+      OverloadedRecordDot
+  ghc-options: -Wno-deprecations -fdefer-typed-holes -Wno-typed-holes -fdefer-typed-holes -Wno-typed-holes -Wunused-imports
+  build-depends:
+      base
+    , blaze-builder
+    , bytestring
+    , containers
+    , deepseq
+    , directory
+    , filepath
+    , haskeline
+    , lens
+    , megaparsec >8.0
+    , mtl
+    , optparse-applicative
+    , parser-combinators
+    , pretty-simple
+    , prettyprinter
+    , primitive
+    , process
+    , protolude
+    , semialign
+    , text
+    , these
+    , transformers
+    , unix
+    , unordered-containers
+    , binary
+    , vector
+    , vector-binary-instances
+    , tasty
+    , tasty-hunit
+--  , tasty-quickcheck
+    , raw-strings-qq
+    , sydtest
+  default-language: Haskell2010
+
+--test-suite irie-test
+--  type: exitcode-stdio-1.0
+--  main-is: Main.hs
+--  build-depends:
+--    tasty

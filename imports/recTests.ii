@@ -1,0 +1,25 @@
+-- Tests that don't want a mu-bound wrapper
+
+rec8  = \x => (\y => (x (y y)))                       -- ∏ A B C → (A → B) → ((C → A) & C) → B
+
+lpRec2 = let rec r = \a => r in ifThenElse 1 r r -- µx.(⊤ → x)
+-- --Rec ^ without canonicalization: ∏ A → ⊤ → (⊤ → A) as A ∨ (⊤ → B) as B
+
+lpRec4 = let rec l = \a => \a => \a => l in let rec r = \a => \a => r in ifThenElse 1 l r -- µx.(⊤ → ⊤ → ⊤ → ⊤ → ⊤ → ⊤ → x)
+-- ^ 6 is the LCD of 3 and 2. without canonicalization: ⊤ → ⊤ → (⊤ → ⊤ → A) as A ∨ (⊤ → (⊤ → ⊤ → ⊤ → B) as B)
+
+
+rec4  = (let x = (\y => (y (x x))) in x)          -- ∏ A → µx.(A → ((A → x) & A)) → A
+-- ^ without canonicalization:                           ∏ A → µx.(A → (A & x)) → A
+
+
+lpRec3 = let rec l a = l in let rec r = \a => \a => r in ifThenElse 1 l r --µx.(⊤ → ⊤ → x)
+-- --Rec ^ without canonicalization: ∏ A → ⊤ → (⊤ → A) as A ∨ (⊤ → (⊤ → ⊤ → B) as B)
+
+rec1  = let rec x = \v => {a = x v , b = x v} in x  -- ⊤ → µx.{a : x , b : x}
+
+rec6  = ((\x => (x x)) (\x => x))                     -- ∏ A → µx.(A & (A → x))
+
+rec9  = let rec x = (let y = (x x) in (\z => z)) in x -- ∏ A → A → µx.(A & (A → x))
+
+rec7  = let rec x = (\y => (x (y y))) in x            -- ∏ A → µx.(A & (A → x)) → ⊥

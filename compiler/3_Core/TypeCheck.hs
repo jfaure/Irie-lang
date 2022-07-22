@@ -72,7 +72,7 @@ check' handleExtern es t1@(TyIndexed{}) t2 = normaliseType handleExtern mempty t
 --check' handleExtern es t1 t2@(TyAlias{}) = normaliseType handleExtern mempty t2 >>= \unaliased ->
 --  check' handleExtern es t1 unaliased
 
-check' handleExtern es t1 t2 = error $ show (t1 , t2)
+check' handleExtern es t1 t2 = error $ show t1 <> "\n" <> show t2
 
 {-
 alignMu :: Int -> TyHead -> TyHead -> TyHead -> Bool

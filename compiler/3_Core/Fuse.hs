@@ -112,7 +112,10 @@ simpleBind bindN = use cBinds >>= \cb -> MV.read cb bindN >>= \b -> do
   specialiseRequests bindN mod new'
 
   -- After deriving the specs; resimplify to inline the specs and further simplify
-  new <- case new' of { Core thisF ty -> simpleTerm thisF <&> \tok -> Core tok ty }
+  new <- case new' of
+    Core thisF ty -> simpleTerm thisF <&> \tok -> Core tok ty
+    PoisonExpr -> pure PoisonExpr
+    x -> error $ show x
 
   nApps .= svN
   let bs = case b of { BindOpt _ s _ -> s ; _ -> emptyBitSet }

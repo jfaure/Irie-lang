@@ -36,8 +36,9 @@ biSubTVars p m = BiEQ <$ (bitSet2IntList p `forM` \v -> biSubTVarTVar v `mapM` b
 
 biSubTVarTVar p m = use deadVars >>= \dead -> -- if testBit ls p || testBit ls m then pure BiEQ else
   use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
-    when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar p) <> " <==> " <> prettyTyRaw (TyVar m)))
-    MV.write v p (BiSub p' (mergeTVar m m'))
+    when global_debug (traceM ("bisubττ: " <> prettyTyRaw (TyVar p) <> " <==> " <> prettyTyRaw (TyVar m)))
+--  MV.write v p (BiSub p' (mergeTVar m m'))
+    MV.write v p (BiSub (mergeTVar m p') (mergeTVar m m')) -- TODO is ok? intended to fix recursive type unification
     unless (hasVar m' m || testBit dead p) $ void (biSubType p' (TyVar m))
     pure BiEQ
 
@@ -60,6 +61,9 @@ biSubTVarM p v = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ els
     else biSubType p m'
 
 biSubType :: Type -> Type -> TCEnv s BiCast
+-- List a => TyIndexed
+--biSubType tyP TyIndexed{} = d_ tyP $ pure BiEQ
+--biSubType TyIndexed{} tyM = d_ tyM $ pure BiEQ
 biSubType tyP tyM =
   let ((pVs , pTs) , (mVs , mTs)) = (partitionType tyP , partitionType tyM) in do
     biSubTVars pVs mVs
@@ -140,6 +144,8 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (x , THBound i) -> error $ "unexpected THBound: " <> show i
   (x , THBi nb y) -> error $ "unexpected THBi: "      <> show (p,m)
   (t@THMu{} , y) -> instantiate 0 (TyGround [t]) >>= \x -> biSubType x (TyGround [y]) -- TODO not ideal
+  (x , t@THMu{}) -> instantiate 0 (TyGround [t]) >>= \y -> biSubType (TyGround [x]) y   -- printList Nil => [Nil] <:? µx.[Nil | Cons {%i32 , x}]
+--(x , THMuBound m) -> use muUnrolls >>= \m -> _ -- printList (Cons 3 Nil) => [Nil] <:? x
 
   (THBi nb p , m) -> do
     instantiated <- instantiate nb p

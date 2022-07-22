@@ -68,9 +68,9 @@ mapWithKey f = BSM . V.map (\(l , v) -> (l , f l v)) . unBSM
 
 traverseWithKey f = fmap BSM <$> traverse (\(l , v) -> (l ,) <$> f l v) . unBSM
 
-unionWith :: (a -> a -> a) -> BitSetMap a -> BitSetMap a -> BitSetMap a
+--unionWith :: (a -> a -> a) -> BitSetMap a -> BitSetMap a -> BitSetMap a
 unionWith f (BSM a) (BSM b) = let
-  go (i , j) | i >= V.length a && i >= V.length b = Nothing
+  go (i , j) | i >= V.length a && j >= V.length b = Nothing
   go (i , j) | i >= V.length a = Just (b V.! j , (i     , j + 1))
   go (i , j) | j >= V.length b = Just (a V.! i , (i + 1 , j    ))
   go (i , j) = let x = a V.! i ; y = b V.! j in case compare (fst x) (fst y) of
@@ -88,7 +88,7 @@ unionWith f (BSM a) (BSM b) = let
 --    EQ -> (fst x , f (snd x) (snd y)) : merge f xs ys
 --  in BitSetMap.fromList (merge f (BitSetMap.toList a) (BitSetMap.toList b))
 
-intersectionWith :: (a -> a -> c) -> BitSetMap a -> BitSetMap a -> BitSetMap c
+--intersectionWith :: (a -> a -> c) -> BitSetMap a -> BitSetMap a -> BitSetMap c
 intersectionWith f a b = let
   merge f xs [] = []
   merge f [] ys = []

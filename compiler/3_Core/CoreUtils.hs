@@ -30,6 +30,7 @@ partitionType = \case
   TyGround g  -> (0  , g)
   TyVar v     -> (0 `setBit` v , [])
 --pi@TyPi{}   -> (0 , [pi]) -- TODO ok?
+--TyIndexed{} -> _
   t -> error $ show t
 
 tyLatticeEmpty pos = \case

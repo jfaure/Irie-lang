@@ -11,8 +11,8 @@ import qualified Data.Vector.Unboxed as VU
 import qualified Data.IntMap.Strict  as IM
 import qualified Data.Map.Strict as M
 
-global_debug = False
---global_debug = True
+--global_debug = False
+global_debug = True
 
 type ExtIName  = Int -- VExterns
 type BiSubName = Int -- index into bisubs
@@ -199,11 +199,6 @@ data BiCast
  | CastFnRet Int BiCast -- arg count (needed by code gen)
  | BiInst  [BiSub] BiCast -- instantiate polytypes
  | CastOver ASMIdx BiCast Expr Type
-
--- | CastFn {- cast for fn arg -} BiCast Expr Type -- used by lensOver to "cast" records
--- | BiFail Text
--- | CastSequence [BiCast]
--- | BiCast Term
 
 data BiSub = BiSub {
    _pSub :: Type
