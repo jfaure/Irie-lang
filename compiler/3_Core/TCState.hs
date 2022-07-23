@@ -55,6 +55,7 @@ type GenEnv s a = StateT (GenEnvState s) (ST s) a
 data GenEnvState s = GenEnvState {
    _muWrap      :: [(Int , IName , Type , [InvMu] , [InvMu])] -- (recBranch , muVar , muType , startInvMu , curInvMu)
  -- ^ several tycon branches may contain a mu type , and a µtype may contain multiple fixpoints
+ , _seenVars    :: BitSet
  , _hasRecs     :: BitSet
  , _quants      :: Int  -- fresh names for generalised typevars [A..Z,A1..Z1..]
  , _quantsRec   :: Int  -- fresh names for generalised recursive typevars [x..y,x1..y1..]

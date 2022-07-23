@@ -116,20 +116,29 @@ go1 z i = let
 --  g : Int
 
 import imports/prelude
---import imports/list
+import imports/list
 --import imports/ls
 
-{-
 --printDirTree : Str -> Dir -> CString
-printDirTree prefix = \case
-  File f => f -- prefix ++ f
-  Dir  d r => prefix ++ d ++ map (printDirTree (fromCString " |-- " ++ prefix)) r
--}
+--printDirTree prefix = \case
+--  File f => prefix ++ f
+--  Dir  d r => prefix ++ d ++ map (printDirTree (fromCString " |-- " ++ prefix)) r
 
 filter pred l = case l of
   Nil => Nil
   Cons x xs => if pred x then Cons x (filter pred xs) else filter pred xs
 
+foldr f s l = case l of
+  Cons x xs => f x (foldr f s xs)
+  Nil       => s
+
+foldl f s l = case l of
+  Cons x xs => foldl f (f s x) xs
+  Nil => s
+
+c a b = Cons a b
+append front back = foldr c back front
+
 scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
 
--- ls = scanSum 5 Nil
+--ls = scanSum 5 Nil

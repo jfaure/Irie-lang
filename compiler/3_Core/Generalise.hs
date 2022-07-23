@@ -64,16 +64,8 @@ generalise escapees rawType = let
   nVars      <- use blen
   leaks      <- use leakedVars
   let tvarSubs = judgeVars nVars escapees leaks recursives occurs
-      -- If we subbed a recVar with a non-rec var, it lost the 'Recursive' tag
-      -- (Obviously this patch is not ideal)
---    fixedRecSubs = let
---      updateV i val = V.modify (\mv -> MV.write mv i val)
---      patchRec w v = case v V.! w of { SubVar x -> patchRec x v ; Generalise -> updateV w Recursive v ; _ -> v }
---      go r v = case v V.! r of { SubVar w -> patchRec w v ; _ -> v }
---      in foldr go tvarSubs (bitSet2IntList recursives)
       done = runST $ MV.replicate coocLen (complement 0) >>= \biEquis ->
---      subGen fixedRecSubs{-tvarSubs-} leaks analysed `evalStateT` (GenEnvState [] emptyBitSet 0 0 biEquis)
-        subGen tvarSubs leaks analysed `evalStateT` (GenEnvState [] emptyBitSet 0 0 biEquis)
+        subGen tvarSubs leaks analysed `evalStateT` (GenEnvState [] emptyBitSet emptyBitSet 0 0 biEquis)
 
   (done <$) $ when global_debug $ do
     traceCoocs nVars occurs
@@ -113,25 +105,21 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
                                     , unzip $ partitionType . subPrevVars False <$> mOccs)
   (coocPVs , coocMVs) = (collectCoocVs pVars , collectCoocVs mVars)
 
-  in if -- Simplify: Try hard to justify Remove, failing that Sub, otherwise must Generalise
+  in if -- Simplify: Try to justify Remove next Sub else fallback to Generalise
   | escapees `testBit` v -> Escaped -- belongs to a parent of this let-binding
   | not vIsRec && (null pOccs || null mOccs) -> Remove -- 'polar' var
   | otherwise -> let
     recMask = if vIsRec then recursives else complement recursives
     polarCooc :: Bool -> Int -> VarSub = \pos w -> let -- +: for ws in +v, look for coocs in +v,+w
-      wCoocs = coocs V.! w ; wCooc = if pos then fst wCoocs else snd wCoocs
-      cooc w (vs , vTs) (ws , wTs) = let
-        subbables = collectCoocVs (vs ++ ws)
-        in if (subbables `clearBit` v) /= 0 then SubVar w else Generalise
-      in {-d_ (v , w , pos) $-}
-      if (null (fst wCoocs) || null (snd wCoocs))
+      wCoocs = coocs V.! w
+      wTypes = unzip $ partitionType . subPrevVars pos <$> (if pos then fst wCoocs else snd wCoocs)
+      cooc w (vs , vTs) (ws , wTs) = if (collectCoocVs (vs ++ ws) `clearBit` v) /= 0 then SubVar w else Generalise
+      in {-d_ (v , w , pos) $-} if (null (fst wCoocs) || null (snd wCoocs))
       then Generalise -- don't merge with a polar (or recursive variable)
-      else cooc w (if pos then (pVars , pTs) else (mVars , mTs))
-        $ (unzip $ partitionType . subPrevVars pos <$> wCooc)
-    polarCoocs pos vCoocs = let -- search ws found in v+ (or v-)
-      -- Note. we already attempted to unify w<v with v, so only try w>v
-      ws = (complement prevTVs .&. vCoocs) `clearBit` v
-      in polarCooc pos <$> bitSet2IntList ws
+      else cooc w (if pos then (pVars , pTs) else (mVars , mTs)) wTypes
+
+    -- search ws found in v+ (or v-) where w>v (we already attempted all w < v)
+    polarCoocs pos vCoocs = polarCooc pos <$> bitSet2IntList ((complement prevTVs .&. vCoocs) `clearBit` v)
 
     -- in v+v- if non-recursive v coocs with w then it always does, so "unify v with w" means "remove v"
     -- but in v+w+ or v-w- no shortcuts: "unify v with w" means "replace occurs of v with w"
@@ -139,6 +127,7 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
     vPvM = case bitSet2IntList $ (recMask .&. collectCoocVs (pVars ++ mVars)) `clearBit` v of
       w : _ -> if vIsRec then SubVar w else Remove
       _ -> Generalise
+    -- recmask to disallow merge x & A in (x & A) → (µx.[Cons {%i32 , x}] & A)
     vPwP = polarCoocs True  (recMask .&. coocPVs) :: [VarSub]
     vMwM = polarCoocs False (recMask .&. coocMVs) :: [VarSub]
     -- look for some T present at all v+v- (since this is expensive and rarer try it last) `A & %i32 -> A & %i32`
@@ -155,7 +144,7 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
     doRec s = if recursives `testBit` v then case s of { Generalise -> Recursive ; _ -> s} else s
     in doRec $ foldl' bestSub vPvM (vPwP ++ vMwM) `bestSub` vTs
 
--- Final step; use VarSubs to eliminate all TVars
+-- Final step; use VarSubs to eliminate all (unleaked) TVars
 -- Also attempt to roll µtypes
 subGen :: V.Vector VarSub -> BitSet -> Type -> GenEnv s Type
 subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
@@ -170,18 +159,18 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
       when global_debug (traceM $ show v <> " =>∀ " <> toS (number2CapLetter q))
       q <$ MV.write biEqui' v q
 
-  doVar pos v = case tvarSubs V.! v of
+  doVar pos v = (seenVars <<%= (`setBit` v)) >>= \oldSeen -> let isRec = oldSeen `testBit` v in case tvarSubs V.! v of
     Escaped  -> pure (TyVar v)
     Remove   | leakedVars `testBit` v -> pure (TyVar v)
     Remove   -> pure (TyGround [])
     Generalise | leakedVars `testBit` v -> generaliseVar v <&> \q -> mergeTVar v (TyGround [THBound q])
+--  Generalise | isRec -> generaliseVar v <&> \q -> TyGround [THMuBound q]
     Generalise -> generaliseVar v <&> \q -> TyGround [THBound q]
     Recursive  -> (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \m -> TyGround [THMuBound m]
     SubVar i   -> doVar pos i
     SubTy t    -> goType pos t -- pure t
 
   -- attempt to roll outer layers of t into a µ type contained within
---rollMu t@(TyGround [THMu m t2]) = pure t -- $ case t2 of { TyGround [THMu n t3] | n == m -> t3 ; _ -> t }
 --rollMu t = pure t -- disable rollMu
   rollMu t = use muWrap >>= \case
     [] -> pure t
@@ -193,7 +182,8 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
         [x] -> case x of
           Left invMuNext -> t <$ (muWrap .= [(error "recBranch not set" , m , mt , invMuStart , [invMuNext])])
           Right False    -> t <$ (muWrap .= [])
-          Right True     -> let rolled = mt in do-- case mt of { TyGround [THMu n t] | n == m -> mt ; _ -> TyGround [THMu m mt] } in do
+--        Right True     -> let rolled = mt in do
+          Right True     -> let rolled = TyGround [THMu m mt] in do
             when global_debug (traceM $ "Rolled µ! " <> prettyTyRaw t
                                    <> "\n       => " <> prettyTyRaw rolled)
             rolled <$ (muWrap .= []) -- (muWrap .= Just (m , mt , invMuStart , invMuStart))
@@ -203,8 +193,14 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
     go t v = MV.read biEqui' v >>= \m -> let
       mT    = rmMuBound m t
       invMu = invertMu (startInvMu m) mT
-      in TyGround [THMu m mT] <$ ((muWrap .= [(_ , m , mT , invMu , invMu)])) -- *> traceShowM invMu)
-    in foldM go t (bitSet2IntList (vs .&. wrappedRecs))
+      in (muWrap .= [(_ , m , mT , invMu , invMu)]) $> TyGround [THMu m mT]
+    in foldM go t (bitSet2IntList (vs .&. wrappedRecs)) >>= \case
+--    TyGround [THMu m t@(TyGround [THMu n ty])] | m == n -> let
+--      invMu = invertMu (startInvMu m) ty
+--      in t <$ (muWrap .= [(_ , m , t , invMu , invMu)])
+      TyGround [THMu m t@(TyGround ts)] | Just (THMu n ty) <- find (\case {THMu n _ -> n == m ; _ -> False}) ts
+        -> let  invMu = invertMu (startInvMu m) ty in t <$ (muWrap .= [(_ , m , t , invMu , invMu)])
+      t -> pure t
 
   goType pos = \case
     TyVars vs g -> do
@@ -266,7 +262,7 @@ substTypeVar pos v loops guarded = if
     loops'    = setBit loops v
     ty = if pos then pty else mty
     in if nullType ty
-       then pure $ TyVars loops' []
+       then pure (TyVars loops' [])
        else substTypeMerge pos loops' guarded ty
 
 substTypeMerge :: Bool -> Integer -> Integer -> Type -> TCEnv s Type

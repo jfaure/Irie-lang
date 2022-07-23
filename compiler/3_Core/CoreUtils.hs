@@ -7,7 +7,7 @@ import CoreSyn
 import ShowCore()
 import PrettyCore
 import Prim
-import Data.List (zipWith3 , partition)
+import Data.List (partition)
 import qualified BitSetMap as BSM
 import qualified Data.Vector as V
 
@@ -126,6 +126,8 @@ mergeTyUnions :: Bool -> [TyHead] -> [TyHead] -> [TyHead]
 mergeTyUnions pos l1 l2 = let
   cmp a b = case (a,b) of
     (THBound a' , THBound b') -> compare a' b'
+    (THMu m t , THMuBound n) -> compare m n
+    (THMuBound n , THMu m t) -> compare m n
     _ -> (kindOf a) `compare` (kindOf b)
   in foldr (mergeTyHeadType pos) [] (sortBy cmp $ l2 ++ l1)
 
@@ -148,6 +150,8 @@ mergeTyHead pos t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
     (PrimBigInt , PrimInt y) -> [THPrim $ PrimBigInt]
     (PrimInt y , PrimBigInt) -> [THPrim $ PrimBigInt]
     _ -> join
+  [THMu m a , THMuBound n] -> if m == n then [t1] else join
+  [THMuBound n , THMu m a] -> if m == n then [t2] else join
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
   [THBound a , THBound b]     -> if a == b then [t1] else join
   [THExt a , THExt  b]        -> if a == b then [t1] else join

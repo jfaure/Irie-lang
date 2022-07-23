@@ -10,7 +10,6 @@ import Errors
 import CoreUtils
 import TypeCheck
 import TCState
-import PrettyCore
 import DesugarParse
 import Externs
 import Mixfix

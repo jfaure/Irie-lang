@@ -50,3 +50,11 @@ null x = case x of
     |]
       in S.describe "unfoldr" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "unfoldr = ∏ A B → (A → [Just {{val : B , seed : A}} | Nothing]) → A → µx.[Nil | Cons {B , x}]\n"
+
+  let e :: Text = [r|
+filter pred l = case l of
+  Nil => Nil
+  Cons x xs => ifThenElse (pred x) (Cons x (filter pred xs)) (filter pred xs)
+    |]
+      in S.describe "filter" $ S.it (toS e) $ UniText (inferType e)
+        `S.shouldBe` UniText "filter = ∏ A → (A → %i1) → µx.[Nil | Cons {A , x}] → µy.[Nil | Cons {A , y}]\n"
