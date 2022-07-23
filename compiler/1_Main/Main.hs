@@ -180,10 +180,10 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
 
 putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oTypes , oCore , oSimple)) = let
   handleErrors = do
-    T.IO.putStr  $ T.intercalate  "\n\n" $ formatError bindSrc srcInfo <$> (errors ^. biFails)
-    T.IO.putStr  $ T.intercalate  "\n\n" $ formatScopeError            <$> (errors ^. scopeFails)
-    TL.IO.putStr $ TL.intercalate "\n\n" $ formatCheckError bindSrc    <$> (errors ^. checkFails)
-    TL.IO.putStr $ TL.intercalate "\n\n" $ formatTypeAppError          <$> (errors ^. typeAppFails)
+    T.IO.putStr  $ T.concat  $ (<> "\n\n") . formatError bindSrc srcInfo <$> (errors ^. biFails)
+    T.IO.putStr  $ T.concat  $ (<> "\n\n") . formatScopeError            <$> (errors ^. scopeFails)
+    TL.IO.putStr $ TL.concat $ (<> "\n\n") . formatCheckError bindSrc    <$> (errors ^. checkFails)
+    TL.IO.putStr $ TL.concat $ (<> "\n\n") . formatTypeAppError          <$> (errors ^. typeAppFails)
   in do
   handleErrors
   -- half-compiled modules `not coreOK` should also be cached (since their names were pre-added to the resolver)

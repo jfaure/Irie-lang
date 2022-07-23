@@ -258,7 +258,7 @@ testWrapper (InvMu this r parent) recBranch t = case {-d_ (recBranch , this , pa
       _ -> V.singleton False
     in if not (all identity muFail) {-|| o1 /= o2-} then Right False
        else case parent of
-         Leaf{}    -> Right True
-         nextInvMu -> Left nextInvMu
+         Leaf{}    -> Right True -- OK found an unrolling
+         nextInvMu -> Left nextInvMu -- so far OK, more wraps to test
   _ -> Right False
 -- TODO TyVars (presumably only relevant for let-bindings)

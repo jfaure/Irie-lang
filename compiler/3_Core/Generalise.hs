@@ -128,12 +128,11 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
       w : _ -> if vIsRec then SubVar w else Remove
       _ -> Generalise
     -- recmask to disallow merge x & A in (x & A) → (µx.[Cons {%i32 , x}] & A)
-    vPwP = polarCoocs True  (recMask .&. coocPVs) :: [VarSub]
-    vMwM = polarCoocs False (recMask .&. coocMVs) :: [VarSub]
+    vPwP = polarCoocs True  ({-recMask .&.-} coocPVs) :: [VarSub]
+    vMwM = polarCoocs False ({-recMask .&.-} coocMVs) :: [VarSub]
     -- look for some T present at all v+v- (since this is expensive and rarer try it last) `A & %i32 -> A & %i32`
     vTs = let allCoocs = concat (pTs ++ mTs) in maybe Generalise (\t -> SubTy (TyGround [t]))
-      $ join $ head <$> head
-      (filter ((== length pTs + length mTs) . length) (group {-$ sort-} allCoocs))
+      $ head =<< head (filter ((== length pTs + length mTs) . length) (group {-$ sort-} allCoocs))
       -- need to sort since group only joins adjacent elements (but that requires Ord on Types)
       -- TODO tycon Intersects eg. { a : t , b : _ } and { a : T } have a co-occurence { a : T }
 --  intersectCooc :: [TyHead] -> [TyHead] -> [TyHead] = \t intersects -> let -- valid cooc intersections
@@ -142,7 +141,7 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
     -- use foldl' to stop once we've found a reason to either Remove or Sub the tvar
     bestSub ok next = case ok of { Remove -> ok ;  SubTy t -> ok ; SubVar v -> ok ; ko -> next }
     doRec s = if recursives `testBit` v then case s of { Generalise -> Recursive ; _ -> s} else s
-    in doRec $ foldl' bestSub vPvM (vPwP ++ vMwM) `bestSub` vTs
+    in {-doRec $-} foldl' bestSub vPvM (vPwP ++ vMwM) `bestSub` vTs
 
 -- Final step; use VarSubs to eliminate all (unleaked) TVars
 -- Also attempt to roll µtypes
@@ -159,14 +158,14 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
       when global_debug (traceM $ show v <> " =>∀ " <> toS (number2CapLetter q))
       q <$ MV.write biEqui' v q
 
-  doVar pos v = (seenVars <<%= (`setBit` v)) >>= \oldSeen -> let isRec = oldSeen `testBit` v in case tvarSubs V.! v of
+  doVar pos v = use seenVars >>= \seen -> case tvarSubs V.! v of
     Escaped  -> pure (TyVar v)
     Remove   | leakedVars `testBit` v -> pure (TyVar v)
     Remove   -> pure (TyGround [])
     Generalise | leakedVars `testBit` v -> generaliseVar v <&> \q -> mergeTVar v (TyGround [THBound q])
---  Generalise | isRec -> generaliseVar v <&> \q -> TyGround [THMuBound q]
+    Generalise | seen `testBit` v -> (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \q -> TyGround [THMuBound q]
     Generalise -> generaliseVar v <&> \q -> TyGround [THBound q]
-    Recursive  -> (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \m -> TyGround [THMuBound m]
+--  Recursive  -> (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \m -> TyGround [THMuBound m]
     SubVar i   -> doVar pos i
     SubTy t    -> goType pos t -- pure t
 
@@ -175,26 +174,31 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
   rollMu t = use muWrap >>= \case
     [] -> pure t
     x@(recBranch , m , mt , invMuStart , invMu) : xs -> do
-      when global_debug (traceM $ "roll µ? " <> prettyTyRaw t) -- <> "\n  invMu = " <> show invMu)
+      when global_debug (traceM $ "roll µ? " <> prettyTyRaw t)
       when (global_debug && not (null xs)) (traceM $ ">1 MuInvs: " <> show (length (x : xs))) --show (x : xs))
       case (\inv -> testWrapper inv recBranch t) <$> invMu of
         [] -> t <$ (muWrap .= [])
-        [x] -> case x of
+        [x] -> case x of -- Left = need to test more wraps ; Right Bool = unrolling OK | KO
           Left invMuNext -> t <$ (muWrap .= [(error "recBranch not set" , m , mt , invMuStart , [invMuNext])])
           Right False    -> t <$ (muWrap .= [])
 --        Right True     -> let rolled = mt in do
           Right True     -> let rolled = TyGround [THMu m mt] in do
             when global_debug (traceM $ "Rolled µ! " <> prettyTyRaw t
                                    <> "\n       => " <> prettyTyRaw rolled)
-            rolled <$ (muWrap .= []) -- (muWrap .= Just (m , mt , invMuStart , invMuStart))
+            rolled <$ (muWrap .= [])
         xs -> t <$ (muWrap .= []) -- error $ show xs
 
   checkRec vs wrappedRecs t = let
-    go t v = MV.read biEqui' v >>= \m -> let
-      mT    = rmMuBound m t
+    go s t v = MV.read biEqui' v >>= \m -> let
+      rmVar m = let goGround = filter (\case { THBound x -> x /= m ; _ -> True }) in \case
+        TyGround g  -> TyGround (goGround g)
+        TyVars vs g -> TyVars vs (goGround g)
+        t -> t
+--    mT    = if s `testBit` m then rmMuBound m t else rmVar m (rmMuBound m t)
+      mT    = rmVar m (rmMuBound m t) -- HACK this may be too aggressive for scansum
       invMu = invertMu (startInvMu m) mT
       in (muWrap .= [(_ , m , mT , invMu , invMu)]) $> TyGround [THMu m mT]
-    in foldM go t (bitSet2IntList (vs .&. wrappedRecs)) >>= \case
+    in use seenVars >>= \s -> foldM (go s) t (bitSet2IntList (vs .&. wrappedRecs)) >>= \case
 --    TyGround [THMu m t@(TyGround [THMu n ty])] | m == n -> let
 --      invMu = invertMu (startInvMu m) ty
 --      in t <$ (muWrap .= [(_ , m , t , invMu , invMu)])
@@ -202,45 +206,50 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
         -> let  invMu = invertMu (startInvMu m) ty in t <$ (muWrap .= [(_ , m , t , invMu , invMu)])
       t -> pure t
 
-  goType pos = \case
+  goType pos t = case t of
     TyVars vs g -> do
+      s <- seenVars <<%= (.|. vs)
       -- ground types first for naming priority: `(A -> B) & B` rather than `(B -> A) & A`
       grounds <- finaliseTyHead pos `mapM` g
-      recs <- use hasRecs
+      seenVars .= s
       vars <- doVar pos `mapM` bitSet2IntList vs
-      if null grounds then pure (mergeTypeList pos vars)
+      recs <- use hasRecs
+      if null grounds 
+        then pure (mergeTypeList pos vars)
         else checkRec vs recs (mergeTypeList pos (grounds ++ vars))
-    TyVar v    -> doVar pos v -- >>= checkRec (0 `setBit` v)
+    TyVar v    -> (seenVars %= (`setBit` v)) *> doVar pos v -- >>= checkRec (0 `setBit` v)
     TyGround g -> mergeTypeList pos <$> finaliseTyHead pos `mapM` g
 
   -- Indicate which tycon branch a mu-type came from
   updateMu recBranch = \case { []->[] ; [(lastI,m,mT,invS,invC)] -> [(recBranch,m,mT,invS,invC)] }
-  goGuarded pos branch t = do
+  goGuarded s pos branch t = do
     t   <- goType pos t
     mus <- muWrap <<.= []
     pure (tyLatticeEmpty pos t , updateMu branch mus)
 
-  finaliseTyHead pos th = (\(x , m) -> (muWrap .= m) *> rollMu (TyGround [x])) =<< case th of
+  finaliseTyHead pos th = subBranches pos th >>= \(x , m) -> (muWrap .= m) *> rollMu (TyGround [x])
+  subBranches pos th = use seenVars >>= \s -> let
+    collectVars = \case { [] -> 0 ; x : xs -> foldr (.&.) x xs } :: [BitSet] -> BitSet
+    in case th of
     THBi b ty -> (,[]) . THBi b <$> goType pos ty
---  THMu m (TyGround [mu@(THMu n t)]) | m == n -> pure (mu , [])
     -- for tycons, collect the branch ids so rollMu knows which recursive branch the mu came from
-    THTyCon t   -> let addBranches = snd . BSM.mapAccum (\n val -> (n+1 , (n,val))) 0
+    THTyCon t   -> let addBranches = snd . BSM.mapAccum (\n val -> (n + 1 , (n,val))) 0
       in (\(t,m) -> (THTyCon t , m)) <$> case t of
       THArrow ars r -> do
-        branches <- traverse (uncurry (goGuarded (not pos))) (zip [1..] ars)
-        ret      <- goGuarded pos 0 r
+        branches <- traverse (uncurry (goGuarded s (not pos))) (zip [1..] ars)
+        ret      <- goGuarded s pos 0 r
         pure (THArrow (fst <$> branches) (fst ret) , concat (snd ret : (snd <$> branches)))
       THTuple     r -> do
-        branches <- V.imapM (goGuarded pos) r
+        branches <- V.imapM (goGuarded s pos) r
         pure (THTuple (fst <$> branches) , concat (V.toList (snd <$> branches)))
       THProduct   r -> do
-        branches <- traverse (\(i,t) -> goGuarded pos i t) (addBranches r)
+        branches <- traverse (\(i,t) -> goGuarded s pos i t) (addBranches r)
         pure (THProduct (fst <$> branches) , concat (snd <$> BSM.elems branches))
       THSumTy     r -> do
-        branches <- traverse (\(i,t) -> goGuarded pos i t) (addBranches r)
+        branches <- traverse (\(i,t) -> goGuarded s pos i t) (addBranches r)
         pure (THSumTy (fst <$> branches) , concat (snd <$> BSM.elems branches))
     x -> pure (x , [])
-  in (fst <$> goGuarded True 0 raw) >>= \done -> use quants <&> \q ->
+  in use seenVars >>= \s -> (fst <$> goGuarded s True 0 raw) >>= \done -> use quants <&> \q ->
     if q > 0 then TyGround [THBi q done] else done
 
 --------------------
@@ -284,16 +293,8 @@ substTypeMerge pos loops guarded ty =  let
     t@THBot{}  -> pure $ TyGround [t]
     THBi n t -> instantiate n t >>= substGuarded pos  -- a generalised let-bound function
     THMu m t -> instantiate 0 (TyGround [THMu m t]) >>= substGuarded pos
---  ^ Maybe can avoid insantiating here
-{-  THBi n t -> use quants >>= \q-> if q /= 0 then _ else (quants .= n) *> substGuarded pos t
---  THBound t -> THBound t
-    THMu m t -> (recQuants %= (\m -> if m /= 0 then _ else m+1)) *> substGuarded pos t
-    THMuBound m -> THMuBound m
-      --substGuarded pos (mergeTypes (TyGround [THMuBound m]) t)
--}
---  THMu m t -> substGuarded pos t
     x -> error $ show x --pure [x]
   in do
-    vs <- bitSet2IntList tvars `forM` \x -> mergeTVar x <$> substTypeVar pos x loops guarded
-    ts <- substTyHead `mapM` others
-    pure (mergeTypeList pos (vs ++ ts))
+  vs <- bitSet2IntList tvars `forM` \x -> mergeTVar x <$> substTypeVar pos x loops guarded
+  ts <- substTyHead `mapM` others
+  pure (mergeTypeList pos (vs ++ ts))
