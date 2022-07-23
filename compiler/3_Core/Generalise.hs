@@ -147,11 +147,12 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
 -- Also attempt to roll µtypes
 subGen :: V.Vector VarSub -> BitSet -> Type -> GenEnv s Type
 subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
-  generaliseRecVar v = MV.read biEqui' v >>= \perm -> if perm /= complement 0
-    then perm <$ (hasRecs %= (`setBit` v)) else do -- xyz recursive vars fresh names
-      m <- quantsRec <<%= (+1)
-      when global_debug (traceM $ show v <> " =>µ " <> toS (number2xyz m))
-      m <$ MV.write biEqui' v m
+  generaliseRecVar = generaliseVar
+--generaliseRecVar v = MV.read biEqui' v >>= \perm -> if perm /= complement 0
+--  then perm <$ (hasRecs %= (`setBit` v)) else do -- xyz recursive vars fresh names
+--    m <- quantsRec <<%= (+1)
+--    when global_debug (traceM $ show v <> " =>µ " <> toS (number2xyz m))
+--    m <$ MV.write biEqui' v m
   generaliseVar v = MV.read biEqui' v >>= \perm -> if perm /= complement 0
     then pure perm else do -- A..Z generalised vars fresh names
       q <- quants <<%= (+1)
@@ -194,6 +195,7 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
         TyGround g  -> TyGround (goGround g)
         TyVars vs g -> TyVars vs (goGround g)
         t -> t
+      -- TODO any recursivised var found outside of its scope should be replaced by its rec type
 --    mT    = if s `testBit` m then rmMuBound m t else rmVar m (rmMuBound m t)
       mT    = rmVar m (rmMuBound m t) -- HACK this may be too aggressive for scansum
       invMu = invertMu (startInvMu m) mT

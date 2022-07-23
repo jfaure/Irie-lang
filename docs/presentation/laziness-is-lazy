@@ -1,0 +1,2 @@
+Laziness by default is no good. There are only 2 cases where we want laziness: 1: values that are computed purely and never used, need not be computed. and 2. the rare occasions when it is explicitly requested (eg. for infinite lists, MonadFix, the not call-by-value safe y combinator etc..)
+Besides that, the vast majority of the time, laziness only invites strange bugs and performance penalties.

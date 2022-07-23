@@ -141,4 +141,8 @@ append front back = foldr c back front
 
 scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
 
+
+printList = \case
+  Nil => 2
+  Cons i ll => add (putNumber i) (printList ll)
 --ls = scanSum 5 Nil

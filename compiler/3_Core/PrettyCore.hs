@@ -104,10 +104,11 @@ number2CapLetter i = let
   letter = (chr ((i `mod` 26) + ord 'A'))
   overflow = i `div` 26
   in if overflow > 0 then (letter `TL.cons` show overflow) else TL.singleton letter
-number2xyz i = let
-  letter = (chr ((i `mod` 3) + ord 'x'))
-  overflow = i `div` 3
-  in if overflow > 0 then (letter `TL.cons` show overflow) else TL.singleton letter
+number2xyz = number2CapLetter
+--number2xyz i = let
+--  letter = (chr ((i `mod` 3) + ord 'x'))
+--  overflow = i `div` 3
+--  in if overflow > 0 then (letter `TL.cons` show overflow) else TL.singleton letter
 
 pTy :: Type -> Doc Annotation
 --pTy (TyUnion t) = case t of
