@@ -74,7 +74,8 @@ generalise escapees rawType = let
     traceM $ "leaked:   " <> show (bitSet2IntList leaks)
     traceM $ "recVars:  " <> show (bitSet2IntList recursives)
     traceM   "tvarSubs: " *> V.imapM_ (\i f -> traceM $ show i <> " => " <> show f) tvarSubs
-    traceM $ "done: "     <> (prettyTyRaw done)
+    traceM $ "done: "     <> prettyTyRaw done
+    traceM $ "done: "     <> show done
 
 -- co-occurence with v in TList1 TList2: find a tvar or a type that always cooccurs with v
 -- hoping to unify v with its co-occurence (straight up remove it if unifies with a var)
@@ -127,6 +128,10 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
     vPvM = case bitSet2IntList $ (recMask .&. collectCoocVs (pVars ++ mVars)) `clearBit` v of
       w : _ -> if vIsRec then SubVar w else Remove
       _ -> Generalise
+    -- Aggressively merge recursive vars even if only partial co-occurence
+    vPvMRec = let partialRecCoocs = complement prevTVs .&. recMask .&. foldr (.|.) 0 (pVars ++ mVars) `clearBit` v
+      in if vIsRec then maybe Generalise SubVar (head (bitSet2IntList partialRecCoocs)) else Generalise
+
     -- recmask to disallow merge x & A in (x & A) → (µx.[Cons {%i32 , x}] & A)
     vPwP = polarCoocs True  ({-recMask .&.-} coocPVs) :: [VarSub]
     vMwM = polarCoocs False ({-recMask .&.-} coocMVs) :: [VarSub]
@@ -141,7 +146,7 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
     -- use foldl' to stop once we've found a reason to either Remove or Sub the tvar
     bestSub ok next = case ok of { Remove -> ok ;  SubTy t -> ok ; SubVar v -> ok ; ko -> next }
     doRec s = if recursives `testBit` v then case s of { Generalise -> Recursive ; _ -> s} else s
-    in {-doRec $-} foldl' bestSub vPvM (vPwP ++ vMwM) `bestSub` vTs
+    in {-doRec $-} foldl' bestSub (vPvM `bestSub` vPvMRec) (vPwP ++ vMwM) `bestSub` vTs
 
 -- Final step; use VarSubs to eliminate all (unleaked) TVars
 -- Also attempt to roll µtypes
@@ -164,7 +169,7 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
     Remove   | leakedVars `testBit` v -> pure (TyVar v)
     Remove   -> pure (TyGround [])
     Generalise | leakedVars `testBit` v -> generaliseVar v <&> \q -> mergeTVar v (TyGround [THBound q])
-    Generalise | seen `testBit` v -> (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \q -> TyGround [THMuBound q]
+    Generalise | seen `testBit` v -> (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \q -> TyGround [THMuBound q] -- [THMuBound q]
     Generalise -> generaliseVar v <&> \q -> TyGround [THBound q]
 --  Recursive  -> (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \m -> TyGround [THMuBound m]
     SubVar i   -> doVar pos i
@@ -190,6 +195,7 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
         xs -> t <$ (muWrap .= []) -- error $ show xs
 
   checkRec vs wrappedRecs t = let
+  {-
     go s t v = MV.read biEqui' v >>= \m -> let
       rmVar m = let goGround = filter (\case { THBound x -> x /= m ; _ -> True }) in \case
         TyGround g  -> TyGround (goGround g)
@@ -200,10 +206,23 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
       mT    = rmVar m (rmMuBound m t) -- HACK this may be too aggressive for scansum
       invMu = invertMu (startInvMu m) mT
       in (muWrap .= [(_ , m , mT , invMu , invMu)]) $> TyGround [THMu m mT]
-    in use seenVars >>= \s -> foldM (go s) t (bitSet2IntList (vs .&. wrappedRecs)) >>= \case
---    TyGround [THMu m t@(TyGround [THMu n ty])] | m == n -> let
---      invMu = invertMu (startInvMu m) ty
---      in t <$ (muWrap .= [(_ , m , t , invMu , invMu)])
+--  in use seenVars >>= \s -> foldM (go s) t (bitSet2IntList (vs .&. wrappedRecs)) >>= \case
+  -}
+
+--  addMus :: [Int] -> Type -> _ Type
+    addMus rawTVs t = (MV.read biEqui' `mapM` rawTVs) >>= \vs -> let
+      rmVars m = let goGround = filter (\case { THBound x -> not (m `testBit` x) ; THMuBound x -> not (m `testBit` x) ; _ -> True })
+        in \case
+        TyGround g  -> TyGround (goGround g)
+        TyVars vs g -> TyVars vs (goGround g)
+        t -> t
+      mT = rmVars (intList2BitSet vs) t
+      retTy = foldl (\ty m -> TyGround [THMu m ty]) mT vs
+      in retTy <$ case vs of
+        m : ms -> let invMu = invertMu (startInvMu m) mT in (muWrap .= [(_ , m , mT , invMu , invMu)])
+        _ -> pure ()
+    in addMus (bitSet2IntList (vs .&. wrappedRecs)) t >>= \case
+      -- prevent stacking µa.µa. after mu-rolling
       TyGround [THMu m t@(TyGround ts)] | Just (THMu n ty) <- find (\case {THMu n _ -> n == m ; _ -> False}) ts
         -> let  invMu = invertMu (startInvMu m) ty in t <$ (muWrap .= [(_ , m , t , invMu , invMu)])
       t -> pure t

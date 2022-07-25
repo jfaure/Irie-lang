@@ -124,10 +124,10 @@ import imports/list
 --  File f => prefix ++ f
 --  Dir  d r => prefix ++ d ++ map (printDirTree (fromCString " |-- " ++ prefix)) r
 
-filter pred l = case l of
-  Nil => Nil
-  Cons x xs => if pred x then Cons x (filter pred xs) else filter pred xs
-
+--filter pred l = case l of
+--  Nil => Nil
+--  Cons x xs => if pred x then Cons x (filter pred xs) else filter pred xs
+--
 foldr f s l = case l of
   Cons x xs => f x (foldr f s xs)
   Nil       => s
@@ -141,8 +141,9 @@ append front back = foldr c back front
 
 scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
 
+concat = foldr (append) Nil
+-- n = Cons '\n' Nil
+mapFold f l = foldr (\x xs => Cons (f x) xs) Nil l -- simple muroll test case
+--µE.[Nil | Cons µE.µD.([Nil | Cons {B , D}] & E)]
 
-printList = \case
-  Nil => 2
-  Cons i ll => add (putNumber i) (printList ll)
 --ls = scanSum 5 Nil

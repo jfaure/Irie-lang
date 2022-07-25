@@ -150,9 +150,13 @@ mergeTyHead pos t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
     (PrimBigInt , PrimInt y) -> [THPrim $ PrimBigInt]
     (PrimInt y , PrimBigInt) -> [THPrim $ PrimBigInt]
     _ -> join
-  [THMu m a , THMuBound n] -> if m == n then [t1] else join
-  [THMuBound n , THMu m a] -> if m == n then [t2] else join
+
+--[THMu m a , THMuBound n] -> if m == n then [t1] else join
+--[THMuBound n , THMu m a] -> if m == n then [t2] else join
+  [THMu m a , THBound n] -> if m == n then [t1] else join
+  [THBound n , THMu m a] -> if m == n then [t2] else join
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
+
   [THBound a , THBound b]     -> if a == b then [t1] else join
   [THExt a , THExt  b]        -> if a == b then [t1] else join
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of
@@ -256,7 +260,8 @@ testWrapper (InvMu this r parent) recBranch t = case {-d_ (recBranch , this , pa
       ([THProduct t1 ] , [THProduct t2 ]) -> testGuarded (BSM.elems t1) (BSM.elems t2)
       ([THTuple t1   ] , [THTuple t2   ]) -> testGuarded t1 t2
       _ -> V.singleton False
-    in if not (all identity muFail) {-|| o1 /= o2-} then Right False
+    in if not (and muFail) {-|| o1 /= o2-}
+       then Right False
        else case parent of
          Leaf{}    -> Right True -- OK found an unrolling
          nextInvMu -> Left nextInvMu -- so far OK, more wraps to test

@@ -12,6 +12,8 @@ import Prettyprinter
 import Prettyprinter.Render.Util.SimpleDocTree
 import Prettyprinter.Internal as P
 
+tr t x = trace (prettyTyRaw t) x
+
 -- HTML links:
 -- <a href="#Marker></a>
 -- <h1 id="Marker">There's a link to here!</h1>
@@ -104,7 +106,7 @@ number2CapLetter i = let
   letter = (chr ((i `mod` 26) + ord 'A'))
   overflow = i `div` 26
   in if overflow > 0 then (letter `TL.cons` show overflow) else TL.singleton letter
-number2xyz = number2CapLetter
+number2xyz = TL.toLower . number2CapLetter
 --number2xyz i = let
 --  letter = (chr ((i `mod` 3) + ord 'x'))
 --  overflow = i `div` 3
