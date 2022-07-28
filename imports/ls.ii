@@ -13,5 +13,3 @@ step dirp = case j (readdir dirp) of
 j = Just
 
 ls dName = unfoldr step (opendir dName)
-
-

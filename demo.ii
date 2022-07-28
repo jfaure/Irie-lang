@@ -1,112 +1,8 @@
---import imports/prelude
---import imports/list
---import imports/simpleTests
---import imports/parser
---import imports/prelude
 module demo x =
 
-{-
-printList l = case l of
-  Nil => 2
-  Cons i ll => add (putNumber i) (printList ll)
+--rec1 v = { a = rec1 v , b = rec1 v }  -- ⊤ → µx.{a : x , b : x}
 
-scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
-
-main = printList (scanSum 4 Nil)
--}
-
--- scansum: muroll & type intersection simplification
--- scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
-
--- ? data args/ret & codata
---foldl f s l = case l of
---  Cons x xs => foldl f (f s x) xs
---  Nil       => s
---
---enumFromTo a b = ifThenElse (gt a b) Nil (Cons a (enumFromTo (add 1 a) b))
---
---fuse = foldl add 0 (enumFromTo 0 10)
-
---nextAppend (Left input) = case nextEnum input of
---  Done       => Skip    (Right 0 5)
---  Skip xs    => Skip    (Left xs)
---  Yield x xs => Yield x (Left xs)
---nextAppend (Right ys) = case nextEnum ys of
---  Done       => Done
---  Skip bs    => Skip    (Right bs)
---  Yield x ys => Yield x (Right ys)
-
-{-
--- Full example
-fromMaybe x = case x of
-  Nothing => 0
-
-nextEnum n = case bool2Bool (ge n 10) of
-  True  => Done
-  False => Yield n (add 1 n)
-bool2Bool i = ifThenElse i True False
-
-nextConcatMap i Nothing = case nextEnum i of
-  Done   => Done
-  Skip i => Skip i Nothing
-  Yield x i => let
-    nextRet x True  = Yield (mul x x) False
-    nextRet x False = Done
-    in Skip i (Just (Stream (nextRet x) True))
-nextConcatMap i (Just (Stream next s0)) = case next s0 of
-  Done      => Skip i Nothing
-  Skip s    => Skip i (Just (Stream next s))
-  Yield y s => Yield y i (Just (Stream next s))
-
-go z s0 s1 = case nextConcatMap s0 s1 of
-  Done        => z
-  Skip s q    => go z s q
-  Yield x s q => go (add z x) s q
-
-sumAppend = go 0 1 Nothing
--}
-
-{-
--- Wrapped
-bool2N = \case
-  True  => 1
-  False => 0
-
-go2 z i (Wrap next) s = case next s of
-  Done      => go1 z i
-  Yield x s => go2 (add z x) i (Wrap next) s
-
-go1 z i = let
-  nextRet x = case x of
-    True  => Yield (mul i i) False
-    False => Done
-  in ifThenElse (ge i 10) z (go2 z (add i 1) (Wrap nextRet) True)
--}
-
-{-
--- Unwrapped
-bool2N = \case
-  True  => 1
-  False => 0
-
-go2 z i next s = case next s of
-  Done      => go1 z i
-  Yield x s => go2 (add z x) i next s
-
-go1 z i = let
-  nextRet x = case x of
-    True  => Yield (mul i i) False
-    False => Done
-  in ifThenElse (ge i 10) z (go2 z (add i 1) nextRet True)
--}
-
--- sum [ k ∗ m | k ← [1..n], m ← [1..k] ]
---n = 10
---go1 z k = ifThenElse (ge k n) z (go2 z k (add k 1) 1)
---go2 z k k' m = ifThenElse (ge m k) (go1 z k')
---  (go2 (add z (mul k m)) k k' (add 1 m))
-
---testParity n = 
+--testParity n = let
 --  isEven n = ifThenElse (eq n 0) 1 (isOdd (sub n 1))
 --  isOdd n  = ifThenElse (eq n 0) 0 (isEven (sub n 1))
 --  in isEven n
@@ -119,31 +15,18 @@ import imports/prelude
 import imports/list
 --import imports/ls
 
---printDirTree : Str -> Dir -> CString
---printDirTree prefix = \case
---  File f => prefix ++ f
---  Dir  d r => prefix ++ d ++ map (printDirTree (fromCString " |-- " ++ prefix)) r
-
---filter pred l = case l of
---  Nil => Nil
---  Cons x xs => if pred x then Cons x (filter pred xs) else filter pred xs
---
-foldr f s l = case l of
-  Cons x xs => f x (foldr f s xs)
-  Nil       => s
-
-foldl f s l = case l of
-  Cons x xs => foldl f (f s x) xs
-  Nil => s
-
-c a b = Cons a b
-append front back = foldr c back front
-
-scanSum n l = ifThenElse (le n 0) l (scanSum (sub n 1) (Cons n l))
-
-concat = foldr (append) Nil
--- n = Cons '\n' Nil
-mapFold f l = foldr (\x xs => Cons (f x) xs) Nil l -- simple muroll test case
---µE.[Nil | Cons µE.µD.([Nil | Cons {B , D}] & E)]
-
---ls = scanSum 5 Nil
+-- File CString ; Dir CString (List Dir)
+--printDirTree : Str -> Dir -> Str
+printDirTree prefix = \case
+  File f   => prefix ++ f
+  Dir d r => prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
+  _ => prefix
+  
+{-
+-- [a] -> [[a]]
+nonEmptySubSequences = \case
+  Nil => Nil
+  Cons x xs => let
+    f ys r = Cons ys (Cons (Cons x ys) r)
+    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+-}

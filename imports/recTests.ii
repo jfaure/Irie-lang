@@ -16,7 +16,7 @@ rec4  = (let x = (\y => (y (x x))) in x)          -- ∏ A → µx.(A → ((A �
 lpRec3 = let rec l a = l in let rec r = \a => \a => r in ifThenElse 1 l r --µx.(⊤ → ⊤ → x)
 -- --Rec ^ without canonicalization: ∏ A → ⊤ → (⊤ → A) as A ∨ (⊤ → (⊤ → ⊤ → B) as B)
 
-rec1  = let rec x = \v => {a = x v , b = x v} in x  -- ⊤ → µx.{a : x , b : x}
+-- rec1  = let rec x = \v => {a = x v , b = x v} in x  -- ⊤ → µx.{a : x , b : x}
 
 rec6  = ((\x => (x x)) (\x => x))                     -- ∏ A → µx.(A & (A → x))
 

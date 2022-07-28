@@ -1,0 +1,21 @@
+-- ghc prelude:
+-- GHC.Prim (No implementation)
+-- GHC.Base (Eq , Ord , Functor , Monad , List , Ordering , Char , String)
+-- Data.Tuple
+-- GHC.Show
+-- GHC.Enum
+-- Data.Maybe
+-- Data.List
+-- GHC.Num
+-- GHC.Real
+-- GHC.ST
+-- GHC.Arr
+-- GHC.Float
+
+flip f x y = f y x
+
+until p f = let
+  go x = if p x then x else go (f x)
+  in go
+
+-- Functor , Applicative , Monad , Alternative

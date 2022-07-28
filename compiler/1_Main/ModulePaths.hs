@@ -12,4 +12,6 @@ findModule :: [FilePath] -> FilePath -> IO FilePath --(Maybe FilePath)
      in Dir.doesFileExist fPath >>= \e -> if e
        then pure fPath
        else checkExists x fName
-  in (checkExists searchPath . (FilePath.<.> "ii")) fName
+  in Dir.doesFileExist fName >>= \case
+    True  -> pure ("." </> fName)
+    False -> checkExists searchPath (fName FilePath.<.> "ii")

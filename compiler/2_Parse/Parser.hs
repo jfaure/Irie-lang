@@ -227,13 +227,13 @@ indentedItems prev scn p finished = let
   pos <- L.indentLevel
   [] <$ lookAhead (eof <|> finished) <|> if
  -- 'fail' here to backtrack the whitespace/newlines. Otherwise the App parser sees and eats things from later lines
-    | pos <= prev -> fail $ ("end of indent: " <> show pos <> " <= " <> show prev)
+    | pos <= prev -> fail ("end of indent: " <> show pos <> " <= " <> show prev)
     | pos == lvl  -> p >>= \ok -> option [ok] ((ok :) <$> try (go lvl))
-    | otherwise   -> fail ("incorrect indentation, got " <> show pos <> ", expected <= " <> show prev <> " or == " <> show lvl)
+    | otherwise   -> fail ("incorrect indentation, got " <> show pos <> ", expected " <> show lvl <> " (<= " <> show prev <>")")
      -- L.incorrectIndent EQ lvl pos
  in L.indentLevel >>= go
 
- -- tells linefold and let-ins not to eat our indentedItems
+-- tells linefold and let-ins not to eat our indentedItems
 svIndent = L.indentLevel >>= (indent .=)
 
 linefold p = let
@@ -505,8 +505,12 @@ ttArg , tt :: Parser TT
                      <> show i <> " < " <> show ref
         _  -> let finishEarly = void $ char ')' <|> lookAhead (reservedChar '_')
           in do  -- ')' and final match-all '_' can terminate indent
+          lvl <- L.indentLevel
           alts     <- indentedItems ref scn split finishEarly
-          catchAll <- optional $ reservedChar ' ' *> reserved "=>" *> tt
+          catchAll <- optional $ do
+            pos <- L.indentLevel
+            unless (pos == lvl) (fail "not final '_' pattern")
+            reservedChar '_' *> reserved "=>" *> tt
           pure (Match alts catchAll)
     splitBraces = fail "" --braces $ 
     in splitBraces <|> splitIndent

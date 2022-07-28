@@ -50,9 +50,10 @@ data GlobalResolver = GlobalResolver {
 } deriving Show
 
 -- basic resolver used to initialise a cache
--- the 0 module ".compilerPrimitives" is the interface for cpu-instructions and other magic
--- tuple fields: 0.[0..]
--- extra labels (esp. for demutualisation and other optimisations)
+-- the private 0 module ".compilerPrimitives" contains:
+--  * cpu-instructions binds
+--  * tuple fields: 0.[0..]
+--  * extra labels (esp. for demutualisation and other optimisations)
 primResolver :: GlobalResolver = let primModName = "(builtinPrimitives)" in
   GlobalResolver
   1 (M.singleton primModName 0) (IM.singleton 0 <$> primMap)
@@ -109,7 +110,6 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
   modIName localNames (labelMap , fieldMap) mixfixHNames unknownNames maybeOld = let
 
   oldIName = oldModuleIName <$> maybeOld
---modIName = fromMaybe n oldIName
 
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
@@ -150,7 +150,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
       | Nothing      <- b -> MixfixyVar $ Mixfixy Nothing              (flattenMFMap mfWords)
       | Just [(m,i)] <- b -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
     (Nothing      , Nothing) -> NotInScope hNm
-    (Just many , _)          -> AmbiguousBinding hNm
+    (Just many , _)          -> d_ many $ AmbiguousBinding hNm
 
   -- convert noScopeNames map to a vector (Map HName IName -> Vector HName)
   names :: Map HName Int -> V.Vector ExternVar
@@ -176,7 +176,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
                })
 
 -- Often we deal with incomplete vectors (with holes for modules in the pipeline eg. when processing dependencies)
--- Unfortunately writing/caching them to disk requires full initialisation (error "" would trigger before writing)
+-- Unfortunately writing/caching them to disk requires full initialisation (error "" would trigger when writing)
 -- the trashValue serves as an obviously wrong 'uninitialised' element which should never be read eg. "(Uninitialized)"
 updateVecIdx :: a -> V.Vector a -> Int -> a -> V.Vector a
 updateVecIdx trashValue v i new = runST $ do

@@ -23,7 +23,7 @@ import Control.Lens
 
 -- inferred type: a & (a -> i1 -> i1) -> i1
 -- contravariant recursive type; this only makes sense if a is higher rank polymorphic:
--- a & a -> i1 -> i1 => (Π B → B → B)
+-- a & (a -> i1 -> i1) => (Π B → B → B)
 
 failBiSub :: BiFail -> Type -> Type -> TCEnv s BiCast
 failBiSub msg a b = BiEQ <$ (tmpFails %= (TmpBiSubError msg a b:))
@@ -48,7 +48,7 @@ biSubTVarP v m = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ els
     when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " <==> " <> prettyTyRaw m))
     use escapedVars >>= \es -> when (testBit es v) $ leakedVars %= (.|. getTVarsType m)
     MV.write b v (BiSub p' mMerged)
-    if (mMerged == m' || testBit dead v) then pure BiEQ -- if merging was noop, this would probably loop
+    if mMerged == m' || testBit dead v then pure BiEQ -- if merging was noop, this would probably loop
     else biSubType p' m
 
 biSubTVarM p v = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ else
@@ -57,7 +57,7 @@ biSubTVarM p v = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ els
     when global_debug (traceM ("bisub: " <> prettyTyRaw p <> " <==> " <> prettyTyRaw (TyVar v)))
     use escapedVars >>= \es -> when (testBit es v) $ leakedVars %= (.|. getTVarsType p)
     MV.write b v (BiSub pMerged m')
-    if (pMerged == p' || testBit dead v) then pure BiEQ -- if merging was noop, this would probably loop
+    if pMerged == p' || testBit dead v then pure BiEQ -- if merging was noop, this would probably loop
     else biSubType p m'
 
 biSubType :: Type -> Type -> TCEnv s BiCast
@@ -94,21 +94,26 @@ instantiate nb x = do
 -- this mixes mu-bound vars xyz.. and generalised vars A..Z
 doInstantiate :: IM.IntMap Int -> Type -> TCEnv s Type
 doInstantiate tvars ty = let
-  keyNotFound = fromMaybe (error "panic: muvar not found")
+  keyNotFound = fromMaybe (error "panic: instantiate: tvar outside of its binding")
+  thBound i   = (0 `setBit` (keyNotFound $ tvars IM.!? i)  , [])
   mapFn = let r = doInstantiate tvars in \case
-    THBound i   -> pure (0 `setBit` (keyNotFound $ tvars IM.!? i)  , [])
-    THMuBound i -> use muInstances >>= \muVars -> case muVars IM.!? i of
-      Just m -> pure (0 `setBit` m , [])
-      Nothing -> freshBiSubs 1 >>= \[mInst] -> (muInstances %= IM.insert i mInst) $> (0 `setBit` mInst , [])
+    THBound i   -> pure (thBound i)
+    THMuBound i -> pure (thBound i)
+--  THMuBound i -> use muInstances >>= \muVars -> case muVars IM.!? i of
+--    Just m -> pure (0 `setBit` m , [])
+--    Nothing -> freshBiSubs 1 >>= \[mInst] -> (muInstances %= IM.insert i mInst) $> (0 `setBit` mInst , [])
     THBi{}      -> error $ "higher rank polymorphic instantiation"
-    THMu m t    -> do -- µx.F(x) is to inference (x & F(x))
-      use muInstances >>= \muVars -> do
-        mInst <- case muVars IM.!? m of
-          Nothing -> freshBiSubs 1 >>= \[mInst] -> mInst <$ (muInstances %= IM.insert m mInst)
-          Just m -> pure m
-        doInstantiate tvars t <&> \case
-          TyGround g  -> (0 `setBit` mInst , g)
-          TyVars vs g -> (vs `setBit` mInst , g)
+    THMu m t    -> let mInst = keyNotFound (tvars IM.!? m) in -- µx.F(x) is to inference (x & F(x))
+      doInstantiate tvars t <&> \case
+        TyGround g -> (0 `setBit` mInst , g)
+        TyVars vs g -> (vs `setBit` mInst , g)
+--    use muInstances >>= \muVars -> do
+--      mInst <- case muVars IM.!? m of
+--        Nothing -> freshBiSubs 1 >>= \[mInst] -> mInst <$ (muInstances %= IM.insert m mInst)
+--        Just m -> pure m
+--      doInstantiate tvars t <&> \case
+--        TyGround g  -> (0 `setBit` mInst , g)
+--        TyVars vs g -> (vs `setBit` mInst , g)
     THTyCon t -> (\x -> (0 , [THTyCon x])) <$> case t of
       THArrow as ret -> THArrow   <$> (r `mapM` as) <*> (r ret)
       THProduct as   -> THProduct <$> (r `mapM` as)

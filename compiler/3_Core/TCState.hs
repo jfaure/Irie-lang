@@ -53,7 +53,8 @@ data TCEnvState s = TCEnvState {
 -- Generalisation state
 type GenEnv s a = StateT (GenEnvState s) (ST s) a
 data GenEnvState s = GenEnvState {
-   _muWrap      :: [(Int , IName , Type , [InvMu] , [InvMu])] -- (recBranch , muVar , muType , startInvMu , curInvMu)
+   _muWrap      :: [(Int , IName , Type , [InvMu])] -- (recBranch , muVar , muType , startInvMu , curInvMu)
+ , _externsGen  :: Externs
  -- ^ several tycon branches may contain a mu type , and a µtype may contain multiple fixpoints
  , _seenVars    :: BitSet
  , _hasRecs     :: BitSet

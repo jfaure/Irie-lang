@@ -355,7 +355,7 @@ infer = let
     let retTys  = tyOfExpr <$> (maybeToList def ++ alts)
         retTy   = mergeTypeList True retTys -- + is right since this term is always output
 
-        altTys  = map (\argTVars -> TyGround [THTyCon $ THTuple $ V.fromList $ argTVars]) argTVars
+        altTys  = map (\argTVars -> TyGround [THTyCon $ THTuple (V.fromList argTVars)]) argTVars
         scrutTy = TyGround [THTyCon $ THSumTy $ BSM.fromList $ zip labels altTys]
         matchTy = TyGround $ mkTyArrow [scrutTy] retTy
         argAndTys  = zipWith zip args argTVars

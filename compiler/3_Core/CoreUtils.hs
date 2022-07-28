@@ -13,16 +13,22 @@ import qualified Data.Vector as V
 
 isPoisonExpr :: Expr -> Bool = (\case { PoisonExpr -> True ; _ -> False })
 
+{-
 -- eqTypes a b = all identity (zipWith eqTyHeads a b) -- not zipwith !
 eqTypes (TyGround a) (TyGround b) = all identity (alignWith (these (const False) (const False) eqTyHeads) a b)
 
 eqTyHeads a b = kindOf a == kindOf b && case (a,b) of
   (THPrim a  , THPrim b)  -> a == b
+  (THMuBound m  , THMu n _)  -> m == n
+  (THMu n _ , THMuBound m)  -> m == n
   (THTyCon a , THTyCon b) -> case (a,b) of
---  (THSumTy a , THSumTy b) -> all identity $ BSM.elems $ alignWith (these (const False) (const False) eqTypes) a b
-    (THSumTy a , THSumTy b) -> all identity $ BSM.elems $ BSM.intersectionWith eqTypes a b
-    (THTuple a , THTuple b) -> all identity $ V.zipWith eqTypes a b
+--  (THSumTy a , THSumTy b) -> and $ BSM.elems $ alignWith (these (const False) (const False) eqTypes) a b
+    (THSumTy a , THSumTy b)     -> and $ BSM.elems $ BSM.intersectionWith eqTypes a b
+    (THProduct a , THProduct b) -> and $ BSM.elems $ BSM.intersectionWith eqTypes a b
+    (THTuple a , THTuple b) -> and $ V.zipWith eqTypes a b
+  (THBound a , THBound b) -> a == b
   _ -> False
+-}
 
 partitionType :: Type -> (BitSet , GroundType)
 partitionType = \case
@@ -120,6 +126,7 @@ kindOf = \case
     THTuple{}   -> KTuple
   THBound{} -> KBound
   THMuBound{} -> KRec
+  THMu{}      -> KRec
   _ -> KAny
 
 mergeTyUnions :: Bool -> [TyHead] -> [TyHead] -> [TyHead]
@@ -155,9 +162,12 @@ mergeTyHead pos t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
 --[THMuBound n , THMu m a] -> if m == n then [t2] else join
   [THMu m a , THBound n] -> if m == n then [t1] else join
   [THBound n , THMu m a] -> if m == n then [t2] else join
+  [THMu m mt , THMu n nt] -> if m == n then [THMu m (mergeTypes pos mt nt)] else join
+  [THBi m mt , THBi n nt] -> if m == n then [THBi m (mergeTypes pos mt nt)] else join -- TODO slightly dodgy
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
 
   [THBound a , THBound b]     -> if a == b then [t1] else join
+  [THPrim (PrimInt 32) , THExt 1] -> [t1] -- HACK
   [THExt a , THExt  b]        -> if a == b then [t1] else join
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of
     [THSumTy a   , THSumTy b]   ->
@@ -175,7 +185,8 @@ nullType = \case
   _ -> False
 
 mergeTypeList :: Bool -> [Type] -> Type
-mergeTypeList pos = foldr (mergeTypes pos) (TyGround [])
+mergeTypeList pos ts = let r = foldr (mergeTypes pos) (TyGround []) ts
+  in r -- trace (T.intercalate " , " (prettyTyRaw <$> ts) <> " => " <> prettyTyRaw r) r
 
 rmMuBound m = let goGround = filter (\case { THMuBound x -> x /= m ; _ -> True }) in \case
   TyGround g  -> TyGround (goGround g)
@@ -215,9 +226,9 @@ mergeTysNoop :: Bool -> Type -> Type -> Maybe Type = \pos a b -> Just $ mergeTyp
 data InvMu
   = Leaf IName
   | InvMu
-  { this      :: Type -- A subtree of the µ. test eq ignoring the rec branch we came from
+  { this      :: Type  -- A subtree of the µ. test
   , recBranch :: Int
-  , parent    :: InvMu -- Nothing if root, Int is the parents tycon rec branch we're in
+  , parent    :: InvMu -- Nothing if root
   } deriving Show
 
 -- i is the wrapping tycon branch we recursed into to get here
@@ -227,43 +238,50 @@ startInvMu m = Leaf m -- the outer µ-binder. We intend to wrap this in successi
 invertMu :: InvMu -> Type -> [InvMu]
 invertMu inv cur = let
   go cur t = case t of
-    THTyCon tycon -> concat -- $ map (\(i , subInvs) -> (\subInv -> InvMu cur i inv) <$> subInvs)
-      $ zipWith (\i t -> invertMu (InvMu cur i inv) t) [0..] $
-      case tycon of -- the order for tycon branches is important:
-        THArrow ars r -> (r : ars)
-        THSumTy tys   -> V.toList $ BSM.elems tys
-        THProduct tys -> V.toList $ BSM.elems tys
-        THTuple tys   -> V.toList tys
+    THTyCon tycon -> concatMap (\(i , t) -> invertMu (InvMu cur i inv) t) $
+      case tycon of -- use the keys to indicate recbranch for sum/product, and index for tuple/arrow
+        THArrow ars r -> zip [0..] (r : ars) -- !ret type is recBranch 0
+        THSumTy tys   -> BSM.toList tys -- V.toList $ BSM.elems tys
+        THProduct tys -> BSM.toList tys -- V.toList $ BSM.elems tys
+        THTuple tys   -> V.toList (V.indexed tys)
     THMu m t    -> [inv] -- [Leaf m]
     THMuBound m -> [inv] -- [Leaf m]
-    _ -> [] -- no mus in cur branch
+    _ -> [] -- no mus in unguarded type
   in case cur of
-  TyGround gs  -> concat (go cur <$> gs)
-  TyVars vs gs -> concat (go cur <$> gs)
+  TyGround gs  -> concatMap (go cur) gs
+  TyVars vs gs -> concatMap (go cur) gs
   TyVar v -> []
 
 -- test if an inverted Mu matches the next layer (a potential unrolling of the µ)
 -- This happens after type simplifications so there should be no tvars (besides escaped ones)
 -- Either (more wrappings to test) (end , True if wrapping is an unrolling)
 testWrapper :: InvMu -> Int -> Type -> Either InvMu Bool
-testWrapper (Leaf m) recBranch t = Right True
-testWrapper (InvMu this r parent) recBranch t | r /= recBranch = Right False
-testWrapper (InvMu this r parent) recBranch t = case {-d_ (recBranch , this , parent)-} (this , t) of
-  (TyGround g1 , TyGround g2) -> let
-    partitionTyCons g = (\(t , o) -> ((\case {THTyCon tycon -> tycon ; _ -> error "wtf" }) <$> t , o))
-      $ partition (\case {THTyCon{}->True;_->False}) g
-    ((t1 , o1) , (t2 , o2)) = (partitionTyCons g1 , partitionTyCons g2)
-    testGuarded t1 t2 = let go i t1 t2 = i == recBranch || t1 == t2 in V.izipWith go t1 t2
-    muFail = case (t1 , t2) of
-      ([THArrow a1 r1] , [THArrow a2 r2]) -> testGuarded (V.fromList $ r1 : a1) (V.fromList $ r2 : a2)
-      ([THSumTy t1   ] , [THSumTy t2   ]) -> testGuarded (BSM.elems t1) (BSM.elems t2)
-      ([THProduct t1 ] , [THProduct t2 ]) -> testGuarded (BSM.elems t1) (BSM.elems t2)
-      ([THTuple t1   ] , [THTuple t2   ]) -> testGuarded t1 t2
-      _ -> V.singleton False
-    in if not (and muFail) {-|| o1 /= o2-}
-       then Right False
-       else case parent of
-         Leaf{}    -> Right True -- OK found an unrolling
-         nextInvMu -> Left nextInvMu -- so far OK, more wraps to test
-  _ -> Right False
+testWrapper inv recBranch t = case inv of
+  Leaf m              -> Right True
+  InvMu this r parent -> if False && r /= recBranch -- Avoid pointless work if testing against wrong branch
+--then d_ (r , recBranch , this) (Right False)
+  then Right False
+  else case {-d_ (recBranch , this , parent)-} (this , t) of
+    (TyGround g1 , TyGround g2) -> let
+      partitionTyCons g = (\(t , o) -> ((\case {THTyCon tycon -> tycon ; _ -> error "wtf" }) <$> t , o))
+        $ partition (\case {THTyCon{}->True;_->False}) g
+      ((t1 , o1) , (t2 , o2)) = (partitionTyCons g1 , partitionTyCons g2)
+      testGuarded t1 t2 = V.izipWith (\i t1 t2 -> i == recBranch || eqTypesRec t1 t2) t1 t2
+      testBSM (i , (t1 , t2)) = i == recBranch || eqTypesRec t1 t2
+      muFail = case (t1 , t2) of
+        -- TODO roll + merge things like μx.[Cons {A , x & [Nil]} => μx.[Nil | Cons {A , x}
+        ([THArrow a1 r1] , [THArrow a2 r2]) -> and $ testGuarded (V.fromList $ r1 : a1) (V.fromList $ r2 : a2)
+        ([THSumTy t1   ] , [THSumTy t2   ]) -> and $ testBSM <$> BSM.toList (BSM.intersectionWith (,) t1 t2)
+        ([THProduct t1 ] , [THProduct t2 ]) -> and $ testBSM <$> BSM.toList (BSM.intersectionWith (,) t1 t2) -- TODO HACK not quite right
+        ([THTuple t1   ] , [THTuple t2   ]) -> and $ testGuarded t1 t2
+        _ -> False
+      in if muFail {-|| o1 /= o2-}
+         then case parent of
+           Leaf{}    -> Right True -- OK found an unrolling
+           nextInvMu -> Left nextInvMu -- so far OK, more wraps to test
+         else Right False
+    _ -> Right False
 -- TODO TyVars (presumably only relevant for let-bindings)
+
+eqTypesRec t1 t2 = -- trace (prettyTyRaw t1 <> " =? " <> prettyTyRaw t2) $
+  t1 == t2

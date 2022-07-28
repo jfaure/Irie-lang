@@ -29,13 +29,20 @@ import qualified Data.Binary as DB
 import Control.Lens
 import System.Console.Haskeline
 import System.Directory
+import qualified System.IO as SIO (hClose)
 import Data.List (words)
 
 searchPath   = ["./" , "Library/"]
 objPath      = ["./"]
 objDir'      = ".irie-obj/"
 objDir       = objDir' <> "@" -- prefix '@' to files in there
-getCachePath fName = objDir <> map (\case { '/' -> '%' ; x -> x} ) fName
+getCachePath fName = let
+  -- ./module == module for cache purposes so they must be converted
+  normalise fName = case fName of
+    '.' : '/' : _ -> fName
+    '/' : _ -> fName
+    _ -> '.' : '/' : fName
+  in objDir <> map (\case { '/' -> '%' ; x -> x} ) (normalise fName)
 resolverCacheFName = getCachePath "resolver"
 doCacheCore  = True
 cacheVersion = 0
@@ -98,7 +105,8 @@ doFileCached flags isMain resolver depStack fName = let
       judged <- decodeCoreFile cached :: IO CachedData -- even stale cached modules need to be read
       if fresh && not (recompile flags) && not isMain then pure (resolver , judged)
         --else go (rmModule modINm (bindNames judged) resolver) (Just modINm)
-        else go resolver (Just $ OldCachedModule (modIName judged) (bindNames judged))
+--      else go resolver (Just $ OldCachedModule (modIName judged) (bindNames judged)) -- <> V.fromList (M.keys (labelNames judged))))
+        else go resolver (Just $ OldCachedModule (modIName judged) (bindNames judged <> V.fromList (M.keys (labelNames judged))))
 
 evalImports :: CmdLine -> ModIName -> GlobalResolver -> BitSet -> [Text] -> IO (GlobalResolver, ModDependencies)
 evalImports flags moduleIName resolver depStack fileNames = do
@@ -179,17 +187,24 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
   in (flags , coreOK , errors , bindSrc , srcInfo , fName , newResolver , judgedFinal , (oTypes , oCore , oSimple))
 
 putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oTypes , oCore , oSimple)) = let
-  handleErrors = do
-    T.IO.putStr  $ T.concat  $ (<> "\n\n") . formatError bindSrc srcInfo <$> (errors ^. biFails)
-    T.IO.putStr  $ T.concat  $ (<> "\n\n") . formatScopeError            <$> (errors ^. scopeFails)
-    TL.IO.putStr $ TL.concat $ (<> "\n\n") . formatCheckError bindSrc    <$> (errors ^. checkFails)
-    TL.IO.putStr $ TL.concat $ (<> "\n\n") . formatTypeAppError          <$> (errors ^. typeAppFails)
+  handleErrors h = do
+    T.IO.hPutStr  h $ T.concat  $ (<> "\n\n") . formatError bindSrc srcInfo <$> (errors ^. biFails)
+    T.IO.hPutStr  h $ T.concat  $ (<> "\n\n") . formatScopeError            <$> (errors ^. scopeFails)
+    TL.IO.hPutStr h $ TL.concat $ (<> "\n\n") . formatCheckError bindSrc    <$> (errors ^. checkFails)
+    TL.IO.hPutStr h $ TL.concat $ (<> "\n\n") . formatTypeAppError          <$> (errors ^. typeAppFails)
   in do
-  handleErrors
+  -- write to stdout unless an outfile was specified
+  outHandle <- case flags.outFile of
+    Nothing -> pure stdout
+    Just fName -> openFile fName WriteMode
+
+  handleErrors outHandle
+
   -- half-compiled modules `not coreOK` should also be cached (since their names were pre-added to the resolver)
-  maybe (pure ()) (TL.IO.putStrLn `mapM_`) oCore
-  maybe (pure ()) (TL.IO.putStrLn `mapM_`) oTypes
-  maybe (pure ()) (TL.IO.putStrLn `mapM_`) oSimple
+  maybe (pure ()) (TL.IO.hPutStrLn outHandle `mapM_`) oCore
+  maybe (pure ()) (TL.IO.hPutStrLn outHandle `mapM_`) oTypes
+  maybe (pure ()) (TL.IO.hPutStrLn outHandle `mapM_`) oSimple
+  unless (outHandle == stdout) (SIO.hClose outHandle)
   when (doCacheCore && not (noCache flags))
     $ DB.encodeFile resolverCacheFName r *> cacheFile fName j
   T.IO.putStrLn $ show fName <> " " <> "(" <> show (modIName j) <> ") " <> (if coreOK then "OK" <> (if isJust oSimple then " Simplified" else " Raw") else "KO")

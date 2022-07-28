@@ -1,0 +1,68 @@
+List =  type [32mΠ(0 : τ1) µa.[Nil | Cons {([34mλ0[32m : τ1) , (([35mrecApp[32m [33mList[32m [34mλ0[32m) : τ2)}][0m
+
+Str =  type [32m[33mList[32m (type [32m%i8[32m)[0m
+
+printList = [32m∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 & %i32)[0m
+
+scanSum = [32m∏ A → %i32 → A → µa.[Cons {%i32 , a}][0m
+
+take = [32m∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
+
+drop = [32m∏ A B → %i32 → µa.([Nil | Cons {⊤ , a}] & B) → ([Nil] & B)[0m
+
+fromMaybe = [32m∏ A → [Maybe {A} | Nothing] → (%i1 & A)[0m
+
+null = [32m[Nil | Cons {⊤ , ⊤}] → %i1[0m
+
+singleton = [32m∏ A → A → [Cons {A , [Nil]}][0m
+
+repeat = [32m∏ A B → A → µb.[Cons {A , b}][0m
+
+xs = [32m∏ A → µa.[Cons {τ(6) , a}][0m
+
+foldr = [32m∏ A B C → (A → B → B) → B → µc.[Nil | Cons {A , c}] → B[0m
+
+foldl = [32m∏ A B C → (A → B → A) → A → µc.[Nil | Cons {B , c}] → A[0m
+
+c = [32m∏ A B → A → B → [Cons {A , B}][0m
+
+append = [32m∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}][0m
+
+_++_ = [32m∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}][0m
+
+concat = [32m∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {A , d}][0m
+
+consF = [32m∏ A B C → (A → B) → A → C → [Cons {B , C}][0m
+
+mapFold = [32m∏ A B C D → (A → B) → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {B , d}][0m
+
+map = [32m∏ A B C D → (A → B) → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {B , d}][0m
+
+concatMap = [32m∏ A B C D E → (A → µc.[Nil | Cons {B , c}]) → µd.[Nil | Cons {A , d}] → µe.[Nil | Cons {B , e}][0m
+
+unlines = [32m∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 & A) , d}][0m
+
+unfoldr = [32m∏ A B C → (A → [Nothing | Just {{val : B , seed : A}}]) → A → µc.[Nil | Cons {B , c}][0m
+
+filter = [32m∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
+
+fromCString = [32m∏ A → %ptr(PrimInt 8) → µa.[Nil | Cons {%i8 , a}][0m
+
+go = [32m∏ A B → {!0 : %i1 , !1 : A , !2 : %ptr(PrimInt 8)} → µb.[Nil | Cons {(%i8 & A) , b}][0m
+
+toCString = [32m∏ A B C → ((([Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}) & C) → {!0 : %i1 , !1 : %i8 , !2 : C}) → C → %ptr(PrimInt 8)[0m
+
+unravel = [32m∏ A B → [Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}[0m
+
+splitAt = [32m∏ A B C → τ(6) & (%i32) → µb.[Nil | Cons {A , τ(9) & (b)}] → {l : µc.[Nil | Cons {A , c}] , r : µb.[Nil]}[0m
+
+z = [32m∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : [Nil]}[0m
+
+reverse = [32m∏ A B C → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
+
+scanl = [32m∏ A B C D → (A → B → A) → A → µc.[Nil | Cons {B , c}] → µd.[Nil | Cons {A , d}][0m
+
+enumFromTo = [32m∏ A → %i32 → %i32 → µa.[Nil | Cons {%i32 , a}][0m
+
+foldr1 = [32m∏ A B → (A → A → A) → µb.[Cons {A , b}] → A[0m
+

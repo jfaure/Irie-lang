@@ -33,9 +33,9 @@ records7 = ifThenElse 1 { a = 1 , b = 1 } { b = 0 , c = 42 } -- {b : %i1}
 --recordserror1 = { a = 123 , b = 1 }.c  -- missing field: c in {a: %i32, b: %i1})
 --recordserror2 = (\x => { a = x }.b)       -- missing field: b in {a: A})
 
--- ^ Irie says ((%i1 → ⊤) → ⊥)
---self i = ifThenElse ((i i) 1) 1 1 -- ∏ A → ((A → %i1 → %i1) & A) → %i1
---
+-- v =? (∏ A → A → A) → %i1
+--self i = if (i i) 1 then 1 else 1 -- ∏ A → ((A → %i1 → %i1) & A) → %i1
+
 --Selfapp0 x = x x      -- ∏ A B → ((A → B) & A) → B
 --Selfapp1 x = x x x    -- ∏ A B → ((A → A → B) & A) → B
 --Selfapp2 x y = x y x  -- ∏ A B C → ((A → B → C) & B) → A → C
@@ -87,19 +87,28 @@ lp17 = \f => let r = \x => \g => { a = g x , b = f x } in {u = r 0 (add 1) , v =
 ---------------------
 -- Recursive types --
 ---------------------
-
-roll1 = let ret = { next = roll1 } in { next = roll1 } -- µx.{next : x}
-straightRec = { next = straightRec } -- µx.{next : x}
+-- µx.{next : x}
+roll1 = let ret = { next = roll1 } in { next = roll1 } -- ∏ A → µa.{next : a}
+-- µx.{next : x}
+straightRec = { next = straightRec } -- ∏ A → µa.{next : a}
 
 -- Function that takes arbitrarily many arguments:
-ManyArgs = (\f => (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v))) (\f => \x => f) -- µx.(⊤ → x)
+-- µx.(⊤ → x)
+ManyArgs = (\f => (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v))) (\f => \x => f) -- ∏ A → µa.(⊤ → a)
 
 --trutru = let rec trutru = \g => trutru (g 1) in trutru -- ∏ A → (%i1 → A) as A → ⊥)
-lpRec1 = let rec f = \x => f x.u in f -- µx.{u : x} → ⊥
+-- µx.{u : x} → ⊥
+lpRec1 = let rec f = \x => f x.u in f -- ∏ A → µa.{u : a} → ⊥
+
+-- merge two (∏ A → µa.(⊤ → a))
+lpRec2 = let r a = r in ifThenElse 1 r r  -- ∏ A → µa.(⊤ → a)
 
 
 -- recursive
-rec0  = let rec x = {a = x , b = x} in x              -- µx.{a : x , b : x}
+-- µx.{a : x , b : x}
+rec0  = let rec x = {a = x , b = x} in x              -- ∏ A → µa.{a : a , b : a}
+-- rec1 : ⊤ → µx.{a : x , b : x} unclear how to fix
+rec1 v = { a = rec1 v , b = rec1 v } -- ∏ A B → ⊤ → µb.µa.{a : a , b : b}
 --recscError  = let rec x = (let rec y = {u = y , v = (x y)} in 0) in 0 -- cannot constrain %i32 <: A → B
 --rec3  = (\x => (let y = (x x) in 0))                  -- ∏ A → A ∧ (A → ⊤) → %i32
 rec5  = \next => 0                                    -- ⊤ → %i1

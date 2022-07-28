@@ -109,11 +109,12 @@ data TyInstrs
  = MkIntN  -- : Nat -> Set --make an int with n bits
  | Arrow   -- : Set -> Set
 
- -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
+-- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
 data Predicates  = EQCmp | NEQCmp | GECmp | GTCmp | LECmp | LTCmp
 data IntInstrs   = Add | Sub | Mul | SDiv | SRem | Neg | AbsVal | IPow
 data NatInstrs   = UDiv | URem
-data BitInstrs   = And | Or | Not | Xor | ShL | ShR | BitRev | ByteSwap | CtPop | CtLZ | CtTZ | FShL | FShR | RotL | RotR
+data BitInstrs   = And | Or | Not | Xor | ShL | ShR | BitRev | ByteSwap | CtPop | CtLZ | FShL | FShR | RotL | RotR
+                 {- BMI1 -} | ANDN | BEXTR | BLSI | BLSMSK | BLSR| CtTZ {- BMI2 -} | BZHI | MULX | PDEP | PEXT
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
 data ArrayInstrs = ExtractVal  -- | InsertVal | Gep
 
@@ -124,7 +125,6 @@ primInstr2Nm = \case
   TyInstr  i -> show i
   i          -> show i
 -- MemInstr   !ArrayInstrs
-
 
 deriving instance Show Literal
 deriving instance Show PrimType
