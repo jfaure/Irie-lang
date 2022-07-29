@@ -21,7 +21,7 @@ data CheckError = CheckError { inferredType :: Type , annotationType :: Type }
 data ScopeError
   = ScopeError Text
   | ScopeNotImported HName HName
-  | AmbigBind  Text
+  | AmbigBind  Text [(ModIName , IName)]
 data TypeAppError = BadTypeApp { typeOperator :: Type , typeArgs :: [Expr] }
 
 data BiFail
@@ -73,7 +73,7 @@ formatScopeError = \case
   ScopeError h -> clRed "Not in scope: "      <> h
   ScopeNotImported h m -> clRed "Not in scope " <> show h <> clBlue "\nnote. ∃: "
     <> show m <> "." <> show h
-  AmbigBind  h -> clRed "Ambiguous binding: " <> h
+  AmbigBind  h many -> clRed "Ambiguous binding: " <> h <> show many
 
 formatTypeAppError = \case
   BadTypeApp f args -> clRed "Cannot normalise type operator application: "

@@ -97,7 +97,7 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("IntN"  , (TyInstr MkIntN , ([i] , set)))
   , ("primLen" , (Len , ([ia] , i)))
 
-  , ("puts"  , (Puts , ([str] , i)))
+  , ("puts"      , (Puts    , ([str] , i)))
   , ("putNumber" , (PutNbr  , ([i] , i)))
   , ("putChar"   , (PutChar , ([c] , c)))
   , ("opendir"   , (OpenDir , ([str] , dirp)))
@@ -123,6 +123,8 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("gt"    , (NumInstr (PredInstr GTCmp ) , ([i, i] , b) ))
   , ("eq"    , (NumInstr (PredInstr EQCmp ) , ([i, i] , b) ))
   , ("ne"    , (NumInstr (PredInstr NEQCmp) , ([i, i] , b) ))
+  , ("boolOR",  (NumInstr (PredInstr OR )   , ([b, b] , b) ))
+  , ("boolAND", (NumInstr (PredInstr AND )  , ([b, b] , b) ))
   , ("zext"  , (Zext  , ([b] , i) ))
   , ("sdiv"  , (NumInstr (IntInstr SDiv) , ([i, i] , i) ))
   , ("srem"  , (NumInstr (IntInstr SRem) , ([i, i] , i) ))

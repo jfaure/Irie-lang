@@ -105,6 +105,16 @@ foldr1 f = \case
     Nil => x
     Cons y ys => f x (foldr1 f xs)
 
+nubBy eq l = let
+  nub l xs = case l of
+    Nil => Nil
+    Cons y ys => if elemBy eq y xs then nub ys xs else Cons y (nub ys (Cons y xs))
+  in nub l Nil
+
+elemBy eq y = \case
+  Nil => 1
+  Cons x xs => boolOR (eq x y) (elemBy eq y xs)
+
 {-
 groupBy _ Nil = Nil
 groupBy eq (Cons x xs) = let

@@ -11,18 +11,44 @@ module demo x =
 --  f : Int
 --  g : Int
 
+--intersectBy          :: (a -> a -> Bool) -> [a] -> [a] -> [a]
+--intersectBy _  [] _  =  []
+--intersectBy _  _  [] =  []
+--intersectBy eq xs ys =  [x | x <- xs, any (eq x) ys]
+
+--intersperse             :: a -> [a] -> [a]
+--intersperse _   []      = []
+--intersperse sep (x:xs)  = x : prependToAll sep xs
+
+--prependToAll            :: a -> [a] -> [a]
+--prependToAll _   []     = []
+--prependToAll sep (x:xs) = sep : x : prependToAll sep xs
+
+-- unionBy
+-- transpose permuatations
+-- mapAccumL(R)
+-- insertBy
+-- sortBy
+-- zip
+-- find findIndex findIndices
+-- partition
+-- isInfixOf isSuffixOf isPrefixOf
+-- span break
 import imports/prelude
 import imports/list
 --import imports/ls
 
+{-
 -- File CString ; Dir CString (List Dir)
 --printDirTree : Str -> Dir -> Str
 printDirTree prefix = \case
   File f   => prefix ++ f
   Dir d r => prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
-  _ => prefix
-  
+-}
+
 {-
+-- µc.[Cons {A , µc.[Nil]}] => µc.[Nil | Cons {A , c}]
+-- ? roll into mutype: [Nil | Cons {[Cons {A , [Nil]}]
 -- [a] -> [[a]]
 nonEmptySubSequences = \case
   Nil => Nil
@@ -30,3 +56,12 @@ nonEmptySubSequences = \case
     f ys r = Cons ys (Cons (Cons x ys) r)
     in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
 -}
+
+null = \case
+  C => C
+  N => N
+
+-- splitAt :: Int -> [a] -> ([a], [a])
+splitAt n xs = if n <=? 0 then { l = N , r = xs } else case xs of
+  C x xs => let z = splitAt (n - 1) xs in { l = C x z.l , r = z.r }
+  N => { l = N , r =  N }

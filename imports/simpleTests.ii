@@ -108,7 +108,7 @@ lpRec2 = let r a = r in ifThenElse 1 r r  -- ∏ A → µa.(⊤ → a)
 -- µx.{a : x , b : x}
 rec0  = let rec x = {a = x , b = x} in x              -- ∏ A → µa.{a : a , b : a}
 -- rec1 : ⊤ → µx.{a : x , b : x} unclear how to fix
-rec1 v = { a = rec1 v , b = rec1 v } -- ∏ A B → ⊤ → µb.µa.{a : a , b : b}
+rec1 v = { a = rec1 v , b = rec1 v } -- ∏ A B → ⊤ → µa.µb.{a : a , b : b}
 --recscError  = let rec x = (let rec y = {u = y , v = (x y)} in 0) in 0 -- cannot constrain %i32 <: A → B
 --rec3  = (\x => (let y = (x x) in 0))                  -- ∏ A → A ∧ (A → ⊤) → %i32
 rec5  = \next => 0                                    -- ⊤ → %i1

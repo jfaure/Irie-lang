@@ -16,7 +16,7 @@ import Mixfix
 import Generalise
 
 import Control.Lens
-import Data.List (unzip4, zipWith3)
+import Data.List (unzip4, zipWith3 , nub)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Map.Strict as M
@@ -62,6 +62,10 @@ judgeModule nBinds pm importedModules modIName nArgs hNames exts source = let
     pure (JudgedModule modIName (either identity identity modName) nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , st ^. errors) --TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
+judgeLocalBind b = use thisMod >>= \modINm -> use wip >>= \wip' -> use pBinds >>= \binds -> judgeBind binds wip' b <&> \case
+  Core e ty -> Core (Var $ VQBind (mkQName modINm b)) ty -- no need to inline the body yet
+  t -> t
+
 -- inference >> generalisation >> type checking of annotations
 -- This stacks inference of forward references and handles mutual binds
 judgeBind :: V.Vector P.FnDef -> MV.MVector s Bind -> IName -> TCEnv s Expr
@@ -72,8 +76,8 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
   Guard mutuals tvar -> do
     this <- fst <$> use bindWIP
     when (this /= bindINm) $ do
-      MV.write wip' bindINm (Guard (this:mutuals) tvar)
-      MV.modify wip' (\(Guard ms tv) -> Guard (bindINm:ms) tv) this
+      MV.write wip' bindINm (Guard (mutuals `setBit` this) tvar)
+      MV.modify wip' (\(Guard ms tv) -> Guard (ms `setBit` bindINm) tv) this
     pure $ Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)
 
   Queued -> use wip >>= \wip' -> let
@@ -81,14 +85,14 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
     freeVars = P.fnFreeVars abs
     tyAnn    = P.fnSig abs
     in do
---  abs   <- (V.! bindINm) <$> use pBinds
+    -- svEscapes is more of a tree than a stack...
     svwip     <- bindWIP <<.= (bindINm , False)
     freeTVars <- use argVars >>= \avs -> bitSet2IntList freeVars `forM` \i -> MV.read avs i
     svEscapes <- escapedVars <<%= (.|. intList2BitSet freeTVars)
     svLeaked  <- use leakedVars
 
     (tvarIdx , jb , ms , isRec) <- freshBiSubs 1 >>= \[idx] -> do
-      MV.write wip' bindINm (Guard [] idx)
+      MV.write wip' bindINm (Guard emptyBitSet idx)
       expr <- infer (P.Abs abs)
       isRec <- snd <$> use bindWIP
       bindWIP .= svwip
@@ -110,11 +114,18 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
       Just t -> tyExpr <$> infer t -- no need to generalise if not Abs since no pi bounds
 
     MV.write wip' bindINm (Mutual jb freeVars isRec tvarIdx typeAnn)
-    if minimum (bindINm:ms) /= bindINm then pure jb
-    else (fromJust . head <$> generaliseBinds svEscapes svLeaked bindINm ms) -- <* clearBiSubs 0
+    ret <- if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
+    then pure jb
+    else fromJust . head <$> generaliseBinds bindINm (bitSet2IntList ms) -- <* clearBiSubs 0
+    ret <$ do
+      l <- use leakedVars
+      leakedVars  .= svLeaked
+      escapedVars .= svEscapes
+      deadVars %= (.|. (l .&. complement svEscapes))
 
-generaliseBinds :: BitSet -> BitSet -> Int -> [Int] -> TCEnv s [Expr]
-generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m >>= \case
+generaliseBinds :: Int -> [Int] -> TCEnv s [Expr]
+generaliseBinds i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m >>= \case
+  -- ! the order is relevant
   Mutual naiveExpr freeVs isRec recTVar annotation -> do
     inferred <- case naiveExpr of
       Core expr coreTy -> Core expr <$> do -- generalise the type
@@ -139,10 +150,6 @@ generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \
         TySi (Pi ars t) e -> TySi (Pi ars (TyGround [THMu 0 t])) e
         t -> TyGround [THMu 0 t]
       t -> pure t
-    l <- use leakedVars
-    leakedVars  .= svLeaked
-    escapedVars .= svEscapes
-    deadVars %= (.|. (l .&. complement svEscapes))
     done <- case (annotation , inferred) of -- Only Core type annotations are worth replacing inferred ones
       (Just ann , Core e inferredTy) -> Core e <$> checkAnnotation ann inferredTy
       _                              -> pure inferred
@@ -161,24 +168,18 @@ checkAnnotation annTy inferredTy = do
 
  -- TODO don't allow `bind = lonemixfixword`
 handleExtern = let mfwOK = True in \case
-  ForwardRef b       -> judgeLocalBind b -- was a forward reference not an extern
-  Imported e         -> pure e
-  NotOpened m h      -> PoisonExpr <$ (errors . scopeFails %= (ScopeNotImported h m:))
-  NotInScope  h      -> PoisonExpr <$ (errors . scopeFails %= (ScopeError h:))
-  AmbiguousBinding h -> PoisonExpr <$ (errors . scopeFails %= (AmbigBind h :))
-  MixfixyVar m       -> if mfwOK then pure $ MFExpr m
+  ForwardRef b         -> judgeLocalBind b -- was a forward reference not an extern
+  Imported e           -> pure e
+  NotOpened m h        -> PoisonExpr <$ (errors . scopeFails %= (ScopeNotImported h m:))
+  NotInScope  h        -> PoisonExpr <$ (errors . scopeFails %= (ScopeError h:))
+  AmbiguousBinding h m -> PoisonExpr <$ (errors . scopeFails %= (AmbigBind h m :))
+  MixfixyVar m         -> if mfwOK then pure (MFExpr m)
     else PoisonExpr <$ (errors . scopeFails %= (ScopeError "(mixfix word cannot be a binding)" :))
-
-judgeLocalBind b = use thisMod >>= \modINm -> use wip >>= \wip' -> use pBinds >>= \binds -> judgeBind binds wip' b <&> \case
-  Core e ty -> Core (Var $ VQBind (mkQName modINm b)) ty -- no need to inline the body yet
-  t -> t
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
- getArgTVars args = use argVars >>= \argPerms -> let
-    nArgs = length args
-    mkArgVars = (\i -> TyVar i)
-   in map mkArgVars <$> (freshBiSubs nArgs >>= \argTVars -> zipWithM (\a v -> v <$ MV.write argPerms a v) args argTVars)
+ getArgTVars args = use argVars >>= \argPerms -> map TyVar
+   <$> (freshBiSubs (length args) >>= \argTVars -> zipWithM (\a v -> v <$ MV.write argPerms a v) args argTVars)
 
   -- App is the only place typechecking can fail
  biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
@@ -268,7 +269,7 @@ infer = let
         f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
       QVar q -> use thisMod >>= \modIName -> use externs >>= \e -> use openModules >>= \open ->
         handleExtern (readQParseExtern open modIName e (modName q) (unQName q))
-      MFExpr{}   -> PoisonExpr <$ (errors . scopeFails %= (AmbigBind "mixfix word":))
+      MFExpr{}   -> PoisonExpr <$ (errors . scopeFails %= (AmbigBind "mixfix word" [] :))
       core -> pure core
     in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
 

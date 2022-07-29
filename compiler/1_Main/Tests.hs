@@ -98,11 +98,13 @@ tI = S.sydTest $ do
 --    Main.sh ("imports/list.ii -p types --no-fuse -o" <> tmpFile)
 --    readFile tmpFile
 
-goldenList = S.goldenTextFile "golden/goldenList" $ do
+goldenList fName goldName = S.goldenTextFile goldName $ do
    tmpFile <- (</> "goldenList") <$> getCanonicalTemporaryDirectory
-   Main.sh ("imports/list.ii -p types --no-fuse -o" <> tmpFile)
+   Main.sh (fName <> " -p types --no-fuse -o" <> tmpFile)
    readFile tmpFile
-gold = (S.it "list.ii" goldenList)
+
+gold   = S.it "list.ii"   (goldenList "imports/list.ii"   "golden/goldenList")
+mutual = S.it "mutual.ii" (goldenList "imports/sumMul.ii" "golden/sumMul")
 
 g = S.sydTest gold
 s = S.sydTest $ do
@@ -110,3 +112,4 @@ s = S.sydTest $ do
   --sequence_ recTests
   caseTests
   gold
+  mutual

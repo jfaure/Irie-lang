@@ -4,12 +4,11 @@
   * switch to codeberg
 ## Top Priority
   * mu-roll nonEmptySubsequences
-  * λ Minimise normal forms on composition: Lambda encoding + lifting + sharing
   * improve type annotations
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals
-  * Instantiation & Generalisation is also beta-reduction and could be improved
   * fix default case branch
+  * improve pipelining of Main to stop once requested work is done
 ## Derivation
   * derive catamorphism
   * derive codata for left folds
@@ -38,44 +37,45 @@
   * THFieldCollision
   * Dependent normalisation
   * first class polymorphism
-## Functor modules and records
+## Functor modules and records (infer a module as a TT (Abs | Record) + ImportList , HNames , MixfixNames , LinSubs)
+  * Open v qualified (BindNames v fieldNames) ? fields => bindnames
+  * fields = unique bindNames , HName = path <.> field
+  * dependency graph
   * infer module like record: fix (fname v bindname) + need stack of Biunifications
-  * Module = `Fun | Record` (Term.(Cons{} or Abs _ Cons{}) , ImportList , HNames , MixfixNames , LinSubs)
   * BindName LName FName overlap & mixfix FNames
-  * BitSetMap upgrades for [0..64] and sequential names [n..m]
   * patterns in field assignments and top-level (patterns2TT)
   * imports allowed anywhere and treated as record
-  * Open v qualified (BindNames v fieldNames)
   * pattern assignments `(a , b) = (1 , 3)`
   * scoping of labelNames
   * use functions & records to manage names? (names , let-binds , etc..)
+  ? let-bindings as record
+## Beta-optimality:
+  * λ Minimise normal forms on composition: Lambda encoding + lifting + sharing
+  * Partial applications extracted and specialised for beta optimality
+  * Fns passed as args must have interpretable format
 ## Error messages
   * Warn nonsense type joins / infer a dependent type
   * Unsaturated (incl. lone) mfWords that aren't ambig-binds should error
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
-## Beta-optimality:
-  * Partial applications extracted and specialised for beta optimality
-  * Fns passed as args must have an extra interpretable format
-
 ## Unimportant
   * Simd
+  * Instantiation & Generalisation is also beta-reduction and could be improved
   * List comprehensions
   * cache version
   * languageDocumentation.md
-  * rm Tuple (after upgrading Bitsetmap for implicit consecutive ints)
-  * improve Generalise's handling of subbing a recvar with non-rec one (keep Recursive flag)
+  * BitSetMap upgrades for [0..64] and sequential names [n..m]: rm Tuple
   * Pattern PTT: custom unPat function to support any patterns
   * optimise instantiation
   * avoid generalising type annotations; directly make a THBi rather than tvars
   * tycon let-bindings addresses (f = let l = .. in .. => `f.l`)
   * error messages via prettyprinter Doc
   * mergeTypes indicate whether merge was noop
-  * check let-rec / mutual annotations
+  * check let-rec / mutual keyword (emit warning if not present)
   * make work module import loops
   * language server
   * optimize cached modules
-  * sh syntax `ls -lr` => `ls { l=True , r=True }` (Str2Label primitives?)
+  * sh syntax `ls -lr +x` => `ls { l=False , r=False , x=True }` (Str2Label primitives?)
   * engineer GlobalResolver to work concurrently
   * mergetyhead could indicate if merge was a noop (so bisub knows it has already seen that input)
   * Completion based on types (Type -> Bind)

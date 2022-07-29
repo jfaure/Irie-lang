@@ -30,8 +30,8 @@ _/=?_{ n5 } = ne
 --¬_   { a5 } = not
 --not_ { a5 } = not
 
---_and_{ a4 } = boolAND
---_or_ { a3 } = boolOR
+_and_{ a4 } = boolAND
+_or_ { a3 } = boolOR
 
 _->_ { r2 } = Arrow
 _<_  { a1 } = \f a => f a

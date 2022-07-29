@@ -40,10 +40,12 @@ convPat = \case
   PArg  i     -> ((i , Nothing) , Nothing)
   PPi (PiBound [i] ty) -> ((i , Just ty) , Nothing)
   PTyped i ty -> ((i , Just ty) , Nothing)
+
   PComp i pat -> ((i , Nothing) ,) . Just $ let
     thisArg = Var (VLocal i) --(if isTop then VBind i else VLocal i)
     in case pat of
 --  PLiteral l -> 
+    PWildCard -> \t -> App (Match [] (Just t)) [thisArg]
     PLabel l pats -> \t -> App (Match [(l , emptyBitSet , pats , t)] Nothing) [thisArg]
     PTuple  fields -> \t -> let
     -- Note the convention that negative numbers indicate tuple indexing

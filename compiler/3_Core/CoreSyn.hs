@@ -156,7 +156,7 @@ data Expr
 
 data Bind -- indexes in the bindmap
  = Queued
- | Guard  { mutuals :: [IName] , tvar :: IName } -- Inference in progress; possibly a stack of its dependencies
+ | Guard  { mutuals :: BitSet , tvar :: IName } -- Inference in progress; possibly a stack of its dependencies
  -- v Marker for an inferred type waiting for generalisation (waiting for all mutual binds to be inferred)
  | Mutual { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
 
@@ -176,7 +176,7 @@ data ExternVar
 
  | NotInScope       HName
  | NotOpened        HName HName
- | AmbiguousBinding HName -- same level binding overlap / overwrite
+ | AmbiguousBinding HName [(ModIName , IName)] -- same level binding overlap / overwrite
 
  | Importable ModuleIName IName -- Available externally but not obviously worth inlining
  | MixfixyVar Mixfixy           -- temp data fed to solvemixfixes

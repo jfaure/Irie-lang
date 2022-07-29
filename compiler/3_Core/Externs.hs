@@ -150,7 +150,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
       | Nothing      <- b -> MixfixyVar $ Mixfixy Nothing              (flattenMFMap mfWords)
       | Just [(m,i)] <- b -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
     (Nothing      , Nothing) -> NotInScope hNm
-    (Just many , _)          -> d_ many $ AmbiguousBinding hNm
+    (Just many , _)          -> AmbiguousBinding hNm many
 
   -- convert noScopeNames map to a vector (Map HName IName -> Vector HName)
   names :: Map HName Int -> V.Vector ExternVar

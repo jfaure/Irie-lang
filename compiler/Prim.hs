@@ -110,7 +110,7 @@ data TyInstrs
  | Arrow   -- : Set -> Set
 
 -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
-data Predicates  = EQCmp | NEQCmp | GECmp | GTCmp | LECmp | LTCmp
+data Predicates  = EQCmp | NEQCmp | GECmp | GTCmp | LECmp | LTCmp | AND | OR
 data IntInstrs   = Add | Sub | Mul | SDiv | SRem | Neg | AbsVal | IPow
 data NatInstrs   = UDiv | URem
 data BitInstrs   = And | Or | Not | Xor | ShL | ShR | BitRev | ByteSwap | CtPop | CtLZ | FShL | FShR | RotL | RotR
