@@ -1,4 +1,19 @@
-An empty Irie file is devoid of bindings, you can `import imports/prelude` to bring some cpu instructions and basic functions into scope. We'll come back to this, but for now let's think of Irie as a theorem proover.
+# Tutorial
+An empty Irie file is devoid of bindings, you can `import imports/prelude` to bring cpu instructions and basic functions into scope. We'll look at the contents of prelude later, but for now let's think of Irie as a theorem proover. There are only 3 type constructors, each with a corresponding term level syntax for construction and elimination
+* `->` function type
+* `[]` sum type
+* `{}` product type
+
+## Type Annotations
+Type annotations are NEVER required, Irie always infers types for itself before checking the validity of any type annotations. Still, explicit annotations are useful:
+1. Documentation: Type signatures are usually easier to understand than function definitions.
+2. Clarity: Irie will re-use type aliases which tends to reduce the printed size of types.
+3. Restricting to a subtype of the (very general) inferred type (eg the inferred type for matching unconditionally: `_ => something` matches every single label possible)
+
+## Functions
+Eg. `f x y = x y` Here we see abstraction (introduce a function `f x y =` taking 2 args x and y), and application (eliminate a function by giving it an argument(s) `x y` function x called with y as argument)
+
+The semantics for application is β-reduction: All uses of a functions argument as defined in its abstraction are replaced by the argument given to it. Thus `test = f inc 1` is `inc 1`
 
 ## Label (introduce a sum type):
 ```
@@ -13,17 +28,16 @@ two = S (S Z)
 
 It's worth noting that Irie will encode Nat as a machine Int, and not a linked list. Generally Irie goes to extreme lengths to optimally encode constructed data.
 
-## Type Annotations
-Type annotations are NEVER required, Irie always infers types for itself before checking the validity of any type annotations. However, Type annotations may be more restricive than inferred types (sometimes useful), and Irie will re-use type aliases since they help reduce the printed size of types and are often clearer
-
 ```
 three : Nat
 three = S (S (S Z))
 -- Or as inferred: three : µx.[Z | S x]
 ```
+
 µ introduces a recursive type. Subtyping means these types are equivalent: `µx.[Z | S x] <=> x & [Z | s x]`
 
 ## Match (eliminate a sum type):
+
 ```
 inc Z = S Z
 Bool = True | False
@@ -33,9 +47,11 @@ isTwo = \case
   _       => False -- '_' matches unconditionally
 
 ```
-due to the use of '_' the inferred domain for this function is every single label possible, so it's good practice to either not use the unconditional pattern match '_' or give a restricted type annotation.
+
+due to the use of '_' the inferred domain for this function is every single label imaginable, so it's good practice to either not use the unconditional pattern match '_' or give a restricted type annotation.
 
 ## Product types
+
 ```
 -- Optional type alias
 Rectangle = { x : Nat , y : Nat }

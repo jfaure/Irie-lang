@@ -1,15 +1,15 @@
 -- Core Language. compiler pipeline = Text >> Parse >> Core >> STG >> SSA
 {-# LANGUAGE TemplateHaskell #-}
 module CoreSyn (module CoreSyn , module QName , ModIName) where
-import Prim
-import QName
-import MixfixSyn
-import Control.Lens hiding (List)
-import qualified BitSetMap           as BSM
-import qualified Data.Vector         as V
-import qualified Data.Vector.Unboxed as VU
-import qualified Data.IntMap.Strict  as IM
-import qualified Data.Map.Strict as M
+import Control.Lens ( makeLenses )
+import MixfixSyn ( ModIName, QMFWord )
+import Prim ( Literal, PrimInstr, PrimType )
+import QName ( fieldBit, labelBit, maxIName, maxModuleName, mkQName, modName, moduleBits, qName2Key, unQName, QName(..) )
+import qualified BitSetMap as BSM ( BitSetMap )
+import qualified Data.IntMap.Strict as IM ( IntMap )
+import qualified Data.Map.Strict as M ( Map )
+import qualified Data.Vector as V ( Vector )
+import qualified Data.Vector.Unboxed as VU ( Vector )
 
 global_debug = False
 --global_debug = True
@@ -28,10 +28,9 @@ type LiName  = QName -- here the module name is used to indicate dups number
 type LiTable = V.Vector (Int , VName)
 
 data VName
- = VBind    IName -- name defined within this module (probably deprecate this)
+ = VArg     IName -- introduced by lambda abstractions
  | VQBind   QName -- qualified name (modulename << moduleBits | IName)
- | VArg     IName -- introduced by lambda abstractions
- | VExt     IName -- externs; primitives, mixfixwords and imported names
+ | VExt     IName -- forward references, primitives, imported names (incl mixfixwords)
  | VForeign HName -- opaque name resolved at linktime
 
 data Term -- β-reducable (possibly to a type)
@@ -91,7 +90,7 @@ data Pi = Pi [(IName , Type)] Type deriving Eq -- pi binder Π (x : T) → F T
 data Type
  = TyGround GroundType
 
- -- vv tvars are temporary artefacts of inference
+ -- vv tvars are temporary artifacts of inference
  | TyVar    Int -- generalizes to THBound if survives biunification and simplification
  | TyVars   BitSet GroundType
 

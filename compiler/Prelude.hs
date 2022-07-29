@@ -16,7 +16,6 @@ import Data.Align
 import Data.These
 import Text.Printf
 
-type Nat    = Int
 type BitSet = Integer
 type String = [Char]
 type IName  = Int
@@ -46,8 +45,8 @@ bitSet2IntList b = let
 intList2BitSet :: [Int] -> Integer
 intList2BitSet = foldl setBit 0
 
-argSort :: Int -> M.Map HName IName -> VU.Vector IName
-argSort n hmap = let v = VU.fromList (M.elems hmap) in VU.unsafeBackpermute v v
+argSort :: M.Map HName IName -> VU.Vector IName
+argSort hmap = let v = VU.fromList (M.elems hmap) in VU.unsafeBackpermute v v
 
 imap f l = zipWith f ([0..] :: [Int]) l
 

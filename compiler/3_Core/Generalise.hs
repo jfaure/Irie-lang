@@ -1,16 +1,16 @@
 -- Biunfication records constraints , generalisation makes sense of them
 module Generalise (generalise,) where
-import CoreSyn
-import CoreUtils
-import PrettyCore
-import TCState
-import BiUnify (instantiate)
-import Control.Lens
-import qualified Data.Vector.Mutable as MV
-import qualified Data.Vector as V
-import qualified Data.Text as T
-import qualified BitSetMap as BSM (elems , traverseWithKey)
-
+import BiUnify ( instantiate )
+import Control.Lens ( iforM_, use, (<<%=), (<<.=), (%=), (.=), over, Field1(_1), Field2(_2) )
+import CoreSyn ( global_debug, BiSub(BiSub), TyCon(THTuple, THArrow, THProduct, THSumTy), TyHead(THMu, THBound, THMuBound, THTyCon, THPrim, THExt, THTop, THBot, THBi),
+      Type(TyGround, TyVar, TyVars) )
+import CoreUtils ( invertMu, mergeTVar, mergeTypeList, mergeTypes, nullType, partitionType, startInvMu, testWrapper, tyLatticeEmpty )
+import PrettyCore ( number2CapLetter, prettyTyRaw )
+import TCState ( biEqui, bis, blen, coOccurs, externs, hasRecs, leakedVars, muWrap, quants, recVars, seenVars, GenEnv, GenEnvState(GenEnvState), TCEnv )
+import qualified BitSetMap as BSM ( elems, traverseWithKey )
+import qualified Data.Vector.Mutable as MV ( length, modify, read, replicate, write )
+import qualified Data.Text as T ( intercalate )
+import qualified Data.Vector as V ( Vector, (!), constructN, imapM, imapM_, length, take, toList, unsafeFreeze )
 -- Generalisation allows polymorphic types to be instantiated with fresh tvars on each use.
 -- This means some tvars are to be promoted to polymorphic vars
 -- However simplification removes (or unifies with another type) as many tvars as possible
@@ -45,7 +45,7 @@ import qualified BitSetMap as BSM (elems , traverseWithKey)
 generalise :: BitSet -> (Either IName Type) -> TCEnv s Type
 generalise escapees rawType = let
   showTys t        = T.intercalate " , " (prettyTyRaw <$> t)
-  traceCoocs nVars coocs = V.take nVars coocs `iforM` \i (p,m) -> traceM (show i <> ": + [" <> showTys p <> " ]; - [" <> showTys m <> "]")
+  traceCoocs nVars coocs = V.take nVars coocs `iforM_` \i (p,m) -> traceM (show i <> ": + [" <> showTys p <> " ]; - [" <> showTys m <> "]")
   in do
   when global_debug (traceM $ "Gen: " <> show rawType)
 
@@ -67,9 +67,6 @@ generalise escapees rawType = let
       done = runST $ MV.replicate coocLen (complement 0) >>= \biEquis ->
         subGen tvarSubs leaks analysed `evalStateT` (GenEnvState [] exts emptyBitSet emptyBitSet 0 0 biEquis)
 
-  traceM $ "escapees: " <> show (bitSet2IntList escapees)
-  traceM $ "leaked:   " <> show (bitSet2IntList leaks)
-
   (done <$) $ when global_debug $ do
     traceCoocs nVars occurs
     traceM $ "analysed: " <> prettyTyRaw analysed
@@ -84,9 +81,9 @@ generalise escapees rawType = let
 -- opposite co-occurence: v + T always occur together at +v,-v => drop v (unify with T)
 -- polar co-occurence:    v + w always occur together at +v,+w or at -v,-w => unify v with w
 -- ? unifying recursive and non-recursive vars (does the non-rec var need to be covariant ?)
-data VarSub = Remove | Escaped | Generalise | Recursive | SubVar Int | SubTy Type deriving Show
+data VarSub = Remove | Escaped | Generalise | {-Recursive |-} SubVar Int | SubTy Type deriving Show
 judgeVars :: Int -> BitSet -> BitSet -> BitSet -> V.Vector ([Type] , [Type]) -> V.Vector VarSub
-judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs -> let
+judgeVars nVars escapees _leaks recursives coocs = V.constructN nVars $ \prevSubs -> let
   collectCoocVs = \case { [] -> 0 ; x : xs -> foldr (.&.) x xs }
   v = V.length prevSubs -- next var to analyse
   vIsRec = recursives `testBit` v
@@ -99,7 +96,7 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
       Remove     -> TyGround []
       Escaped    -> self
       Generalise -> self
-      Recursive  -> self
+--    Recursive  -> self
       SubTy t    -> t
       SubVar x   -> subVar x
     in mergeTypeList pos $ [TyVars (complement prevTVs .&. tvars) [] , TyGround rest]
@@ -116,7 +113,7 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
     polarCooc :: Bool -> Int -> VarSub = \pos w -> let -- +: for ws in +v, look for coocs in +v,+w
       wCoocs = coocs V.! w
       wTypes = unzip $ partitionType . subPrevVars pos <$> (if pos then fst wCoocs else snd wCoocs)
-      cooc w (vs , vTs) (ws , wTs) = if (collectCoocVs (vs ++ ws) `clearBit` v) /= 0 then SubVar w else Generalise
+      cooc w (vs , _vTs) (ws , _wTs) = if (collectCoocVs (vs ++ ws) `clearBit` v) /= 0 then SubVar w else Generalise
       in {-d_ (v , w , pos) $-} if (null (fst wCoocs) || null (snd wCoocs))
       then Generalise -- don't merge with a polar (or recursive variable)
       else cooc w (if pos then (pVars , pTs) else (mVars , mTs)) wTypes
@@ -146,8 +143,8 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
 --    intersectTH th intersect
 
     -- use foldl' to stop once we've found a reason to either Remove or Sub the tvar
-    bestSub ok next = case ok of { Remove -> ok ;  SubTy t -> ok ; SubVar v -> ok ; ko -> next }
-    doRec s = if recursives `testBit` v then case s of { Generalise -> Recursive ; _ -> s} else s
+    bestSub ok next = case ok of { Remove -> ok ;  SubTy _ -> ok ; SubVar _ -> ok ; _ko -> next }
+--  doRec s = if recursives `testBit` v then case s of { Generalise -> Recursive ; _ -> s} else s
     in {-doRec $-} foldl' bestSub (vPvM `bestSub` vPvMRec) (vPwP ++ vMwM) `bestSub` vTs
 
 -- Final step; use VarSubs to eliminate all (unleaked) TVars
@@ -180,10 +177,10 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
   -- attempt to roll outer layers of t into a µ type contained within
 --rollMu t mwrap = pure t -- disable rollMu
   rollMu t mwrap = let
-    tryInv x@(recBranch , m , mt , invMu) = when global_debug (traceM $ "roll µ? " <> prettyTyRaw t) *>
+    tryInv (recBranch , m , mt , invMu) = when global_debug (traceM $ "roll µ? " <> prettyTyRaw t) *>
       case (\inv -> testWrapper inv recBranch t) <$> invMu of
         [] -> pure Nothing
-        xs@(x:xss) -> let
+        (x:xss) -> let
           doWrap x = case x of -- Left = need to test more wraps ; Right Bool = unrolling OK | KO
             Left invMuNext -> Nothing <$ (muWrap .= [(error "recBranch not set" , m , mt , [invMuNext])])
             Right False    -> pure Nothing
@@ -209,11 +206,11 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
       mT = rmVars (intList2BitSet vs) t
       retTy = foldl (\ty m -> TyGround [THMu m ty]) mT vs
       in retTy <$ case vs of
-        m : ms -> let invMu = invertMu (startInvMu m) mT in (muWrap .= [(_ , m , mT , invMu)])
+        m : _ms -> let invMu = invertMu (startInvMu m) mT in (muWrap .= [(_ , m , mT , invMu)]) -- TODO why are we ignoring ms
         _ -> pure ()
     in addMus (bitSet2IntList (vs .&. wrappedRecs)) t >>= \case
       -- prevent stacking µa.µa. after mu-rolling
-      TyGround [THMu m t@(TyGround ts)] | Just (THMu n ty) <- find (\case {THMu n _ -> n == m ; _ -> False}) ts
+      TyGround [THMu m t@(TyGround ts)] | Just (THMu _n ty) <- find (\case {THMu n _ -> n == m ; _ -> False}) ts
         -> let  invMu = invertMu (startInvMu m) ty in t <$ (muWrap .= [(_ , m , t , invMu)])
       t -> pure t
 
@@ -232,10 +229,11 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
         else checkRec vs recs (mergeTypeList pos (grounds ++ vars))
     TyVar v    -> (seenVars %= (`setBit` v)) *> doVar pos v -- >>= checkRec (0 `setBit` v)
     TyGround g -> mergeTypeList pos <$> finaliseTyHead pos `mapM` g
+    x -> error (show x) -- TyPi TySi TyAlias TyTerm
 
   -- Indicate which tycon branch a mu-type came from
-  goGuarded oldRecs pos branch guardedT = let
-    updateMu recBranch = \case { []->[] ; [(lastI,m,mT,invC)] -> [(recBranch,m,mT,invC)] ; _ -> error ">1 mu branch" }
+  goGuarded _oldRecs pos branch guardedT = let
+    updateMu recBranch = \case { []->[] ; [(_lastI,m,mT,invC)] -> [(recBranch,m,mT,invC)] ; _ -> error ">1 mu branch" }
     in do
     t   <- goType pos guardedT
     mus <- muWrap <<.= []

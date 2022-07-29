@@ -1,34 +1,35 @@
--- : see "Algebraic subtyping" by Stephen Dolan https://www.cl.cam.ac.uk/~sd601/thesis.pdf
--- * Identify recursive and mutual bindings
+-- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
+-- * replace forward references (Externs) with their name and identify recursive and mutual bindings
 module Infer (judgeModule) where
-import Prim
-import BiUnify
+import Prim ( PrimInstr(MkPAp) )
+import BiUnify ( bisub )
 import qualified ParseSyntax as P
 import CoreSyn as C
-import TTCalculus
+import CoreUtils ( isPoisonExpr, mergeTVar, mergeTypeList, mergeTypes, mkTyArrow, prependArrowArgsTy, tyExpr, tyOfExpr )
+import TTCalculus ( ttApp )
 import Errors
-import CoreUtils
-import TypeCheck
+import TypeCheck ( check )
 import TCState
-import DesugarParse
-import Externs
-import Mixfix
-import Generalise
+import DesugarParse ( matches2TT, patterns2TT )
+import Externs ( typeOfLit, readField, readLabel, readParseExtern, readQParseExtern )
+import Mixfix ( solveMixfixes )
+import Generalise ( generalise )
 
-import Control.Lens
-import Data.List (unzip4, zipWith3 , nub)
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
-import qualified Data.Map.Strict as M
---import qualified Data.IntMap as IM
-import qualified BitSetMap as BSM
+import Control.Lens ( (^.), use, (<<%=), (<<.=), (%=), (.=), Field2(_2) )
+import Data.List ( unzip4, zipWith3 )
+import qualified Data.Vector as V ( Vector, (!), fromList, fromListN, unsafeFreeze )
+import qualified Data.Vector.Mutable as MV ( MVector, modify, new, read, replicate, write )
+import qualified BitSetMap as BSM ( fromList, fromListWith, singleton )
 
-judgeModule nBinds pm importedModules modIName nArgs hNames exts source = let
+judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
   modName = pm ^. P.moduleName
   nArgs   = pm ^. P.parseDetails . P.nArgs
-  nFields = M.size (pm ^. P.parseDetails . P.fields)
-  nLabels = M.size (pm ^. P.parseDetails . P.labels)
   pBinds' = V.fromListN nBinds (pm ^. P.bindings)
+--nFields = M.size (pm ^. P.parseDetails . P.fields)
+--nLabels = M.size (pm ^. P.parseDetails . P.labels)
+--fromRevListN n l = V.create $ do
+--  v <- MV.new n
+--  v <$ zipWithM (\i e -> MV.write v i e) [n-1,n-2..0] l
   in runST $ do
     wip'      <- MV.replicate nBinds Queued
     bis'      <- MV.new 64
@@ -39,11 +40,10 @@ judgeModule nBinds pm importedModules modIName nArgs hNames exts source = let
       , _externs  = exts
       , _thisMod  = modIName
 
-      , _wip          = wip'
-      , _errors       = emptyErrors
+      , _wip      = wip'
+      , _errors   = emptyErrors
 
       , _openModules = importedModules
-      , _muInstances = mempty
       , _argVars  = argVars'
       , _bindWIP  = (0 , False)
       , _tmpFails = []
@@ -54,24 +54,25 @@ judgeModule nBinds pm importedModules modIName nArgs hNames exts source = let
       , _deadVars    = emptyBitSet
 
       , _recVars     = emptyBitSet
-      , _coOccurs = _
+      , _coOccurs    = _
 --    , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
 --    , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
     wip''    <- V.unsafeFreeze (st ^. wip)
-    pure (JudgedModule modIName (either identity identity modName) nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
+    pure (JudgedModule modIName modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , st ^. errors) --TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
+-- uninline expr and prefer qualified binding
 judgeLocalBind b = use thisMod >>= \modINm -> use wip >>= \wip' -> use pBinds >>= \binds -> judgeBind binds wip' b <&> \case
-  Core e ty -> Core (Var $ VQBind (mkQName modINm b)) ty -- no need to inline the body yet
+  Core _ ty -> Core (Var $ VQBind (mkQName modINm b)) ty -- no need to inline the body yet
   t -> t
 
 -- inference >> generalisation >> type checking of annotations
 -- This stacks inference of forward references and handles mutual binds
 judgeBind :: V.Vector P.FnDef -> MV.MVector s Bind -> IName -> TCEnv s Expr
 judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' ->-} (wip' `MV.read` bindINm) >>= \case
-  BindOK isRec e -> pure e
-  Mutual e freeVs isRec tvar tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)) -- pure e
+  BindOK _isRec e -> pure e
+  Mutual _e _freeVs _isRec tvar _tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)) -- don't inline the expr
 
   Guard mutuals tvar -> do
     this <- fst <$> use bindWIP
@@ -96,7 +97,7 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
       expr <- infer (P.Abs abs)
       isRec <- snd <$> use bindWIP
       bindWIP .= svwip
-      Guard ms tVar <- MV.read wip' bindINm
+      Guard ms _tVar <- MV.read wip' bindINm
       pure (idx , expr , ms , isRec)
 
     -- get the Maybe type annotation, and generalise it if Abs, since it contains tvars
@@ -122,6 +123,7 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
       leakedVars  .= svLeaked
       escapedVars .= svEscapes
       deadVars %= (.|. (l .&. complement svEscapes))
+  b -> error (show b)
 
 generaliseBinds :: Int -> [Int] -> TCEnv s [Expr]
 generaliseBinds i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m >>= \case
@@ -130,17 +132,16 @@ generaliseBinds i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m
     inferred <- case naiveExpr of
       Core expr coreTy -> Core expr <$> do -- generalise the type
         (ty , free) <- case expr of
-          Abs ars free x fnTy -> pure (coreTy , free)
+          Abs _ars free _x _fnTy -> pure (coreTy , free) -- ? TODO why not free .|. freeVs
           _ -> pure (coreTy , freeVs)
         -- rec | mutual: if this bind : τ was used within itself , something bisubed with -τ
-        use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
+        _cast <- use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
           TyGround [] -> BiEQ <$ MV.write v recTVar (BiSub ty (TyGround []))
-          t           -> bisub ty (TyVar recTVar) -- ! this binding is recursive | mutual
+          _t          -> bisub ty (TyVar recTVar) -- ! this binding is recursive | mutual
         bl <- use blen
         when global_debug $ use bis >>= \b -> [0..bl -1] `forM_` \i ->
           MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
-        freeArgTVars <- use argVars >>= \argPerms ->
-          bitSet2IntList freeVs `forM` \i -> MV.read argPerms i
+--      freeArgTVars <- use argVars >>= \argPerms -> bitSet2IntList freeVs `forM` \i -> MV.read argPerms i
         escaped <- use escapedVars
         generalise escaped (Left recTVar)
           <* when (free == 0 && null ms) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
@@ -154,7 +155,8 @@ generaliseBinds i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m
       (Just ann , Core e inferredTy) -> Core e <$> checkAnnotation ann inferredTy
       _                              -> pure inferred
     done <$ MV.write wip' m (BindOK isRec done)
-  BindOK r e -> pure e -- An already handled mutual
+  BindOK _r e -> pure e -- An already handled mutual
+  b -> error (show b)
 
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
 -- ! we may have inferred some missing information in type holes
@@ -175,6 +177,7 @@ handleExtern = let mfwOK = True in \case
   AmbiguousBinding h m -> PoisonExpr <$ (errors . scopeFails %= (AmbigBind h m :))
   MixfixyVar m         -> if mfwOK then pure (MFExpr m)
     else PoisonExpr <$ (errors . scopeFails %= (ScopeError "(mixfix word cannot be a binding)" :))
+  x -> error (show x)
 
 infer :: P.TT -> TCEnv s Expr
 infer = let
@@ -185,7 +188,7 @@ infer = let
  biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
    (, TyVar retV) <$> bisub fTy (prependArrowArgsTy argTys (TyVar retV))
 
- retCast rc tt = case rc of { BiEQ -> tt ; c -> case tt of { Core f ty -> Core (Cast c f) ty } }
+ retCast rc tt = case rc of { BiEQ -> tt ; c -> case tt of { Core f ty -> Core (Cast c f) ty ; x -> error (show x) } }
 
  checkFails srcOff x = use tmpFails >>= \case
    [] -> pure x
@@ -195,17 +198,17 @@ infer = let
    castRet :: BiCast -> ([Term] -> BiCast -> [Term]) -> Expr -> Expr
    castRet biret castArgs = \case
      Core (App f args) retTy -> case biret of
-       CastApp ac (Just pap) rc -> -- partial application
+       CastApp _ac (Just pap) rc -> -- partial application TODO use argcasts
          retCast rc (Core (App (Instr (MkPAp (length pap))) (f : castArgs args biret)) retTy)
-       CastApp ac Nothing    rc -> retCast rc (Core (App f (castArgs args biret)) retTy)
+       CastApp _ac Nothing    rc -> retCast rc (Core (App f (castArgs args biret)) retTy)
        _ -> Core (App f args) retTy
      t -> t
    -- TODO This will let slip some bieq casts on function arguments
    castArg (a :: Term) = \case { BiEQ -> a ; CastApp [BiEQ] Nothing BiEQ -> a ; cast -> Cast cast a }
    castArgs args' cast = case cast of
-     CastApp ac maybePap rc -> zipWith castArg args' (ac ++ repeat BiEQ) -- supplement paps with bieqs
+     CastApp ac _maybePap _rc -> zipWith castArg args' (ac ++ repeat BiEQ)
      BiEQ -> args'
-     x    -> _
+     _    -> _
 
    checkRec e@(Core (App (Var (VQBind q)) args) t) = use thisMod >>= \mod -> use bindWIP <&> \b ->
      if modName q == mod && unQName q == fst b && snd b then Core (RecApp (Var (VQBind q)) args) t else e
@@ -223,7 +226,7 @@ infer = let
  judgeLabel qNameL exprs = let
    labTy = TyGround [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
 -- in Core (Label qNameL exprs) (TyGround [THTyCon $ THSumTy $ IM.singleton (qName2Key qNameL) labTy])
-   es = (\(Core t ty) -> t) <$> exprs
+   es = (\(Core t _ty) -> t) <$> exprs
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  in \case
@@ -236,6 +239,7 @@ infer = let
       t    -> pure t
     P.VExtern i    -> use thisMod >>= \mod -> use externs >>= \e -> use openModules >>= \open ->
       handleExtern (readParseExtern open mod e i)
+    _ -> _
 
   P.Foreign i tt   -> infer tt <&> \case
     PoisonExpr -> PoisonExpr
@@ -245,9 +249,9 @@ infer = let
     ty         -> Core (Var (VForeign i)) (fromMaybe (error $ "not a type: " <> show ty) (tyExpr ty))
 
   -- TODO shouldn't be tyAnn here if it is ignored
-  P.Abs (P.FnDef hNm letRecT mf freeVars matches tyAnn) -> let
+  P.Abs (P.FnDef _hNm _letRecT _mf freeVars matches _tyAnn) -> let
     (argsAndTys , tt) = matches2TT matches
-    (args , argAnns)  = unzip argsAndTys
+    (args , _argAnns)  = unzip argsAndTys
     in do
     argTVars <- getArgTVars args
     infer tt <&> \case
@@ -263,9 +267,10 @@ infer = let
   P.App fTT argsTT -> infer fTT >>= \f -> (infer `mapM` argsTT) >>= inferApp (-1) f
   P.Juxt srcOff juxt -> let
     inferExprApp srcOff = \case
-      ExprApp fE [] -> panic "impossible: empty expr App"
+      ExprApp _fE [] -> panic "impossible: empty expr App"
       ExprApp fE argsE -> inferExprApp srcOff fE >>= \case
-        Core (Label iLabel ars) _ -> (inferExprApp srcOff `mapM` argsE) <&> judgeLabel iLabel
+        Core (Label iLabel []) _ -> (inferExprApp srcOff `mapM` argsE) <&> judgeLabel iLabel
+        Core (Label _ ars) _ -> error (show ars) -- TODO why are we ignoring label args
         f -> (inferExprApp srcOff `mapM`  argsE) >>= inferApp srcOff f
       QVar q -> use thisMod >>= \modIName -> use externs >>= \e -> use openModules >>= \open ->
         handleExtern (readQParseExtern open modIName e (modName q) (unQName q))
@@ -299,31 +304,31 @@ infer = let
       mkExpected :: Type -> Type
       mkExpected dest = foldr (\fName ty -> TyGround [THTyCon $ THProduct (BSM.singleton (qName2Key fName) ty)]) dest fields
     in (>>= checkFails o) $ case record of
-    e@(Core f gotTy) -> case maybeSet of
+    (Core f gotTy) -> case maybeSet of
       P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (TyVar i))
         <&> \cast -> Core (TTLens (Cast cast f) fields LensGet) (TyVar i)
 
       P.LensSet x  -> infer x <&> \case -- LeafTy -> Record -> Record & { path : LeafTy }
         -- + is right for mergeTypes since this is output
-        new@(Core newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (mergeTypes True gotTy (mkExpected newLeafTy))
+        new@(Core _newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (mergeTypes True gotTy (mkExpected newLeafTy))
         _ -> PoisonExpr
 
       P.LensOver x -> infer x >>= \fn -> do
-         let [singleField] = fields
          (ac , rc , outT , rT) <- freshBiSubs 3 >>= \[inI , outI , rI] -> let
            inT = TyVar inI ; outT = TyVar outI
            in do -- need 3 fresh TVars since we cannot assume anything about the "fn" or the "record"
            argCast <- bisub (tyOfExpr fn) (TyGround [THTyCon $ THArrow [inT] outT]) <&> \case
-             CastApp [argCast] pap BiEQ  -> argCast -- pap ?
-             BiEQ                        -> BiEQ
+             CastApp [argCast] _pap BiEQ  -> argCast -- pap ?
+             BiEQ                         -> BiEQ
+             x -> error (show x)
            -- note. the typesystem does not atm support quantifying over field presences
            rCast <- bisub recordTy (mergeTVar rI (mkExpected inT))
            pure (argCast , rCast , outT , rI)
 
          let lensOverCast = case rc of
-               CastProduct drops [(asmIdx,cast)] -> Cast (CastOver asmIdx ac fn outT) f
+               CastProduct _drops [(asmIdx , _cast)] -> Cast (CastOver asmIdx ac fn outT) f
                BiEQ -> f
-               x -> error $ "expected CastProduct: " <> show rc
+               _ -> error $ "expected CastProduct: " <> show rc
 
          pure $ Core lensOverCast (mergeTVar rT (mkExpected outT))
 
@@ -336,7 +341,7 @@ infer = let
   P.Gadt alts -> use externs >>= \ext -> do
     let getTy = fromMaybe (TyGround [THPoison]) . tyExpr
         mkLabelCol a b = TyGround [THLabelCollision a b]
-    sumArgsMap <- alts `forM` \(l , tyParams , gadtSig@Nothing) -> do
+    sumArgsMap <- alts `forM` \(l , tyParams , _gadtSig@Nothing) -> do
       params <- tyParams `forM` \t -> getTy <$> infer t
       pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
     pure $ Ty $ TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap]
@@ -344,9 +349,9 @@ infer = let
   P.Match alts catchAll -> use externs >>= \ext -> let
     -- * desugar all patterns in the alt fns (whose args are parameters of the label)
     -- * ret type is a join of all the labels
-    desugarFns = \(lname , free , pats , tt) -> let
+    desugarFns = \(lname , _free , pats , tt) -> let
       (argsAndTys , e) = patterns2TT pats tt
-      (args , argAnns) = unzip argsAndTys
+      (args , _argAnns) = unzip argsAndTys
       in (qName2Key (readLabel ext lname) , args , _ , e)
     (labels , args , _ , exprs) = unzip4 $ (desugarFns <$> alts)
     in do
@@ -362,7 +367,8 @@ infer = let
         argAndTys  = zipWith zip args argTVars
         altsMap = let
           addAbs ty (Core t _) args = Core (Abs args 0 t ty) ty
-          addAbs ty PoisonExpr _ = PoisonExpr
+          addAbs _ty PoisonExpr _ = PoisonExpr
+          addAbs _ty e _ = error (show e)
           in BSM.fromList $ zip labels (zipWith3 addAbs retTys alts argAndTys)
     pure $ if isPoisonExpr `any` alts then PoisonExpr else
       Core (Match retTy altsMap def) matchTy

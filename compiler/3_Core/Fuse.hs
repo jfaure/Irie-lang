@@ -87,8 +87,8 @@ simpleBind bindN = use cBinds >>= \cb -> MV.read cb bindN >>= \b -> do
   svIS <- inlineStack <<.= emptyBitSet
   svHS <- hasSpecs <<.= emptyBitSet
   self .= bindN
-  -- VBinds are not present in the inferred Syn; they are thus only introduced here
-  MV.write cb bindN (BindOpt (complement 0) emptyBitSet (Core (Var (VBind bindN)) tyBot)) -- recursion guard
+
+  MV.write cb bindN (BindOpt (complement 0) emptyBitSet (Core (Var (VQBind (mkQName mod bindN))) tyBot)) -- used to generate VBind here
 
   new' <- case b of
     BindOpt nA bs body -> (nApps .= nA) *> pure body
@@ -286,7 +286,7 @@ simpleApp' isRec f args = (nApps %= (1+)) *> case f of
     hasSpecArgs = not (null args) && any isSpecArg args
     in case fn of
 --  Abs argDefs' free body ty -> foldAbs argDefs' free body ty args
-    Var (VBind i ) | hasSpecArgs -> use thisMod >>= \m -> mkSpecialisation (Left (mkQName m i)) args
+--  Var (VBind i ) | hasSpecArgs -> use thisMod >>= \m -> mkSpecialisation (Left (mkQName m i)) args
     Var (VQBind q) | hasSpecArgs -> mkSpecialisation (Left q) args
     Spec i -> (specStack <<%= (`setBit` i)) >>= \sp -> use thisSpec >>= \this -> let
       testRec = when (this == i) (recSpecs %= (`setBit` i))

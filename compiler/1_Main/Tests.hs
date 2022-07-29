@@ -79,7 +79,7 @@ testImports = do
   Main.sh (fp2 <> " -p types")
 
 testPhantomLabel = do
-  SP.system "mv .irie-obj/* /tmp/"
+  _ <- SP.system "mv .irie-obj/* /tmp/"
   (fp1 , h1) <- SIO.openTempFile "/tmp/" "m1"
   hPutStr h1 $ T.unlines ["lol (Cons x xs) = x" , "g = Cons"]
   SIO.hClose h1

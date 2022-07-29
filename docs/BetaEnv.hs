@@ -1,13 +1,5 @@
 -- # β-reduction of higher order functions can have exponential amounts of sharing
 -- To share computations inside lambdas (partial applications); ! Do not gratuitously duplicate applications
-{-# Language TemplateHaskell #-}
-module BetaEnv where
-{-
-import CoreSyn
-import ShowCore()
-import qualified Data.Vector.Mutable as MV
-import qualified Data.Vector as V
-import Control.Lens
 
 -- # Linearise CoreSyn => App Module (Bindings <> Externs)
 -- Convert all Bindings to Args (LiNames): VLocal | VBind | VExtern => LiName

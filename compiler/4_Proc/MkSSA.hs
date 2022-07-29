@@ -153,9 +153,9 @@ cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case
 cgExpr :: Term -> CGEnv s Expr
 cgExpr t = let
   cgName = \case
-    VQBind q -> gets thisMod >>= \m -> if modName q == m then cgName (VBind (unQName q)) else error $ "extern" <> show q --Extern b
+    VQBind q -> gets thisMod <&> \m -> if modName q == m then ECallable (LocalFn (unQName q)) else error $ "extern" <> show q --Extern b
 --  VBind b  -> pure (Extern b) -- fnDecl <$> cgBind b
-    VBind b  -> pure (ECallable (LocalFn b)) --cgBind b >>= \case
+--  VBind b  -> pure (ECallable (LocalFn b)) --cgBind b >>= \case
     VArg  i  -> gets argTable >>= \at -> fst <$> MV.read at i
     x -> error $ "cgName: " <> show x
   in case t of
@@ -208,7 +208,7 @@ cgApp f ars = let
 --RecMatch alts d | [a] <- ars -> cgExpr a >>= \scrut ->
 --  emitMatchApp scrut alts d
   Instr i -> Call (Prim i) <$> (cgExpr `mapM` ars)
-  Var (VBind i)  -> cgVarApp i
+--Var (VBind i)  -> cgVarApp i
   Var (VQBind q) -> gets thisMod >>= \m -> if m == modName q then cgVarApp (unQName q) else error $ "extern qname: " <> show q
   x -> error $ show x
 

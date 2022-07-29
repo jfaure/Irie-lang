@@ -5,10 +5,9 @@
 module Builtins (primBinds , primMap , typeOfLit) where
 import Prim
 import CoreSyn
---import CoreUtils
+import qualified Data.Map.Strict as M ( (!?), fromList )
+import qualified Data.Vector as V ( Vector, fromList )
 import qualified BitSetMap as BSM
-import qualified Data.Map.Strict as M
-import qualified Data.Vector as V
 
 mkExtTy x = [THExt x]
 getPrimIdx = (primMap M.!?)

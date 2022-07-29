@@ -1,7 +1,7 @@
 -- Command line arguments
 module CmdLine (CmdLine(..) , parseCmdLine, defaultCmdLine) where
 import Options.Applicative
-import Data.Text as T
+import qualified Data.Text as T ( words, isInfixOf, intercalate, split )
 
 data CmdLine = CmdLine
   { printPass      :: [Text]
@@ -42,7 +42,7 @@ printPasses = T.words "args source parseTree types core simple ssa C" :: [Text]
 
 parsePrintPass :: ReadM [Text]
 parsePrintPass = eitherReader $ \str -> let
-  passesStr = split (==',') (toS str)
+  passesStr = T.split (==',') (toS str)
   checkAmbiguous s = case Prelude.filter (T.isInfixOf s) printPasses of
     []  -> Left $ "Unrecognized print pass: '" <> str <> "'"
     [p] -> Right p

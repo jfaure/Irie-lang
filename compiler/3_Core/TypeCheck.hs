@@ -22,12 +22,12 @@ check' handleExtern es (TyGround inferred) (TyGround gotTy) = let
   readExt x = case readPrimExtern es x of
     c@Core{} -> error $ "type expected, got: " <> show c
     Ty t -> t
-  dbgCheck inferred gotTy = identity --trace (prettyTyRaw (TyGround [inferred]) <> " <?: " <> prettyTyRaw (TyGround [gotTy])) 
+    x -> error (show x)
   checkAtomic :: (ExternVar -> TCEnv s Expr) -> TyHead -> TyHead -> TCEnv s Bool
   checkAtomic handleExtern inferred gotTy = let
     check'' = check' handleExtern es
     end x = pure $ if x then True else d_ (inferred , gotTy) False
-    in case dbgCheck inferred gotTy (inferred , gotTy) of
+    in case (inferred , gotTy) of --trace (prettyTyRaw (TyGround [inferred]) <> " <?: " <> prettyTyRaw (TyGround [gotTy])) 
     (_ , THTop) -> end True
     (THBot , _) -> end True
     (THExt i , t)  -> check'' (readExt i) (TyGround [t])
@@ -58,21 +58,21 @@ check' handleExtern es (TyGround inferred) (TyGround gotTy) = let
       _ -> end False
 
     -- for cases that reduce to `x <:? ⊤`
-    (a , THMu m b) -> check'' (TyGround [a]) b
-    (THMu m a , b) -> check'' a (TyGround [b])
-    x -> end False
+    (a , THMu _ b) -> check'' (TyGround [a]) b
+    (THMu _ a , b) -> check'' a (TyGround [b])
+    _ -> end False
   in case inferred of
   []   -> pure False
   tys  -> allM (\t -> anyM (checkAtomic handleExtern t) gotTy) $ tys
 
-check' handleExtern es t1 (TyGround [THTop]) = pure True
+check' _handleExtern _es _t1 (TyGround [THTop]) = pure True
 check' handleExtern es t1@(TyIndexed{}) t2 = normaliseType handleExtern mempty t1 >>= \case
   loop@TyIndexed{} -> error $ "cannot normalise TyIndexed: " <> show loop
   unaliased        -> check' handleExtern es unaliased t2
 --check' handleExtern es t1 t2@(TyAlias{}) = normaliseType handleExtern mempty t2 >>= \unaliased ->
 --  check' handleExtern es t1 unaliased
 
-check' handleExtern es t1 t2 = error $ show t1 <> "\n" <> show t2
+check' _handleExtern _es t1 t2 = error $ show t1 <> "\n" <> show t2
 
 {-
 alignMu :: Int -> TyHead -> TyHead -> TyHead -> Bool

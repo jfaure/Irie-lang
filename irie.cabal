@@ -21,7 +21,16 @@ source-repository head
   location: https://github.com/jfaure/irie
 
 executable irie-exe
-  ghc-options: -threaded -O3 -Wno-deprecations -fdefer-typed-holes -Wno-typed-holes -fdefer-typed-holes -Wno-typed-holes -Wunused-imports
+  ghc-options: -threaded -O3 -Wno-deprecations -fdefer-typed-holes -Wno-typed-holes -fdefer-typed-holes -Wno-typed-holes
+    -Wunused-imports 
+    -Wincomplete-patterns
+    -Wincomplete-record-updates
+    -Wtabs
+    -Wunused-binds
+    -Wunused-matches
+    -Wunused-do-bind
+    -Wwrong-do-bind
+--  -Wname-shadowing:
   mixins: 
       base (Prelude as BasePrelude)
     , base hiding (Prelude)
@@ -38,8 +47,6 @@ executable irie-exe
       DesugarParse
       Parser
       ParseSyntax
-      Beta
-      BetaEnv
       BiUnify
       Builtins
       CoreBinary
@@ -54,7 +61,6 @@ executable irie-exe
       Mixfix
       MixfixSyn
       PrettyCore
-      Record
       ShowCore
       SimplifyInstr
       TCState

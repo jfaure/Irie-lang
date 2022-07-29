@@ -1,12 +1,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS  -funbox-strict-fields #-}
-module ParseSyntax where -- import qualified as PSyn
-import Prim
-import QName
-import MixfixSyn
-import qualified Data.Map.Strict as M
-import Control.Lens
-import Text.Megaparsec.Pos
+module ParseSyntax where
+import Prim ( Literal )
+import QName ( QName )
+import MixfixSyn ( MFWord, MixfixDef )
+import Control.Lens ( (^.), makeLenses )
+import Text.Megaparsec.Pos ( Pos )
+import qualified Data.Map.Strict as M ( Map )
 
 type FName        = IName -- record  fields
 type LName        = IName -- sumtype labels
@@ -16,19 +16,16 @@ type NameMap      = M.Map HName IName
 type SourceOffset = Int
 
 data Module = Module { -- Contents of a File (Module = Function : _ → Record | Record)
-   _moduleName  :: Either HName HName -- Left is file_name , Right read from a `module Nm .. =` declaration
+   _moduleName  :: HName -- the fileName
 
- , _functor     :: Maybe FunctorModule
  , _imports     :: [HName] -- all imports used at any scope
- , _bindings    :: [FnDef] -- hNameBinds
-
- , _liNames     :: [TTName] -- TTNames may be duplicated
+ , _bindings    :: [FnDef] -- hNameBinds (! these are listed in reverse)
 
  , _parseDetails :: ParseDetails
 }
 
 -- args and signature for the module (return type must be a record)
-data FunctorModule = FunctorModule [Pattern] (Maybe TT) SourceOffset
+-- data FunctorModule = FunctorModule [Pattern] (Maybe TT) SourceOffset
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
@@ -43,7 +40,6 @@ data ParseDetails = ParseDetails {
  , _fields         :: NameMap
  , _labels         :: NameMap
  , _newLines       :: [Int]
- , _liCount        :: Int
 }
 data FnDef = FnDef {
    fnNm         :: HName
@@ -51,15 +47,16 @@ data FnDef = FnDef {
  , fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
  , fnFreeVars   :: FreeVars
  , fnMatches    :: NonEmpty FnMatch
- , fnSig        :: (Maybe TT)
+ , fnSig        :: Maybe TT
 }
 data FnMatch = FnMatch [Pattern] TT
 data LetRecT = Let | Rec | LetOrRec
 
 data TTName
- = VBind   IName
- | VLocal  IName
- | VExtern IName
+ = VLocal  IName
+ | VBind   IName | VExtern IName -- TODO rm both since don't understand scopes
+ | VToResolve QName -- scope (let-bind / record) found in
+
 data LensOp a = LensGet | LensSet a | LensOver a deriving Show
 data DoStmt  = Sequence TT | Bind IName TT -- | Let
 data TT -- Type | Term; Parser Expressions (types and terms are syntactically equivalent)

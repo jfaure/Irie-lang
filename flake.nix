@@ -20,7 +20,6 @@
     overlays = [ haskell-nix.overlay ];
     };
   nixpkgsFor' = system: import nixpkgs { inherit system; };
-# fourmoluFor = system: (nixpkgsFor system).haskell-nix.tool "ghc921" "fourmolu" { };
   projectFor = system: let
     deferPluginErrors = true;
     pkgs = nixpkgsFor system;
@@ -37,17 +36,7 @@
 #       withHoogle = true;
 #       tools.haskell-language-server = { };
         exactDeps = true;
-        # the ones from Nixpkgs are cached reliably. eventually build these with haskell.nix.
-        nativeBuildInputs = [
-          pkgs.gnumake
-          pkgs.cabal-install
-#         pkgs.hlint
-#         (fourmoluFor system)
-#         pkgs.nixpkgs-fmt
-#         pkgs.haskellPackages.cabal-fmt
-#         pkgs.haskellPackages.apply-refact
-#         pkgs.fd
-          ];
+        nativeBuildInputs = [ pkgs.gnumake pkgs.cabal-install ];
         };
       };
   formatCheckFor = system: let pkgs = nixpkgsFor system; in

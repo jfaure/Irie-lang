@@ -4,7 +4,7 @@ import Prelude hiding (sourceLine)
 import MixfixSyn
 import CoreSyn
 import ShowCore()
-import qualified Data.List as DL
+import qualified Data.List as DL ( length, init, last, span )
 import Text.Megaparsec
 import Control.Monad (fail)
 

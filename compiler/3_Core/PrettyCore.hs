@@ -203,7 +203,7 @@ pTerm = let
   parensApp f = case f of { App{} -> parens ; _ -> identity }
   pVName = \case
     VArg i     -> annotate (AArg i)       ""
-    VBind i    -> "VBind" <> viaShow i -- error $ "not a QBind: " <> show i --annotate (ABindName i)  ""
+--  VBind i    -> "VBind" <> viaShow i -- error $ "not a QBind: " <> show i --annotate (ABindName i)  ""
     VQBind q   -> annotate (AQBindName q) ""
     VExt i     -> "E" <> viaShow i -- <> dquotes (toS $ (srcExtNames bindSrc) V.! i)
     VForeign i -> "foreign " <> viaShow i

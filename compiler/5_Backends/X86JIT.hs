@@ -1,13 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable, ForeignFunctionInterface, GeneralizedNewtypeDeriving #-}
-module X86JIT -- ( allocateMemory, codePtr, vecPtr , asciz, extern, getFunction, jit,)
-where
-import System.Info (os , arch) -- arch `elem` ["x86_64" , "x86"]
+module X86JIT where-- ( allocateMemory, codePtr, vecPtr , asciz, extern, getFunction, jit,)
 import X86
-
---import Data.Typeable
---import qualified Data.ByteString.Internal as BS (c2w, w2c)
---import Data.Word
---import Foreign.Storable
+--import System.Info (os , arch) -- arch `elem` ["x86_64" , "x86"]
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as VM
 import Foreign.C.String

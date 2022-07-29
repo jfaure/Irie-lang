@@ -1,17 +1,17 @@
 -- See presentation/TypeTheory for commentary
 module BiUnify (bisub , instantiate) where
-import Prim
+import Prim (PrimInstr(..) , PrimType(..))
 import CoreSyn as C
-import Errors
-import CoreUtils
+import Errors ( BiFail(..), TmpBiSubError(TmpBiSubError) )
+import CoreUtils ( hasVar, mergeTVar, mergeTypes, partitionType, prependArrowArgsTy, tyExpr )
 import TCState
-import PrettyCore
-import Externs
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
-import qualified BitSetMap as BSM
-import qualified Data.IntMap as IM
-import Control.Lens
+import PrettyCore (prettyTyRaw)
+import Externs (readPrimExtern)
+import qualified BitSetMap as BSM ( (!?), elems, mergeWithKey', singleton, toList, traverseWithKey )
+import qualified Data.IntMap as IM ( IntMap, (!?), fromList )
+import qualified Data.Vector.Mutable as MV ( read, write )
+import qualified Data.Vector as V ( (++), fromList, ifoldM, length, zipWithM )
+import Control.Lens ( use, (%=) )
 
 -- First class polymorphism:
 -- \i => if (i i) true then true else true
@@ -64,13 +64,14 @@ biSubType :: Type -> Type -> TCEnv s BiCast
 -- List a => TyIndexed
 --biSubType tyP TyIndexed{} = d_ tyP $ pure BiEQ
 --biSubType TyIndexed{} tyM = d_ tyM $ pure BiEQ
-biSubType tyP tyM =
-  let ((pVs , pTs) , (mVs , mTs)) = (partitionType tyP , partitionType tyM) in do
-    biSubTVars pVs mVs
-    unless (null mTs) $ bitSet2IntList pVs `forM_` \v -> biSubTVarP v (TyGround mTs)
-    unless (null pTs) $ bitSet2IntList mVs `forM_` \v -> biSubTVarM (TyGround pTs) v
-    biSub pTs mTs
-    pure BiEQ
+biSubType tyP tyM = let
+  (pVs , pTs) = partitionType tyP
+  (mVs , mTs) = partitionType tyM
+  in do
+  void (biSubTVars pVs mVs)
+  unless (null mTs) $ bitSet2IntList pVs `forM_` \v -> biSubTVarP v (TyGround mTs)
+  unless (null pTs) $ bitSet2IntList mVs `forM_` \v -> biSubTVarM (TyGround pTs) v
+  biSub pTs mTs
 
 -- bisub on ground types
 biSub :: [TyHead] -> [TyHead] -> TCEnv s BiCast
@@ -83,12 +84,8 @@ biSub a b = case (a , b) of
 -- Note. weird special case (A & {f : B}) typevars as produced by lens over
 --   The A serves to propagate the input record, minus the lens field
 --   what is meant is really set difference: A =: A // { f : B }
-instantiate nb x = do
-  sv <- muInstances <<.= mempty
-  r <- if nb == 0 then doInstantiate mempty x else
-    freshBiSubs nb >>= \tvars@(tvStart:_) -> doInstantiate (IM.fromList (zip [0..] tvars)) x
-  muInstances .= sv
-  pure r
+instantiate nb x = if nb == 0 then doInstantiate mempty x else
+  freshBiSubs nb >>= \tvars@(_tvStart:_) -> doInstantiate (IM.fromList (zip [0..] tvars)) x
 
 -- Replace THBound with fresh TVars
 -- this mixes mu-bound vars xyz.. and generalised vars A..Z
@@ -107,6 +104,7 @@ doInstantiate tvars ty = let
       doInstantiate tvars t <&> \case
         TyGround g -> (0 `setBit` mInst , g)
         TyVars vs g -> (vs `setBit` mInst , g)
+        _ -> _
 --    use muInstances >>= \muVars -> do
 --      mInst <- case muVars IM.!? m of
 --        Nothing -> freshBiSubs 1 >>= \[mInst] -> mInst <$ (muInstances %= IM.insert m mInst)
@@ -141,18 +139,18 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THBot , _) -> pure (CastInstr MkBot)
   (THPrim p1 , THPrim p2) -> primBiSub p1 p2
   (THExt a , THExt b) | a == b -> pure BiEQ
-  (p , THExt i) -> biSubType tyP     =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
-  (THExt i , m) -> (`biSubType` tyM) =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
+  (_ , THExt i) -> biSubType tyP     =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
+  (THExt i , _) -> (`biSubType` tyM) =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
 
   -- Bound vars (removed at +THBi, so should never be encountered during biunification)
-  (THBound i , x) -> error $ "unexpected THBound: " <> show i
-  (x , THBound i) -> error $ "unexpected THBound: " <> show i
-  (x , THBi nb y) -> error $ "unexpected THBi: "      <> show (p,m)
+  (THBound i , _) -> error $ "unexpected THBound: " <> show i
+  (_ , THBound i) -> error $ "unexpected THBound: " <> show i
+  (_ , THBi{}   ) -> error $ "unexpected THBi: "    <> show (p , m)
   (t@THMu{} , y) -> instantiate 0 (TyGround [t]) >>= \x -> biSubType x (TyGround [y]) -- TODO not ideal
   (x , t@THMu{}) -> instantiate 0 (TyGround [t]) >>= \y -> biSubType (TyGround [x]) y   -- printList Nil => [Nil] <:? µx.[Nil | Cons {%i32 , x}]
 --(x , THMuBound m) -> use muUnrolls >>= \m -> _ -- printList (Cons 3 Nil) => [Nil] <:? x
 
-  (THBi nb p , m) -> do
+  (THBi nb p , _) -> do
     instantiated <- instantiate nb p
     biSubType instantiated tyM
 
@@ -160,11 +158,11 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
 
 --(THPi (Pi p ty) , y) -> biSub ty [y]
 --(x , THPi (Pi p ty)) -> biSub [x] ty
-  (THSet u , x) -> pure BiEQ
-  (x , THSet u) -> pure BiEQ
+  (THSet _u , _) -> pure BiEQ
+  (_ , THSet _u) -> pure BiEQ
 
-  (x , THTyCon THArrow{}) -> failBiSub (TextMsg "Excess arguments")       (TyGround [p]) (TyGround [m])
-  (THTyCon THArrow{} , x) -> failBiSub (TextMsg "Insufficient arguments") (TyGround [p]) (TyGround [m])
+  (_ , THTyCon THArrow{}) -> failBiSub (TextMsg "Excess arguments")       (TyGround [p]) (TyGround [m])
+  (THTyCon THArrow{} , _) -> failBiSub (TextMsg "Insufficient arguments") (TyGround [p]) (TyGround [m])
   (a , b) -> failBiSub (TextMsg "Incompatible types") (TyGround [a]) (TyGround [b])
 
 -- TODO cache THTycon contained vars?
@@ -172,6 +170,7 @@ getTVarsType = \case
   TyVar v -> setBit 0 v
   TyVars vs g -> foldr (.|.) vs (getTVarsTyHead <$> g)
   TyGround  g -> foldr (.|.) 0 (getTVarsTyHead <$> g)
+  _ -> error "panic: getTVars on non-trivial type"
 getTVarsTyHead :: TyHead -> BitSet
 getTVarsTyHead = \case
   THTyCon t -> case t of
@@ -180,7 +179,7 @@ getTVarsTyHead = \case
     THSumTy     r -> foldr (.|.) 0 (getTVarsType <$> BSM.elems r)
     THTuple     r -> foldr (.|.) 0 (getTVarsType <$> r)
 --THBi _ t -> getTVarsType t
-  x -> 0
+  _ -> 0
 
 -- used for computing both differences between 2 IntMaps (alignWith doesn't give access to the ROnly map key)
 data KeySubtype
@@ -191,18 +190,18 @@ data KeySubtype
 -- This is complicated slightly by needing to recover the necessary subtyping casts
 biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
-  (THArrow ars ret ,  THSumTy x) -> pure BiEQ --_
+--(THArrow{} ,  THSumTy{}) -> pure BiEQ -- ?!
   (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSubType x y
   (THProduct x , THProduct y) -> let --use normFields >>= \nf -> let -- record: fields in the second must all be in the first
-    merged     = BSM.mergeWithKey' (\k a b -> Just (Both a b)) (\k v -> LOnly v) (ROnly) x y
+    merged     = BSM.mergeWithKey' (\_k a b -> Just (Both a b)) (\_k v -> LOnly v) (ROnly) x y
 --  merged     = BSM.mergeWithKey (\k a b -> Just (Both a b)) (fmap LOnly) (BSM.mapWithKey ROnly) x y
 --  merged     = BSM.mergeWithKey (\k a b -> Both a b) (const LOnly) (ROnly) x y
 --  normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
     normalized = BSM.elems merged -- $ IM.mapKeys (nf VU.!) merged
     go leafCasts normIdx ty = case ty of
-      LOnly a   {- drop     -} -> pure $ leafCasts --(field : drops , leafCasts)
-      ROnly f a {- no subty -} -> leafCasts <$ failBiSub (AbsentField (QName f)) tyP tyM
-      Both  a b {- leafcast -} -> biSubType a b <&> (\x -> (normIdx , x) : leafCasts) -- leaf bicast
+      LOnly _a   {- drop     -} -> pure $ leafCasts --(field : drops , leafCasts)
+      ROnly f _a {- no subty -} -> leafCasts <$ failBiSub (AbsentField (QName f)) tyP tyM
+      Both  a b  {- leafcast -} -> biSubType a b <&> (\x -> (normIdx , x) : leafCasts) -- leaf bicast
     in V.ifoldM go [] normalized <&> \leafCasts ->
        let drops = V.length normalized - length leafCasts -- TODO rm filthy list length
        in if drops > 0
@@ -219,8 +218,8 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
                TyGround [THTyCon (THTuple x)] -> [THTyCon $ THTuple (x V.++ V.fromList args)]
                x                              -> [THTyCon $ THTuple (V.fromList (x : args))]
     in biSubType (TyGround [THTyCon (THSumTy $ BSM.singleton lName t')]) retT
-  (THSumTy s , THArrow{}) | [single] <- BSM.toList s -> failBiSub (TextMsg "Note. Labels must be fully applied to avoid ambiguity") tyP tyM
-  (a , b)         -> failBiSub TyConMismatch tyP tyM
+  (THSumTy s , THArrow{}) | [_single] <- BSM.toList s -> failBiSub (TextMsg "Note. Labels must be fully applied to avoid ambiguity") tyP tyM
+  _         -> failBiSub TyConMismatch tyP tyM
 
 arrowBiSub (argsp,argsm) (retp,retm) = let
   bsArgs [] [] = ([] , Nothing , ) <$> biSubType retp retm

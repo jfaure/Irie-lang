@@ -4,8 +4,8 @@ import Prim
 
 simpleInstr i args = case i of
   IfThenE | [cond , a , b] <- args
-          , App pred [Lit (Int x) , Lit (Int y)] <- cond -> case pred of
-    Instr (NumInstr (PredInstr p)) -> 
+          , App pred [Lit (Int x) , Lit (Int y)] <- cond
+          , Instr (NumInstr (PredInstr p)) <- pred ->
       if case p of { EQCmp-> x == y ; NEQCmp-> x /= y ; GECmp-> x > y ; GTCmp-> x >= y ; LECmp-> x <= y ; LTCmp-> x < y }
       then a else b
   GMPInstr j -> simpleGMPInstr j args

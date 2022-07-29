@@ -2,21 +2,21 @@
 module Main where
 import CmdLine
 import qualified ParseSyntax as P
-import Parser
-import ModulePaths
+import Parser (parseModule)
+import ModulePaths (findModule)
 import Externs
-import CoreSyn
+import CoreSyn ( ModIName, BindSource(BindSource), JudgedModule(JudgedModule, bindNames, labelNames, modIName), OldCachedModule(OldCachedModule, oldModuleIName), SrcInfo(..) )
 import Errors
 import CoreBinary()
 import CoreUtils (bind2Expr)
-import PrettyCore
+import PrettyCore ( ansiRender, prettyBind, RenderOptions(ansiColor, bindSource) )
 import qualified PrettySSA
-import Infer
-import Fuse
-import MkSSA
-import C
+import Infer (judgeModule)
+import Fuse (simplifyBindings)
+import MkSSA (mkSSAModule)
+import C (mkC)
 
-import Text.Megaparsec hiding (many)
+import Text.Megaparsec ( errorBundlePretty )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy.IO as TL.IO
@@ -26,9 +26,9 @@ import qualified Data.Vector as V
 import qualified Data.Map    as M
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Binary as DB
-import Control.Lens
-import System.Console.Haskeline
-import System.Directory
+import Control.Lens ( (^.), Field2(_2) )
+import System.Console.Haskeline ( defaultSettings, getInputLine, runInputT )
+import System.Directory ( createDirectoryIfMissing, doesFileExist, getModificationTime )
 import qualified System.IO as SIO (hClose)
 import Data.List (words)
 
@@ -96,7 +96,7 @@ doFileCached flags isMain resolver depStack fName = let
   go' resolver = go resolver Nothing
   didIt = modNameMap resolver M.!? toS fName
   in case didIt of
-    Just modI | not doCacheCore || noCache flags -> error $ "compiling a module twice without cache is unsupported: " <> show fName
+    Just _    | not doCacheCore || noCache flags -> error $ "compiling a module twice without cache is unsupported: " <> show fName
     Just modI | depStack `testBit` modI -> error $ "Import loop: "
       <> toS (T.intercalate " <- " (show . (modNamesV resolver V.!) <$> bitSet2IntList depStack))
     _         | not doCacheCore -> go' resolver
@@ -157,7 +157,7 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
     (parsed ^. P.parseDetails . P.hNamesNoScope)     -- unknownNames not in local scope
     maybeOldModule
   (judgedModule , errors) = judgeModule nBinds parsed (deps modDeps) modIName nArgs hNames exts srcInfo
-  JudgedModule _modIName modNm nArgs' bindNames a b judgedBinds = judgedModule
+  JudgedModule _modIName _modNm _nArgs bindNames _a _b judgedBinds = judgedModule
 
   newResolver = addModule2Resolver tmpResolver isRecompile modIName (T.pack fName)
          (V.zip bindNames (bind2Expr <$> judgedBinds)) labelNames (iMap2Vector fieldMap) labelMap fieldMap modDeps
@@ -214,7 +214,7 @@ putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oType
 -- Phase 2: codegen, linking, jit
 ---------------------------------
 --codegen flags input@((resolver , Import bindNames judged) , exts , judgedModule) = let
-codegen flags input@(resolver , jm@(JudgedModule modINm modNm nArgs bindNms a b judgedBinds)) = let
+codegen flags input@(_resolver , jm) = let
   ssaMod = mkSSAModule jm
   in do
     when ("ssa" `elem` printPass flags) $ TL.IO.putStrLn (PrettySSA.prettySSAModule PrettySSA.ansiRender ssaMod)

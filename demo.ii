@@ -1,5 +1,3 @@
-module demo x =
-
 --rec1 v = { a = rec1 v , b = rec1 v }  -- ⊤ → µx.{a : x , b : x}
 
 --testParity n = let
@@ -24,6 +22,7 @@ module demo x =
 --prependToAll _   []     = []
 --prependToAll sep (x:xs) = sep : x : prependToAll sep xs
 
+-- wordsBy linesBy
 -- unionBy
 -- transpose permuatations
 -- mapAccumL(R)
@@ -34,6 +33,11 @@ module demo x =
 -- partition
 -- isInfixOf isSuffixOf isPrefixOf
 -- span break
+-- split splitOn chunksOf
+-- compareLength : [a] -> Int -> Ordering
+--   = foldr (\_ acc n -> if n > 0 then acc (n - 1) else GT) (compare 0)
+-- dropWhileEnd : (a -> Bool) -> [a] -> [a]
+--   = \p -> foldr (\x xs -> if p x && null xs then [] else x : xs) []
 import imports/prelude
 import imports/list
 --import imports/ls
@@ -57,11 +61,18 @@ nonEmptySubSequences = \case
     in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
 -}
 
-null = \case
-  C => C
-  N => N
+--null = \case
+--  C => C
+--  N => N
+--
+---- splitAt :: Int -> [a] -> ([a], [a])
+--splitAt n xs = if n <=? 0 then { l = N , r = xs } else case xs of
+--  C x xs => let z = splitAt (n - 1) xs in { l = C x z.l , r = z.r }
+--  N => { l = N , r =  N }
 
--- splitAt :: Int -> [a] -> ([a], [a])
-splitAt n xs = if n <=? 0 then { l = N , r = xs } else case xs of
-  C x xs => let z = splitAt (n - 1) xs in { l = C x z.l , r = z.r }
-  N => { l = N , r =  N }
+r1 = { x = 3 , y = x }
+
+--testParity n = let
+--  isEven n = ifThenElse (eq n 0) 1 (isOdd (sub n 1))
+--  isOdd n  = ifThenElse (eq n 0) 0 (isEven (sub n 1))
+--  in isEven n

@@ -9,16 +9,17 @@
 -- * The 0 module (compiler primitives) is used to mark tuple fields (forall n 0.n)
 module Externs (GlobalResolver(..) , ModDeps, ModDependencies(..), addModule2Resolver , addModName , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readQParseExtern , readLabel , readField , readPrimExtern , resolveImports , typeOfLit , addDependency)
 where
-import Builtins
+import Builtins ( primBinds, primMap, typeOfLit )
 import qualified ParseSyntax as P
 import CoreSyn
-import MixfixSyn
 import ShowCore()
-import qualified BitSetMap as BSM
-import qualified Data.Map.Strict as M
-import qualified Data.IntMap as IM
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
+import MixfixSyn ( mfw2qmfw, MFWord, QMFWord )
+import qualified BitSetMap as BSM ( singleton )
+import qualified Data.IntMap as IM ( IntMap, filterWithKey, singleton, toList, union )
+import qualified Data.Map.Strict as M ( Map, (!?), member, size, insert, singleton, traverseWithKey, unionWith, unionsWith, update )
+import qualified Data.Vector.Mutable as MV ( length, unsafeGrow, unsafeNew, write )
+import qualified ParseSyntax as P ( NameMap )
+import qualified Data.Vector as V ( Vector, (!), create, foldl, singleton, unsafeFreeze, unsafeThaw )
 
 -----------------
 -- Import Tree --

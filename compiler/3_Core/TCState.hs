@@ -1,19 +1,17 @@
 {-# LANGUAGE TemplateHaskell #-}
 module TCState where
-import CoreSyn
-import CoreUtils
-import Errors
-import Externs
-import qualified ParseSyntax as P
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
-import qualified Data.IntMap as IM
-import Control.Lens
+import CoreSyn ( tyBot, tyTop, BiSub(BiSub), Bind, Type )
+import CoreUtils ( InvMu )
+import Externs ( Externs )
+import Errors ( Errors, TmpBiSubError )
+import Control.Lens ( use, (.=), makeLenses )
+import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write )
+import qualified ParseSyntax as P ( FnDef )
+import qualified Data.Vector as V ( Vector )
 
 -- Convert QNames to VArgs so bindings can also be beta-reduced optimally
 -- Convert VArgs to Lin by inserting Dups
 -- this produces an "import signature" for the module
-
 type TCEnv s a = StateT (TCEnvState s) (ST s) a
 data TCEnvState s = TCEnvState {
  -- in
@@ -25,12 +23,6 @@ data TCEnvState s = TCEnvState {
  -- out
  , _wip         :: MV.MVector s Bind
  , _errors      :: Errors
-
- -- Linearisation
--- , nameMap :: M.Map VName LiName
--- , counts  :: MV.MVector s Int -- count occurences of a LiName, to insert appropriate amount of dups
-
- , _muInstances :: IM.IntMap Int -- Instantiation of mu-types; not brilliant
 
  -- Biunification state
  , _bindWIP     :: (IName , Bool)     -- to identify recursion and mutuals (Bool indicates recursion)
@@ -75,5 +67,5 @@ freshBiSubs n = do
   blen .= (biLen + n)
   bisubs <- if MV.length bisubs < biLen + n then MV.grow bisubs n else pure bisubs
   bis .= bisubs
-  tyVars `forM` \i -> MV.write bisubs i (BiSub tyBot tyTop)
+  tyVars `forM_` \i -> MV.write bisubs i (BiSub tyBot tyTop)
   pure tyVars

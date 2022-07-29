@@ -10,23 +10,24 @@ module Parser (parseModule , parseMixFixDef) where
 -- Note: add corresponding bind immediately after adding an IName (can resort to recursiveDo)
 -- 3 parts: Module builder + parse state (scoping, free vars, desugaring), Lexing , Parsing
 
-import Prim
+import Prim ( Literal(PolyFrac, Char, String, Int, PolyInt) )
 import ParseSyntax as P
-import MixfixSyn
+import MixfixSyn ( defaultPrec, Assoc(..), MFWord(..), MixfixDef(..), Prec(Prec) )
 --import DesugarParse
-import Text.Megaparsec-- hiding (State)
-import Text.Megaparsec.Char
+import Text.Megaparsec
+import Text.Megaparsec.Char ( char, char', string )
 import System.FilePath.Posix as FilePath (dropExtension , takeFileName)
-import qualified Text.Megaparsec.Char.Lexer as L
-import qualified Data.Text as T
-import qualified Data.Map.Strict as M
-import qualified Data.Set as S
+import qualified Text.Megaparsec.Char.Lexer as L ( binary, charLiteral, hexadecimal, octal, skipLineComment, space, symbol, decimal, indentLevel, lexeme )
 import Control.Monad (fail)
-import Control.Lens
+import Control.Lens ( (^.), use, (%%=), (<%=), (<<%=), (%=), (%~), (.=), Field1(_1), Field2(_2) )
+import qualified Data.Map.Strict as M ( Map, (!?), elems, empty, lookup, size, insert, insertLookupWithKey, insertWith )
+import qualified Data.Set as S ( fromList, member )
+import qualified Data.Text as T ( all, any, append, concat, null, snoc, empty )
 --import qualified Text.Megaparsec.Debug as DBG
-dbg i = identity -- DBG.dbg i
 
-showN n = try ((takeP Nothing n >>= traceShowM) *> fail "debug parser") <|> pure () :: Parser ()
+-- debug fns
+--dbg i = DBG.dbg i
+--showN n = try ((takeP Nothing n >>= traceShowM) *> fail "debug parser") <|> pure () :: Parser ()
 
 type Parser = ParsecT Void Text (Prelude.State ParseState)
 
@@ -51,7 +52,7 @@ addMFWord h mfw = do
   pure sz
 
 -- The trickiness below is due to insertLookup, which saves a log(n) operation
-il = M.insertLookupWithKey (\k new old -> old)
+il = M.insertLookupWithKey (\_k _new old -> old)
 -- Data.Map's builtin size is good enough for labels/fields
 insertOrRetrieve h mp = let sz = M.size mp in case il h sz mp of
   (Just x, mp) -> (Right x  , mp)
@@ -94,7 +95,7 @@ addBindName   h = do
     [] -> pd . hNameBinds  %%= insertOrRetrieveSZ h
     _  -> (pd . hNameLocals %%= insertOrRetrieveArg h n) <* addAnonBindName -- inc the sz counter
   case r of
-    Right r -> fail $ toS $ "Binding overwrites existing binding: '" <> h <> "'"
+    Right _ -> fail $ toS $ "Binding overwrites existing binding: '" <> h <> "'"
     Left  r -> pure r
 
 eitherOne = \case { Right r -> r ; Left r -> r }
@@ -108,13 +109,13 @@ lookupSLabel h = (M.!? h) <$> use (moduleWIP . parseDetails . labels)
 -- a Name may be an arg, or another binding in scope at some let-depth
 lookupBindName h = use (moduleWIP . parseDetails) >>= \p -> let
   tryArg = case p ^. hNameArgs of
-    [] -> pure $ Nothing
+    [] -> pure Nothing
     thisFrame : prevFrames -> case thisFrame M.!? h of
-      Just n  -> pure $ Just $ VLocal n
+      Just n  -> pure $ Just (VLocal n)
       Nothing -> case asum $ (M.!? h) <$> prevFrames of
         Just upStackArg -> do
           moduleWIP . parseDetails . freeVars %= (`setBit` upStackArg)
-          pure $ Just $ VLocal upStackArg
+          pure $ Just (VLocal upStackArg)
         Nothing -> pure Nothing
   tryLet = VBind  <$> (asum $ (M.lookup h) `map` (p ^. hNameLocals))
   tryTop = VBind  <$> M.lookup h (p ^. hNameBinds . _2)
@@ -142,12 +143,12 @@ newArgNest p = let
     decArgNest
     pure (ret , free)
 
-lookupImplicit :: Text -> Parser IName -- implicit args
-lookupImplicit h = do
-  pd <- use $ moduleWIP . parseDetails
-  case asum $ map (M.!? h) (pd ^. hNameArgs) of
-    Just arg -> pure $ arg
-    Nothing  -> fail ("Not in scope: implicit arg '" <> toS h <> "'")
+--lookupImplicit :: Text -> Parser IName -- implicit args
+--lookupImplicit h = do
+--  pd <- use $ moduleWIP . parseDetails
+--  case asum $ map (M.!? h) (pd ^. hNameArgs) of
+--    Just arg -> pure $ arg
+--    Nothing  -> fail ("Not in scope: implicit arg '" <> toS h <> "'")
 
 -----------
 -- Lexer --
@@ -172,17 +173,14 @@ blockComment = let -- still need to count newlines
   in void $ skipBlockComment "{-" "-}"
 
 lexeme, lexemen :: Parser a -> Parser a -- parser then whitespace
-[lexeme, lexemen]   = L.lexeme <$> [sc , scn]
-symbol, symboln :: Text -> Parser Text --verbatim strings
-[symbol , symboln]  = L.symbol <$> [sc , scn]
+[lexeme, lexemen] = L.lexeme <$> [sc , scn]
+symbol :: Text -> Parser Text --verbatim strings
+symbol = L.symbol sc
 
-parens, braces, bracesn , brackets , bracketsn :: Parser a -> Parser a
+parens, braces, brackets :: Parser a -> Parser a
 parens    = symbol  "(" `between` symbol  ")"
 braces    = symbol  "{" `between` symbol  "}"
-bracesn   = symboln "{" `between` symboln "}"
 brackets  = symbol  "[" `between` symbol  "]"
-bracketsn = symboln "[" `between` symboln "]"
-p `sepBy2` sep = (:) <$> p <*> (some (sep *> p))
 
 -----------
 -- Names --
@@ -196,20 +194,17 @@ reservedChar c
   | otherwise = lexeme ((char c) <* notFollowedBy idenChars)
 reservedOp = reservedName
 reserved = reservedName
-isIdenChar x = not (isSpace x) && not (T.any (==x) reservedChars)
+isIdenChar x = not (isSpace x || T.any (==x) reservedChars)
 idenChars = takeWhile1P Nothing isIdenChar
-checkReserved x = if x `S.member` reservedNames
-  then fail $ "keyword '" <> toS x <> "' cannot be an identifier"
-  else pure x
-checkLiteral x = if isDigit `T.all` x -- TODO not good enough (1e3 , 2.0 etc..)
-  then fail $ "literal: '" <> toS x <> "' cannot be an identifier"
-  else pure x
+checkReserved x = x <$ when (x `S.member` reservedNames) (fail ("keyword '" <> toS x <> "' cannot be an identifier"))
+checkLiteral x  = x <$ when (isDigit `T.all` x) -- TODO not good enough (1e3 , 2.0 etc..)
+  (fail ("literal: '" <> toS x <> "' cannot be an identifier"))
 checkIden = checkReserved <=< checkLiteral
 
 -- We must use 'try', to backtrack if we ended up parsing a reserved word
 iden :: Parser HName = lexeme . try $ (idenChars >>= checkIden)
 idenNo_ = lexeme idenNo_'
-idenNo_' = try $ (takeWhile1P Nothing (\x->isIdenChar x && x /= '_') >>= checkIden)
+idenNo_' = try (takeWhile1P Nothing (\x->isIdenChar x && x /= '_') >>= checkIden)
 
 -- separated and split on '_' (ie. argument holes)
 pMixfixWords :: Parser [Maybe Text] = lexeme $ do
@@ -254,11 +249,10 @@ linefold p = let
 parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
   = \nm txt -> let
   startModule = Module {
-      _moduleName  = Left (toS (dropExtension $ takeFileName nm))
-    , _functor     = Nothing
+      _moduleName  = toS (dropExtension (takeFileName nm))
     , _imports     = []
     , _bindings    = []
-    , _liNames     = []
+--  , _liNames     = []
     , _parseDetails = ParseDetails {
         _hNameBinds     = (0 , M.empty)
       , _hNameMFWords   = (0 , M.empty)
@@ -271,7 +265,6 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
       , _fields         = M.empty -- field names
       , _labels         = M.empty -- explicit label names; note. `L a` is ambiguous
       , _newLines       = []
-      , _liCount        = 0
     }
   }
   end = (bindings %~ reverse)
@@ -286,7 +279,7 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
 doParse = void $ decl `sepEndBy` (optional endLine *> scn) :: Parser ()
 decl = svIndent *> choice
    [ reserved "import" *> (iden >>= addImport)
-   , void functorModule
+-- , void functorModule
    , pForeign
    , void (funBind True LetOrRec) <?> "binding"
 -- , bareTT <?> "repl expression"
@@ -295,12 +288,13 @@ decl = svIndent *> choice
 --bareTT = addAnonBindName *> ((\tt -> addBind (FnDef "replExpr" LetOrRec Nothing 0 [FnMatch [] tt] Nothing)) =<< tt)
 
 pForeign = do -- external function defined outside of Irie and opaque until link-time
-  fn  <- ((Foreign <$ reserved "foreign") <|> (ForeignVA <$ reserved "foreignVA"))
+  _fn  <- ((Foreign <$ reserved "foreign") <|> (ForeignVA <$ reserved "foreignVA")) -- TODO use va/not va info
   hNm <- iden
-  addBindName hNm
+  void (addBindName hNm)
   ty <- reservedOp ":" *> tt
   addBind (FnDef hNm Let Nothing 0 (FnMatch [] (Foreign hNm ty) :| []) (Just ty))
 
+{-
 functorModule :: Parser ()
 functorModule = reserved "module" *> do
   mName     <- idenNo_
@@ -316,6 +310,7 @@ functorModule = reserved "module" *> do
         sig     <- optional (reserved ":" *> tt)
         unless (null args && isNothing sig) (moduleWIP . functor .= Just (FunctorModule args sig o))
         reserved "="
+-}
 
 -------------------
 -- Function defs --
@@ -327,7 +322,7 @@ parsePrec = let
   <$> (assoc     <?> "assoc : [a | l | r | n]")
   <*> (L.decimal <?> "precedence (an integer)")
 
-addMixfixWords m mfBind mfdef = let
+addMixfixWords m mfdef = let
   addMFParts mfp = mfp `forM` \case
     Just hNm -> Just <$> addMFWord hNm MFPart
     Nothing  -> pure Nothing
@@ -336,20 +331,21 @@ addMixfixWords m mfBind mfdef = let
       >>= \w -> (Just w : )              <$> addMFParts mfp
     Nothing : Just hNm : mfp -> addMFWord hNm (StartPostfix mfdef)
       >>= \w -> (Nothing :) . (Just w :) <$> addMFParts mfp
+    _ -> fail "panic: internal parse error with mixfixes"
 
 funBind :: Bool -> LetRecT -> Parser ()
 funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
   [Just nm] -> let pArgs = many (lexeme singlePattern) -- non-mixfix fn def can parse args immediately
     in void $ funBind' isTop pArgs letRecT nm Nothing (symbol nm *> pArgs)
   mfdefHNames -> let
-    hNm = mixFix2Nm mfdefHNames
+--  hNm = mixFix2Nm mfdefHNames
     pMixFixArgs = \case
       []           -> pure []
       Just  nm : x -> symbol nm *> pMixFixArgs x
       Nothing  : x -> (:) <$> lexeme singlePattern <*> pMixFixArgs x
     in mdo
     prec <- fromMaybe defaultPrec <$> optional (braces parsePrec)
-    mfdefINames <- addMixfixWords mfdefHNames iNm mfdef
+    mfdefINames <- addMixfixWords mfdefHNames mfdef
     let mfdef = MixfixDef iNm mfdefINames prec
     iNm <- funBind' isTop (pure []) letRecT (mixFix2Nm mfdefHNames) (Just mfdef) (pMixFixArgs mfdefHNames)
     pure ()
@@ -360,7 +356,7 @@ some1 f = (:|) <$> f <*> many f
 -- => pMFArgs should be used to parse extra equations on subsequent lines
 -- If this is a mixfix, args will be [] at this point
 funBind' :: Bool -> Parser [Pattern] -> LetRecT -> Text -> Maybe MixfixDef -> Parser [Pattern] -> Parser IName
-funBind' isTop pArgs letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
+funBind' _isTop pArgs letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
   iNm <- addBindName nm -- add in mfix in case of recursive references
     <* addBind (FnDef nm letRecT mfDef free eqns ann)
   ((eqns , ann) , free) <- newArgNest $ do
@@ -370,18 +366,15 @@ funBind' isTop pArgs letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
       [ (:|) <$> (fnMatch pArgs (reserved "="))
              <*> many (try $ endLine *> scn *> svIndent *> fnMatch pMFArgs (reserved "="))
       , case ([] , ann) of
-          (x  , Nothing) -> some1 $ try (endLine *> fnMatch pMFArgs (reserved "=") ) -- f = _
-          ([] , Just{})  -> some1 $ try (endLine *> fnMatch pMFArgs (reserved "=") ) -- f : T = _
+          (_  , Nothing) -> some1 $ try (endLine *> fnMatch pMFArgs (reserved "=")) -- f = _
+          ([] , Just{})  -> some1 $ try (endLine *> fnMatch pMFArgs (reserved "=")) -- f : T = _
 --        (x  , Just{})  -> fail  $ "Expected function definition \" = _\" , got type annotation \" : _\"" -- f x : _
       ]
     pure (eqns , ann)
   pure iNm
 
-tyAnn :: Parser TT = do {-newArgNest $-}
-  reservedChar ':'
-  (pi , ty) <- getPiBounds tt
-  -- no freeVars in a pi-binder
-  pure $ case pi of
+tyAnn :: Parser TT = reservedChar ':' *> do {-newArgNest $-} -- no freeVars in a pi-binder
+  getPiBounds tt <&> \(pi , ty) -> case pi of
     [] -> ty
     pi -> Abs (FnDef "pi-binder" LetOrRec Nothing emptyBitSet (FnMatch (PPi <$> pi) ty :| []) Nothing)
 
@@ -391,8 +384,8 @@ lambda = do
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ? (idea is to merge abs `f x = \y => _` into f x y = _
-  let hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case")
-        *> (fnMatch (many singlePattern)) (reserved "=>")
+  let -- hoistLambda = try $ lexemen sep *> reservedChar '\\' *> notFollowedBy (string "case")
+      --   *> (fnMatch (many singlePattern)) (reserved "=>")
       normalFnMatch = FnMatch <$> (pMFArgs <* lexemen sep) <*> tt
   in {-hoistLambda <|>-} normalFnMatch -- TODO reactivate
 
@@ -406,8 +399,8 @@ catchUnderscoreAbs tt = use (moduleWIP . parseDetails . underscoreArgs) >>= \und
     Abs (FnDef "_abs" LetOrRec Nothing free eqns Nothing) <$ (moduleWIP . parseDetails . underscoreArgs .= 0)
 
 -- TT parser
-ttArg , tt :: Parser TT
-(ttArg , tt) = (arg , anyTT)
+tt :: Parser TT
+tt = anyTT
   where
   anyTT = ({-tySum <|>-} appOrArg) >>= catchUnderscoreAbs >>= typedTT <?> "tt"
    -- lens bind tighter than App
@@ -424,7 +417,7 @@ ttArg , tt :: Parser TT
       , idenNo_ >>= newFLabel >>= \p -> choice [lensNext (p : path) , pure (TTLens o record (reverse (p:path)) LensGet)]
       ]
     in lensNext []
-  arg = use indent >>= \sv -> choice
+  arg = choice
    [ reserved "_" *> (addAnonArgName >>= addUnderscoreArg)
    , reserved "?" $> WildCard
    , letIn
@@ -444,7 +437,7 @@ ttArg , tt :: Parser TT
    , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
    ] <?> "ttArg"
 
-  piBinder = reserved "Π" *> (many (iden >>= addArgName) >>= \pis -> addPiBound (PiBound pis WildCard))
+--piBinder = reserved "Π" *> (many (iden >>= addArgName) >>= \pis -> addPiBound (PiBound pis WildCard))
   -- Catch potential implicit abstractions at each parens
   parensExpr = parens (choice [try piBound , (tt >>= \t -> tuple t <|> typedTT t) , scn $> Cons []]) >>= catchUnderscoreAbs
   tuple t = (\ts -> Cons (zip [-1,-2..] (t:ts))) <$> some (reservedChar ',' *> arg)
@@ -452,9 +445,9 @@ ttArg , tt :: Parser TT
     Nothing -> P.Label <$ reserved "@" <*> newSLabel i <*> (many arg)
     Just l  -> pure $ P.Label l [] -- <$> many arg (converted in App)
 
-  tySum = Gadt <$> let
-    adtAlts = (,,Nothing) <$> (iden >>= newSLabel) <*> many appOrArg
-    in some $ try (scn *> (reservedChar '|' *> lexeme adtAlts))
+--tySum = Gadt <$> let
+--  adtAlts = (,,Nothing) <$> (iden >>= newSLabel) <*> many appOrArg
+--  in some $ try (scn *> (reservedChar '|' *> lexeme adtAlts))
 
   tySumData = Gadt <$> do
     let labelDecl = (,,) <$> (iden >>= newSLabel) <*> many arg <*> optional tyAnn <?> "Label declaration"
@@ -520,11 +513,11 @@ ttArg , tt :: Parser TT
     (`App` [scrut]) <$> caseSplits
 
   letIn = let
-    pletBinds letStart (letRecT :: LetRecT) = newLetNest $ do
+    pletBinds _letStart (letRecT :: LetRecT) = newLetNest $ do
       scn -- go to first indented binding
       ref <- use indent
       svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
-      indentedItems ref scn (funBind False letRecT) (reserved "in") <* reserved "in"
+      indentedItems ref scn (funBind False letRecT) (reserved "in") *> reserved "in"
       tt
     in do
       letStart <- use indent
@@ -537,7 +530,7 @@ ttArg , tt :: Parser TT
     Just WildCard  ->  pure exp -- don't bother if no info given (eg. pi binder)
     Just ty -> case exp of
       Var (VLocal l) -> addPiBound (PiBound [l] ty) *> pure exp
-      x -> (Var . VBind <$> addAnonBindName)
+      exp -> (Var . VBind <$> addAnonBindName)
         <* addBind (FnDef "typed-expr" LetOrRec Nothing 0 (FnMatch [] exp :| []) (Just ty))
 
   piBound = do

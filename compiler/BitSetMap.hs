@@ -14,11 +14,11 @@ module BitSetMap (BitSetMap , size , fromList , fromListWith , BitSetMap.toList 
 --elems = V.fromList . Data.IntMap.elems
 
 -- dichotomy lookup on a (Vector (Int , a)) is a clear improvement for Data.IntMap for static ordered lists
+import Data.Binary ( Binary )
+import Data.Vector.Binary ()
+import qualified Data.Traversable as DT ( mapAccumL )
 import qualified Data.Vector as V
-import qualified Data.Traversable as DT
-import Data.Binary
-import GHC.Generics
-import Data.Vector.Binary()
+    ( Vector, (!), fromList, length, map, singleton, toList, unfoldrN )
 
 newtype BitSetMap a = BSM { unBSM :: V.Vector (Int , a) }
   deriving (Eq , Generic , Show)
@@ -29,7 +29,7 @@ instance Functor BitSetMap where
   fmap f = BSM . fmap (\(a , b) -> (a , f b)) . unBSM
 instance Foldable BitSetMap where
   foldr :: (a -> b -> b) -> b -> BitSetMap a -> b
-  foldr f z = foldr (\(a , b) acc -> f b acc) z . unBSM
+  foldr f z = foldr (\(_ , v) acc -> f v acc) z . unBSM
 instance Traversable BitSetMap where
   traverse f = fmap BSM . traverse (\(a,b) -> (a,) <$> f b) . unBSM
 
@@ -90,8 +90,8 @@ unionWith f (BSM a) (BSM b) = let
 
 --intersectionWith :: (a -> a -> c) -> BitSetMap a -> BitSetMap a -> BitSetMap c
 intersectionWith f a b = let
-  merge f xs [] = []
-  merge f [] ys = []
+  merge _ _ [] = []
+  merge _ [] _ = []
   merge f (x : xs) (y : ys) = case compare (fst x) (fst y) of
     LT -> merge f xs (y : ys)
     GT -> merge f (x : xs) ys

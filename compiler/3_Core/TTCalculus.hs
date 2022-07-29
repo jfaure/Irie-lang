@@ -1,7 +1,7 @@
 module TTCalculus (ttApp , normaliseType) where
 import Prim
 import CoreSyn
-import Errors
+import Errors()
 import Externs
 import CoreUtils
 import TCState
@@ -22,8 +22,7 @@ ttApp retTy readBind handleExtern fn args = let --trace (clYellow (show fn <> " 
   ttApp' = ttApp retTy readBind handleExtern
  
   -- Term application
-  doApp coreFn args = use wip >>= \binds -> let
-    isRec = False -- case coreFn of Var (VQBind q)
+  doApp coreFn args = let
     (termArgs , otherArgs) = span (\case {Core{}->True ; _->False}) args
     app = App coreFn $ (\(Core t _ty)->t) <$> termArgs -- forget the argument types
     in pure $ case otherArgs of
@@ -50,22 +49,19 @@ ttApp retTy readBind handleExtern fn args = let --trace (clYellow (show fn <> " 
   in case fn of
   PoisonExpr -> pure PoisonExpr
   ExprApp f2 args2 -> (ttApp' f2 args2) >>= \f' -> ttApp' f' args
-  Core cf ty -> case cf of
-    Var (VBind i) -> readBind i >>= \e -> case e of
-      Core (Var (VBind j)) ty | j == i -> doApp cf args
-      f -> ttApp' f args
+  Core cf _ty -> case cf of
     Var (VQBind q) -> getQBind q >>= \e -> case e of
-      Core (Var (VQBind j)) ty | j == q -> doApp cf args
+      Core (Var (VQBind j)) _ty | j == q -> doApp cf args
       e -> ttApp' e args
  
 --  Special instructions (esp. type constructors)
     Instr (TyInstr Arrow)  -> expr2Ty readBind `mapM` args <&> \case
-      { [a , b] -> Ty (TyGround (mkTyArrow [a] b)) }
+      { [a , b] -> Ty (TyGround (mkTyArrow [a] b)) ; x -> error $ "wrong arity for TyArrow" <> show x }
     Instr (TyInstr MkIntN) | [Core (Lit (Int i)) ty] <- args ->
       pure $ Ty (TyGround [THPrim (PrimInt $ fromIntegral i)])
     Instr (MkPAp n) | f : args' <- args -> ttApp' f args'
     coreFn -> doApp coreFn args
-  Ty f -> pure $ Ty $ TyIndexed f args -- make no attempt to normalise types at this stage
+  Ty f -> pure $ Ty (TyIndexed f args) -- make no attempt to normalise types at this stage
 
 --  _ -> PoisonExpr <$ (errors . typeAppFails %= (BadTypeApp f args :))
   _ -> error $ "ttapp: unexpected 'function': " <> show fn <> " $ " <> show args
@@ -92,11 +88,10 @@ normaliseType handleExtern args ty = let
 
   normaliseTH args = \case
     THTyCon t -> THTyCon <$> case t of 
-      THArrow ars r -> THArrow   <$> (normaliseT args `mapM` ars) <*> (normaliseT args r)
+      THArrow ars r -> THArrow   <$> (normaliseT args `mapM` ars) <*> normaliseT args r
       THSumTy ars   -> THSumTy   <$> (normaliseT args `mapM` ars)
       THTuple ars   -> THTuple   <$> (normaliseT args `mapM` ars)
       THProduct ars -> THProduct <$> (normaliseT args `mapM` ars)
-      x -> error $ show x
     THMu m t -> THMu m <$> normaliseT args t
     ok -> pure $ case ok of
       THPrim{} -> ok
@@ -106,7 +101,7 @@ normaliseType handleExtern args ty = let
     pn = length piArgs ; an = length tyArgs
     (ok , rest) = splitAt an piArgs
     in if pn == an -- check if args are the same in recursive applications
-    then let self = Nothing --(,args) <$> this
+    then let --self = Nothing --(,args) <$> this
       in normaliseT (IM.fromList (zipWith (\(i,t) e -> (i,e)) ok tyArgs)) body
     else _ --TySi (Pi rest body) (foldl (\m (i , val) -> IM.insert (i , val) m) args tyArgs
 
@@ -117,8 +112,7 @@ normaliseType handleExtern args ty = let
       TyPi (Pi piArgs body) -> normalisePiApp piArgs body tyArgs
       TyGround g -> TyGround <$> normaliseTH args `mapM` g
       t -> pure t
+    x -> error $ "not a type: " <> show x
   TyGround ts -> TyGround <$> normaliseTH args `mapM` ts
-
-  TyTerm e t -> term2Type args e
-
+  TyTerm e _t -> term2Type args e
   t -> pure t
