@@ -3,7 +3,7 @@
 module ParseSyntax where
 import Prim ( Literal )
 import QName ( QName )
-import MixfixSyn ( MFWord, MixfixDef )
+import MixfixSyn ( MFWord, MixfixDef, ModIName )
 import Control.Lens ( (^.), makeLenses )
 import Text.Megaparsec.Pos ( Pos )
 import qualified Data.Map.Strict as M ( Map )
@@ -40,12 +40,13 @@ data ParseDetails = ParseDetails {
  , _fields         :: NameMap
  , _labels         :: NameMap
  , _newLines       :: [Int]
+ , _scope          :: ModIName -- Spawn new ModIName on each record cons | let block. (inference should .|. scopes)
 }
 data FnDef = FnDef {
    fnNm         :: HName
  , fnRecType    :: !LetRecT        -- or mutual
  , fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
- , fnFreeVars   :: FreeVars
+ , fnFreeVars   :: FreeVars        -- implicit lambda-bounds (eventually become explicit arguments)
  , fnMatches    :: NonEmpty FnMatch
  , fnSig        :: Maybe TT
 }

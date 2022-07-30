@@ -147,7 +147,6 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
   labelNames  = iMap2Vector labelMap
   nArgs       = parsed ^. P.parseDetails . P.nArgs
   srcInfo     = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
-  isRecompile = isJust maybeOldModule
 
   (tmpResolver  , exts) = resolveImports
     modResolver modIName
@@ -159,8 +158,8 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
   (judgedModule , errors) = judgeModule nBinds parsed (deps modDeps) modIName nArgs hNames exts srcInfo
   JudgedModule _modIName _modNm _nArgs bindNames _a _b judgedBinds = judgedModule
 
-  newResolver = addModule2Resolver tmpResolver isRecompile modIName (T.pack fName)
-         (V.zip bindNames (bind2Expr <$> judgedBinds)) labelNames (iMap2Vector fieldMap) labelMap fieldMap modDeps
+  newResolver = addModule2Resolver tmpResolver modIName
+    (V.zip bindNames (bind2Expr <$> judgedBinds)) labelNames (iMap2Vector fieldMap) labelMap fieldMap modDeps
   in (flags , fName , judgedModule , newResolver , exts , errors , srcInfo)
 
 handleJudgedModule :: (CmdLine, f, JudgedModule, GlobalResolver, e1, Errors, e2)

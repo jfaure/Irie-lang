@@ -10,15 +10,14 @@
 module Externs (GlobalResolver(..) , ModDeps, ModDependencies(..), addModule2Resolver , addModName , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readQParseExtern , readLabel , readField , readPrimExtern , resolveImports , typeOfLit , addDependency)
 where
 import Builtins ( primBinds, primMap, typeOfLit )
-import qualified ParseSyntax as P
 import CoreSyn
 import ShowCore()
 import MixfixSyn ( mfw2qmfw, MFWord, QMFWord )
+import qualified ParseSyntax as P ( NameMap )
 import qualified BitSetMap as BSM ( singleton )
 import qualified Data.IntMap as IM ( IntMap, filterWithKey, singleton, toList, union )
 import qualified Data.Map.Strict as M ( Map, (!?), member, size, insert, singleton, traverseWithKey, unionWith, unionsWith, update )
 import qualified Data.Vector.Mutable as MV ( length, unsafeGrow, unsafeNew, write )
-import qualified ParseSyntax as P ( NameMap )
 import qualified Data.Vector as V ( Vector, (!), create, foldl, singleton, unsafeFreeze, unsafeThaw )
 
 -----------------
@@ -78,13 +77,14 @@ data Externs = Externs {
 readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
 
 readLabel , readField :: Externs -> IName -> QName
-readLabel (Externs nms binds ils ifs mNms) l = if l < 0 then mkQName 0 (-1 - l) else ils V.! l
-readField (Externs nms binds ils ifs mNms) f = if f < 0 then mkQName 0 (-1 - f) else ifs V.! f
+readLabel exts l = if l < 0 then mkQName 0 (-1 - l) else exts.importLabels V.! l
+readField exts f = if f < 0 then mkQName 0 (-1 - f) else exts.importFields V.! f
 
 -- exported functions to resolve ParseSyn.VExterns
-readQParseExtern openMods thisModIName (Externs nms binds ils ifs mNms) modNm iNm = if
+readQParseExtern :: BitSet -> Int -> Externs -> Int -> IName -> CoreSyn.ExternVar
+readQParseExtern openMods thisModIName (exts :: Externs) modNm iNm = if
   | modNm == thisModIName    -> ForwardRef iNm -- ie. not actually an extern
-  | openMods `testBit` modNm -> Imported $ case snd ((binds V.! modNm) V.! iNm) of
+  | openMods `testBit` modNm -> Imported $ case snd ((exts.extBinds V.! modNm) V.! iNm) of
     e@(Core f t) -> case f of -- inline trivial things
       Lit{}   -> e
       Instr{} -> e
@@ -92,10 +92,10 @@ readQParseExtern openMods thisModIName (Externs nms binds ils ifs mNms) modNm iN
       _ -> Core (Var $ VQBind $ mkQName modNm iNm) t
     PoisonExpr -> PoisonExpr
     x -> x -- types and sets
-  | otherwise -> NotOpened (mNms V.! modNm) (fst ((binds V.! modNm) V.! iNm))
+  | otherwise -> NotOpened (exts.eModNamesV V.! modNm) (fst ((exts.extBinds V.! modNm) V.! iNm))
 
-readParseExtern openMods thisModIName e@(Externs nms binds ils ifs mNms) i = case nms V.! i of
-  Importable modNm iNm -> readQParseExtern openMods thisModIName e modNm iNm
+readParseExtern openMods thisModIName exts i = case exts.extNames V.! i of
+  Importable modNm iNm -> readQParseExtern openMods thisModIName exts modNm iNm
   x -> x
 
 -- First resolve names for a module, then that module can be added to the resolver
@@ -123,7 +123,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
       collect = V.foldl (\stale nm -> if M.member nm localNames then stale else nm : stale) []
       staleNames = fromMaybe [] ((collect . oldBindNames) <$> maybeOld) :: [HName]
       in case oldIName of
-        Just oldMod -> foldr (\staleName m -> M.update (Just . IM.filterWithKey (\k v -> k /= oldMod)) staleName m) nameMap staleNames
+        Just oldMod -> foldr (\staleName m -> M.update (Just . IM.filterWithKey (\k _v -> k /= oldMod)) staleName m) nameMap staleNames
         Nothing -> nameMap
     in rmStaleNames $ M.unionsWith IM.union
       [((\iNm -> IM.singleton modIName iNm) <$> localNames) , curResolver , labels , fields]
@@ -136,10 +136,10 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
   resolveName hNm = let
     binds   = IM.toList <$> (resolver   M.!? hNm)
     mfWords = IM.toList <$> (mfResolver M.!? hNm)
-    flattenMFMap = concat . map snd
+    flattenMFMap = concatMap snd
     in case (binds , mfWords) of
-    (Just [] , _)  -> NotInScope hNm -- this name was deleted from (all) modules error $ "impossible: empty imap ?!"
-    -- substitute compiler primitives directly
+    (Just [] , _)  -> NotInScope hNm -- this name was deleted from (all) modules
+    -- inline compiler primitives
     (Just [(0     , iNm)] , Nothing) -> Imported $ snd ((prevBinds V.! 0) V.! iNm)
     (Just [(modNm , iNm)] , Nothing)
 --    label applications look like normal bindings `n = Nil`
@@ -180,12 +180,12 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
 -- Unfortunately writing/caching them to disk requires full initialisation (error "" would trigger when writing)
 -- the trashValue serves as an obviously wrong 'uninitialised' element which should never be read eg. "(Uninitialized)"
 updateVecIdx :: a -> V.Vector a -> Int -> a -> V.Vector a
-updateVecIdx trashValue v i new = runST $ do
-  v <- V.unsafeThaw v
+updateVecIdx trashValue v' i new = runST $ do
+  v <- V.unsafeThaw v'
   let l = MV.length v
   g <- if l > i then pure v else do
     g <- MV.unsafeGrow v i
-    g <$ [l..l+i-1] `forM` \i -> MV.write g i trashValue -- initialise with recognizable trash
+    g <$ [l..l+i-1] `forM` \i -> MV.write g i trashValue -- initialise with recognizable trash to help debug bad reads
   MV.write g i new
   V.unsafeFreeze g
 
@@ -195,7 +195,7 @@ addModName modIName modHName g = g
   , modNamesV  = updateVecIdx "(Uninitialized)" (modNamesV g) modIName modHName
   }
 
-addDependency imported moduleIName r = r
+addDependency _imported _moduleIName r = r
 -- { dependencies = let
 --   ModDependencies deps dependents = if V.length (dependencies r) > moduleIName
 --     then dependencies r V.! moduleIName
@@ -204,11 +204,11 @@ addDependency imported moduleIName r = r
 -- }
 
 addModule2Resolver (GlobalResolver modCount modNames nameMaps l f modNamesV binds lh fh deps mfResolver)
-  isRecompile modIName modHName newBinds lHNames fHNames labelNames fieldNames modDeps
+  modIName newBinds lHNames fHNames labelNames fieldNames _modDeps
   = let binds'     = updateVecIdx (V.singleton ("(Uninitialized)" , PoisonExpr)) binds modIName newBinds
         lh'        = updateVecIdx (V.singleton "(Uninitialized)") lh    modIName lHNames
         fh'        = updateVecIdx (V.singleton "(Uninitialized)") fh    modIName fHNames
-        deps'      = updateVecIdx (ModDependencies 0 0) deps modIName modDeps
-        l' = alignWith (\case { This new -> mkQName modIName new ; That old -> old ; These new old -> old }) labelNames l
-        f' = alignWith (\case { This new -> mkQName modIName new ; That old -> old ; These new old -> old }) fieldNames f
+--      deps'      = updateVecIdx (ModDependencies 0 0) deps modIName modDeps
+        l' = alignWith (\case { This new -> mkQName modIName new ; That old -> old ; These _new old -> old }) labelNames l
+        f' = alignWith (\case { This new -> mkQName modIName new ; That old -> old ; These _new old -> old }) fieldNames f
     in GlobalResolver modCount modNames nameMaps l' f' modNamesV binds' lh' fh' deps mfResolver

@@ -15,7 +15,7 @@ import Externs ( typeOfLit, readField, readLabel, readParseExtern, readQParseExt
 import Mixfix ( solveMixfixes )
 import Generalise ( generalise )
 
-import Control.Lens ( (^.), use, (<<%=), (<<.=), (%=), (.=), Field2(_2) )
+import Control.Lens ( (^.), use, (<<%=), (<.=), (<<.=), (%=), (.=), Field2(_2) )
 import Data.List ( unzip4, zipWith3 )
 import qualified Data.Vector as V ( Vector, (!), fromList, fromListN, unsafeFreeze )
 import qualified Data.Vector.Mutable as MV ( MVector, modify, new, read, replicate, write )
@@ -27,6 +27,8 @@ judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
   pBinds' = V.fromListN nBinds (pm ^. P.bindings)
 --nFields = M.size (pm ^. P.parseDetails . P.fields)
 --nLabels = M.size (pm ^. P.parseDetails . P.labels)
+--normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
+--normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
 --fromRevListN n l = V.create $ do
 --  v <- MV.new n
 --  v <$ zipWithM (\i e -> MV.write v i e) [n-1,n-2..0] l
@@ -55,8 +57,6 @@ judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
 
       , _recVars     = emptyBitSet
       , _coOccurs    = _
---    , _normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
---    , _normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
       }
     wip''    <- V.unsafeFreeze (st ^. wip)
     pure (JudgedModule modIName modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
@@ -67,8 +67,9 @@ judgeLocalBind b = use thisMod >>= \modINm -> use wip >>= \wip' -> use pBinds >>
   Core _ ty -> Core (Var $ VQBind (mkQName modINm b)) ty -- no need to inline the body yet
   t -> t
 
--- inference >> generalisation >> type checking of annotations
--- This stacks inference of forward references and handles mutual binds
+-- infer >> generalise >> check annotation
+-- This stacks inference of forward references + let-binds and handles mutuals (only generalise at end of mutual block)
+-- This includes noting leaked and escaped typevars
 judgeBind :: V.Vector P.FnDef -> MV.MVector s Bind -> IName -> TCEnv s Expr
 judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' ->-} (wip' `MV.read` bindINm) >>= \case
   BindOK _isRec e -> pure e
@@ -84,9 +85,7 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
   Queued -> use wip >>= \wip' -> let
     abs      = ttBinds V.! bindINm
     freeVars = P.fnFreeVars abs
-    tyAnn    = P.fnSig abs
     in do
-    -- svEscapes is more of a tree than a stack...
     svwip     <- bindWIP <<.= (bindINm , False)
     freeTVars <- use argVars >>= \avs -> bitSet2IntList freeVars `forM` \i -> MV.read avs i
     svEscapes <- escapedVars <<%= (.|. intList2BitSet freeTVars)
@@ -94,36 +93,38 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
 
     (tvarIdx , jb , ms , isRec) <- freshBiSubs 1 >>= \[idx] -> do
       MV.write wip' bindINm (Guard emptyBitSet idx)
-      expr <- infer (P.Abs abs)
+      expr  <- infer (P.Abs abs)
       isRec <- snd <$> use bindWIP
       bindWIP .= svwip
-      Guard ms _tVar <- MV.read wip' bindINm
+      Guard ms _tVar <- MV.read wip' bindINm -- learn which binds had to be inferred as dependencies
       pure (idx , expr , ms , isRec)
-
-    -- get the Maybe type annotation, and generalise it if Abs, since it contains tvars
-    -- This will also simplify | normalise the type
-    typeAnn <- case tyAnn of
-      Nothing -> pure Nothing
-      Just t@P.Abs{} -> let
-        genGroundType t = case t of
-          TyGround{} -> generalise svEscapes (Right t)
-          t -> pure t -- may need to generalise under complex types
-        in fmap tyExpr $ infer t >>= \case
-        Core t ty -> Core t <$> genGroundType ty
-        Ty ty     -> Ty     <$> genGroundType ty
-        x -> pure x
-      Just t -> tyExpr <$> infer t -- no need to generalise if not Abs since no pi bounds
-
+    typeAnn <- getAnnotationType (P.fnSig abs)
     MV.write wip' bindINm (Mutual jb freeVars isRec tvarIdx typeAnn)
+
+    -- Generalise unless more mutuals to infer first
     ret <- if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
-    then pure jb
-    else fromJust . head <$> generaliseBinds bindINm (bitSet2IntList ms) -- <* clearBiSubs 0
+      then pure jb
+      else fromJust . head <$> generaliseBinds bindINm (bitSet2IntList ms) -- <* clearBiSubs 0
     ret <$ do
-      l <- use leakedVars
-      leakedVars  .= svLeaked
-      escapedVars .= svEscapes
+      l <- leakedVars  <.= svLeaked
+      escapedVars       .= svEscapes
       deadVars %= (.|. (l .&. complement svEscapes))
   b -> error (show b)
+
+-- Converting user types to Types = Generalise to simplify and normalise the type
+getAnnotationType :: Maybe P.TT -> TCEnv s (Maybe Type)
+getAnnotationType ttAnn = case ttAnn of
+  Nothing -> pure Nothing
+  Just t@P.Abs{} -> let
+    escapes = emptyBitSet
+    genGroundType t = case t of
+      TyGround{} -> generalise escapes (Right t)
+      t -> pure t -- may need to generalise under complex types
+    in fmap tyExpr $ infer t >>= \case
+    Core t ty -> Core t <$> genGroundType ty
+    Ty ty     -> Ty     <$> genGroundType ty
+    x         -> pure x
+  Just t -> tyExpr <$> infer t -- no need to generalise if not Abs since no pi bounds
 
 generaliseBinds :: Int -> [Int] -> TCEnv s [Expr]
 generaliseBinds i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m >>= \case

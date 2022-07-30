@@ -29,8 +29,7 @@ data TCEnvState s = TCEnvState {
  , _tmpFails    :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen        :: Int                -- cursor for bis which may have spare space
  , _bis         :: MV.MVector s BiSub -- typeVars
- , _argVars     :: MV.MVector s Int   -- arg IName -> TVar map
-   -- (rather than Arg i => TVar i) to trim bisubs more frequently
+ , _argVars     :: MV.MVector s Int   -- arg IName -> TVar map (Arg i => TVar i made it harder to trim bisubs)
 
  -- tvar kinds (see Generalise.hs)
  , _escapedVars :: BitSet  -- TVars of shallower let-nests (don't generalize)
