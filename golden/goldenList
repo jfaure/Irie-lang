@@ -2,6 +2,8 @@ List =  type [32mΠ(0 : τ1) µa.[Nil | Cons {([34mλ0[32m : τ1) , (([35mre
 
 Str =  type [32m[33mList[32m (type [32m%i8[32m)[0m
 
+length = [32m∏ A → µa.[Nil | Cons {⊤ , a}] → (%i1 & %i32)[0m
+
 printList = [32m∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 & %i32)[0m
 
 scanSum = [32m∏ A → %i32 → A → µa.[Cons {%i32 , a}][0m

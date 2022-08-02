@@ -8,39 +8,11 @@
 --rect (P : Set) : Set = record
 --  f : Int
 --  g : Int
-
---intersectBy          :: (a -> a -> Bool) -> [a] -> [a] -> [a]
---intersectBy _  [] _  =  []
---intersectBy _  _  [] =  []
---intersectBy eq xs ys =  [x | x <- xs, any (eq x) ys]
-
---intersperse             :: a -> [a] -> [a]
---intersperse _   []      = []
---intersperse sep (x:xs)  = x : prependToAll sep xs
-
---prependToAll            :: a -> [a] -> [a]
---prependToAll _   []     = []
---prependToAll sep (x:xs) = sep : x : prependToAll sep xs
-
--- wordsBy linesBy
--- unionBy
--- transpose permuatations
--- mapAccumL(R)
--- insertBy
--- sortBy
--- zip
--- find findIndex findIndices
--- partition
--- isInfixOf isSuffixOf isPrefixOf
--- span break
--- split splitOn chunksOf
--- compareLength : [a] -> Int -> Ordering
---   = foldr (\_ acc n -> if n > 0 then acc (n - 1) else GT) (compare 0)
--- dropWhileEnd : (a -> Bool) -> [a] -> [a]
---   = \p -> foldr (\x xs -> if p x && null xs then [] else x : xs) []
 import imports/prelude
 import imports/list
+--import imports/question
 --import imports/ls
+import imports/parser
 
 {-
 -- File CString ; Dir CString (List Dir)
@@ -61,18 +33,48 @@ nonEmptySubSequences = \case
     in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
 -}
 
---null = \case
---  C => C
---  N => N
+--ParseState = record
+--  state  : { input : Stream , offset : Int }
+--  cok : a          -> ParseState -> m b
+--  cko : ParseError -> ParseState -> m b
+--  eok : a          -> ParseState -> m b
+--  eko : ParseError -> ParseState -> m b
+-- ErrorItem t = Tokens (NonEmpty t) | Label (NonEmpty Char) | EndOfInput
+
+{-
+pure x ps = (ps . ret . set x) . cok . set 1
+--pure x ps = ps . { ret = x , status = @cok }
+
+pTakeP n = \s cok _ _ eko => let
+  split = splitAt n s.input
+  in if length split.l /=? n then eko "Bad length" else cok split.l (s.input.set (split.r))
+-}
+
+g x = if x
+  then x 
+   else x
+
+z = 2
+
+f x = \case
+  Nil => 2
+  Just x => 2
+
+--take n xs = if n <=? 0 then Nil else case xs of
+--  Nil => Nil
+--  Cons x xs => Cons x (take (n - 1) xs)
 --
----- splitAt :: Int -> [a] -> ([a], [a])
---splitAt n xs = if n <=? 0 then { l = N , r = xs } else case xs of
---  C x xs => let z = splitAt (n - 1) xs in { l = C x z.l , r = z.r }
---  N => { l = N , r =  N }
+--lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
+--
+--pTakeWhileP f = \s cok _ eok _ => let
+--  split = span f f s.input
+--  in if null split.l
+--    then eok split.l s
+--    else cok split.l (s.input.set split.r)
 
-r1 = { x = 3 , y = x }
+--pToken
 
---testParity n = let
---  isEven n = ifThenElse (eq n 0) 1 (isOdd (sub n 1))
---  isOdd n  = ifThenElse (eq n 0) 0 (isEven (sub n 1))
---  in isEven n
+--span p xs = case xs of
+--  Nil => { left = xs , right = xs }
+--  Cons x xs2 => if p x then let { left = ys , right = zs } = span p xs2 in (Cons x ys , zs) else { left = Nil , right = xs }
+--

@@ -21,11 +21,11 @@
   * expand lambda-mixfixes with explicit holes & reject unsaturated mixfix words
   * mixfix scope
   * record type decls
+  * repl parse multiline
 ## Parse
   * don't allow mixing tabs and spaces
   * Pattern guards
   * improve patterns2TT (add tuple of label , add literal) and eqn matches
-  * improve linefolds
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
 ## SSA
   * local/extern names in ssa form
@@ -41,19 +41,15 @@
 ## Functor modules and records (infer a module as a TT (Abs | Record) + ImportList , HNames , MixfixNames , LinSubs)
   * file = implicit `filename = record`
   * pattern assignments `(a , b) = (1 , 3)`
-  * BindName LName FName overlap & mixfix FNames
-  * imports allowed anywhere and treated as record
-  * fields = duplicatable bindNames , HName = path <.> field
-  * record fields as QNames on themselves?
+  * file = let-block = opened record (allow use/open/mutual statements)
+  * dups | linearity ? on BindNames + FNames
+  * BindName LName FName MFName overlap
+  * use | open | mutual allowed in let-blocks / opened record
+  * scoped HNames = path <.> field
+  * re-generalise let-binds once escaped tvars resolved
   ? scope | dependency graph: imports / records / let-bindings / labelNames(!)
-  ? rm IField
-    * Module = opened record
-    * use | open | mutual (locally)
-    ? imported names as inputs to the module?
-    ? insanely dependent records: inference stack of `Bind`
-    ? let-mutuals: forward ref is out-of scope during extern resolution => (either parser resolves it or mk insane record)
-    * Scopes = Tree of Modnames (resolve outer scopes?)
-    Scope -> Type -> Bindings lookup function
+  ? imported names as inputs to the module?
+  ? file | module (inter-)dependencies
 
 ## Beta-optimality:
   * λ Minimise normal forms on composition: Lambda encoding + lifting + sharing
@@ -64,12 +60,10 @@
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
 ## Unimportant
-  * ocamldoc stop comment
   * switch to codeberg
   * Instantiation & Generalisation is also beta-reduction and could be improved
   * List comprehensions
   * cache version
-  * languageDocumentation.md
   * Show function + Pap object: allow inspection of papped args
   * BitSetMap upgrades for [0..64] and sequential names [n..m]: rm Tuple
   * Pattern PTT: custom unPat function to support any patterns

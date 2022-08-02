@@ -44,7 +44,7 @@ biSubTVarTVar p m = use deadVars >>= \dead -> -- if testBit ls p || testBit ls m
 
 biSubTVarP v m = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ else
   use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
-    let mMerged = mergeTypes False m m'
+    let mMerged = mergeTypes True m m'
     when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " <==> " <> prettyTyRaw m))
     use escapedVars >>= \es -> when (testBit es v) $ leakedVars %= (.|. getTVarsType m)
     MV.write b v (BiSub p' mMerged)
@@ -53,7 +53,7 @@ biSubTVarP v m = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ els
 
 biSubTVarM p v = use deadVars >>= \dead -> -- if testBit ls v then pure BiEQ else
   use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
-    let pMerged = mergeTypes True p p'
+    let pMerged = mergeTypes False p p'
     when global_debug (traceM ("bisub: " <> prettyTyRaw p <> " <==> " <> prettyTyRaw (TyVar v)))
     use escapedVars >>= \es -> when (testBit es v) $ leakedVars %= (.|. getTVarsType p)
     MV.write b v (BiSub pMerged m')
@@ -84,16 +84,16 @@ biSub a b = case (a , b) of
 -- Note. weird special case (A & {f : B}) typevars as produced by lens over
 --   The A serves to propagate the input record, minus the lens field
 --   what is meant is really set difference: A =: A // { f : B }
-instantiate nb x = if nb == 0 then doInstantiate mempty x else
-  freshBiSubs nb >>= \tvars@(_tvStart:_) -> doInstantiate (IM.fromList (zip [0..] tvars)) x
+instantiate pos nb x = if nb == 0 then doInstantiate pos mempty x else
+  freshBiSubs nb >>= \tvars@(_tvStart:_) -> doInstantiate pos (IM.fromList (zip [0..] tvars)) x
 
 -- Replace THBound with fresh TVars
 -- this mixes mu-bound vars xyz.. and generalised vars A..Z
-doInstantiate :: IM.IntMap Int -> Type -> TCEnv s Type
-doInstantiate tvars ty = let
+doInstantiate :: Bool -> IM.IntMap Int -> Type -> TCEnv s Type
+doInstantiate pos tvars ty = let
   keyNotFound = fromMaybe (error "panic: instantiate: tvar outside of its binding")
   thBound i   = (0 `setBit` (keyNotFound $ tvars IM.!? i)  , [])
-  mapFn = let r = doInstantiate tvars in \case
+  mapFn = let r = doInstantiate pos tvars in \case
     THBound i   -> pure (thBound i)
     THMuBound i -> pure (thBound i)
 --  THMuBound i -> use muInstances >>= \muVars -> case muVars IM.!? i of
@@ -101,7 +101,7 @@ doInstantiate tvars ty = let
 --    Nothing -> freshBiSubs 1 >>= \[mInst] -> (muInstances %= IM.insert i mInst) $> (0 `setBit` mInst , [])
     THBi{}      -> error $ "higher rank polymorphic instantiation"
     THMu m t    -> let mInst = keyNotFound (tvars IM.!? m) in -- µx.F(x) is to inference (x & F(x))
-      doInstantiate tvars t <&> \case
+      doInstantiate pos tvars t <&> \case
         TyGround g -> (0 `setBit` mInst , g)
         TyVars vs g -> (vs `setBit` mInst , g)
         _ -> _
@@ -124,10 +124,10 @@ doInstantiate tvars ty = let
     in if tvs == 0 then TyGround groundTys else TyVars tvs groundTys
   in case ty of
   TyGround g -> instantiateGround g
-  TyVars vs g -> mergeTypes True (TyVars vs []) <$> instantiateGround g -- TODO ! get the right polarity here
+  TyVars vs g -> mergeTypes pos (TyVars vs []) <$> instantiateGround g -- TODO ! get the right polarity here
   TyVar v -> pure (TyVar v)
-  TyPi (Pi ars t)   -> (doInstantiate tvars t) <&> (\t -> TyPi (Pi ars t)  )
-  TySi (Pi ars t) e -> (doInstantiate tvars t) <&> (\t -> TySi (Pi ars t) e)
+  TyPi (Pi ars t)   -> (doInstantiate pos tvars t) <&> (\t -> TyPi (Pi ars t)  )
+  TySi (Pi ars t) e -> (doInstantiate pos tvars t) <&> (\t -> TySi (Pi ars t) e)
   TyTerm{} -> pure ty
   x -> error $ show x
 
@@ -146,12 +146,12 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THBound i , _) -> error $ "unexpected THBound: " <> show i
   (_ , THBound i) -> error $ "unexpected THBound: " <> show i
   (_ , THBi{}   ) -> error $ "unexpected THBi: "    <> show (p , m)
-  (t@THMu{} , y) -> instantiate 0 (TyGround [t]) >>= \x -> biSubType x (TyGround [y]) -- TODO not ideal
-  (x , t@THMu{}) -> instantiate 0 (TyGround [t]) >>= \y -> biSubType (TyGround [x]) y   -- printList Nil => [Nil] <:? µx.[Nil | Cons {%i32 , x}]
+  (t@THMu{} , y) -> instantiate True 0 (TyGround [t]) >>= \x -> biSubType x (TyGround [y]) -- TODO not ideal
+  (x , t@THMu{}) -> instantiate True 0 (TyGround [t]) >>= \y -> biSubType (TyGround [x]) y   -- printList Nil => [Nil] <:? µx.[Nil | Cons {%i32 , x}]
 --(x , THMuBound m) -> use muUnrolls >>= \m -> _ -- printList (Cons 3 Nil) => [Nil] <:? x
 
   (THBi nb p , _) -> do
-    instantiated <- instantiate nb p
+    instantiated <- instantiate True nb p -- TODO polarity?
     biSubType instantiated tyM
 
   (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)

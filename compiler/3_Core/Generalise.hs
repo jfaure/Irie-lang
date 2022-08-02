@@ -300,7 +300,7 @@ substTypeMerge pos loops guarded ty =  let
     t@THExt{}  -> pure $ TyGround [t]
     t@THTop{}  -> pure $ TyGround [t]
     t@THBot{}  -> pure $ TyGround [t]
-    THBi n t -> instantiate n t >>= substGuarded pos  -- a generalised let-bound function
+    THBi n t -> instantiate pos n t >>= substGuarded pos  -- a generalised let-bound function
 --  THMu m t -> instantiate 0 (TyGround [THMu m t]) >>= substGuarded pos
     THMu m t -> substGuarded pos (TyGround [THMu m t])
     x -> error $ show x --pure [x]

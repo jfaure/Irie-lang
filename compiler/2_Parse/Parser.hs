@@ -34,9 +34,6 @@ type Parser = ParsecT Void Text (Prelude.State ParseState)
 --------------------------
 -- Parsestate functions --
 --------------------------
---addLiName     = moduleWIP . parseDetails . liCount <<%= (+1)
---addLiVar v    = moduleWIP . liNames    %= (v:)
-
 addBind b     = moduleWIP . bindings   %= (b:)
 addImport i   = moduleWIP . imports    %= (i:)
 addPiBound  p = piBound %= \(x:xs)->(p:x):xs
@@ -170,7 +167,7 @@ lineComment = L.skipLineComment "--" -- <* addNewlineOffset
 blockComment = let -- still need to count newlines
   skipBlockComment start end = string start
     *> manyTill (endLine {-<|> blockComment nested-} <|> anySingle) end
-  in void $ skipBlockComment "{-" "-}"
+  in void $ skipBlockComment "{-" "-}" <|> skipBlockComment "(*" "*)"
 
 lexeme, lexemen :: Parser a -> Parser a -- parser then whitespace
 [lexeme, lexemen] = L.lexeme <$> [sc , scn]
@@ -186,7 +183,7 @@ brackets  = symbol  "[" `between` symbol  "]"
 -- Names --
 -----------
 reservedChars = ".@(){};:,\\\""
-reservedNames = S.fromList $ words "let rec in \\case case as over foreign foreignVarArg where of _ module import require = ? | λ =>"
+reservedNames = S.fromList $ words "let rec in \\case case as over foreign foreignVarArg where of _ module import use open require = ? | λ =>"
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c
@@ -220,6 +217,7 @@ parseMixFixDef :: Text -> Either (ParseErrorBundle Text Void) [Maybe Text]
 indentedItems prev scn p finished = let
  go lvl = scn *> do
   pos <- L.indentLevel
+--svIndent
   [] <$ lookAhead (eof <|> finished) <|> if
  -- 'fail' here to backtrack the whitespace/newlines. Otherwise the App parser sees and eats things from later lines
     | pos <= prev -> fail ("end of indent: " <> show pos <> " <= " <> show prev)
@@ -231,17 +229,12 @@ indentedItems prev scn p finished = let
 -- tells linefold and let-ins not to eat our indentedItems
 svIndent = L.indentLevel >>= (indent .=)
 
-linefold p = let
-  doLinefold = endLine *> scn *> do
-    prev <- use indent
-    cur  <- L.indentLevel
-    when (prev >= cur)
-      (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
---    (L.incorrectIndent GT prev cur) (alas GEQ is not an Ordering)
---  indent .= cur
-    p -- <* (indent .= prev)
-    <* lookAhead (single '\n') -- make sure this was a linefold to not corrupt error messages
-  in try doLinefold <|> p
+linefold p = endLine *> scn *> do
+  prev <- use indent
+  cur  <- L.indentLevel
+  svIndent
+  when (cur <= prev) (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
+  p
 
 ------------
 -- Parser --
@@ -252,7 +245,6 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
       _moduleName  = toS (dropExtension (takeFileName nm))
     , _imports     = []
     , _bindings    = []
---  , _liNames     = []
     , _parseDetails = ParseDetails {
         _hNameBinds     = (0 , M.empty)
       , _hNameMFWords   = (0 , M.empty)
@@ -260,11 +252,13 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
       , _hNameLocals    = [] :: [M.Map HName IName]
       , _freeVars       = emptyBitSet
       , _nArgs          = 0
-      , _underscoreArgs = 0 :: BitSet
+      , _underscoreArgs = emptyBitSet
       , _hNamesNoScope  = M.empty -- track VExterns
       , _fields         = M.empty -- field names
       , _labels         = M.empty -- explicit label names; note. `L a` is ambiguous
       , _newLines       = []
+      , _scope          = 0 -- 0 scope is the top-level of this file
+      , _scopeCount     = 1
     }
   }
   end = (bindings %~ reverse)
@@ -279,6 +273,7 @@ parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
 doParse = void $ decl `sepEndBy` (optional endLine *> scn) :: Parser ()
 decl = svIndent *> choice
    [ reserved "import" *> (iden >>= addImport)
+   , reserved "use"    *> (iden >>= addImport) -- TODO Scope the names !
 -- , void functorModule
    , pForeign
    , void (funBind True LetOrRec) <?> "binding"
@@ -403,17 +398,21 @@ tt :: Parser TT
 tt = anyTT
   where
   anyTT = ({-tySum <|>-} appOrArg) >>= catchUnderscoreAbs >>= typedTT <?> "tt"
-   -- lens bind tighter than App
-  argOrLens = arg       >>=                     \larg -> option larg (lens larg)
+   -- lens '.' binds tighter than App
+  argOrLens = arg >>= \larg -> option larg (lens larg)
+  lineFoldArgs p = let
+    oneLineFold = (:) <$> try (linefold p) <*> many p <* lookAhead (single '\n')
+    in choice [ oneLineFold , (:) <$> p <*> lineFoldArgs p , pure [] ]
+      >>= \ars -> option ars ((ars ++) <$> oneLineFold)
   appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg $ case larg of
 --  Lit l -> LitArray . (l:) <$> some (lexeme $ try (literalP <* notFollowedBy iden)) -- Breaks `5 + 5`
-    P.Label l [] -> P.Label l <$> some (linefold argOrLens) --arg
-    fn -> (Juxt o . (fn:) <$> some (linefold argOrLens))
+    P.Label l [] -> P.Label l <$> lineFoldArgs argOrLens
+    fn     -> Juxt o . (fn :) <$> lineFoldArgs argOrLens
   lens :: TT -> Parser TT
   lens record = let
-    lensNext path = getOffset >>= \o -> reservedChar '.' *> choice [
-        TTLens o record (reverse path) <$> (LensSet  <$ reserved "set"  <*> arg)
-      , TTLens o record (reverse path) <$> (LensOver <$ reserved "over" <*> arg)
+    lensNext path = reservedChar '.' *> getOffset >>= \o -> choice [
+        TTLens o record (reverse path) <$> (LensSet  <$ reserved "set"  <*> argOrLens)
+      , TTLens o record (reverse path) <$> (LensOver <$ reserved "over" <*> argOrLens)
       , idenNo_ >>= newFLabel >>= \p -> choice [lensNext (p : path) , pure (TTLens o record (reverse (p:path)) LensGet)]
       ]
     in lensNext []
@@ -430,7 +429,9 @@ tt = anyTT
 -- , piBinder *> arg
    , con
    , Lit <$> lexeme (try (literalP <* notFollowedBy iden)) -- must be before Iden parsers
-   , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x] -- varName -- incl. label
+-- , reservedChar '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
+   , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x]
+-- , try $ idenNo_ >>= lookupBindName
    , try $ iden >>= lookupBindName -- holey names used as defined
    , TyListOf <$> brackets tt
    , parensExpr
@@ -442,7 +443,7 @@ tt = anyTT
   parensExpr = parens (choice [try piBound , (tt >>= \t -> tuple t <|> typedTT t) , scn $> Cons []]) >>= catchUnderscoreAbs
   tuple t = (\ts -> Cons (zip [-1,-2..] (t:ts))) <$> some (reservedChar ',' *> arg)
   label i = lookupSLabel i >>= \case
-    Nothing -> P.Label <$ reserved "@" <*> newSLabel i <*> (many arg)
+    Nothing -> P.Label <$ reserved "@" <*> newSLabel i <*> many arg
     Just l  -> pure $ P.Label l [] -- <$> many arg (converted in App)
 
 --tySum = Gadt <$> let
@@ -461,7 +462,7 @@ tt = anyTT
   con = let
     fieldAssign = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> tt
     multilineAssign = do
-      reserved "mkRecord"
+      reserved "record"
       ref <- scn *> use indent <* svIndent
       indentedItems ref scn fieldAssign (fail "")
     conBraces = braces (fieldAssign `sepBy` reservedChar ',')
@@ -544,8 +545,12 @@ loneIden a i = lookupSLabel i <&> \case
 
 -- TODO parse patterns as TT's to handle pi-bound arguments
 pattern = let
+  -- @Nil indicates Nil is a label and not an arg
+  explicitLabel = reservedChar '@' *>
+    idenNo_ >>= newSLabel >>= \l -> addAnonArgName >>= \a -> PComp a . PLabel l <$> many singlePattern
   in choice
-  [ try idenNo_ >>= \i -> choice -- addArgName i >>= \a -> choice
+  [  explicitLabel
+  ,  try idenNo_ >>= \i -> choice -- addArgName i >>= \a -> choice
      [ some (singlePattern) >>= \args -> lookupSLabel i >>=
          maybe (newSLabel i) pure >>= \f -> addAnonArgName <&> \a -> PComp a (PLabel f args)
      , addNewArgName i >>= \a -> loneIden a i

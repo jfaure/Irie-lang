@@ -290,29 +290,23 @@ infer = let
       then PoisonExpr
       else Core (Cons (BSM.fromList $ zip fields tts)) (TyGround [THTyCon retTycon])
 
---P.Cons construct -> let
---  (fieldsLocal , rawTTs) = unzip construct
---  fields = qName2Key . readField ext <$> fieldsLocal
---  fieldBinds = rawTTs <&> \tt -> P.FnDef { fnFreeVars = mempty , fnMatches = [FnMatch [] tt] , fnSig = Nothing }
---  in do
---  ext   <- use externs
---  wip'  <- MV.replicate (BSM.size rawTTs) Queued
---  exprs <- uncurry (\(i , tt) -> judgeBind fieldBinds wip') `imapM` construct
-
   P.TTLens o tt fieldsLocal maybeSet -> use externs >>= \ext -> infer tt >>= \record -> let
       fields = readField ext <$> fieldsLocal
       recordTy = tyOfExpr record
       mkExpected :: Type -> Type
       mkExpected dest = foldr (\fName ty -> TyGround [THTyCon $ THProduct (BSM.singleton (qName2Key fName) ty)]) dest fields
     in (>>= checkFails o) $ case record of
-    (Core f gotTy) -> case maybeSet of
+    (Core object objTy) -> case maybeSet of
       P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (TyVar i))
-        <&> \cast -> Core (TTLens (Cast cast f) fields LensGet) (TyVar i)
+        <&> \cast -> Core (TTLens (Cast cast object) fields LensGet) (TyVar i)
 
-      P.LensSet x  -> infer x <&> \case -- LeafTy -> Record -> Record & { path : LeafTy }
-        -- + is right for mergeTypes since this is output
-        new@(Core _newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (mergeTypes True gotTy (mkExpected newLeafTy))
-        _ -> PoisonExpr
+      -- LeafTy -> Record -> Record & { path : LeafTy }
+      -- + is right for mergeTypes since this is output
+      P.LensSet x  -> infer x >>= \case
+--      new@(Core _newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (mergeTypes True objTy (mkExpected newLeafTy))
+        leaf@(Core _newLeaf newLeafTy) -> pure $ -- freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected TyVar i)
+          Core (TTLens object fields (LensSet leaf)) (mergeTypes True objTy (mkExpected newLeafTy))
+        _ -> pure PoisonExpr
 
       P.LensOver x -> infer x >>= \fn -> do
          (ac , rc , outT , rT) <- freshBiSubs 3 >>= \[inI , outI , rI] -> let
@@ -327,8 +321,8 @@ infer = let
            pure (argCast , rCast , outT , rI)
 
          let lensOverCast = case rc of
-               CastProduct _drops [(asmIdx , _cast)] -> Cast (CastOver asmIdx ac fn outT) f
-               BiEQ -> f
+               CastProduct _drops [(asmIdx , _cast)] -> Cast (CastOver asmIdx ac fn outT) object
+               BiEQ -> object
                _ -> error $ "expected CastProduct: " <> show rc
 
          pure $ Core lensOverCast (mergeTVar rT (mkExpected outT))

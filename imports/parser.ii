@@ -1,4 +1,4 @@
---import imports/prelude
+import imports/prelude
 import imports/list
 -- Main : IO
 -- IO = ##
@@ -26,18 +26,10 @@ import imports/list
 --  | Null : String
 --  | Next : Char -> (String -> String)
 
-printString l = case l of
-  Null => 0
-  Next i ll => add (putChar i) (printString ll)
-
--- _>>_ = \f x => \a => x (f a)
->> = \f x => \a => x (f a)
 pure x ps = (ps . ret . set x) . cok . set 1
 fmap f x = x . ret . over f
 <*> fs a  = a . ret . over (fs . ret) -- ? need to merge the records
 liftA2 f x = <*> (fmap f x)
-
-u ls = concat (mapFold (\l => append l (c '\n' Nil)) ls)
 
 -- --parser primitives
 -- parseOK pstate = pstate . cok . set 1

@@ -1,0 +1,43 @@
+import imports/prelude
+import imports/list
+
+-- : ∏ A B C D → A → µc.[Nil | Cons {B , c}]
+-- → µd.[Nil | Cons {A , [Cons {B , d}]}]
+-- a -> [a] -> [a]
+prependToAll sep = \case
+  Nil => Nil
+  Cons x xs  => Cons sep (Cons x (prependToAll sep xs))
+
+-- [Nil | Cons {B , µe.[Nil | Cons {A , [Cons {C , e}]}]}]
+-- a -> [a] -> [a]
+intersperse sep = \case
+  Nil => Nil
+  Cons x xs  => Cons x (prependToAll sep xs)
+
+-- µ vars - + position
+-- splitAt :: Int -> [a] -> ([a], [a])
+splitAt n xs = if n <=? 0 then { l = Nil , r = xs } else case xs of
+  Cons x xs => let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
+  Nil => { l = Nil , r =  Nil }
+
+--intersectBy          :: (a -> a -> Bool) -> [a] -> [a] -> [a]
+--intersectBy _  [] _  =  []
+--intersectBy _  _  [] =  []
+--intersectBy eq xs ys =  [x | x <- xs, any (eq x) ys]
+
+-- wordsBy linesBy
+-- unionBy
+-- transpose permutations
+-- mapAccumL(R)
+-- insertBy
+-- sortBy
+-- zip
+-- find findIndex findIndices
+-- partition
+-- isInfixOf isSuffixOf isPrefixOf
+-- span break
+-- split splitOn chunksOf
+-- compareLength : [a] -> Int -> Ordering
+--   = foldr (\_ acc n -> if n > 0 then acc (n - 1) else GT) (compare 0)
+-- dropWhileEnd : (a -> Bool) -> [a] -> [a]
+--   = \p -> foldr (\x xs -> if p x && null xs then [] else x : xs) []

@@ -16,10 +16,11 @@ type NameMap      = M.Map HName IName
 type SourceOffset = Int
 
 data Module = Module { -- Contents of a File (Module = Function : _ → Record | Record)
-   _moduleName  :: HName -- the fileName
-
- , _imports     :: [HName] -- all imports used at any scope
- , _bindings    :: [FnDef] -- hNameBinds (! these are listed in reverse)
+   _moduleName   :: HName -- the fileName
+-- , _modFunctor   :: [Pattern]
+-- , _modSig       :: Maybe TT
+ , _imports      :: [HName] -- all imports used at any scope
+ , _bindings     :: [FnDef] -- hNameBinds (! these are listed in reverse)
 
  , _parseDetails :: ParseDetails
 }
@@ -40,7 +41,8 @@ data ParseDetails = ParseDetails {
  , _fields         :: NameMap
  , _labels         :: NameMap
  , _newLines       :: [Int]
- , _scope          :: ModIName -- Spawn new ModIName on each record cons | let block. (inference should .|. scopes)
+ , _scope          :: ModIName -- Spawn new module on each let block. (inference should .|. scopes)
+ , _scopeCount     :: Int
 }
 data FnDef = FnDef {
    fnNm         :: HName
@@ -73,7 +75,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Abs FnDef
  | App TT [TT] -- mixfixless Juxt (used for "case x of .." => "x > \case ")
  | Juxt SourceOffset [TT] -- may contain mixfixes to resolve
- | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat ->'
+ | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat =>'
 
  -- tt primitives (sum , product , list)
  | Cons   [(FName , TT)] -- can be used to type itself
@@ -81,6 +83,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Label  LName [TT]
  | Match  [(LName , FreeVars , [Pattern] , TT)] (Maybe TT)
  | List   [TT]
+ | NewScope ModIName TT -- marker for let-block / opened Module
 
  -- term primitives
  | Lit      Literal

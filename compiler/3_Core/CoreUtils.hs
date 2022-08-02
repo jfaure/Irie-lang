@@ -90,17 +90,17 @@ tyExpr = \case -- get the type from an expr.
   Core e t -> Just (TyTerm e t)
   expr -> Nothing --error $ "expected type, got: " ++ show expr
 
-tyOfExpr  = \case
-  Core x ty -> ty
-  Ty t      -> tyOfTy t
-  PoisonExpr-> TyGround []
-  m@MFExpr{}-> error $ "unexpected mfexpr: " <> show m
+tyOfExpr = \case
+  Core _x ty -> ty
+  Ty t       -> tyOfTy t
+  PoisonExpr -> TyGround []
+  m@MFExpr{} -> error $ "unexpected mfexpr: " <> show m
 
 -- expr2Ty :: _ -> Expr -> TCEnv s Type
 -- Expression is a type (eg. untyped lambda calculus is both a valid term and type)
-expr2Ty judgeBind e = case e of
+expr2Ty _judgeBind e = case e of
  Ty x -> pure x
- Core c ty -> case c of
+ Core c _ty -> case c of
 -- Var (VBind i) -> pure [THRecSi i []]
    Var (VArg x)  -> pure $ TyVar x --[THVar x] -- TODO ?!
 -- App (Var (VBind fName)) args -> pure [THRecSi fName args]
@@ -139,8 +139,9 @@ mergeTyUnions pos l1 l2 = let
   in foldr (mergeTyHeadType pos) [] (sortBy cmp $ l2 ++ l1)
 
 mergeTyHeadType :: Bool -> TyHead -> [TyHead] -> [TyHead]
-mergeTyHeadType pos newTy [] = [newTy]
-mergeTyHeadType pos newTy (ty:tys) = mergeTyHead pos newTy ty ++ tys
+mergeTyHeadType pos newTy = \case
+  []       -> [newTy]
+  ty : tys -> mergeTyHead pos newTy ty ++ tys
 
 mergeTyHead :: Bool -> TyHead -> TyHead -> [TyHead]
 mergeTyHead pos t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
@@ -154,14 +155,14 @@ mergeTyHead pos t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   [THSet a , THSet b] -> [THSet $ max a b]
   [THPrim a , THPrim b]  -> if a == b then [t1] else case (a,b) of
 --  (PrimInt x , PrimInt y) -> [THPrim $ PrimInt $ max x y]
-    (PrimBigInt , PrimInt y) -> [THPrim $ PrimBigInt]
-    (PrimInt y , PrimBigInt) -> [THPrim $ PrimBigInt]
+    (PrimBigInt , PrimInt _) -> [THPrim $ PrimBigInt]
+    (PrimInt _ , PrimBigInt) -> [THPrim $ PrimBigInt]
     _ -> join
 
 --[THMu m a , THMuBound n] -> if m == n then [t1] else join
 --[THMuBound n , THMu m a] -> if m == n then [t2] else join
-  [THMu m a , THBound n] -> if m == n then [t1] else join
-  [THBound n , THMu m a] -> if m == n then [t2] else join
+  [THMu m _ , THBound n] -> if m == n then [t1] else join
+  [THBound n , THMu m _] -> if m == n then [t2] else join
   [THMu m mt , THMu n nt] -> if m == n then [THMu m (mergeTypes pos mt nt)] else join
   [THBi m mt , THBi n nt] -> if m == n then [THBi m (mergeTypes pos mt nt)] else join -- TODO slightly dodgy
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
@@ -170,13 +171,11 @@ mergeTyHead pos t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   [THPrim (PrimInt 32) , THExt 1] -> [t1] -- HACK
   [THExt a , THExt  b]        -> if a == b then [t1] else join
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of
-    [THSumTy a   , THSumTy b]   ->
-      [THTyCon $ THSumTy $ if pos then BSM.unionWith mT a b else BSM.intersectionWith mT a b]
-    [THProduct a , THProduct b] ->
-      [THTyCon $ THProduct $ if pos then BSM.intersectionWith mT a b else BSM.unionWith mT a b]
+    [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ if pos then BSM.intersectionWith mT a b else BSM.unionWith mT a b]
+    [THProduct a , THProduct b] -> [THTyCon $ THProduct $ if pos then BSM.unionWith mT a b else BSM.intersectionWith mT a b]
     [THTuple a , THTuple b]     -> [THTyCon $ THTuple $ zM pos a b]
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM (not pos) d1 d2) (mergeTypes pos r1 r2)]
-    x -> join
+    _ -> join
   _ -> join
 
 nullType = \case
@@ -213,7 +212,7 @@ mergeTypes pos t (TyVar v)                   = mergeTVar v t
 mergeTypes pos (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions pos g1 g2)
 mergeTypes pos (TyVars vs g1) (TyGround g2)  = TyVars vs (mergeTyUnions pos g1 g2)
 mergeTypes pos (TyGround g1) (TyVars vs g2)  = TyVars vs (mergeTyUnions pos g1 g2)
-mergeTypes pos a b = error $ "attempt to merge weird types: " <> show (a , b)
+mergeTypes pos a b = error $ "attempt to merge weird types at " <> if pos then "+" else "-" <> ": " <> show (a , b)
 
 -- TODO check at the same time if this did anything
 mergeTysNoop :: Bool -> Type -> Type -> Maybe Type = \pos a b -> Just $ mergeTypes pos a b
@@ -244,20 +243,22 @@ invertMu inv cur = let
         THSumTy tys   -> BSM.toList tys -- V.toList $ BSM.elems tys
         THProduct tys -> BSM.toList tys -- V.toList $ BSM.elems tys
         THTuple tys   -> V.toList (V.indexed tys)
-    THMu m t    -> [inv] -- [Leaf m]
-    THMuBound m -> [inv] -- [Leaf m]
+    THMu _m t    -> [inv] -- [Leaf m]
+    THMuBound _m -> [inv] -- [Leaf m]
     _ -> [] -- no mus in unguarded type
   in case cur of
-  TyGround gs  -> concatMap (go cur) gs
-  TyVars vs gs -> concatMap (go cur) gs
-  TyVar v -> []
+  -- TODO why are we dropping tvars ?
+  TyGround gs   -> concatMap (go cur) gs
+  TyVars _vs gs -> concatMap (go cur) gs
+  TyVar _v -> []
+  x -> error (show x)
 
 -- test if an inverted Mu matches the next layer (a potential unrolling of the µ)
 -- This happens after type simplifications so there should be no tvars (besides escaped ones)
 -- Either (more wrappings to test) (end , True if wrapping is an unrolling)
 testWrapper :: InvMu -> Int -> Type -> Either InvMu Bool
 testWrapper inv recBranch t = case inv of
-  Leaf m              -> Right True
+  Leaf _m             -> Right True
   InvMu this r parent -> if False && r /= recBranch -- Avoid pointless work if testing against wrong branch
 --then d_ (r , recBranch , this) (Right False)
   then Right False
@@ -265,7 +266,7 @@ testWrapper inv recBranch t = case inv of
     (TyGround g1 , TyGround g2) -> let
       partitionTyCons g = (\(t , o) -> ((\case {THTyCon tycon -> tycon ; _ -> error "wtf" }) <$> t , o))
         $ partition (\case {THTyCon{}->True;_->False}) g
-      ((t1 , o1) , (t2 , o2)) = (partitionTyCons g1 , partitionTyCons g2)
+      ((t1 , _o1) , (t2 , _o2)) = (partitionTyCons g1 , partitionTyCons g2)
       testGuarded t1 t2 = V.izipWith (\i t1 t2 -> i == recBranch || eqTypesRec t1 t2) t1 t2
       testBSM (i , (t1 , t2)) = i == recBranch || eqTypesRec t1 t2
       muFail = case (t1 , t2) of
