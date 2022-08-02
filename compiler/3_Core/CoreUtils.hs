@@ -161,8 +161,8 @@ mergeTyHead pos t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
 
 --[THMu m a , THMuBound n] -> if m == n then [t1] else join
 --[THMuBound n , THMu m a] -> if m == n then [t2] else join
-  [THMu m _ , THBound n] -> if m == n then [t1] else join
-  [THBound n , THMu m _] -> if m == n then [t2] else join
+  [THMu m _ , THBound n]  -> if m == n then [t1] else join
+  [THBound n , THMu m _]  -> if m == n then [t2] else join
   [THMu m mt , THMu n nt] -> if m == n then [THMu m (mergeTypes pos mt nt)] else join
   [THBi m mt , THBi n nt] -> if m == n then [THBi m (mergeTypes pos mt nt)] else join -- TODO slightly dodgy
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
@@ -173,7 +173,7 @@ mergeTyHead pos t1 t2 = -- trace (show t1 ++ " ~~ " ++ show t2) $
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of
     [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ if pos then BSM.intersectionWith mT a b else BSM.unionWith mT a b]
     [THProduct a , THProduct b] -> [THTyCon $ THProduct $ if pos then BSM.unionWith mT a b else BSM.intersectionWith mT a b]
-    [THTuple a , THTuple b]     -> [THTyCon $ THTuple $ zM pos a b]
+    [THTuple a , THTuple b]     -> [THTyCon $ THTuple (zM pos a b)]
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM (not pos) d1 d2) (mergeTypes pos r1 r2)]
     _ -> join
   _ -> join

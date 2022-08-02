@@ -354,7 +354,7 @@ infer = let
     alts <- infer `mapM` exprs
     def  <- sequenceA (infer <$> catchAll)
     let retTys  = tyOfExpr <$> (maybeToList def ++ alts)
-        retTy   = mergeTypeList True retTys -- + is right since this term is always output
+        retTy   = mergeTypeList False retTys -- ?? TODO why is this a negative merge
 
         altTys  = map (\argTVars -> TyGround [THTyCon $ THTuple (V.fromList argTVars)]) argTVars
         scrutTy = TyGround [THTyCon $ THSumTy $ BSM.fromList $ zip labels altTys]

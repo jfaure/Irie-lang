@@ -567,6 +567,7 @@ singlePattern = let
     [ reservedName "as" *> lexeme idenNo_ >>= addNewArgName <&> PArg
     , addAnonArgName <&> \a -> PComp a PWildCard
     ]
+  , reservedChar '@' *> idenNo_ >>= newSLabel >>= \l -> addAnonArgName <&> \a -> PComp a (PLabel l [])
   , try idenNo_ >>= \i -> addNewArgName i >>= \a -> loneIden a i
 
   -- Composites

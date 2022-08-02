@@ -45,7 +45,7 @@ caseTests = do
 printList l = case l of
   Nil => 2
   Cons i ll => add (putNumber i) (printList ll)
-    |] in S.describe "printList" $ S.it (toS e) $ UniText (inferType e)
+|] in S.describe "printList" $ S.it (toS e) $ UniText (inferType e)
       `S.shouldBe` UniText "printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → %i32\n"
 
   let e :: Text = [r|
@@ -56,7 +56,7 @@ unfoldr f b0 = case f b0 of
 null x = case x of
   Nil => 1
   Cons => 0
-    |]
+|]
       in S.describe "unfoldr" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "unfoldr = ∏ A B C → (A → [Just {{val : B , seed : A}} | Nothing]) → A → µc.[Nil | Cons {B , c}]\n"
 
@@ -64,9 +64,18 @@ null x = case x of
 filter pred l = case l of
   Nil => Nil
   Cons x xs => ifThenElse (pred x) (Cons x (filter pred xs)) (filter pred xs)
-    |]
+|]
       in S.describe "filter" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "filter = ∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]\n"
+
+  let e :: Text = [r|
+mergeRec = \case
+  N => { x = 1 }
+  C => { y = 1 }
+|]
+      in S.describe "mergeRecords" $ S.it (toS e) $ UniText (inferType e)
+        `S.shouldBe` UniText "mergeRec = [N | C] → {}\n"
+
 
 testImports = do
   (fp1 , h1) <- SIO.openTempFile "/tmp/" "m1"

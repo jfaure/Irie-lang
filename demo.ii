@@ -50,19 +50,15 @@ pTakeP n = \s cok _ _ eko => let
   in if length split.l /=? n then eko "Bad length" else cok split.l (s.input.set (split.r))
 -}
 
-g x = if x
-  then x 
-   else x
+n @N = 0
+take n xs = if n <=? 0 then N else case xs of
+  N => N
+  C x xs => C x (take (n - 1) xs)
 
-z = 2
+mergeRec = \case
+  N => { x = 1 }
+  C => { y = 1 }
 
-f x = \case
-  Nil => 2
-  Just x => 2
-
---take n xs = if n <=? 0 then Nil else case xs of
---  Nil => Nil
---  Cons x xs => Cons x (take (n - 1) xs)
 --
 --lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
 --

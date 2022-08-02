@@ -5,7 +5,7 @@ Subtyping calculus of inductive constructions for high-performance (and eventual
 ## [FAQ](FAQ.md)
 ## [Tutorial (WIP)](tutorial.md)
 ## [Language documentation (WIP)](languageDocumentation.md)
-## [Compiler Internals](compiler/README.md)
+## [Compiler Internals](../compiler/README.md)
 
 ## Origin
 Irie is the first pure functional language with first-class subtyping and an extreme emphasis on performance. The philosophy is to focus on a simple but powerful core language capable of naturally expressing additional desirable features: The subtyping calculus of constructions.
@@ -25,6 +25,9 @@ Subtyping examples:
 * Extra subtyping relations can enable custom optimisations
 
 ## Performance
+### Simd
+when you write `float f = x * y` you're wasting almost 90% of cpu time, because you could have done 8 floating point multiplications at once (even 16 with AVX-512), or 32 byte-wise operations. Vector instructions are far too powerful to ignore but also too painful to write manually all the time - A pure functional compiler with subtyping could automatically emit SIMD instructions.
+
 ### Fusion
 Cata-Build and stream fusion are techniques for automatically eliminating many intermediate datastructures. Catamorphisms can fuse with anything, however this direction of travel cannot fuse zips or other functions of multiple datas. Stream fusion is more powerful, but more difficult to implement since it depends on co-recursion and general compiler optimisations and in particular specialisation of partial applications. Both of these fusion framewords traditionally require functions to be written in a restricted form, but this form can often be automatically derived from general recursive definitions. See "Stream Fusion: From Lists to Streams to Nothing at All" and "Warm Fusion: Deriving Build-Catas from Recursive definitions"
 

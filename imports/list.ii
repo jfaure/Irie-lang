@@ -39,11 +39,9 @@ singleton x = Cons x Nil
 
 repeat x = let xs = Cons x xs in xs
 
---span p xs = case xs of
---  Nil => { left = xs , right = xs }
---  Cons x xs2 => if p x
---    then let { left = ys , right = zs } = span p xs2 in (Cons x ys , zs)
---    else { left = Nil , right = xs }
+--span p = case xs of
+--  Nil => { l = xs , r = xs }
+--  Cons x xs2 => if p x then let s = span p xs2 in (Cons x s.l , s.r) else { l = Nil , r = xs }
 
 foldr f s l = case l of
   Cons x xs => f x (foldr f s xs)
@@ -53,9 +51,9 @@ foldl f s l = case l of
   Cons x xs => foldl f (f s x) xs
   Nil => s
 
---unwords = \case
---  Nil => Nil
---  ws  => foldr1 (\w s => w ++ Cons ' ' s) ws
+unwords ws = case ws of
+  Nil => Nil
+  _   => foldr1 (\w s => w ++ Cons ' ' s) ws
 
 c a b = Cons a b
 append front back = foldr c back front

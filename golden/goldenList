@@ -26,6 +26,8 @@ foldr = [32m∏ A B C → (A → B → B) → B → µc.[Nil | Cons {A , c}] �
 
 foldl = [32m∏ A B C → (A → B → A) → A → µc.[Nil | Cons {B , c}] → A[0m
 
+unwords = [32m∏ A → µa.µa.[Cons {%i8 , a}][0m
+
 c = [32m∏ A B → A → B → [Cons {A , B}][0m
 
 append = [32m∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}][0m
