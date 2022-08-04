@@ -8,6 +8,22 @@ prependToAll sep = \case
   Nil => Nil
   Cons x xs  => Cons sep (Cons x (prependToAll sep xs))
 
+unwords ws = let
+  go = \case
+    Nil => Nil
+    Cons v vs => append v (go vs)
+  in case ws of
+    Nil => Nil
+    Cons w ws => append w go ws
+
+unwords ws = let
+  go = \case
+    Nil => Nil
+    Cons v vs => {-Cons ' '-} (append v (go vs))
+  in case ws of
+    Nil => Nil
+    Cons w ws => append w (go ws)
+
 -- [Nil | Cons {B , µe.[Nil | Cons {A , [Cons {C , e}]}]}]
 -- a -> [a] -> [a]
 intersperse sep = \case

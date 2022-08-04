@@ -227,7 +227,9 @@ infer = let
  judgeLabel qNameL exprs = let
    labTy = TyGround [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
 -- in Core (Label qNameL exprs) (TyGround [THTyCon $ THSumTy $ IM.singleton (qName2Key qNameL) labTy])
-   es = (\(Core t _ty) -> t) <$> exprs
+   es = exprs <&> \case
+     Core t _ty -> t
+     PoisonExpr -> Question
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  in \case
@@ -357,7 +359,11 @@ infer = let
         retTy   = mergeTypeList False retTys -- ?? TODO why is this a negative merge
 
         altTys  = map (\argTVars -> TyGround [THTyCon $ THTuple (V.fromList argTVars)]) argTVars
-        scrutTy = TyGround [THTyCon $ THSumTy $ BSM.fromList $ zip labels altTys]
+        scrutSum = BSM.fromList $ zip labels altTys
+--      scrutSumD = maybe scrutSum (\d -> (qName2Key (mkQName 0 0) , tyOfExpr d) : scrutSum) def
+        scrutTy = case def of
+          Nothing -> TyGround [THTyCon $ THSumTy scrutSum]
+          Just t  -> TyGround [THTyCon $ THSumOpen scrutSum (tyOfExpr t)]
         matchTy = TyGround $ mkTyArrow [scrutTy] retTy
         argAndTys  = zipWith zip args argTVars
         altsMap = let

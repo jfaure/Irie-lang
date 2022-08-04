@@ -20,7 +20,7 @@ The parser is designed to infaillably parse syntactically valid modules, handle 
 The parser assigns every argument and binding a unique Int name and constructs a list of unknown names (forward and external references).
 
 # Type inference / checking
-This phase is heavily inspired by 'Algebraic subtyping' by Stephen Dolan, (minus the last chapter on automata). Biunification is extended with QTT and dependent types.
+This phase is heavily inspired by 'Algebraic subtyping' by Stephen Dolan, minus the last chapter on automata.
 
 ## Generalisation
 We want polymorphic typing schemes to be instantiated with fresh variables on every use. We need to be careful to only generalise type variables that do not escape into enclosing scope. This is a good moment to simplify types by removing excessive type variables and tighten recursive types. Mutual functions need to be handled carefully.

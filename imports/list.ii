@@ -51,10 +51,6 @@ foldl f s l = case l of
   Cons x xs => foldl f (f s x) xs
   Nil => s
 
-unwords ws = case ws of
-  Nil => Nil
-  _   => foldr1 (\w s => w ++ Cons ' ' s) ws
-
 c a b = Cons a b
 append front back = foldr c back front
 _++_ = append
@@ -89,7 +85,12 @@ toCString str = let
 -- Int -> [a] -> ([a] , [a])
 splitAt n xs = if n <=? 0 then { l = Nil , r = xs } else case xs of
   Cons x xs => let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
-  Nil => { l = Nil , r =  Nil }
+  Nil => { l = Nil , r = Nil }
+--Nil => { l = xs , r = xs }
+
+span p xs = case xs of
+  Nil => { l = xs , r = xs }
+  Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
 
 reverse = foldl (\x xs => Cons xs x) Nil
 

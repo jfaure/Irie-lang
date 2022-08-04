@@ -1,3 +1,8 @@
+--Either a b =
+-- | Left  a
+-- | Right b
+
+--either : A B C => (A -> B) -> (C -> B) -> Either A C -> B
 either f g r = case r of
   Left x  => f x
   Right y => g y

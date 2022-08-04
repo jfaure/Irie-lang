@@ -46,7 +46,9 @@ formatError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = l
       else show (modName q) <> "." <> (names V.! modName q V.! unQName q)
     in case failType of
     TextMsg m     -> m
-    TyConMismatch -> "Type constructor mismatch"
+    TyConMismatch -> "Type constructor mismatch" <> case (got , exp) of
+      (_ , TyGround [THTyCon THArrow{}]) -> " (excess arguments)"
+      _ -> ""
     AbsentField q -> "Absent field '" <> getName (srcFieldNames srcNames) q <> "'"
     AbsentLabel q -> "Absent label '" <> getName (srcLabelNames srcNames) q <> "'"
 

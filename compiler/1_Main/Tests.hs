@@ -76,7 +76,6 @@ mergeRec = \case
       in S.describe "mergeRecords" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "mergeRec = [N | C] → {}\n"
 
-
 testImports = do
   (fp1 , h1) <- SIO.openTempFile "/tmp/" "m1"
   hPutStr h1 $ ("f = 3" :: Text)
@@ -114,6 +113,7 @@ goldenList fName goldName = S.goldenTextFile goldName $ do
 
 gold   = S.it "list.ii"   (goldenList "imports/list.ii"   "golden/goldenList")
 mutual = S.it "mutual.ii" (goldenList "imports/sumMul.ii" "golden/sumMul")
+tree   = S.it "tree.ii"   (goldenList "imports/tree.ii"   "golden/tree")
 
 g = S.sydTest gold
 s = S.sydTest $ do
@@ -122,3 +122,4 @@ s = S.sydTest $ do
   caseTests
   gold
   mutual
+  tree

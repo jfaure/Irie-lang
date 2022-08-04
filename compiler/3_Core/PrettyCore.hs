@@ -157,7 +157,12 @@ pTyHead = let
       prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> case ty of
         TyGround [THTyCon (THTuple v)] | V.null v -> ""
         _ -> space <> pTy ty
-      in enclose "[" "]" (hsep $ punctuate (" |") (prettyLabel <$> BSM.toList l))
+      in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)))
+    THSumOpen l d -> let
+      prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> case ty of
+        TyGround [THTyCon (THTuple v)] | V.null v -> ""
+        _ -> space <> pTy ty
+      in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)) <> viaShow d)
     THProduct l -> let
       prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy ty
       in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> BSM.toList l))

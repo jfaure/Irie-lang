@@ -1,0 +1,7 @@
+import imports/prelude
+import imports/list
+
+--flatten :: Tree a -> [a]
+flattenTree t = let
+  squish (Node x ts) xs = @Cons x (foldr squish xs ts)
+  in squish t @Nil

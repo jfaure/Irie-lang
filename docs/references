@@ -1,3 +1,6 @@
+Hyperscan: A Fast multi-pattern regex matcher for modern CPUS
+https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf
+
 simd pattern matching
 https://github.com/jneem/teddy
 

@@ -115,6 +115,7 @@ data TyCon -- Type constructors
  | THTuple    (V.Vector  TyPlus) -- ordered form of THproduct
  | THProduct  (BSM.BitSetMap TyPlus)
  | THSumTy    (BSM.BitSetMap TyPlus)
+ | THSumOpen  (BSM.BitSetMap TyPlus) TyPlus -- [li : τi | (lj : pj for lj ∉ li)]
  deriving Eq
 
 -- Head constructors in the profinite distributive lattice of types

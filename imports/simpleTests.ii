@@ -82,7 +82,7 @@ lp9 = \k => let test = {tmp = k (\x => x) , res = (\x => x)}.res in {u = test 0 
 lp14 = \f => let r = \x => \g => { a = f x , b = g x } in r -- ∏ A B C → (A → B) → A → (A → C) → {a : B , b : C}
 lp15 = \f => let r = \x => \g => { a = g x } in {u = r 0 (add 1) , v = r 1 (add 0)} -- ⊤ → {u : {a : %i32} , v : {a : %i32}}
 lp16 = \f => let r = \x => \g => { a = g x , b = f x } in {u = r 0 (add 1) , v = r 1 (add 0)} -- ∏ A → (%i1 → A) → {u : {a : %i32 , b : A} , v : {a : %i32 , b : A}}
-lp17 = \f => let r = \x => \g => { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)} -- ∏ A → ((%i1 & {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
+lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)} -- ∏ A → ((%i1 & {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
 
 ---------------------
 -- Recursive types --
@@ -108,7 +108,7 @@ lpRec2 = let r a = r in ifThenElse 1 r r  -- ∏ A → µa.(⊤ → a)
 -- µx.{a : x , b : x}
 rec0  = let rec x = {a = x , b = x} in x              -- ∏ A → µa.{a : a , b : a}
 -- rec1 : ⊤ → µx.{a : x , b : x} unclear how to fix
-rec1 v = { a = rec1 v , b = rec1 v } -- ∏ A B → ⊤ → µa.µb.{a : a , b : b}
+rec1 v = { a = rec1 v , b = rec1 v } -- ∏ A B → ⊤ → µa.{a : a , b : a}
 --recscError  = let rec x = (let rec y = {u = y , v = (x y)} in 0) in 0 -- cannot constrain %i32 <: A → B
 --rec3  = (\x => (let y = (x x) in 0))                  -- ∏ A → A ∧ (A → ⊤) → %i32
 rec5  = \next => 0                                    -- ⊤ → %i1
@@ -132,4 +132,4 @@ misc0 = (\x => (let y = (x x.v) in 0))                  -- ⊤ → %i1
 
 -- Type Checking (Note. these require prelude imported for ->)
 add1 : Arrow Int Int = \a => add a 1  -- %i32 → %i32
-identity : Arrow (a : Set) a = \x => x -- ∏ A → A → A
+--identity : Arrow (a : Set) a = \x => x -- ∏ A → A → A

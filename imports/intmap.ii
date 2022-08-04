@@ -1,0 +1,7 @@
+import imports/prelude
+
+--insertLookupWithKey f k x t = case t of
+--  Bin p m l r => if nomatch k p m then (Nothing , link k (Tip k x) p t)
+--    else if zero k m then (let (found , l2) = insertLookupWithKey f k x r in (found , Bin p m l2 r)) else (let (found , r2) = insertLookupWithKey f k x r in (found , Bin p m l r2))
+--  Tip k y     => if k =? ky then (Just y , Tip k (f k x y)) else (Nothing , link k (Tip k x) ky t)
+--  None        => (Nothing , Tip k x)

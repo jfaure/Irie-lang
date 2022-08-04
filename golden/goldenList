@@ -26,8 +26,6 @@ foldr = [32m∏ A B C → (A → B → B) → B → µc.[Nil | Cons {A , c}] �
 
 foldl = [32m∏ A B C → (A → B → A) → A → µc.[Nil | Cons {B , c}] → A[0m
 
-unwords = [32m∏ A → µa.µa.[Cons {%i8 , a}][0m
-
 c = [32m∏ A B → A → B → [Cons {A , B}][0m
 
 append = [32m∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}][0m
@@ -62,6 +60,10 @@ splitAt = [32m∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → {l : µc.[Nil
 
 z = [32m∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : [Nil]}[0m
 
+span = [32m∏ A B → (A → %i1) → µb.[Nil | Cons {A , b}] → {l : µb.[Nil | Cons {A , b}] , r : µb.[Nil | Cons {A , b}]}[0m
+
+s = [32m∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : µa.[Nil | Cons {⊥ , a}]}[0m
+
 reverse = [32m∏ A B C → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
 
 scanl = [32m∏ A B C D → (A → B → A) → A → µc.[Nil | Cons {B , c}] → µd.[Nil | Cons {A , d}][0m
@@ -72,7 +74,7 @@ foldr1 = [32m∏ A B → (A → A → A) → µb.[Cons {A , b}] → A[0m
 
 nubBy = [32m∏ A B C → (A → A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
 
-nub = [32m∏ A B C D → µb.[Nil | Cons {τ(30) & (A) , b}] → µc.[Nil | Cons {τ(30) & (A) , c}] → µd.[Nil | Cons {τ(30) & (A) , d}][0m
+nub = [32m∏ A B C D → µb.[Nil | Cons {τ(43) & (A) , b}] → µc.[Nil | Cons {τ(43) & (A) , c}] → µd.[Nil | Cons {τ(43) & (A) , d}][0m
 
 elemBy = [32m∏ A B C → (A → B → %i1) → B → µc.[Nil | Cons {A , c}] → (%i1 & %i1)[0m
 

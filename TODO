@@ -1,9 +1,12 @@
 ## surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * move to f2fs
 ## ?
+  * Advanced recursive types µ insufficient `PTree a = Leaves a | Cons (PTree (a , a))`
   * Linear variables (vbruijn | sourceArg | binding | literal | Extern [ | Field | Label ]) + occurs + src Info (all β-subbed with Term)
+  * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
+  * open sum type
 ## Top Priority
-  * `splitAt : %i32 -> µb.[C {A , b} | N] → {l : µc.[C {A , c} | N] , r : µb.[N]}`
+  * `splitAt : %i32 -> µb.[C {A , b} | N] → {l : µc.[C {A , c} | N] , r : µb.[N]}` (list.ii: also diff with returning Nil vs xs)
   * mu-roll nonEmptySubsequences
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * fix default case branch
@@ -20,19 +23,19 @@
   * Linear types; dependent types required to quantify relative linearity `Lin t ≥ Lin f => t → u`
   * expand lambda-mixfixes with explicit holes & reject unsaturated mixfix words
   * mixfix scope
-  * record type decls
-  * repl parse multiline
 ## Parse
   * don't allow mixing tabs and spaces
   * Pattern guards
   * improve patterns2TT (add tuple of label , add literal) and eqn matches
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
+  * figure out end of let-in in mixfix parser ?! `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
+  * repl parser: multiline
 ## SSA
   * local/extern names in ssa form
   * normalize order of fields/labels for codegen (sort on size then textual name)
   * case-splits + lambdas as data (for optimal beta-reduction)
 ## Types
-  * Annotations
+  * Annotations (record , sum , TPi)
   * THFieldCollision
   * Dependent normalisation
   * first class polymorphism

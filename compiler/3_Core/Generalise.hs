@@ -2,15 +2,15 @@
 module Generalise (generalise,) where
 import BiUnify ( instantiate )
 import Control.Lens ( iforM_, use, (<<%=), (<<.=), (%=), (.=), over, Field1(_1), Field2(_2) )
-import CoreSyn ( global_debug, BiSub(BiSub), TyCon(THTuple, THArrow, THProduct, THSumTy), TyHead(THMu, THBound, THMuBound, THTyCon, THPrim, THExt, THTop, THBot, THBi),
+import CoreSyn ( global_debug, BiSub(BiSub), TyCon(THTuple, THArrow, THProduct, THSumTy , THSumOpen), TyHead(THMu, THBound, THMuBound, THTyCon, THPrim, THExt, THTop, THBot, THBi),
       Type(TyGround, TyVar, TyVars) )
-import CoreUtils ( invertMu, mergeTVar, mergeTypeList, mergeTypes, nullType, partitionType, startInvMu, testWrapper, tyLatticeEmpty )
+import CoreUtils ( mapType, invertMu, mergeTVar, mergeTypeList, mergeTypes, nullType, partitionType, startInvMu, testWrapper, tyLatticeEmpty )
 import PrettyCore ( number2CapLetter, prettyTyRaw )
 import TCState ( biEqui, bis, blen, coOccurs, externs, hasRecs, leakedVars, muWrap, quants, recVars, seenVars, GenEnv, GenEnvState(GenEnvState), TCEnv )
 import qualified BitSetMap as BSM ( elems, traverseWithKey )
 import qualified Data.Vector.Mutable as MV ( length, modify, read, replicate, write )
 import qualified Data.Text as T ( intercalate )
-import qualified Data.Vector as V ( Vector, (!), constructN, imapM, imapM_, length, take, toList, unsafeFreeze )
+import qualified Data.Vector as V ( Vector, (!), cons, constructN, imapM, imapM_, length, take, toList, unsafeFreeze )
 -- Generalisation allows polymorphic types to be instantiated with fresh tvars on each use.
 -- This means some tvars are to be promoted to polymorphic vars
 -- However simplification removes (or unifies with another type) as many tvars as possible
@@ -189,13 +189,11 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
                                      <> "\n       => " <> prettyTyRaw rolled)
               <* when (global_debug && not (null xss)) (traceM $ show xss) -- rec1
           in doWrap x
-    in case mwrap of
-      [] -> pure t
-      invs -> do
-        when (global_debug && not (null (drop 1 invs))) (traceM $ ">1 MuInvs: " <> show (length invs)) --show (x : xs))
-        (fromMaybe t) <$> foldM (\x next -> case x of { Nothing -> tryInv next ; r -> pure r }) Nothing invs
+    in do
+      when (global_debug && not (null (drop 1 mwrap))) (traceM $ ">1 MuInvs: " <> show (length mwrap)) --show (x : xs))
+      fromMaybe t <$> foldM (\x next -> case x of { Nothing -> tryInv next ; r -> pure r }) Nothing mwrap
 
-  checkRec vs wrappedRecs t = let
+  checkRec vs wrappedRecs t = mergeMus =<< let -- ! Hack; need to use SubVar to ensure the mus are merged out of scope
 --  addMus :: [Int] -> Type -> _ Type
     addMus rawTVs t = (MV.read biEqui' `mapM` rawTVs) >>= \vs -> let
       rmVars m = let goGround = filter (\case { THBound x -> not (m `testBit` x) ; THMuBound x -> not (m `testBit` x) ; _ -> True })
@@ -206,13 +204,27 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
       mT = rmVars (intList2BitSet vs) t
       retTy = foldl (\ty m -> TyGround [THMu m ty]) mT vs
       in retTy <$ case vs of
-        m : _ms -> let invMu = invertMu (startInvMu m) mT in (muWrap .= [(_ , m , mT , invMu)]) -- TODO why are we ignoring ms
+        m : _ms -> let invMu = invertMu m (startInvMu m) mT in (muWrap .= [(_ , m , mT , invMu)]) -- TODO why are we ignoring ms
         _ -> pure ()
     in addMus (bitSet2IntList (vs .&. wrappedRecs)) t >>= \case
       -- prevent stacking µa.µa. after mu-rolling
       TyGround [THMu m t@(TyGround ts)] | Just (THMu _n ty) <- find (\case {THMu n _ -> n == m ; _ -> False}) ts
-        -> let  invMu = invertMu (startInvMu m) ty in t <$ (muWrap .= [(_ , m , t , invMu)])
+        -> t <$ (muWrap .= [(_ , m , t , invertMu m (startInvMu m) ty)])
       t -> pure t
+
+  -- TODO hack to eliminate eq mubounds μa.μb.{ x : a , y : b }
+  -- this messes up the mu-roll mechanism since b branch is now a branch
+  mergeMus = \case
+    TyGround [THMu m (TyGround [THMu n t])] -> let
+      newM = min m n
+      oldM = max m n
+      go = \case
+        THMuBound x | x == oldM -> THMuBound newM
+        x -> x
+      newT = mapType go t
+      in d_ ("mergemu: " <> show oldM <> " => " <> show newM :: Text)
+        $ TyGround [THMu newM newT] <$ (muWrap .= [(_ , newM , newT , invertMu newM (startInvMu newM) newT)])
+    t -> pure t
 
   goType pos t = let
     finaliseTyHead pos th = subBranches pos th >>= \(x , m) -> rollMu (TyGround [x]) m
@@ -256,6 +268,10 @@ subGen tvarSubs leakedVars raw = use biEqui >>= \biEqui' -> let
       THSumTy     r -> do
         branches <- BSM.traverseWithKey (goGuarded s pos) r
         pure (THSumTy (fst <$> branches) , concatMap snd (BSM.elems branches))
+      THSumOpen r d -> do
+        branches <- BSM.traverseWithKey (goGuarded s pos) r
+        open     <- goGuarded s pos (-1) d -- ! branch keys should never be negative TODO use prelude module
+        pure (THSumOpen (fst <$> branches) (fst open) , concatMap snd (open `V.cons` BSM.elems branches))
     x -> pure (x , [])
 
   in use seenVars >>= \s -> (fst <$> goGuarded s True 0 raw) >>= \done -> use quants <&> \q ->
@@ -295,6 +311,7 @@ substTypeMerge pos loops guarded ty =  let
                                  <*> substGuarded pos r
       THProduct   r -> THProduct <$> traverse (substGuarded pos) r
       THSumTy     r -> THSumTy   <$> traverse (substGuarded pos) r
+      THSumOpen r d -> THSumOpen <$> traverse (substGuarded pos) r <*> substGuarded pos d
       THTuple     r -> THTuple   <$> traverse (substGuarded pos) r
     t@THPrim{} -> pure $ TyGround [t]
     t@THExt{}  -> pure $ TyGround [t]

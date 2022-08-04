@@ -15,7 +15,7 @@ Generalisation: we want polymorphic typing schemes to be instantiated with fresh
 Simplification is incidentally conveniently handled now:
   * remove polar variables (those that appear only positively or only negatively) `a & int -> int`
   * unify inseparable positive variables (co-occurence `a&b -> a|b` and indistinguishable variables `a->b->a|b`)
-  * unify variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int`
+  * unify variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int
   * minimize recursive types that may have been unrolled during biunification
 
 # Note. Rank-n polymorphism
@@ -57,3 +57,10 @@ eg. isorecursive non-regular: add opaque roll/unroll primitives
 
 The lambda-bound types here are flexible ie. subsumption can occur before beta-reduction. This can be weakened by instantiation to a (monomorphically abstracted) typing scheme.
 We have to unconditionally trust annotations so far as the rank of polymorphism, since that cannot be inferred (cannot insert type abstractions)
+
+## Default case match
+quantify over presence in a sum type: presence variables appear in the lattice directly as indeterminates.
+\case
+  l x => l x + 1
+  x   => x
+  [l : int | (li : pi for li ≠ l)] → [l : int (li : pi for li /= l)]

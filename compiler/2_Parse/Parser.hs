@@ -36,7 +36,7 @@ type Parser = ParsecT Void Text (Prelude.State ParseState)
 --------------------------
 addBind b     = moduleWIP . bindings   %= (b:)
 addImport i   = moduleWIP . imports    %= (i:)
-addPiBound  p = piBound %= \(x:xs)->(p:x):xs
+addPiBound  p = piBound %= \(x : xs) -> (p : x) : xs
 getPiBounds f = do
   piBound %= ([]:)
   r <- f
@@ -67,7 +67,7 @@ insertOrRetrieveArg h sz argMaps = case argMaps of
     Just x        -> (Right x, argMaps)
     Nothing       -> case il h sz mp of
       (Just x, _) -> (Right x , argMaps)
-      (_, mp')    -> (Left sz , mp':xs)
+      (_, mp')    -> (Left sz , mp': xs)
 
 pd = moduleWIP . parseDetails
 addAnonArgName = moduleWIP . parseDetails . nArgs <<%= (1+)
@@ -429,7 +429,7 @@ tt = anyTT
 -- , piBinder *> arg
    , con
    , Lit <$> lexeme (try (literalP <* notFollowedBy iden)) -- must be before Iden parsers
--- , reservedChar '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
+   , reservedChar '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
    , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x]
 -- , try $ idenNo_ >>= lookupBindName
    , try $ iden >>= lookupBindName -- holey names used as defined

@@ -1,4 +1,5 @@
 https://github.com/jneem/teddy
+https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf
 packed substring matching: do as little work as possible per 16 bytes
 
 Result.least significant bit (% 8 == pattern idx) (/ 8 = byte offset)
