@@ -122,3 +122,9 @@ p1 = runParser pEof { input = Nil }
 --  in case ws of
 --    Nil => Nil
 --    Cons w ws => append w (go ws)
+
+--zero  = 0 * 1 + 2
+--math1 = 1 * 9 * 6 - 2
+--math2 = 1 + 2 * 3 + 5
+
+--math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4

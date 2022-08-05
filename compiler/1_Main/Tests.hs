@@ -107,14 +107,14 @@ tI = S.sydTest $ do
 --    readFile tmpFile
 
 goldenList opts fName goldName = S.goldenTextFile goldName $ do
-   tmpFile <- (</> "goldenList") <$> getCanonicalTemporaryDirectory
-   Main.sh (fName <> " -p types --no-fuse -o" <> tmpFile <> " " <> opts)
+   tmpFile <- (</> "tmp") <$> getCanonicalTemporaryDirectory
+   Main.sh (fName <> " --no-fuse -o" <> tmpFile <> " " <> opts)
    readFile tmpFile
 
-gold     = S.it "list.ii"        (goldenList "" "imports/list.ii"        "golden/goldenList")
-mutual   = S.it "mutual.ii"      (goldenList "" "imports/sumMul.ii"      "golden/sumMul")
-tree     = S.it "tree.ii"        (goldenList "" "imports/tree.ii"        "golden/tree")
-mixfixes = S.it "mixfixTests.ii" (goldenList "--no-color" "imports/mixfixTests.ii" "golden/mixfixTests")
+gold     = S.it "list.ii"        (goldenList "-p types" "imports/list.ii"        "golden/goldenList")
+mutual   = S.it "mutual.ii"      (goldenList "-p types" "imports/sumMul.ii"      "golden/sumMul")
+tree     = S.it "tree.ii"        (goldenList "-p types" "imports/tree.ii"        "golden/tree")
+mixfixes = S.it "mixfixTests.ii" (goldenList "-p core --no-color" "imports/mixfixTests.ii" "golden/mixfixTests")
 
 g = S.sydTest gold
 s = S.sydTest $ do
@@ -124,4 +124,7 @@ s = S.sydTest $ do
   gold
   mutual
   tree
+  mixfixes
+
+m = S.sydTest $ do
   mixfixes

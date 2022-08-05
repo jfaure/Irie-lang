@@ -16,14 +16,17 @@ command line >> parse >> core >> STG >> llvm IR
 * Mutable Vectors (MVector s a) are the choice data structure most of the time
 
 # Parser
-The parser is designed to infaillably parse syntactically valid modules, handle Int names assignments and name shadowing. Issues of more complex name scoping, imported modules, external bindings and mixfixes are handled later.
+The parser is designed to infaillably parse syntactically valid modules, handle Int name assignments and name shadowing. Issues of more complex name scoping, imported modules, external bindings and mixfixes are handled later.
 The parser assigns every argument and binding a unique Int name and constructs a list of unknown names (forward and external references).
+
+# Mixfixes
+Mixfixes aren't all in scope at parse-time, and we go even further and infer all arguments to find their scope and QNames before resolving mixfixes. Mixfixes are solved using megaparsec again, this time on a list of CoreSyn.Expr
 
 # Type inference / checking
 This phase is heavily inspired by 'Algebraic subtyping' by Stephen Dolan, minus the last chapter on automata.
 
 ## Generalisation
-We want polymorphic typing schemes to be instantiated with fresh variables on every use. We need to be careful to only generalise type variables that do not escape into enclosing scope. This is a good moment to simplify types by removing excessive type variables and tighten recursive types. Mutual functions need to be handled carefully.
+We want polymorphic typing schemes to be instantiated with fresh variables on every use. We need to be careful to only generalise type variables that do not escape into enclosing scope. This is a good moment to simplify types by removing excessive type variables and tighten our equi-recursive types. Mutual functions need to be handled carefully.
 
 # SSA Form; based on llvm, but (runtime)interpretable, linear and with untyped pointers
 * Minor inconveniences are implicit threading of free variables
