@@ -96,7 +96,6 @@ p1 = runParser pEof { input = Nil }
 -}
 
 --g v v = v
---x = 5 * 2 + 1 * 9 * 6 - 2
 
 -- Prefix = Int
 -- Mask   = Int
@@ -108,19 +107,18 @@ p1 = runParser pEof { input = Nil }
 --  Nothing => a
 --  Just x  => x
 
-zero i m = i B& m =? 0
-lookup k = \case
-  Bin p m l r => if zero k m then lookup k l else lookup k r
+--zero i m = i B& m =? 0
+--lookup k = \case
+--  Bin p m l r => if zero k m then lookup k l else lookup k r
 --Tip kx x    => if k =? kx then Just x else Nothing
 --None        => Nothing
 
-rec1 v = { a = rec1 v , b = rec1 v }
+--go x = case x of
+--  Nil => Nil
+--  Cons v vs => Cons ' ' (append v (go vs))
 
 -- unwords :: [[Char]] -> [Char]
-unwords ws = let
-  go = \case
-    Nil => Nil
-    Cons v vs => {-Cons ' '-} (append v (go vs))
-  in case ws of
-    Nil => Nil
-    Cons w ws => append w (go ws)
+--unwords ws = let
+--  in case ws of
+--    Nil => Nil
+--    Cons w ws => append w (go ws)

@@ -58,11 +58,14 @@ pxy = Proxy :: Proxy JuxtStream
 -- Mixfix Parser --
 -------------------
 type Parser = Parsec Void JuxtStream
-prependArg a f = case f of { ExprApp f args -> ExprApp f (a:args) ; f -> ExprApp f [a] }
+prependArg a f = case f of { ExprApp f args -> ExprApp f (a : args) ; f -> ExprApp f [a] }
 -- Also need to flip the arguments (since precedence swaps reverse apps)
-appendArg  f a = case f of { ExprApp f args -> ExprApp f (a : reverse args) ; f -> ExprApp f [a] }
+appendArg  f a = case f of
+  ExprApp f [ExprApp g [theirs] ,  ours] -> ExprApp f [ExprApp g [a , theirs] ,  ours] -- ?!
+  ExprApp f args -> ExprApp f (a : reverse args)
+  f -> ExprApp f [a]
 --mkApp :: [Expr] -> Expr
-mkApp = \case { [a] -> a ; f:args -> ExprApp f args }
+mkApp = \case { [a] -> a ; f : args -> ExprApp f args }
 patchMFBind b = let
   patchQVar q = mkQName (modName q) b
   in \case
@@ -92,13 +95,12 @@ solveMixfixes :: [Expr] -> Expr = let
       Nothing : xs -> (\p (lastArg , l) -> (lastArg , p : l)) <$> expr <*> mkMFParser xs
       Just q  : xs -> (pMFWord q <|> fail ("expected mfword: " <> show q)) *> mkMFParser xs
 
---  in mkMFParser (fmap (fst qNm ,) <$> mfWs)
-    in mkMFParser (fmap (mkQName (modName qNm)) <$> mfWs)
+    in mkMFParser (map (mkQName (modName qNm)) <$> mfWs)
       <&> (\(pf,args) -> (pf , maybe (QVar qNm : args) (\la -> QVar qNm : la : args) larg))
-      >>= \case -- did the mf end with _
-       (False , p) -> pure   (patchMFBind mb (mkApp p)) -- end of mf train
-       (True  , p) -> option (patchMFBind mb (mkApp p)) -- ends with '_' => parse more mfs
-                      (try $ startPostfix (patchMFBind mb (mkApp p)) (Just (qNm , fixity)))
+      >>= \(endWord , p) -> let got = patchMFBind mb (mkApp p)
+       in if endWord -- did the mf end with _
+       then option got (try $ startPostfix got (Just (qNm , fixity))) -- ends with '_' => parse more mfs
+       else pure   got -- end of mf train
 
   startPostfix :: Expr -> (Maybe (QName , Prec)) -> Parser Expr
   startPostfix larg fixity = mfExpr >>= \(Mixfixy maybeBind mfWords) -> let
@@ -109,7 +111,7 @@ solveMixfixes :: [Expr] -> Expr = let
         if qNml == qNmr && assoc fixityL == AssocNone
         then fail $ "operator not associative: " <> show qNml
         else if (qNml == qNmr && assoc fixityL /= AssocRight) || prec fixityL >= prec fixityR
-        then (\x -> appendArg x larg) <$> mfParts mb Nothing qNmr fixityR contMFWs
+        then (\f -> {-d_ (fixityL , fixityR , f , larg) $!-} appendArg f larg) <$> mfParts mb Nothing qNmr fixityR contMFWs
         else case larg of -- `l_ _r` => r gets l's last arg, l gets all of r
           ExprApp f ars -> (\r -> ExprApp f (DL.init ars ++ [r]))
             <$> mfParts mb (Just (DL.last ars)) qNmr fixityR contMFWs
@@ -126,6 +128,6 @@ solveMixfixes :: [Expr] -> Expr = let
     in choice (try . mkPrefixParser <$> mfWords)
       <|> maybe (fail "not a bindName") (\qvar -> mkApp . (QVar qvar :) <$> many arg) maybeBind
   expr = arg >>= \a -> option a (try $ startPostfix a Nothing)
-  in \s -> case runParser expr "<mixfix resolver>" (JuxtStream $ s) of
+  in \s -> case runParser expr "<mixfix resolver>" (JuxtStream s) of
     Right r -> r
-    Left e  -> error $ errorBundlePretty e
+    Left e  -> error (errorBundlePretty e)

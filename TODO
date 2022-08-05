@@ -5,6 +5,7 @@
   * Linear variables (vbruijn | sourceArg | binding | literal | Extern [ | Field | Label ]) + occurs + src Info (all β-subbed with Term)
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type
+  * rewrite mixfix solver
 ## Top Priority
   * `splitAt : %i32 -> µb.[C {A , b} | N] → {l : µc.[C {A , c} | N] , r : µb.[N]}` (list.ii: also diff with returning Nil vs xs)
   * mu-roll nonEmptySubsequences

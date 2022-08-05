@@ -1,6 +1,7 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
 -- * replace forward references (Externs) with their name and identify recursive and mutual bindings
 module Infer (judgeModule) where
+import PrettyCore
 import Prim ( PrimInstr(MkPAp) )
 import BiUnify ( bisub )
 import qualified ParseSyntax as P
@@ -279,6 +280,7 @@ infer = let
         handleExtern (readQParseExtern open modIName e (modName q) (unQName q))
       MFExpr{}   -> PoisonExpr <$ (errors . scopeFails %= (AmbigBind "mixfix word" [] :))
       core -> pure core
+--  in (solveMixfixes <$> (infer `mapM` juxt)) >>= \e -> trace (case e of { Core t ty -> prettyTermRaw t ; x -> show x }) $ inferExprApp srcOff e
     in (solveMixfixes <$> (infer `mapM` juxt)) >>= inferExprApp srcOff
 
   P.Cons construct -> use externs >>= \ext -> do

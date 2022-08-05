@@ -1,0 +1,26 @@
+plus = %i32 → %i32 → %i32
+
+zero = %i32
+
+one = %i32
+
+prec1 = %i32
+
+prec2 = %i32
+
+prec3 = %i32
+
+lassoc = %i32
+
+rassoc =  type (%i32 → %fDoubleTy) → %i1
+
+if1 = %i32
+
+if2 = (%i1 & %i32)
+
+if3 = %i32
+
+megaIf = %i32
+
+math1 = %i32
+
