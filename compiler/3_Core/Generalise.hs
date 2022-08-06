@@ -11,14 +11,20 @@ import qualified BitSetMap as BSM ( elems, traverseWithKey )
 import qualified Data.Vector.Mutable as MV ( length, modify, read, replicate, write )
 import qualified Data.Text as T ( intercalate )
 import qualified Data.Vector as V ( Vector, (!), cons, constructN, imapM, imapM_, length, take, toList, unsafeFreeze )
+
+-- Simplification removes (or unifies with another type) as many tvars as possible
 -- Generalisation allows polymorphic types to be instantiated with fresh tvars on each use.
 -- This means some tvars are to be promoted to polymorphic vars
--- However simplification removes (or unifies with another type) as many tvars as possible
 -- TVars and let-bindings:
 -- 1. Escaped : tvars belong to outer let-nests, don't generalise (leave the raw tvar)
 -- 2. Leaked  : local vars biunified with escaped vars (generalise and merge with raw tvar)
 --   * necessary within let-binds to constrain free variables. considered dead outside the let-bind
 -- 3. Dead    : formerly leaked vars once their scope expires. They are now overconstrained since were biunified with instantiations of their let-binding (they're present outside of their let binding due to at one point leaking through a constraint)
+--
+-- Setup:
+--   let a ; b in g: mark freevars of a and b as escaped during (only during! g)
+--   restore freeVars once g is generalised
+--
 -- Escaped vars examples:
 -- * f1 x = let y z = z in y   -- nothing can go wrong
 -- * f2 x = let y   = x in y   -- if x generalised at y => f2 : a → b

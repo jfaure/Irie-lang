@@ -105,7 +105,7 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
     -- Generalise unless more mutuals to infer first
     ret <- if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
       then pure jb
-      else fromJust . head <$> generaliseBinds bindINm (bitSet2IntList ms) -- <* clearBiSubs 0
+      else fromJust . head <$> generaliseBinds svEscapes svLeaked bindINm (bitSet2IntList ms) -- <* clearBiSubs 0
     ret <$ do
       l <- leakedVars  <.= svLeaked
       escapedVars       .= svEscapes
@@ -127,8 +127,8 @@ getAnnotationType ttAnn = case ttAnn of
     x         -> pure x
   Just t -> tyExpr <$> infer t -- no need to generalise if not Abs since no pi bounds
 
-generaliseBinds :: Int -> [Int] -> TCEnv s [Expr]
-generaliseBinds i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m >>= \case
+generaliseBinds :: BitSet -> BitSet -> Int -> [Int] -> TCEnv s [Expr]
+generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m >>= \case
   -- ! the order is relevant
   Mutual naiveExpr freeVs isRec recTVar annotation -> do
     inferred <- case naiveExpr of

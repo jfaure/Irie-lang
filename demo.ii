@@ -113,18 +113,17 @@ p1 = runParser pEof { input = Nil }
 --Tip kx x    => if k =? kx then Just x else Nothing
 --None        => Nothing
 
---go x = case x of
---  Nil => Nil
---  Cons v vs => Cons ' ' (append v (go vs))
+-- go x = case x of
+--   Nil => Nil
+--   Cons v vs => {-Cons ' '-} (append v (go vs))
+-- 
+-- -- unwords :: [[Char]] -> [Char]
+-- unwords ws = let
+--   in case ws of
+--     Nil => Nil
+--     Cons w ws => append w (go ws)
 
--- unwords :: [[Char]] -> [Char]
---unwords ws = let
---  in case ws of
---    Nil => Nil
---    Cons w ws => append w (go ws)
+lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
 
---zero  = 0 * 1 + 2
---math1 = 1 * 9 * 6 - 2
---math2 = 1 + 2 * 3 + 5
-
---math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4
+--lp17 f = let r x g = { a = g x , b = f x }
+--in {u = r 0 (add 1) } 

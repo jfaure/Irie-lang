@@ -4,13 +4,16 @@
   * Advanced recursive types µ insufficient `PTree a = Leaves a | Cons (PTree (a , a))`
   * Linear variables (vbruijn | sourceArg | binding | literal | Extern [ | Field | Label ]) + occurs + src Info (all β-subbed with Term)
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
-  * open sum type
+  * open sum type (default case branch)
+  * audit oldcachedmodule , seems slightly broken
+  * let-poly
 ## Top Priority
-  * `splitAt : %i32 -> µb.[C {A , b} | N] → {l : µc.[C {A , c} | N] , r : µb.[N]}` (list.ii: also diff with returning Nil vs xs)
-  * mu-roll nonEmptySubsequences
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
-  * fix default case branch
   * improve pipelining of Main to stop once requested work is done
+## µ-roll
+  * rollmerge recvars (unwords) : µe.[4.0 | 4.1 {µd.[4.0 | 4.1 {C , d}] , e}]
+  * subtyping mu-roll; `splitAt : %i32 -> µb.[C {A , b} | N] → {l : µc.[C {A , c} | N] , r : µb.[N]}` (list.ii: also diff with returning Nil vs xs)
+  * nonEmptySubsequences
 ## µ-elim derivations (identify fixpoints in coresyn / mutual functions)
   * catamorphism
   * codata for left folds
@@ -24,12 +27,12 @@
   * expand lambda-mixfixes with explicit holes & reject unsaturated mixfix words
   * mixfix scope
 ## Parse
-  * don't allow mixing tabs and spaces
+  * allow tabs instead of spaces
   * Pattern guards
   * improve patterns2TT (add tuple of label , add literal) and eqn matches
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
   * figure out end of let-in in mixfix parser ?! `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
-  * repl parser: multiline
+  * repl parser: multiline case / let
 ## SSA
   * local/extern names in ssa form
   * normalize order of fields/labels for codegen (sort on size then textual name)
@@ -63,6 +66,7 @@
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
 ## Unimportant
+  * --math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4
   * switch to codeberg
   * Instantiation & Generalisation is also beta-reduction and could be improved
   * List comprehensions
@@ -87,4 +91,3 @@
   * optimise co-occurences by merging instantly
   * 'StrIntName' new datatype, during parsing link growable vector + hashmap
   * Function = Constructor + rewrite rules ?
-  * check escaped | leaked | dead vars are updated at right time through let-nests & mutuals

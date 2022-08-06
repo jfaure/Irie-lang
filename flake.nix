@@ -12,7 +12,7 @@
   outputs = { self, nixpkgs, haskell-nix, flake-compat, flake-compat-ci, flake-utils }:
   let
   supportedSystems = [ "x86_64-linux" ];
-  compiler-nix-name = "ghc923";
+  compiler-nix-name = "ghc924";
   perSystem = nixpkgs.lib.genAttrs supportedSystems;
   nixpkgsFor = system: import nixpkgs {
     inherit system;
@@ -32,12 +32,13 @@
       src = fakeSrc.outPath;
       cabalProjectFileName = "cabal.project";
       modules = [{ packages = { }; }];
-      shell = {
+#     shell = {
+#       buildDepends = [pkgs.gnumake];
 #       withHoogle = true;
 #       tools.haskell-language-server = { };
-        exactDeps = true;
-        nativeBuildInputs = [ pkgs.gnumake pkgs.cabal-install ];
-        };
+#       exactDeps = true;
+#       nativeBuildInputs = [ pkgs.gnumake pkgs.cabal-install ];
+#       };
       };
   formatCheckFor = system: let pkgs = nixpkgsFor system; in
     pkgs.runCommand "format-check" {
@@ -50,9 +51,10 @@
     '';
   in {
   project = perSystem projectFor;
-  flake = perSystem (system: (projectFor system).flake { });
+  flake = perSystem (system: (projectFor system).flake {});
+# devShell = perSystem (system: with nixpkgsFor system; mkShell { buildInputs = [ nixUnstable cabal-install gnumake ]; });
 
-  # this could be done automatically, but would reduce readability
+  # this could be done automatically, but would reduce readabilit
   packages = perSystem (system: self.flake.${system}.packages);
   checks = perSystem (system: self.flake.${system}.checks
     // { formatCheck = formatCheckFor system; });
