@@ -3,10 +3,10 @@
 ## ?
   * Advanced recursive types µ insufficient `PTree a = Leaves a | Cons (PTree (a , a))`
   * Linear variables (vbruijn | sourceArg | binding | literal | Extern [ | Field | Label ]) + occurs + src Info (all β-subbed with Term)
+  * equality constraints are central to GADTs
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
   * audit oldcachedmodule , seems slightly broken
-  * let-poly
 ## Top Priority
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * improve pipelining of Main to stop once requested work is done
@@ -71,7 +71,7 @@
   * Instantiation & Generalisation is also beta-reduction and could be improved
   * List comprehensions
   * cache version
-  * Show function + Pap object: allow inspection of papped args
+  * Allow inspection of papped args
   * BitSetMap upgrades for [0..64] and sequential names [n..m]: rm Tuple
   * Pattern PTT: custom unPat function to support any patterns
   * optimise instantiation

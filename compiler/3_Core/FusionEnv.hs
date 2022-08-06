@@ -29,40 +29,40 @@ data ArgShape
  deriving (Eq , Ord , Show)
 
 getArgShape = \case
-  Label l params -> ShapeLabel l (getArgShape <$> params)
-  Var (VQBind q) -> ShapeQBind q
-  _ -> ShapeNone
+  Label l params → ShapeLabel l (getArgShape <$> params)
+  Var (VQBind q) → ShapeQBind q
+  _ → ShapeNone
 
 type SimplifierEnv s = StateT (Simplifier s) (ST s)
 data Simplifier s = Simplifier {
-   _thisMod     :: IName
- , _extBinds    :: V.Vector (V.Vector Expr)
- , _cBinds      :: MV.MVector s Bind
- , _nApps       :: Int -- approximate complexity rating of a function
- , _argTable    :: MV.MVector s Term -- used for β reduction
- , _useArgTable :: Bool -- toggle for bypassing argTable (ie. if not simplifying the body of an App)
- , _bruijnArgs  :: V.Vector Term
- , _self        :: Int    -- the bind we're simplifying
+   _thisMod     ∷ IName
+ , _extBinds    ∷ V.Vector (V.Vector Expr)
+ , _cBinds      ∷ MV.MVector s Bind
+ , _nApps       ∷ Int -- approximate complexity rating of a function
+ , _argTable    ∷ MV.MVector s Term -- used for β reduction
+ , _useArgTable ∷ Bool -- toggle for bypassing argTable (ie. if not simplifying the body of an App)
+ , _bruijnArgs  ∷ V.Vector Term
+ , _self        ∷ Int    -- the bind we're simplifying
 
- , _nSpecs      :: Int -- cursor for allocating new specialisations
- , _prevSpecs   :: Int -- specialisations already computed; new requests are: [prevSpecs .. nSpecs-1]
- , _tmpSpecs    :: MV.MVector s (Either QName IName , Int , [Term]) -- requested specialisations of q (bind) or i (spec)
- , _letSpecs    :: MV.MVector s (Maybe Term)  -- specialisations
- , _bindSpecs   :: MV.MVector s BitSet -- specialisation INames for each bind (to avoid respecialising things)
- , _cachedSpecs :: MV.MVector s (M.Map [ArgShape] IName) -- recover specialisations for same arg shapes
+ , _nSpecs      ∷ Int -- cursor for allocating new specialisations
+ , _prevSpecs   ∷ Int -- specialisations already computed; new requests are: [prevSpecs .. nSpecs-1]
+ , _tmpSpecs    ∷ MV.MVector s (Either QName IName , Int , [Term]) -- requested specialisations of q (bind) or i (spec)
+ , _letSpecs    ∷ MV.MVector s (Maybe Term)  -- specialisations
+ , _bindSpecs   ∷ MV.MVector s BitSet -- specialisation INames for each bind (to avoid respecialising things)
+ , _cachedSpecs ∷ MV.MVector s (M.Map [ArgShape] IName) -- recover specialisations for same arg shapes
  -- recursive specialisations
- , _thisSpec    :: IName  -- wip spec
- , _recSpecs    :: BitSet -- specialisations that contain themselves (don't inline these)
+ , _thisSpec    ∷ IName  -- wip spec
+ , _recSpecs    ∷ BitSet -- specialisations that contain themselves (don't inline these)
 
   -- collect fns using specialisations not yet generated; will have to resimplify later
- , _hasSpecs    :: BitSet
- , _reSpecs     :: [IName] -- Bindings containing un-inlined specialisations
+ , _hasSpecs    ∷ BitSet
+ , _reSpecs     ∷ [IName] -- Bindings containing un-inlined specialisations
 
- , _specStack   :: BitSet -- Avoid recursive inline
- , _inlineStack :: BitSet -- Avoid recursive inline
+ , _specStack   ∷ BitSet -- Avoid recursive inline
+ , _inlineStack ∷ BitSet -- Avoid recursive inline
 
- , _caseArgs    :: BitSet
- , _caseFnArgs  :: BitSet
+ , _caseArgs    ∷ BitSet
+ , _caseFnArgs  ∷ BitSet
 }; makeLenses ''Simplifier
 
 --data ArgKind

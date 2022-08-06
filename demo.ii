@@ -17,22 +17,22 @@ import imports/list
 -- File CString ; Dir CString (List Dir)
 --printDirTree : Str -> Dir -> Str
 printDirTree prefix = \case
-  File f   => prefix ++ f
-  Dir d r => prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
+  File f   ⇒ prefix ++ f
+  Dir d r ⇒ prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
 -}
 
 {-
--- µc.[Cons {A , µc.[Nil]}] => µc.[Nil | Cons {A , c}]
+-- µc.[Cons {A , µc.[Nil]}] ⇒ µc.[Nil | Cons {A , c}]
 -- ? roll into mutype: [Nil | Cons {[Cons {A , [Nil]}]
 -- [a] -> [[a]]
 nonEmptySubSequences = \case
-  Nil => Nil
-  Cons x xs => let
+  Nil ⇒ Nil
+  Cons x xs ⇒ let
     f ys r = Cons ys (Cons (Cons x ys) r)
     in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
 -}
 
---lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
+--lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y ⇒ y.t)}
 
 --newtype ParsecT e s m a = ParsecT { unParser :: forall b.
 --  State s e ->
@@ -53,35 +53,35 @@ nonEmptySubSequences = \case
 
 {-
 unParser (Parser p) = p
-pTakeP n = @Parser \s cok _ _ eko => let
+pTakeP n = @Parser \s cok _ _ eko ⇒ let
   split = splitAt n s.input
   in if length split.l /=? n then eko "Bad length"
     else cok split.l (s.input.set (split.r))
 
-pTakeWhileP f = @Parser \s cok _ eok _ => let
+pTakeWhileP f = @Parser \s cok _ eok _ ⇒ let
   split = span f s.input
   in if null split.l
     then eok split.l s 
       else cok split.l (s.input.set split.r)
 
-pEof = @Parser \s v v eok eko => if null s.input
+pEof = @Parser \s v v eok eko ⇒ if null s.input
   then eok () s else eko "expected eof" s
 
-pTry p = @Parser \s cok _ eok eko => let
+pTry p = @Parser \s cok _ eok eko ⇒ let
   ko e _ = eko e s
   in unParser p s cok ko eok ko -- override kos
 
-pMap f p = @Parser \s cok cko eok eko =>
+pMap f p = @Parser \s cok cko eok eko ⇒
   unParser p s (cok << f) cko (eok << f) eko
-pPure x = @Parser \s _ _ eok _ => eok x s
-pAp m k = @Parser \s cok cko eok eko => unParser m s
- (\x s2 => unParser k s2 (cok << x) cko (cok << x) cko) cko
-   (\x s2 => unParser k s2 (cok << x) cko (eok << x) eko) eko
-pBind m k = @Parser \s cok cko eok eko => unParser m s
- (\x s2 => unParser (k x) s2 cok cko cok cko) cko
-   (\x s2 => unParser k s2 (k x) cko eok eko) eko
-pZero = @Parser \s _ _ _ err => err "nothing" s
-pPlus m n = @Parser \s cok cko eok eko => let
+pPure x = @Parser \s _ _ eok _ ⇒ eok x s
+pAp m k = @Parser \s cok cko eok eko ⇒ unParser m s
+ (\x s2 ⇒ unParser k s2 (cok << x) cko (cok << x) cko) cko
+   (\x s2 ⇒ unParser k s2 (cok << x) cko (eok << x) eko) eko
+pBind m k = @Parser \s cok cko eok eko ⇒ unParser m s
+ (\x s2 ⇒ unParser (k x) s2 cok cko cok cko) cko
+   (\x s2 ⇒ unParser k s2 (k x) cko eok eko) eko
+pZero = @Parser \s _ _ _ err ⇒ err "nothing" s
+pPlus m n = @Parser \s cok cko eok eko ⇒ let
   mko err ms = let
     ncko err s2 = cko "err1" ms -- ms longest match ms s2
     neok x s2   = eok x s2
@@ -89,8 +89,8 @@ pPlus m n = @Parser \s cok cko eok eko => let
     in unParser n s cok ncko neok neko
   in unParser m s cok cko eok mko -- override eko
 
-runParser p s = unParser p s (\a s => @COK s a)
-  (\err s => @CKO err) (\a s => @EOK a) (\err s => @EKO err)
+runParser p s = unParser p s (\a s ⇒ @COK s a)
+  (\err s ⇒ @CKO err) (\a s ⇒ @EOK a) (\err s ⇒ @EKO err)
 
 p1 = runParser pEof { input = Nil }
 -}
@@ -104,34 +104,33 @@ p1 = runParser pEof { input = Nil }
 -- | Tip Key a
 -- | Nil
 --fromMaybe a = \case
---  Nothing => a
---  Just x  => x
+--  Nothing ⇒ a
+--  Just x  ⇒ x
 
 --zero i m = i B& m =? 0
 --lookup k = \case
---  Bin p m l r => if zero k m then lookup k l else lookup k r
---Tip kx x    => if k =? kx then Just x else Nothing
---None        => Nothing
+--  Bin p m l r ⇒ if zero k m then lookup k l else lookup k r
+--Tip kx x    ⇒ if k =? kx then Just x else Nothing
+--None        ⇒ Nothing
 
 -- go x = case x of
---   Nil => Nil
---   Cons v vs => {-Cons ' '-} (append v (go vs))
+--   Nil ⇒ Nil
+--   Cons v vs ⇒ {-Cons ' '-} (append v (go vs))
 -- 
 -- -- unwords :: [[Char]] -> [Char]
 -- unwords ws = let
 --   in case ws of
---     Nil => Nil
---     Cons w ws => append w (go ws)
+--     Nil ⇒ Nil
+--     Cons w ws ⇒ append w (go ws)
 
 --lp16 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r 1 (add 0)}  -- ∏ A → (%i1 → A) → {u : {a : %i32 , b : A} , v : {a : %i32 , b : A}}
 
 -- Need to biunify escaped var f
 --lp14 f = let r x g = { a = f x , b = g x } in r  -- ∏ A B C → (A → B) → A → (A → C) → {a : B , b : C}
 -- r must be generalisable fully
---lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
+--lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y ⇒ y.t)}
 
---span p xs = case xs of
---  N => { l = xs , r = xs }
---  C x xs2 => if p x then (let s = span p xs2 in { l = @C x s.l , r = s.r }) else { l = @N , r = xs }
+span p xs = case xs of
+  N ⇒ { l = xs , r = xs }
+  C x xs2 ⇒ if p x then (let s = span p xs2 in { l = @C x s.l , r = s.r }) else { l = @N , r = xs }
 
-f x = let g = x in g

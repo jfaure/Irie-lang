@@ -32,29 +32,29 @@ emitType = emitType' False
 emitType' emitDef t = let
   tagT = "uint64_t"
   in case t of
-  TRec i  -> "struct T" <> fromString (show i) <> "*"
-  TPoly   -> "TPoly"
-  TPrim p -> emitPrimType p
-  TTuple ts -> "struct {" <> mconcat (V.toList ((\t -> emitType t <> ";") <$> ts)) <> "}"
-  TStruct nm ts -> if emitDef
+  TRec i  → "struct T" <> fromString (show i) <> "*"
+  TPoly   → "TPoly"
+  TPrim p → emitPrimType p
+  TTuple ts → "struct {" <> mconcat (V.toList ((\t → emitType t <> ";") <$> ts)) <> "}"
+  TStruct nm ts → if emitDef
     then let
-      fields = V.toList $ V.imap (\i t -> emitType t <> " f" <> fromString (show i) <> ";") ts
+      fields = V.toList $ V.imap (\i t → emitType t <> " f" <> fromString (show i) <> ";") ts
       in if null fields then "void *"
         else "struct " <> "T" <> fromString (show nm) <> "{ " <> (mconcat (intersperse " " fields)) <> "}"
     else "T" <> fromString (show nm)
-  TSum nm ts -> let
+  TSum nm ts → let
 --  fieldSize = fromString "sizeof (" <> emitType (ts V.! i) <> fromChar ')'
 --  in fromString "struct { uint32_t f0 ; char f1[" <> fieldSize <> fromString "];}"
-    fields = mintersperse "; " (V.toList $ V.imap (\i t -> emitType t <> fromString (" b" ++ show i)) ts) <> ";"
+    fields = mintersperse "; " (V.toList $ V.imap (\i t → emitType t <> fromString (" b" ++ show i)) ts) <> ";"
     in if emitDef
       then "struct " <> "T" <> fromString (show nm) <> "{ " <> tagT <> " f0 ; union {" <> fields <> "} f1;}"
       else "T" <> fromString (show nm)
---TypeDef i -> "T" <> fromString (show i)
-  x -> error $ show x
+--TypeDef i → "T" <> fromString (show i)
+  x → error $ show x
 
-emitFunction :: Module -> Function -> Builder
+emitFunction ∷ Module → Function → Builder
 emitFunction ssaMod (Function fnDecl a0 body) = let
-  emitParam (i :: Int) t = emitType t <> " a" <> fromString (show $ a0 + i)
+  emitParam (i ∷ Int) t = emitType t <> " a" <> fromString (show $ a0 + i)
   in
   emitType (retTy fnDecl) <> fromChar ' '
    <> fromString (T.unpack $ name fnDecl) <> fromChar '('
@@ -63,133 +63,133 @@ emitFunction ssaMod (Function fnDecl a0 body) = let
    <> emitBody ssaMod body
    <> "}"
 
-emitBody :: Module -> Expr -> Builder
+emitBody ∷ Module → Expr → Builder
 emitBody ssaMod = let
   emitBody' = emitBody ssaMod
   emitCallable = \case
---  LocalFn i -> let
+--  LocalFn i → let
 --    decl = fnDecl (locals ssaMod V.! i)
 --    in "((" <> emitType (retTy decl) <> " (*)(" <> (mconcat $ intersperse "," $ emitType <$> args decl) <> "))"
 --      <> fromString (T.unpack $ name $ fnDecl $ locals ssaMod V.! i) <> ")"
-    LocalFn i -> fromString (T.unpack $ name $ fnDecl $ locals ssaMod V.! i)
-    Prim p -> _ -- instr wrapper error $ show x
+    LocalFn i → fromString (T.unpack $ name $ fnDecl $ locals ssaMod V.! i)
+    Prim p → _ -- instr wrapper error $ show x
   in \case
-  Arg i    -> fromString $ 'a' : show i
-  Local i  -> fromString $ 'l' : show i
-  Extern i -> fromString (show i)
-  LitE l   -> emitLiteral ssaMod l
+  Arg i    → fromString $ 'a' : show i
+  Local i  → fromString $ 'l' : show i
+  Extern i → fromString (show i)
+  LitE l   → emitLiteral ssaMod l
 
---ECallable c -> emitCallable c
-  Call c ops -> let
+--ECallable c → emitCallable c
+  Call c ops → let
     emitCall f argList = f <> "(" <> mconcat (intersperse "\n  , " argList) <> ")"
     in case c of
-    Prim i  -> emitPrimInstr ssaMod i ops
-    LocalFn i -> let
+    Prim i  → emitPrimInstr ssaMod i ops
+    LocalFn i → let
       decl = fnDecl (locals ssaMod V.! i)
       castArg t op@(Load{}) = emitBody' op -- don't need to cast if already the right type
       castArg t op = case t of
---      TSum{}    -> "(" <> emitType t <> ")" <> emitBody' op
---      TStruct{} -> "(" <> emitType t <> ")" <> emitBody' op
-        x      -> emitBody' op
+--      TSum{}    → "(" <> emitType t <> ")" <> emitBody' op
+--      TStruct{} → "(" <> emitType t <> ")" <> emitBody' op
+        x      → emitBody' op
       in emitCall (emitCallable c) (zipWith castArg (args decl) ops)
-    c -> emitCall (emitCallable c) (emitBody' <$> ops)
---Load  t (SSA.Gep t' i e) -> emitBody' e <> "[" <> fromString (show i) <> "]"
-  Load t e      -> emitBody' e <> "[0]" -- "*(" <> emitBody' e <> ")"
-  Index t i e   -> emitBody' e <> "->f" <> fromString (show i)
-  Extract t i e -> emitBody' e <> ".f" <> fromString (show i)
-  Gep t i e    -> "(&" <> emitBody' (Index t i e) <> ")"
-  Next t e     -> "(&" <> emitBody' e <> ")[1]"
-  BitCast t e   -> "((" <> emitType t <> ")" <> emitBody' e <> ")"
---FromPoly t e  -> "({ union { TPoly in; " <> emitType t <> " out;} ret; ret.in = " <> emitBody' e <> ";ret.out ;})"
-  FromPoly t e  -> "FromPoly(" <> emitType t <> " , " <> emitBody' e <> ")"
-  ToPoly t e  -> "(TPoly)"   <> emitBody' e
---ToPoly t e@Struct{}  -> "(TPoly)"   <> emitBody' e
---ToPoly t e    -> "ToPoly("   <> emitType t <> " , (" <> emitBody' e <> "))"
-  UnUnion tag branchTy val -> emitBody' val <> ".b" <> fromString (show tag)
+    c → emitCall (emitCallable c) (emitBody' <$> ops)
+--Load  t (SSA.Gep t' i e) → emitBody' e <> "[" <> fromString (show i) <> "]"
+  Load t e      → emitBody' e <> "[0]" -- "*(" <> emitBody' e <> ")"
+  Index t i e   → emitBody' e <> "→f" <> fromString (show i)
+  Extract t i e → emitBody' e <> ".f" <> fromString (show i)
+  Gep t i e    → "(&" <> emitBody' (Index t i e) <> ")"
+  Next t e     → "(&" <> emitBody' e <> ")[1]"
+  BitCast t e   → "((" <> emitType t <> ")" <> emitBody' e <> ")"
+--FromPoly t e  → "({ union { TPoly in; " <> emitType t <> " out;} ret; ret.in = " <> emitBody' e <> ";ret.out ;})"
+  FromPoly t e  → "FromPoly(" <> emitType t <> " , " <> emitBody' e <> ")"
+  ToPoly t e  → "(TPoly)"   <> emitBody' e
+--ToPoly t e@Struct{}  → "(TPoly)"   <> emitBody' e
+--ToPoly t e    → "ToPoly("   <> emitType t <> " , (" <> emitBody' e <> "))"
+  UnUnion tag branchTy val → emitBody' val <> ".b" <> fromString (show tag)
     -- fromChar '(' <> fromString (show i) <> " + "<> emitBody' e <> fromChar ')'
-  Ret e -> "return " <> emitBody' e <> ";"
---SumData t tag val -> "{" <> emitBody' tag <> " , " <> emitBody' val <> "}"
-  SumData t tag (Struct st vals) -> "{" <> emitBody' tag <> " , " <> mintersperse " , " (V.toList $ emitBody' <$> vals) <> "}"
-  Switch scrut brs d -> let
+  Ret e → "return " <> emitBody' e <> ";"
+--SumData t tag val → "{" <> emitBody' tag <> " , " <> emitBody' val <> "}"
+  SumData t tag (Struct st vals) → "{" <> emitBody' tag <> " , " <> mintersperse " , " (V.toList $ emitBody' <$> vals) <> "}"
+  Switch scrut brs d → let
     emitBranch (const , val) = "case " <> fromString (show const) <> ": "
       <> emitBody' val
-      <> case val of { Ret{} -> "\n" ; _ -> "; break;\n" }
+      <> case val of { Ret{} → "\n" ; _ → "; break;\n" }
     emitBranches = mconcat $ emitBranch <$> brs
-    emitDefault = case d of { Void -> mempty ; Ret (Void) -> mempty ; x -> "default:\n" <> emitBody' x }
+    emitDefault = case d of { Void → mempty ; Ret (Void) → mempty ; x → "default:\n" <> emitBody' x }
     in "switch (" <> emitBody' scrut <> ") {\n" <> emitBranches <> emitDefault <> "}"
---Void -> fromString "void" -- mempty
---Struct t vals -> "(" <> emitType' True t <> "){ " <> mintersperse "," (emitBody' <$> V.toList vals) <> " }"
-  Struct t vals -> if V.null vals then "NULL" --"{}"
+--Void → fromString "void" -- mempty
+--Struct t vals → "(" <> emitType' True t <> "){ " <> mintersperse "," (emitBody' <$> V.toList vals) <> " }"
+  Struct t vals → if V.null vals then "NULL" --"{}"
     else -- "(" <> emitType t <> ")" <>
       "{ " <> mintersperse "," (emitBody' <$> V.toList vals) <> " }"
-  Boxed t e -> "BOX(" <> emitType t <> " , " <> emitBody' e <> ")"
+  Boxed t e → "BOX(" <> emitType t <> " , " <> emitBody' e <> ")"
 --  let
 --  cTy = emitType t
 --  in "({ " <> cTy <> " *p = malloc(sizeof(" <> cTy <> ")); *p = " <> emitBody' e <> ";p;})"
-  x -> error $ show x
+  x → error $ show x
 
 emitPrimInstr ssaMod i args = case args of
-  [a]     -> emitInstr ssaMod i a
-  [a,b]   -> emitBinInstr ssaMod i a b
-  [a,b,c] -> emitTriInstr ssaMod i a b c
-  x -> error $ show i
+  [a]     → emitInstr ssaMod i a
+  [a,b]   → emitBinInstr ssaMod i a b
+  [a,b,c] → emitTriInstr ssaMod i a b c
+  x → error $ show i
 
 emitTriInstr ssaMod i a b c = let
   emitBody' = emitBody ssaMod
   in case i of
-  IfThenE -> "if (" <> emitBody' a <> ")\n  "
+  IfThenE → "if (" <> emitBody' a <> ")\n  "
     <> emitBody' b <> "\nelse\n  " <> emitBody' c
 
 emitInstr ssaMod i a = let
   emitBody' = emitBody ssaMod
   in case i of
-  PutNbr -> "printf(\"%d\\n\" , " <> emitBody' a <> ")"
-  Puts   -> "puts(" <> emitBody' a <> ")"
-  NumInstr (BitInstr Not)  -> "!(" <> emitBody' a <> ")"
+  PutNbr → "printf(\"%d\\n\" , " <> emitBody' a <> ")"
+  Puts   → "puts(" <> emitBody' a <> ")"
+  NumInstr (BitInstr Not)  → "!(" <> emitBody' a <> ")"
 
 emitBinInstr ssaMod i a b = let
   emitInfix str = emitBody ssaMod a <> fromChar ' ' <> fromString str <> fromChar ' ' <> emitBody ssaMod b
   in parens $ case i of
-  NumInstr j -> case j of
-    IntInstr Add -> emitInfix "+"
-    IntInstr Sub -> emitInfix "-"
-    IntInstr Mul -> emitInfix "*"
-    IntInstr SDiv-> emitInfix "/"
-    IntInstr SRem-> emitInfix "%"
+  NumInstr j → case j of
+    IntInstr Add → emitInfix "+"
+    IntInstr Sub → emitInfix "-"
+    IntInstr Mul → emitInfix "*"
+    IntInstr SDiv→ emitInfix "/"
+    IntInstr SRem→ emitInfix "%"
 
-    PredInstr LECmp -> emitInfix "<="
-    PredInstr GECmp -> emitInfix ">="
-    PredInstr LTCmp -> emitInfix "<"
-    PredInstr GTCmp -> emitInfix ">"
-    PredInstr EQCmp -> emitInfix "=="
-    PredInstr NEQCmp-> emitInfix "!="
+    PredInstr LECmp → emitInfix "<="
+    PredInstr GECmp → emitInfix ">="
+    PredInstr LTCmp → emitInfix "<"
+    PredInstr GTCmp → emitInfix ">"
+    PredInstr EQCmp → emitInfix "=="
+    PredInstr NEQCmp→ emitInfix "!="
 
-    BitInstr Xor -> emitInfix "^"
-    BitInstr And -> emitInfix "&"
-    BitInstr Or  -> emitInfix "|"
-    BitInstr ShL -> emitInfix "<<"
-    BitInstr ShR -> emitInfix ">>"
+    BitInstr Xor → emitInfix "^"
+    BitInstr And → emitInfix "&"
+    BitInstr Or  → emitInfix "|"
+    BitInstr ShL → emitInfix "<<"
+    BitInstr ShR → emitInfix ">>"
 
 parens p = fromChar '(' <> p <> fromChar ')'
 
 emitLiteral ssaMod = \case
-  Char c  -> fromString $ show c
-  Int i   -> fromString $ show i
-  Fin n i -> case n of
-    8  -> "(uint8_t)"   <> fromString (show i)
-    16 -> "(uint16_t)"  <> fromString (show i)
-    32 -> "(uint32_t)"  <> fromString (show i)
-    64 -> "(uint64_t)"  <> fromString (show i)
-    128-> "(uint128_t)" <> fromString (show i)
-  String s -> fromString s <> "\n"
-  Array  l -> fromChar '{' <> mconcat (intersperse (fromChar ',') (emitLiteral ssaMod <$> l)) <> "};"
+  Char c  → fromString $ show c
+  Int i   → fromString $ show i
+  Fin n i → case n of
+    8  → "(uint8_t)"   <> fromString (show i)
+    16 → "(uint16_t)"  <> fromString (show i)
+    32 → "(uint32_t)"  <> fromString (show i)
+    64 → "(uint64_t)"  <> fromString (show i)
+    128→ "(uint128_t)" <> fromString (show i)
+  String s → fromString s <> "\n"
+  Array  l → fromChar '{' <> mconcat (intersperse (fromChar ',') (emitLiteral ssaMod <$> l)) <> "};"
 
 emitPrimType = \case
-  PrimInt 8  -> "int8_t"
-  PrimInt 32 -> "int32_t"
-  PrimInt 64 -> "int64_t"
-  PrimNat 8  -> "uint8_t"
-  PrimNat 32 -> "uint32_t"
-  PrimNat 64 -> "uint64_t"
-  PtrTo p    -> emitPrimType p <> "*"
-  x -> error ("C-emitprimtype: " <> show x)
+  PrimInt 8  → "int8_t"
+  PrimInt 32 → "int32_t"
+  PrimInt 64 → "int64_t"
+  PrimNat 8  → "uint8_t"
+  PrimNat 32 → "uint32_t"
+  PrimNat 64 → "uint64_t"
+  PtrTo p    → emitPrimType p <> "*"
+  x → error ("C-emitprimtype: " <> show x)

@@ -70,7 +70,7 @@ data Term -- β-reducable (possibly to a type)
  | VBruijn IName
  | BruijnAbs Int BitSet Term
 
- | PartialApp [Type] Term [Term] --Top level PAp => Abs (only parse generates fresh argnames)
+ | PartialApp [Type] Term [Term] --Top level PAp ⇒ Abs (only parse generates fresh argnames)
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
 -- lensover needs idx for extracting field (??)
@@ -96,7 +96,7 @@ data Type
  -- vv Only occur in user type annotations
  | TyAlias  QName
  | TyTerm   Term Type       -- term should be lambda calculus or product/sum calculus
- | TyPi Pi                  -- dependent functions, implicit args (explicit as: Arg -> T)
+ | TyPi Pi                  -- dependent functions, implicit args (explicit as: Arg → T)
  | TySi Pi (IM.IntMap Expr) -- Existential: some TT and a function of them (~partial app)
  | TyIndexed Type [Expr]    -- Indexed family (raw Terms can only exist here after normalisation)
 
@@ -110,7 +110,7 @@ instance Eq Type where
   _           == _           = False
 
 data TyCon -- Type constructors
- = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot -> top is the largest)
+ = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot → top is the largest)
  | THTuple    (V.Vector  TyPlus) -- ordered form of THproduct
  | THProduct  (BSM.BitSetMap TyPlus)
  | THSumTy    (BSM.BitSetMap TyPlus)
@@ -155,14 +155,14 @@ data Expr
 
 data Bind -- indexes in the bindmap
  = Queued
- | Guard  { mutuals :: BitSet , tvar :: IName } -- Inference in progress; possibly a stack of its dependencies
+ | Guard  { mutuals ∷ BitSet , tvar ∷ IName } -- Inference in progress; possibly a stack of its dependencies
  -- | Marker for an inferred type waiting for generalisation (waiting for all mutual binds to be inferred)
- | Mutual { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
+ | Mutual { naiveExpr ∷ Expr , freeVs ∷ BitSet , recursive ∷ Bool , tvar ∷ IName , tyAnn ∷ Maybe Type }
  -- | Function already partially generalised, must be re-generalised once all free-vars are resolved
- | LetBound { recursive :: Bool , naiveExpr :: Expr }
+ | LetBound { recursive ∷ Bool , naiveExpr ∷ Expr }
 
  | BindKO -- failed type
- | BindOK { recursive :: Bool , naiveExpr :: Expr } -- isRec
+ | BindOK { recursive ∷ Bool , naiveExpr ∷ Expr } -- isRec
 
 -- | BindMutuals (V.Vector Expr)
 
@@ -183,11 +183,11 @@ data ExternVar
  | MixfixyVar Mixfixy           -- temp data fed to solvemixfixes
 
 data Mixfixy = Mixfixy
- { ambigBind   :: Maybe QName
- , ambigMFWord :: [QMFWord]
+ { ambigBind   ∷ Maybe QName
+ , ambigMFWord ∷ [QMFWord]
  }
 
-type ASMIdx = IName -- Field|Label-> Idx in sorted list (the actual index used at runtime)
+type ASMIdx = IName -- Field|Label→ Idx in sorted list (the actual index used at runtime)
 -- Various casts inserted by inference
 data BiCast
  = BiEQ
@@ -202,8 +202,8 @@ data BiCast
  | CastOver ASMIdx BiCast Expr Type
 
 data BiSub = BiSub {
-   _pSub :: Type
- , _mSub :: Type
+   _pSub ∷ Type
+ , _mSub ∷ Type
 }
 
 makeLenses ''BiSub
@@ -214,26 +214,26 @@ data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTup
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 data JudgedModule = JudgedModule {
-   modIName    :: IName
- , modHName    :: HName
- , nArgs       :: Int
- , bindNames   :: V.Vector HName
- , fieldNames  :: M.Map HName IName -- can we use Vector instead of Map?
- , labelNames  :: M.Map HName IName
- , judgedBinds :: V.Vector Bind
+   modIName    ∷ IName
+ , modHName    ∷ HName
+ , nArgs       ∷ Int
+ , bindNames   ∷ V.Vector HName
+ , fieldNames  ∷ M.Map HName IName -- can we use Vector instead of Map?
+ , labelNames  ∷ M.Map HName IName
+ , judgedBinds ∷ V.Vector Bind
 }
 
 data OldCachedModule = OldCachedModule {
-   oldModuleIName :: ModuleIName
- , oldBindNames   :: V.Vector HName -- to check if ambiguous names were deleted
+   oldModuleIName ∷ ModuleIName
+ , oldBindNames   ∷ V.Vector HName -- to check if ambiguous names were deleted
 } deriving Show
 
 -- only used by prettyCore functions and the error formatter
 data BindSource = BindSource {
-   srcArgNames     :: V.Vector HName
- , srcBindNames    :: V.Vector HName
- , srcExtNames     :: V.Vector HName
- , srcLabelNames   :: V.Vector (V.Vector HName)
- , srcFieldNames   :: V.Vector (V.Vector HName)
- , allNames        :: V.Vector (V.Vector (HName , Expr))
+   srcArgNames     ∷ V.Vector HName
+ , srcBindNames    ∷ V.Vector HName
+ , srcExtNames     ∷ V.Vector HName
+ , srcLabelNames   ∷ V.Vector (V.Vector HName)
+ , srcFieldNames   ∷ V.Vector (V.Vector HName)
+ , allNames        ∷ V.Vector (V.Vector (HName , Expr))
 }

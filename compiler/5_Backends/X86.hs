@@ -73,16 +73,16 @@ data Instr
 -- Monad --
 -----------
 data JITMem = JITMem
- { _instrs :: [Instr]
- , _mach   :: [Word8]
- , _icount :: Word32
- , _memptr :: Word32
- , _memoff :: Word32
+ { _instrs ∷ [Instr]
+ , _mach   ∷ [Word8]
+ , _icount ∷ Word32
+ , _memptr ∷ Word32
+ , _memoff ∷ Word32
  } deriving (Eq, Show)
 
 type X86 a = StateT JITMem (Except String) a
 
-istate :: Word32 -> JITMem
+istate ∷ Word32 → JITMem
 istate start = JITMem
   { _instrs = []
   , _icount = 0
@@ -91,89 +91,89 @@ istate start = JITMem
   , _memoff = start
   }
 
-emit :: [Word8] -> X86 ()
-emit i = modify $ \s -> s
+emit ∷ [Word8] → X86 ()
+emit i = modify $ \s → s
   { _mach = _mach s ++ i
   , _memoff = _memoff s + fromIntegral (length i)
   }
 
-imm :: Integral a => a -> X86 ()
+imm ∷ Integral a ⇒ a → X86 ()
 imm = emit . bytes
 
 -- Instructions
-ret :: X86 ()
+ret ∷ X86 ()
 ret = emit [0xc3]
 
 rexPre = 0x48
 
-add :: Val -> Val -> X86 ()
+add ∷ Val → Val → X86 ()
 add (R l) (I r) = emit [0x48 , 0x05] *> imm r
 add (R l) (R r) = emit [0x48 , 0x01 , 0xc0 .|. index r `shiftL` 3 .|. index l]
 add _ _ = nodef
 
-sub :: Val -> Val -> X86 ()
+sub ∷ Val → Val → X86 ()
 sub (R l) (I r) = emit [0x48 , 0x2D] *> imm r
 sub (R l) (R r) = emit [0x48 , 0x29 , 0xc0 .|. index r `shiftL` 3 .|. index l]
 
-push :: Val -> X86 ()
+push ∷ Val → X86 ()
 push (R l) = emit [0x50 + index l]
 push _ = nodef
 
-pop :: Val -> X86 ()
+pop ∷ Val → X86 ()
 pop (R l) = emit [0x58 + index l]
 pop _ = nodef
 
-call :: Val -> X86 ()
+call ∷ Val → X86 ()
 call (A dst) = do
-  src <- gets _memoff
+  src ← gets _memoff
   emit [0xE8]
   imm (dst - (src + 5))
 call _ = nodef
 
-mul :: Val -> X86 ()
+mul ∷ Val → X86 ()
 mul (R l) = emit [0x48 , 0xF7 , 0xE0 .|. index l]
 mul _ = nodef
 
-imul :: Val -> Val -> X86 ()
+imul ∷ Val → Val → X86 ()
 imul (R l) (I r) = emit [0x48 , 0x69 , 0xC0 .|. index l] *> imm r
 imul (R l) (R r) = emit [0x48 , 0x0F , 0xAF , 0xC0 .|. index r `shiftL` 3 .|. index l]
 imul _ _ = nodef
 
-mov :: Val -> Val -> X86 ()
+mov ∷ Val → Val → X86 ()
 mov (R dst) (I src) = emit [0x48 , 0xC7 , 0xC0 .|. (index dst .&. 7)] *> imm src
 mov (R dst) (A src) = emit [0x48 , 0xC7 , 0xC7] *> imm src
 mov (R dst) (R src) = emit [0x48 , 0x89 , 0xC0 .|. index src `shiftL` 3 .|. index dst]
 mov _ _ = nodef
 
-nop :: X86 ()
+nop ∷ X86 ()
 nop = emit [0x90]
 
-inc :: Val -> X86()
+inc ∷ Val → X86()
 inc (R dst) = emit [0x48 , 0xFF , 0xc0 + index dst]
 inc _ = nodef
 
-dec :: Val -> X86()
+dec ∷ Val → X86()
 dec (R dst) = emit [0x48 , 0xFF , 0xc0 + (index dst + 8)]
 dec _ = nodef
 
-loop :: Val -> X86()
+loop ∷ Val → X86()
 loop (A dst) = do
   emit [0xE2]
-  src <- gets _memoff
-  ptr <- gets _memptr
+  src ← gets _memoff
+  ptr ← gets _memptr
   emit [fromIntegral $ dst - src]
 loop _ = nodef
 
-syscall :: X86 ()
+syscall ∷ X86 ()
 syscall = emit [0x0f , 0x05]
 
 -- Functions
-prologue :: X86 ()
+prologue ∷ X86 ()
 prologue = do
   push rbp
   mov rbp rsp
 
-epilogue :: X86 ()
+epilogue ∷ X86 ()
 epilogue = do
   pop rax
   mov rsp rbp
@@ -181,7 +181,7 @@ epilogue = do
   ret
 
 -- Registers
-rax , rbp , rsp , rdi , rsi , rdx , rcx :: Val
+rax , rbp , rsp , rdi , rsi , rdx , rcx ∷ Val
 rax = R RAX
 rbp = R RBP
 rsp = R RSP
@@ -190,20 +190,20 @@ rsi = R RSI
 rdx = R RDX
 rcx = R RCX
 
-label :: X86 Val = A <$> gets _memoff
+label ∷ X86 Val = A <$> gets _memoff
 
-nodef :: X86 () = lift (throwE "Invalid operation")
+nodef ∷ X86 () = lift (throwE "Invalid operation")
 
-index :: Reg -> Word8 = fromIntegral . fromEnum
+index ∷ Reg → Word8 = fromIntegral . fromEnum
 
-assemble :: Ptr a -> X86 b -> Either String JITMem
+assemble ∷ Ptr a → X86 b → Either String JITMem
 assemble start = runExcept . flip execStateT (istate (heapPtr start))
 
-hex :: (Integral a, Show a) => a -> String
+hex ∷ (Integral a, Show a) ⇒ a → String
 hex x = showHex x ""
 
-heapPtr :: Ptr a -> Word32
+heapPtr ∷ Ptr a → Word32
 heapPtr = fromIntegral . ptrToIntPtr
 
-bytes :: Integral a => a -> [Word8]
+bytes ∷ Integral a ⇒ a → [Word8]
 bytes x = fmap BS.c2w (unpack $ runPut $ putWord32le (fromIntegral x))

@@ -98,6 +98,7 @@ executable irie-exe
       DeriveDataTypeable
       DeriveGeneric
       OverloadedRecordDot
+      UnicodeSyntax
   build-depends:
       base
     , blaze-builder
@@ -132,6 +133,7 @@ executable irie-exe
     , raw-strings-qq
     , sydtest
     , temporary
+    , base-unicode-symbols
   default-language: Haskell2010
 
 --test-suite irie-test

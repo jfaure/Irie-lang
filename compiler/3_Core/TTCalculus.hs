@@ -15,104 +15,104 @@ import Control.Lens
 -- Lambda calculus TTs are ambiguous, eg. 'f x = x' could be a type or a term
 -- Terms that need to become types need to have potential fixed points converted to µ types
 -- This has to be done in TCState because forward refs may trigger inference mid ttApp
-ttApp :: Type -> (Int -> TCEnv s Expr) -> (ExternVar -> TCEnv s Expr) -> Expr -> [Expr] -> TCEnv s Expr
-ttApp retTy readBind handleExtern fn args = let --trace (clYellow (show fn <> " $ " <> show args :: Text)) $ let
-  getQBind q = use thisMod >>= \modIName -> use openModules >>= \open -> use externs >>= \e ->
+ttApp ∷ Type → (Int → TCEnv s Expr) → (ExternVar → TCEnv s Expr) → Expr → [Expr] → TCEnv s Expr
+ttApp retTy readBind handleExtern fn args = let --trace (clYellow (show fn <> " $ " <> show args ∷ Text)) $ let
+  getQBind q = use thisMod ≫= \modIName → use openModules ≫= \open → use externs ≫= \e →
     handleExtern (readQParseExtern open modIName e (modName q) (unQName q))
   ttApp' = ttApp retTy readBind handleExtern
  
   -- Term application
   doApp coreFn args = let
-    (termArgs , otherArgs) = span (\case {Core{}->True ; _->False}) args
-    app = App coreFn $ (\(Core t _ty)->t) <$> termArgs -- forget the argument types
+    (termArgs , otherArgs) = span (\case {Core{}→True ; _→False}) args
+    app = App coreFn $ (\(Core t _ty)→t) <$> termArgs -- forget the argument types
     in pure $ case otherArgs of
-      []  -> Core app retTy
-      tys -> if any isPoisonExpr tys then PoisonExpr else error $ "ttApp cannot resolve application: " <> show app <> show tys
+      []  → Core app retTy
+      tys → if any isPoisonExpr tys then PoisonExpr else error $ "ttApp cannot resolve application: " <> show app <> show tys
 
 {- -- Eta reduction of Pi types applied to Exprs (likely result is an indexed type family)
-  substituteType :: Maybe (QName , [Expr]) -> IM.IntMap Expr -> Type -> Type
+  substituteType ∷ Maybe (QName , [Expr]) → IM.IntMap Expr → Type → Type
   substituteType self piArgs body = let
     sT = substituteType self piArgs
     in case body of
-    TyGround [THTyCon t] -> TyGround . (:[]) . THTyCon $ case t of
-      THSumTy alts -> THSumTy $ sT <$> alts
-      THTuple alts -> THTuple $ sT <$> alts
-      x -> error $ show x
+    TyGround [THTyCon t] → TyGround . (:[]) . THTyCon $ case t of
+      THSumTy alts → THSumTy $ sT <$> alts
+      THTuple alts → THTuple $ sT <$> alts
+      x → error $ show x
   
     -- Expr must be lambda calculus or product/sumtype operations
-    TyTerm e t -> case term2Type self piArgs e of
-      (Just m , t) -> TyGround [THMu 0 t]
-      (_ , t) -> t
-    _ -> body
+    TyTerm e t → case term2Type self piArgs e of
+      (Just m , t) → TyGround [THMu 0 t]
+      (_ , t) → t
+    _ → body
 -}
 
   in case fn of
-  PoisonExpr -> pure PoisonExpr
-  ExprApp f2 args2 -> (ttApp' f2 args2) >>= \f' -> ttApp' f' args
-  Core cf _ty -> case cf of
-    Var (VQBind q) -> getQBind q >>= \e -> case e of
-      Core (Var (VQBind j)) _ty | j == q -> doApp cf args
-      e -> ttApp' e args
+  PoisonExpr → pure PoisonExpr
+  ExprApp f2 args2 → (ttApp' f2 args2) ≫= \f' → ttApp' f' args
+  Core cf _ty → case cf of
+    Var (VQBind q) → getQBind q ≫= \e → case e of
+      Core (Var (VQBind j)) _ty | j == q → doApp cf args
+      e → ttApp' e args
  
 --  Special instructions (esp. type constructors)
-    Instr (TyInstr Arrow)  -> expr2Ty readBind `mapM` args <&> \case
-      { [a , b] -> Ty (TyGround (mkTyArrow [a] b)) ; x -> error $ "wrong arity for TyArrow" <> show x }
-    Instr (TyInstr MkIntN) | [Core (Lit (Int i)) ty] <- args ->
+    Instr (TyInstr Arrow)  → expr2Ty readBind `mapM` args <&> \case
+      { [a , b] → Ty (TyGround (mkTyArrow [a] b)) ; x → error $ "wrong arity for TyArrow" <> show x }
+    Instr (TyInstr MkIntN) | [Core (Lit (Int i)) ty] ← args →
       pure $ Ty (TyGround [THPrim (PrimInt $ fromIntegral i)])
-    Instr (MkPAp n) | f : args' <- args -> ttApp' f args'
-    coreFn -> doApp coreFn args
-  Ty f -> pure $ Ty (TyIndexed f args) -- make no attempt to normalise types at this stage
+    Instr (MkPAp n) | f : args' ← args → ttApp' f args'
+    coreFn → doApp coreFn args
+  Ty f → pure $ Ty (TyIndexed f args) -- make no attempt to normalise types at this stage
 
---  _ -> PoisonExpr <$ (errors . typeAppFails %= (BadTypeApp f args :))
-  _ -> error $ "ttapp: unexpected 'function': " <> show fn <> " $ " <> show args
+--  _ → PoisonExpr <$ (errors . typeAppFails %= (BadTypeApp f args :))
+  _ → error $ "ttapp: unexpected 'function': " <> show fn <> " $ " <> show args
 
 -- inline aliases and eta-reduce TyPi applications
-normaliseType :: (ExternVar -> TCEnv s Expr) -> IM.IntMap Expr -> Type -> TCEnv s Type
+normaliseType ∷ (ExternVar → TCEnv s Expr) → IM.IntMap Expr → Type → TCEnv s Type
 normaliseType handleExtern args ty = let
   normaliseT = normaliseType handleExtern
-  getQBind q = use thisMod >>= \modIName -> use openModules >>= \open -> use externs >>= \e ->
+  getQBind q = use thisMod ≫= \modIName → use openModules ≫= \open → use externs ≫= \e →
     handleExtern (readQParseExtern open modIName e (modName q) (unQName q))
 
   -- If the term isn't a type index, it must be lambda calculus or product/sumtype operations
---term2Type :: IM.IntMap Expr -> Term -> _ Type
+--term2Type ∷ IM.IntMap Expr → Term → _ Type
   term2Type piArgs = \case
-    Var (VArg i)   -> pure $ case piArgs IM.!? i of
-      Just (Ty t) -> t
-      _ -> (TyGround [THPoison])
-    RecApp f args -> let recArgs = (\case { Var (VArg i) -> i ; _ -> (-1) }) <$> args
+    Var (VArg i)   → pure $ case piArgs IM.!? i of
+      Just (Ty t) → t
+      _ → (TyGround [THPoison])
+    RecApp f args → let recArgs = (\case { Var (VArg i) → i ; _ → (-1) }) <$> args
       in pure $ if all (`IM.member` piArgs) recArgs then (TyGround [THMuBound 0])
         else _
---  Var (VQBind q) -> _
---  App f args     -> _
-    x -> error $ show x
+--  Var (VQBind q) → _
+--  App f args     → _
+    x → error $ show x
 
   normaliseTH args = \case
-    THTyCon t -> THTyCon <$> case t of 
-      THArrow ars r -> THArrow   <$> (normaliseT args `mapM` ars) <*> normaliseT args r
-      THSumTy ars   -> THSumTy   <$> (normaliseT args `mapM` ars)
-      THTuple ars   -> THTuple   <$> (normaliseT args `mapM` ars)
-      THProduct ars -> THProduct <$> (normaliseT args `mapM` ars)
-    THMu m t -> THMu m <$> normaliseT args t
-    ok -> pure $ case ok of
-      THPrim{} -> ok
-      ko -> error $ show ko
+    THTyCon t → THTyCon <$> case t of 
+      THArrow ars r → THArrow   <$> (normaliseT args `mapM` ars) <*> normaliseT args r
+      THSumTy ars   → THSumTy   <$> (normaliseT args `mapM` ars)
+      THTuple ars   → THTuple   <$> (normaliseT args `mapM` ars)
+      THProduct ars → THProduct <$> (normaliseT args `mapM` ars)
+    THMu m t → THMu m <$> normaliseT args t
+    ok → pure $ case ok of
+      THPrim{} → ok
+      ko → error $ show ko
 
   normalisePiApp piArgs body tyArgs = let -- TODO check arg types match piArg types !
     pn = length piArgs ; an = length tyArgs
     (ok , rest) = splitAt an piArgs
     in if pn == an -- check if args are the same in recursive applications
     then let --self = Nothing --(,args) <$> this
-      in normaliseT (IM.fromList (zipWith (\(i,t) e -> (i,e)) ok tyArgs)) body
-    else _ --TySi (Pi rest body) (foldl (\m (i , val) -> IM.insert (i , val) m) args tyArgs
+      in normaliseT (IM.fromList (zipWith (\(i,t) e → (i,e)) ok tyArgs)) body
+    else _ --TySi (Pi rest body) (foldl (\m (i , val) → IM.insert (i , val) m) args tyArgs
 
   in case ty of
-  TyIndexed (TyPi (Pi piArgs body)) tyArgs -> normalisePiApp piArgs body tyArgs
-  TyIndexed (TyAlias q) tyArgs -> getQBind q >>= \case
-    Ty t -> case t of
-      TyPi (Pi piArgs body) -> normalisePiApp piArgs body tyArgs
-      TyGround g -> TyGround <$> normaliseTH args `mapM` g
-      t -> pure t
-    x -> error $ "not a type: " <> show x
-  TyGround ts -> TyGround <$> normaliseTH args `mapM` ts
-  TyTerm e _t -> term2Type args e
-  t -> pure t
+  TyIndexed (TyPi (Pi piArgs body)) tyArgs → normalisePiApp piArgs body tyArgs
+  TyIndexed (TyAlias q) tyArgs → getQBind q ≫= \case
+    Ty t → case t of
+      TyPi (Pi piArgs body) → normalisePiApp piArgs body tyArgs
+      TyGround g → TyGround <$> normaliseTH args `mapM` g
+      t → pure t
+    x → error $ "not a type: " <> show x
+  TyGround ts → TyGround <$> normaliseTH args `mapM` ts
+  TyTerm e _t → term2Type args e
+  t → pure t

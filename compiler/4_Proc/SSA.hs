@@ -1,7 +1,7 @@
 -- Optimized cpu form designed to be easily converted to C or llvm or wasm
 
 -- Runtime fusion
--- Reflection: Runtime beta-optimality (pap-reduce) & GPU/distribution => lib JIT ?
+-- Reflection: Runtime beta-optimality (pap-reduce) & GPU/distribution ⇒ lib JIT ?
 -- Memory: non-fusible | duped Labels
 -- Mem-layout , label subtyping
 -- Clone Lazy-incremental
@@ -26,10 +26,10 @@ import qualified ShowCore()
 type V = V.Vector
 
 data Module = Module {
-   moduleName :: Text
- , typeDefs   :: V.Vector Type
- , externs    :: V.Vector Function
- , locals     :: V.Vector Function
+   moduleName ∷ Text
+ , typeDefs   ∷ V.Vector Type
+ , externs    ∷ V.Vector Function
+ , locals     ∷ V.Vector Function
 }
 
 data Type
@@ -47,15 +47,15 @@ data Type
  | TVoid -- no ty
 
 data FunctionDecl = FunctionDecl {
-   name  :: Text
- , args  :: [Type]
- , retTy :: Type
+   name  ∷ Text
+ , args  ∷ [Type]
+ , retTy ∷ Type
 }
 
 data Function = Function {
-   fnDecl :: FunctionDecl
- , a0     :: Int
- , body   :: Expr
+   fnDecl ∷ FunctionDecl
+ , a0     ∷ Int
+ , body   ∷ Expr
 }
 
 data Callable
@@ -88,9 +88,9 @@ data Expr
 
  | UnUnion Int Type Expr
  | Load  Type Expr
- | Gep   Type Int Expr   -- C"&(->)" Only TStruct and TSum
+ | Gep   Type Int Expr   -- C"&(→)" Only TStruct and TSum
  | Next  Type Expr       -- C"(&t)[1]" Only TStruct and TSum
- | Index Type Int Expr   -- C"->"
+ | Index Type Int Expr   -- C"→"
  | Extract Type Int Expr -- C"."
  | Dup IName Int Expr
 
@@ -106,8 +106,8 @@ builtins = V.fromList [
 type Off = Expr
 type ROS = V ROSField
 data ROSField
- = ROSFieldMem { fieldOffset :: Off  , sumOffset :: Maybe Off } -- record of sum
- | ROSFloats   { fieldFloat  :: Expr , sumTag :: Maybe Expr }
+ = ROSFieldMem { fieldOffset ∷ Off  , sumOffset ∷ Maybe Off } -- record of sum
+ | ROSFloats   { fieldFloat  ∷ Expr , sumTag ∷ Maybe Expr }
  deriving Show
 
 -----------------------
@@ -115,15 +115,15 @@ data ROSField
 -----------------------
 type CGEnv s a = StateT (CGState s) (ST s) a
 data CGState s = CGState {
-   wipBinds    :: MV.MVector s CGWIP
- , typeDef     :: Int -- typedef counter
- , wipTypeDefs :: [Type]
- , top         :: Bool -- for inserting Rets
- , locCount    :: Int
- , argTable    :: MV.MVector s (Expr , Type)
- , muDefs      :: IntMap Int
- , expectedTy  :: Type
- , thisMod     :: CoreSyn.ModIName
+   wipBinds    ∷ MV.MVector s CGWIP
+ , typeDef     ∷ Int -- typedef counter
+ , wipTypeDefs ∷ [Type]
+ , top         ∷ Bool -- for inserting Rets
+ , locCount    ∷ Int
+ , argTable    ∷ MV.MVector s (Expr , Type)
+ , muDefs      ∷ IntMap Int
+ , expectedTy  ∷ Type
+ , thisMod     ∷ CoreSyn.ModIName
  }
 
 data CGWIP

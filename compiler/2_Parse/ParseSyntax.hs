@@ -16,13 +16,13 @@ type NameMap      = M.Map HName IName
 type SourceOffset = Int
 
 data Module = Module { -- Contents of a File (Module = Function : _ → Record | Record)
-   _moduleName   :: HName -- the fileName
--- , _modFunctor   :: [Pattern]
--- , _modSig       :: Maybe TT
- , _imports      :: [HName] -- all imports used at any scope
- , _bindings     :: [FnDef] -- hNameBinds (! these are listed in reverse)
+   _moduleName   ∷ HName -- the fileName
+-- , _modFunctor   ∷ [Pattern]
+-- , _modSig       ∷ Maybe TT
+ , _imports      ∷ [HName] -- all imports used at any scope
+ , _bindings     ∷ [FnDef] -- hNameBinds (! these are listed in reverse)
 
- , _parseDetails :: ParseDetails
+ , _parseDetails ∷ ParseDetails
 }
 
 -- args and signature for the module (return type must be a record)
@@ -30,27 +30,27 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
-   _hNameBinds     :: (Int , NameMap) -- also count anonymous (lambdas) (>= nameMap size)
- , _hNameLocals    :: [NameMap] -- let-bound names stack
- , _hNameArgs      :: [NameMap]
- , _hNameMFWords   :: (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
- , _freeVars       :: FreeVars
- , _underscoreArgs :: FreeVars
- , _nArgs          :: Int
- , _hNamesNoScope  :: NameMap
- , _fields         :: NameMap
- , _labels         :: NameMap
- , _newLines       :: [Int]
- , _scope          :: ModIName -- Spawn new module on each let block. (inference should .|. scopes)
- , _scopeCount     :: Int
+   _hNameBinds     ∷ (Int , NameMap) -- also count anonymous (lambdas) (>= nameMap size)
+ , _hNameLocals    ∷ [NameMap] -- let-bound names stack
+ , _hNameArgs      ∷ [NameMap]
+ , _hNameMFWords   ∷ (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
+ , _freeVars       ∷ FreeVars
+ , _underscoreArgs ∷ FreeVars
+ , _nArgs          ∷ Int
+ , _hNamesNoScope  ∷ NameMap
+ , _fields         ∷ NameMap
+ , _labels         ∷ NameMap
+ , _newLines       ∷ [Int]
+ , _scope          ∷ ModIName -- Spawn new module on each let block. (inference should .|. scopes)
+ , _scopeCount     ∷ Int
 }
 data FnDef = FnDef {
-   fnNm         :: HName
- , fnRecType    :: !LetRecT        -- or mutual
- , fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
- , fnFreeVars   :: FreeVars        -- implicit lambda-bounds (eventually become explicit arguments)
- , fnMatches    :: NonEmpty FnMatch
- , fnSig        :: Maybe TT
+   fnNm         ∷ HName
+ , fnRecType    ∷ !LetRecT        -- or mutual
+ , fnMixfixName ∷ Maybe MixfixDef -- rm (mixfixes are aliases)
+ , fnFreeVars   ∷ FreeVars        -- implicit lambda-bounds (eventually become explicit arguments)
+ , fnMatches    ∷ NonEmpty FnMatch
+ , fnSig        ∷ Maybe TT
 }
 data FnMatch = FnMatch [Pattern] TT
 data LetRecT = Let | Rec | LetOrRec
@@ -73,9 +73,9 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  -- lambda-calculus
  | Abs FnDef
- | App TT [TT] -- mixfixless Juxt (used for "case x of .." => "x > \case ")
+ | App TT [TT] -- mixfixless Juxt (used for "case x of .." ⇒ "x > \case ")
  | Juxt SourceOffset [TT] -- may contain mixfixes to resolve
- | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat =>'
+ | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat ← x' stands for '≫= \pat ⇒'
 
  -- tt primitives (sum , product , list)
  | Cons   [(FName , TT)] -- can be used to type itself
@@ -94,14 +94,14 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Gadt [(LName , [TT] , Maybe TT)] -- Parameters and constructor signature (return type may be a subtype of the Gadt)
 
 -- patterns represent arguments of abstractions
--- (a b c :: T) introduces implicit pi-bound arguments of type T. note. (a : _) == (a :: _) -> A
+-- (a b c ∷ T) introduces implicit pi-bound arguments of type T. note. (a : _) == (a ∷ _) → A
 data PiBound = PiBound [IName] TT
 data Pattern
  = PArg   IName -- introduce VLocal arguments
  | PPi    PiBound
  | PTyped IName TT
  | PComp  IName CompositePattern
- | PGuard Pattern [Pattern] -- case .. of { pat | b <- pat0 , c <- pat1 .. }
+ | PGuard Pattern [Pattern] -- case .. of { pat | b ← pat0 , c ← pat1 .. }
 
 data CompositePattern -- the pattern is INamed then split into components (As pats use this IName)
  = PLabel LName [Pattern]
@@ -111,10 +111,10 @@ data CompositePattern -- the pattern is INamed then split into components (As pa
  | PLit   Literal
 
 data ParseState = ParseState {
-   _indent      :: Pos    -- start of line indentation (need to save it for subparsers)
- , _piBound     :: [[PiBound]]
+   _indent      ∷ Pos    -- start of line indentation (need to save it for subparsers)
+ , _piBound     ∷ [[PiBound]]
 
- , _moduleWIP   :: Module -- result
+ , _moduleWIP   ∷ Module -- result
 }
 makeLenses ''ParseState
 makeLenses ''ParseDetails
@@ -133,10 +133,10 @@ prettyParseDetails p = Prelude.concatMap ("\n  " <>)
     , "labels: "   <> show (p^.labels)
     , "newlines: " <> show (p^.newLines)
     ]
-prettyTTName :: TTName -> Text = \case
-    VBind x   -> "π" <> show x
-    VLocal  x -> "λ" <> show x
-    VExtern x -> "?" <> show x
+prettyTTName ∷ TTName → Text = \case
+    VBind x   → "π" <> show x
+    VLocal  x → "λ" <> show x
+    VExtern x → "?" <> show x
 
 --deriving instance Show Module
 deriving instance Show ParseDetails

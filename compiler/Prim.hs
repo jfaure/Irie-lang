@@ -73,8 +73,8 @@ data PrimInstr
  | Ptr2Maybe -- glue between ptr/nullptrs and algebraic data (usually Maybe t = [Nothing | Just t])
 
  -- conversion between primitive arrays and ADTs
- | UnFoldArr -- (Seed -> (Bool , A , Seed)) -> Seed -> %ptr(A)
- | NextElem  -- %ptr(A) -> (A , %ptr(A))
+ | UnFoldArr -- (Seed → (Bool , A , Seed)) → Seed → %ptr(A)
+ | NextElem  -- %ptr(A) → (A , %ptr(A))
  | ToCStruct | ToCStructPacked | FromCStruct | FromCStructPacked
 
  -- Posix instructions
@@ -106,8 +106,8 @@ data GMPSpecial -- special fast cases avoiding a gmpInt in favor of raw i64
 
  -- type instructions
 data TyInstrs
- = MkIntN  -- : Nat -> Set --make an int with n bits
- | Arrow   -- : Set -> Set
+ = MkIntN  -- : Nat → Set --make an int with n bits
+ | Arrow   -- : Set → Set
 
 -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
 data Predicates  = EQCmp | NEQCmp | GECmp | GTCmp | LECmp | LTCmp | AND | OR
@@ -119,11 +119,11 @@ data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
 data ArrayInstrs = ExtractVal  -- | InsertVal | Gep
 
 primInstr2Nm = \case
-  NumInstr i -> show i
-  GMPInstr i -> "gmp-" <> show i
-  GMPOther i -> "gmp-" <> show i
-  TyInstr  i -> show i
-  i          -> show i
+  NumInstr i → show i
+  GMPInstr i → "gmp-" <> show i
+  GMPOther i → "gmp-" <> show i
+  TyInstr  i → show i
+  i          → show i
 -- MemInstr   !ArrayInstrs
 
 deriving instance Show Literal
@@ -171,20 +171,20 @@ deriving instance Eq NumInstrs
 deriving instance Eq GMPSpecial
 deriving instance Eq POSIXType
 
-prettyPrimType :: PrimType -> Text
+prettyPrimType ∷ PrimType → Text
 prettyPrimType = toS . \case
-  PrimInt x        -> "%i" <> show x
-  PrimBigInt       -> "%BigInt"
-  PrimNat x        -> "%ui" <> show x
-  PrimFloat f      -> "%f" <> show f
-  PrimArr prim     -> "%@[" <> show prim <> "]"
-  PrimTuple prim   -> "%tuple(" <> show prim <> ")"
-  PtrTo t          -> "%ptr(" <> show t <> ")"
-  PrimExtern   tys -> "%extern(" <> show tys <> ")"
-  PrimExternVA tys -> "%externVA(" <> show tys <> ")"
-  POSIXTy t -> case t of { DirP -> "%DIR*" ; DirentP -> "%dirent*" }
+  PrimInt x        → "%i" <> show x
+  PrimBigInt       → "%BigInt"
+  PrimNat x        → "%ui" <> show x
+  PrimFloat f      → "%f" <> show f
+  PrimArr prim     → "%@[" <> show prim <> "]"
+  PrimTuple prim   → "%tuple(" <> show prim <> ")"
+  PtrTo t          → "%ptr(" <> show t <> ")"
+  PrimExtern   tys → "%extern(" <> show tys <> ")"
+  PrimExternVA tys → "%externVA(" <> show tys <> ")"
+  POSIXTy t → case t of { DirP → "%DIR*" ; DirentP → "%dirent*" }
 
-primSubtypeOf :: PrimType -> PrimType -> Bool
+primSubtypeOf ∷ PrimType → PrimType → Bool
 PrimInt a `primSubtypeOf` PrimInt b = a <= b
 PrimNat a `primSubtypeOf` PrimNat b = a <= b
 x `primSubtypeOf` y = x == y
