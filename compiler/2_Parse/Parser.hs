@@ -183,7 +183,7 @@ brackets  = symbol  "[" `between` symbol  "]"
 -- Names --
 -----------
 reservedChars = ".@(){};:,\\\""
-reservedNames = S.fromList $ words "let rec in \\case case as over foreign foreignVarArg where of _ module import use open require = ? | λ =>"
+reservedNames = S.fromList $ words "let rec in \\case λcase case as over foreign foreignVarArg where of _ import use open require = ? | λ => ⇒"
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c
@@ -374,8 +374,8 @@ tyAnn :: Parser TT = reservedChar ':' *> do {-newArgNest $-} -- no freeVars in a
     pi -> Abs (FnDef "pi-binder" LetOrRec Nothing emptyBitSet (FnMatch (PPi <$> pi) ty :| []) Nothing)
 
 lambda = do
-  (eqns , free) <- newArgNest $ (:|[]) <$> fnMatch (many singlePattern) (reserved "=>")
-  pure $ Abs $ FnDef "lambda" LetOrRec Nothing free eqns Nothing
+  (eqns , free) <- newArgNest $ (:|[]) <$> fnMatch (many singlePattern) (reserved "=>" <|> reserved "⇒")
+  pure $ Abs (FnDef "lambda" LetOrRec Nothing free eqns Nothing)
 
 fnMatch pMFArgs sep = -- sep is "=" or "=>"
   -- TODO is hoistLambda ideal here ? (idea is to merge abs `f x = \y => _` into f x y = _
@@ -420,7 +420,7 @@ tt = anyTT
    [ reserved "_" *> (addAnonArgName >>= addUnderscoreArg)
    , reserved "?" $> WildCard
    , letIn
-   , reserved "\\case" *> caseSplits
+   , (reserved "\\case" <|> reserved "λcase") *> caseSplits
    , (reservedChar '\\' <|> reservedChar 'λ') *> lambda
    , reserved "do" *> doExpr
    , reserved "case"   *> match
@@ -488,7 +488,7 @@ tt = anyTT
       lName <- idenNo_ >>= newSLabel
       ((pats , splitFn) , free) <- newArgNest $ do
         pats  <- many singlePattern
-        reserved "=>"
+        reserved "=>" <|> reserved "⇒"
         splitFn <- tt
         pure (pats , splitFn)
       pure (lName , free , pats , splitFn)
@@ -504,7 +504,7 @@ tt = anyTT
           catchAll <- optional $ do
             pos <- L.indentLevel
             unless (pos == lvl) (fail "not final '_' pattern")
-            reservedChar '_' *> reserved "=>" *> tt
+            reservedChar '_' *> (reserved "=>" <|> reserved "⇒") *> tt
           pure (Match alts catchAll)
     splitBraces = fail "" --braces $ 
     in splitBraces <|> splitIndent

@@ -23,6 +23,7 @@ data TCEnvState s = TCEnvState {
  -- out
  , _wip         :: MV.MVector s Bind
  , _errors      :: Errors
+ , _letBounds   :: BitSet
 
  -- Biunification state
  , _bindWIP     :: (IName , Bool)     -- to identify recursion and mutuals (Bool indicates recursion)

@@ -187,6 +187,8 @@ pBind nm showTerm bind = pretty nm <> " = " <> case bind of
   Queued -> "Queued"
   BindOK isRec expr -> let recKW = if isRec && case expr of {Core{}->True;_->False} then annotate AKeyWord "rec " else ""
     in if showTerm then recKW <> pExpr expr else pExprType expr
+  LetBound isRec expr -> let recKW = if isRec && case expr of {Core{}->True;_->False} then annotate AKeyWord "rec " else ""
+    in annotate AKeyWord "let " <> if showTerm then recKW <> pExpr expr else pExprType expr
   BindOpt complex specs expr -> let
     showSpecs = if specs == 0 then "" else space <> parens "specs: " <> viaShow (bitSet2IntList specs)
     in parens ("nApps: " <> viaShow complex) <> showSpecs <+> pExpr expr

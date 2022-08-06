@@ -123,8 +123,9 @@ expr2Ty _judgeBind e = case e of
  x -> error $ "raw term cannot be a type: " ++ show x
 
 bind2Expr = \case
-  BindOK isRec e -> e
-  BindOpt _ _ e -> e
+  BindOK isRec e   -> e
+  LetBound isRec e -> e
+  BindOpt _ _ e    -> e
   x -> error (show x)
 
 ------------------------

@@ -10,7 +10,7 @@ import Externs (readPrimExtern)
 import qualified BitSetMap as BSM ( (!?), elems, mergeWithKey', singleton, toList, traverseWithKey )
 import qualified Data.IntMap as IM ( IntMap, (!?), fromList )
 import qualified Data.Vector.Mutable as MV ( read, write )
-import qualified Data.Vector as V ( (++), fromList, ifoldM, length, zipWithM )
+import qualified Data.Vector as V ( Vector, (!), (++), fromList, ifoldM, length, zipWithM )
 import Control.Lens ( use, (%=) )
 
 -- First class polymorphism:
@@ -85,33 +85,23 @@ biSub a b = case (a , b) of
 --   The A serves to propagate the input record, minus the lens field
 --   what is meant is really set difference: A =: A // { f : B }
 instantiate pos nb x = if nb == 0 then doInstantiate pos mempty x else
-  freshBiSubs nb >>= \tvars@(_tvStart:_) -> doInstantiate pos (IM.fromList (zip [0..] tvars)) x
+  freshBiSubs nb >>= \tvars -> doInstantiate pos (V.fromList tvars) x
 
 -- Replace THBound with fresh TVars
 -- this mixes mu-bound vars xyz.. and generalised vars A..Z
-doInstantiate :: Bool -> IM.IntMap Int -> Type -> TCEnv s Type
-doInstantiate pos tvars ty = let
-  keyNotFound = fromMaybe (error "panic: instantiate: tvar outside of its binding")
-  thBound i   = (0 `setBit` (keyNotFound $ tvars IM.!? i)  , [])
+doInstantiate :: Bool -> V.Vector Int -> Type -> TCEnv s Type
+doInstantiate pos tvars ty = let -- use deadVars <&> did_ >>= \leaked -> let
+--clearLeaked = (complement leaked .&.)
+  thBound i   = (0 `setBit` (tvars V.! i)  , [])
   mapFn = let r = doInstantiate pos tvars in \case
     THBound i   -> pure (thBound i)
     THMuBound i -> pure (thBound i)
---  THMuBound i -> use muInstances >>= \muVars -> case muVars IM.!? i of
---    Just m -> pure (0 `setBit` m , [])
---    Nothing -> freshBiSubs 1 >>= \[mInst] -> (muInstances %= IM.insert i mInst) $> (0 `setBit` mInst , [])
     THBi{}      -> error $ "higher rank polymorphic instantiation"
-    THMu m t    -> let mInst = keyNotFound (tvars IM.!? m) in -- µx.F(x) is to inference (x & F(x))
+    THMu m t    -> let mInst = tvars V.! m in -- µx.F(x) is to inference (x & F(x))
       doInstantiate pos tvars t <&> \case
         TyGround g -> (0 `setBit` mInst , g)
         TyVars vs g -> (vs `setBit` mInst , g)
         _ -> _
---    use muInstances >>= \muVars -> do
---      mInst <- case muVars IM.!? m of
---        Nothing -> freshBiSubs 1 >>= \[mInst] -> mInst <$ (muInstances %= IM.insert m mInst)
---        Just m -> pure m
---      doInstantiate tvars t <&> \case
---        TyGround g  -> (0 `setBit` mInst , g)
---        TyVars vs g -> (vs `setBit` mInst , g)
     THTyCon t -> (\x -> (0 , [THTyCon x])) <$> case t of
       THArrow as ret -> THArrow   <$> (r `mapM` as) <*> (r ret)
       THProduct as   -> THProduct <$> (r `mapM` as)

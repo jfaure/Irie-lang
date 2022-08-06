@@ -8,7 +8,10 @@ Q: Where did typeclasses go?
 A: Typeclasses amount to slapping a Prolog language atop the core calculus, which is unnatural and complicates the entire compiler pipeline, while simultaneously admitting that the base language is somehow insufficient. Predictably, typeclasses don't extend organically and invite progressively weirder extensions and caveats (cf. haskell's Multiparam , Functional dependencies , flexiblecontexts , typesynonymInstances , overlappingInstances , orphan instances , lawless typeclasses , subtyping/inheritance of classes (eg. Monad < Applicative < Functor) etc..). Typeclasses are a hole out of which a language will never climb out of, which becomes especially painful since they complicate more useful extensions for type-level manipulations and first class polymorphism. Cynically, typeclasses may be called a failed experiment that is automatically replicated due to their ubiquity in haskell.
 
 Q: Ad-hoc polymorphism?
-Ostensibly typeclasses buy ad-hoc polymorphism. Irie supports this more cleanly using explicit records and subtyping to recover the convenience of automatic handling of overload dictionnaries. Irie also has functor modules which are frequently the best solution.
+A: Ostensibly typeclasses buy ad-hoc polymorphism. Irie supports this more cleanly using explicit records and subtyping to recover the convenience of automatic handling of overload dictionnaries. Irie also has functor modules which are frequently the best solution.
+
+Q: Unicode syntax?
+A: There is little builtin syntax so only `\` = `λ` , `\case` = `λcase` and `=>` = `⇒` have a unicode alternative builtin to Irie's parser. Of course the prelude and libraries export unicode alternatives for many standard functions. To input unicode, most editors support digraphs, so eg. in vim Ctr-k (see :digraphs) enables digraph input, then l* = λ , => = ⇒ , FA = ∀ and so on. It is also possible to setup some macros in case you want typing => to automatically insert ⇒.
 
 Q: Irie functions don't need type annotations?
 A: Irie is exceptionally good at inferring types, so you should never need to provide a type signature. The only place type inference can fail is at function application, when incompatible arguments are given to a function.

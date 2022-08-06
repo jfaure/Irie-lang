@@ -12,7 +12,6 @@ import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
 
 global_debug = False
---global_debug = True
 
 type ExtIName  = Int -- VExterns
 type BiSubName = Int -- index into bisubs
@@ -157,11 +156,13 @@ data Expr
 data Bind -- indexes in the bindmap
  = Queued
  | Guard  { mutuals :: BitSet , tvar :: IName } -- Inference in progress; possibly a stack of its dependencies
- -- v Marker for an inferred type waiting for generalisation (waiting for all mutual binds to be inferred)
+ -- | Marker for an inferred type waiting for generalisation (waiting for all mutual binds to be inferred)
  | Mutual { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
+ -- | Function already partially generalised, must be re-generalised once all free-vars are resolved
+ | LetBound { recursive :: Bool , naiveExpr :: Expr }
 
  | BindKO -- failed type
- | BindOK Bool Expr -- isRec
+ | BindOK { recursive :: Bool , naiveExpr :: Expr } -- isRec
 
 -- | BindMutuals (V.Vector Expr)
 

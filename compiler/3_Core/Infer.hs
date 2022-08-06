@@ -1,7 +1,6 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
 -- * replace forward references (Externs) with their name and identify recursive and mutual bindings
 module Infer (judgeModule) where
-import PrettyCore
 import Prim ( PrimInstr(MkPAp) )
 import BiUnify ( bisub )
 import qualified ParseSyntax as P
@@ -45,6 +44,7 @@ judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
 
       , _wip      = wip'
       , _errors   = emptyErrors
+      , _letBounds= emptyBitSet
 
       , _openModules = importedModules
       , _argVars  = argVars'
@@ -73,7 +73,8 @@ judgeLocalBind b = use thisMod >>= \modINm -> use wip >>= \wip' -> use pBinds >>
 -- This includes noting leaked and escaped typevars
 judgeBind :: V.Vector P.FnDef -> MV.MVector s Bind -> IName -> TCEnv s Expr
 judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' ->-} (wip' `MV.read` bindINm) >>= \case
-  BindOK _isRec e -> pure e
+  BindOK _isRec e   -> pure e
+  LetBound _isRec e -> pure e
   Mutual _e _freeVs _isRec tvar _tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)) -- don't inline the expr
 
   Guard mutuals tvar -> do
@@ -89,6 +90,7 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
     in do
     svwip     <- bindWIP <<.= (bindINm , False)
     freeTVars <- use argVars >>= \avs -> bitSet2IntList freeVars `forM` \i -> MV.read avs i
+    svLets    <- use letBounds
     svEscapes <- escapedVars <<%= (.|. intList2BitSet freeTVars)
     svLeaked  <- use leakedVars
 
@@ -103,13 +105,15 @@ judgeBind ttBinds wip' bindINm = use thisMod >>= \modINm -> {-use wip >>= \wip' 
     MV.write wip' bindINm (Mutual jb freeVars isRec tvarIdx typeAnn)
 
     -- Generalise unless more mutuals to infer first
-    ret <- if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
+    letBinds <- (.&. complement svLets) <$> use letBounds
+
+    bitSet2IntList letBinds `forM_` \l -> do -- regeneralise all let-bounds whose escaped vars are now resolved
+      MV.read wip' l >>= \case -- escapes have been resolved, need to solve them in our partially generalised types
+        (LetBound r (Core t ty)) -> (Core t <$> generalise 0 (Right ty)) >>= MV.write wip' l . LetBound r
+
+    if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
       then pure jb
-      else fromJust . head <$> generaliseBinds svEscapes svLeaked bindINm (bitSet2IntList ms) -- <* clearBiSubs 0
-    ret <$ do
-      l <- leakedVars  <.= svLeaked
-      escapedVars       .= svEscapes
-      deadVars %= (.|. (l .&. complement svEscapes))
+      else fromJust . head <$> generaliseBinds False letBinds svEscapes svLeaked (bindINm : bitSet2IntList ms) -- <* clearBiSubs 0
   b -> error (show b)
 
 -- Converting user types to Types = Generalise to simplify and normalise the type
@@ -127,8 +131,8 @@ getAnnotationType ttAnn = case ttAnn of
     x         -> pure x
   Just t -> tyExpr <$> infer t -- no need to generalise if not Abs since no pi bounds
 
-generaliseBinds :: BitSet -> BitSet -> Int -> [Int] -> TCEnv s [Expr]
-generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \m -> MV.read wip' m >>= \case
+generaliseBinds :: Bool -> BitSet -> BitSet -> BitSet -> [Int] -> TCEnv s [Expr]
+generaliseBinds regen letBinds svEscapes svLeaked ms = use wip >>= \wip' -> ms `forM` \m -> MV.read wip' m >>= \case
   -- ! the order is relevant
   Mutual naiveExpr freeVs isRec recTVar annotation -> do
     inferred <- case naiveExpr of
@@ -136,28 +140,33 @@ generaliseBinds svEscapes svLeaked i ms = use wip >>= \wip' -> (i : ms) `forM` \
         (ty , free) <- case expr of
           Abs _ars free _x _fnTy -> pure (coreTy , free) -- ? TODO why not free .|. freeVs
           _ -> pure (coreTy , freeVs)
-        -- rec | mutual: if this bind : τ was used within itself , something bisubed with -τ
+        -- rec | mutual: if this bind : τ was used within itself then something bisubed with -τ
         _cast <- use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
-          TyGround [] -> BiEQ <$ MV.write v recTVar (BiSub ty (TyGround []))
-          _t          -> bisub ty (TyVar recTVar) -- ! this binding is recursive | mutual
+          TyGround [] -> BiEQ <$ MV.write v recTVar (BiSub ty (TyGround [])) -- not recursive / mutual
+          _t          -> bisub ty (TyVar recTVar) -- ! recursive | mutual ⇒ bisub with -τ (itself)
         bl <- use blen
-        when global_debug $ use bis >>= \b -> [0..bl -1] `forM_` \i ->
-          MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
---      freeArgTVars <- use argVars >>= \argPerms -> bitSet2IntList freeVs `forM` \i -> MV.read argPerms i
+        when global_debug $ use bis >>= \b -> [0..bl -1] `forM_` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
         escaped <- use escapedVars
-        generalise escaped (Left recTVar)
-          <* when (free == 0 && null ms) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
+        g <- generalise escaped (Left recTVar)
+        when (free == 0 && null ms) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars 
+        pure g
       Ty t -> pure $ Ty $ if not isRec then t else case t of
         -- v should µbinder be inside the pi type ?
         TyPi (Pi ars t)   -> TyPi (Pi ars (TyGround [THMu 0 t]))
         TySi (Pi ars t) e -> TySi (Pi ars (TyGround [THMu 0 t])) e
         t -> TyGround [THMu 0 t]
       t -> pure t
+
+    l <- leakedVars  <<.= svLeaked
+    e <- escapedVars <<.= svEscapes
+    deadVars %= (.|. (l .&. complement svEscapes))
+
     done <- case (annotation , inferred) of -- Only Core type annotations are worth replacing inferred ones
       (Just ann , Core e inferredTy) -> Core e <$> checkAnnotation ann inferredTy
       _                              -> pure inferred
-    done <$ MV.write wip' m (BindOK isRec done)
-  BindOK _r e -> pure e -- An already handled mutual
+    done <$ if e == 0 then MV.write wip' m (BindOK isRec done) else (letBounds %= (`setBit` m)) *> MV.write wip' m (LetBound isRec done)
+  BindOK _r e   -> pure e -- already handled mutual
+  LetBound _r e -> pure e -- already handled mutual
   b -> error (show b)
 
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
