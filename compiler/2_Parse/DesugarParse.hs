@@ -1,5 +1,7 @@
 module DesugarParse (matches2TT , patterns2TT) where
+import Prim
 import ParseSyntax
+import CoreSyn (Term(Instr))
 import Data.List (findIndex)
 
 type FnArg = (IName , Maybe TT) -- arg and maybe type sig
@@ -43,11 +45,12 @@ convPat = \case
 
   PComp i pat → ((i , Nothing) ,) . Just $ let
     thisArg = Var (VLocal i) --(if isTop then VBind i else VLocal i)
-    in case pat of
---  PLiteral l → 
-    PWildCard → \t → t -- pcomp names the arg but it's never used
-    PLabel l pats → \t → App (Match [(l , emptyBitSet , pats , t)] Nothing) [thisArg]
-    PTuple  fields → \t → let
+    -- t is the term returned by this case expression
+    in \t → case pat of
+    PWildCard      → t -- pcomp names the arg but it's never used
+    PLabel l pats  → App (Match [(l , emptyBitSet , pats , t)] Nothing) [thisArg]
+    PLit lit       → _ -- LitEq lit thisArg t
+    PTuple  fields → let
     -- Note the convention that negative numbers indicate tuple indexing
       mkProj l (PArg i) = (i , TTLens 0 thisArg [l] LensGet) -- (i , Idx thisArg l)
       mkProj _ p = error $ "not ready for patterns within tuples: " <> show p
@@ -55,12 +58,12 @@ convPat = \case
       fArgs = PArg <$> fieldArgs
       abs = Abs (FnDef "tupleProj" Let Nothing 0 (FnMatch fArgs t :| []) Nothing)
       in App abs projs
-    PCons  fields → \t → let
+    PCons  fields → let
       mkProj (l , PArg i) = (i , TTLens 0 thisArg [l] LensGet)
       mkProj p = error $ "not ready for patterns within records" <> show p
       (fieldArgs , projs) = unzip $ mkProj <$> fields
       fArgs = PArg <$> fieldArgs
       abs  = Abs (FnDef "patProj" Let Nothing 0 (FnMatch fArgs t :| []) Nothing)
       in App abs projs
-    x → error $ "not ready for pattern: " <> show x
+--  x → error $ "not ready for pattern: " <> show x
   x → error $ "unknown pattern: " <> show x

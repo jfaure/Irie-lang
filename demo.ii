@@ -113,18 +113,11 @@ p1 = runParser pEof { input = Nil }
 --Tip kx x      ⇒ if k =? kx then Just x else Nothing
 --None          ⇒ Nothing
 
--- go x = case x of
---   Nil ⇒ Nil
---   Cons v vs ⇒ {-Cons ' '-} (append v (go vs))
--- 
--- -- unwords :: [[Char]] -> [Char]
--- unwords ws = let
---   in case ws of
---     Nil ⇒ Nil
---     Cons w ws ⇒ append w (go ws)
+go x = case x of
+  Nil ⇒ Nil
+  Cons v vs ⇒ {-Cons ' '-} (append v (go vs))
 
-span p xs = case xs of
-  N ⇒ { l = xs , r = xs }
-  C x xs2 ⇒ if p x then (let s = span p xs2 in { l = @C x s.l , r = s.r }) else { l = @N , r = xs }
-
-x = let f = 3 in f
+-- unwords :: [[Char]] -> [Char]
+unwords ws = case ws of
+  Nil ⇒ Nil
+  Cons w ws ⇒ append w (go ws)

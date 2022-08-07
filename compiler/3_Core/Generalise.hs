@@ -87,7 +87,7 @@ generalise escapees rawType = let
 -- opposite co-occurence: v + T always occur together at +v,-v ⇒ drop v (unify with T)
 -- polar co-occurence:    v + w always occur together at +v,+w or at -v,-w ⇒ unify v with w
 -- ? unifying recursive and non-recursive vars (does the non-rec var need to be covariant ?)
-data VarSub = Remove | Escaped | Generalise | {-Recursive |-} SubVar Int | SubTy Type deriving Show
+data VarSub = Remove | Escaped | Generalise | SubVar Int | SubTy Type deriving Show
 judgeVars ∷ Int → BitSet → BitSet → BitSet → V.Vector ([Type] , [Type]) → V.Vector VarSub
 judgeVars nVars escapees _leaks recursives coocs = V.constructN nVars $ \prevSubs → let
   collectCoocVs = \case { [] → 0 ; x : xs → foldr (.&.) x xs }
@@ -124,8 +124,8 @@ judgeVars nVars escapees _leaks recursives coocs = V.constructN nVars $ \prevSub
       then Generalise -- don't merge with a polar (or recursive variable)
       else cooc w (if pos then (pVars , pTs) else (mVars , mTs)) wTypes
 
-    -- search ws found in v+ (or v-) where w>v (we already attempted all w < v)
-    polarCoocs pos vCoocs = polarCooc pos <$> bitSet2IntList ((complement prevTVs .&. vCoocs) `clearBit` v)
+    -- search ws found in v+ (or v-) note. we already attempted all w < v , but there may still be matches in the other var
+    polarCoocs pos vCoocs = polarCooc pos <$> bitSet2IntList (vCoocs `clearBit` v)
 
     -- in v+v- if non-recursive v coocs with w then it always does, so "unify v with w" means "remove v"
     -- but in v+w+ or v-w- no shortcuts: "unify v with w" means "replace occurs of v with w"
@@ -174,9 +174,8 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
     Remove   | leakedVars `testBit` v → pure (TyVar v)
     Remove   → pure (TyGround [])
     Generalise | leakedVars `testBit` v → generaliseVar v <&> \q → mergeTVar v (TyGround [THBound q])
-    Generalise | seen `testBit` v → (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \q → TyGround [THMuBound q] -- [THMuBound q]
+    Generalise | seen `testBit` v → (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \q → TyGround [THMuBound q]
     Generalise → generaliseVar v <&> \q → TyGround [THBound q]
---  Recursive  → (hasRecs %= (`setBit` v)) *> generaliseRecVar v <&> \m → TyGround [THMuBound m]
     SubVar i   → doVar pos i
     SubTy t    → goType pos t -- pure t
 
@@ -194,13 +193,14 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
               when global_debug (traceM $ "Rolled µ! " <> prettyTyRaw t
                                      <> "\n     ⇒ " <> prettyTyRaw rolled)
               <* when (global_debug && not (null xss)) (traceM $ show xss) -- rec1
-          in doWrap x
+          in doWrap x -- ? xss
     in do
       when (global_debug && not (null (drop 1 mwrap))) (traceM $ ">1 MuInvs: " <> show (length mwrap)) --show (x : xs))
       fromMaybe t <$> foldM (\x next → case x of { Nothing → tryInv next ; r → pure r }) Nothing mwrap
 
   checkRec vs wrappedRecs t = mergeMus =≪ let -- ! Hack; need to use SubVar to ensure the mus are merged out of scope
---  addMus ∷ [Int] → Type → _ Type
+--  vars = if vs `testBit` 8 || vs `testBit` 12 then 0 `setBit` 13 else 0 -- case t of { TyVars ws _ → ws ; _ → 0 }
+--  addMus ∷ [Int] → Type → GenEnv s Type
     addMus rawTVs t = (MV.read biEqui' `mapM` rawTVs) ≫= \vs → let
       rmVars m = let goGround = filter (\case { THBound x → not (m `testBit` x) ; THMuBound x → not (m `testBit` x) ; _ → True })
         in \case
@@ -218,7 +218,7 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
         → t <$ (muWrap .= [(_ , m , t , invertMu m (startInvMu m) ty)])
       t → pure t
 
-  -- TODO hack to eliminate eq mubounds μa.μb.{ x : a , y : b }
+  -- hack to eliminate eq mubounds μa.μb.{ x : a , y : b }
   -- this messes up the mu-roll mechanism since b branch is now a branch
   mergeMus = \case
     TyGround [THMu m (TyGround [THMu n t])] → let
@@ -228,25 +228,31 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
         THMuBound x | x == oldM → THMuBound newM
         x → x
       newT = mapType go t
-      in d_ ("mergemu: " <> show oldM <> " ⇒ " <> show newM ∷ Text)
+      in trace ("mergemu: " <> show oldM <> " ⇒ " <> show newM ∷ Text)
         $ TyGround [THMu newM newT] <$ (muWrap .= [(_ , newM , newT , invertMu newM (startInvMu newM) newT)])
     t → pure t
 
   goType pos t = let
     finaliseTyHead pos th = subBranches pos th ≫= \(x , m) → rollMu (TyGround [x]) m
+    -- since recursive tvars may be subbed , we need to get to the bottom of var subs immediately (for checkRec)
+    subvar v = case tvarSubs V.! v of
+      SubVar w → subvar w
+      _        → v
+    subvars vs = intList2BitSet (subvar <$> bitSet2IntList vs)
     in case t of
     TyVars vs g → do
       s ← seenVars <<%= (.|. vs)
       -- ground types first for naming priority: `(A → B) & B` rather than `(B → A) & A`
       grounds ← finaliseTyHead pos `mapM` g
       seenVars .= s
-      vars ← doVar pos `mapM` bitSet2IntList vs
+      vars ← mergeTypeList pos <$> doVar pos `mapM` bitSet2IntList vs
       recs ← use hasRecs
-      if null grounds 
-        then pure (mergeTypeList pos vars)
-        else checkRec vs recs (mergeTypeList pos (grounds ++ vars))
+      if null grounds -- TODO maybe not good enough since vars can contain groundtypes
+        then pure vars
+        else checkRec (subvars vs) recs (mergeTypeList pos (vars : grounds))
     TyVar v    → (seenVars %= (`setBit` v)) *> doVar pos v -- ≫= checkRec (0 `setBit` v)
-    TyGround g → mergeTypeList pos <$> finaliseTyHead pos `mapM` g
+--  TyVar v    → goType pos (TyVars (0 `setBit` v) [])
+    TyGround g → goType pos (TyVars 0 g) -- mergeTypeList pos <$> finaliseTyHead pos `mapM` g
     x → error (show x) -- TyPi TySi TyAlias TyTerm
 
   -- Indicate which tycon branch a mu-type came from

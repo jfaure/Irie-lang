@@ -9,9 +9,9 @@
   * audit oldcachedmodule , seems slightly broken
   * make freevars explicit in let-binds so their types make sense
 ## Top Priority
-  * get let dependencies (and infer mutual let binds)
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * improve pipelining of Main to stop once requested work is done
+  * predicates should return a Label
 ## µ-roll
   * subtyping mu-roll; `splitAt : %i32 -> µb.[C {A , b} | N] → {l : µc.[C {A , c} | N] , r : µb.[N]}` (list.ii: also diff with returning Nil vs xs)
   * nonEmptySubsequences
@@ -22,11 +22,6 @@
   * Append sub-functions to module (case branches , specialisations , pap-specs)
   * Arg shapes keys to lookup specialisations
   * max destructure; indicate pointless specializing (esp. scanSum)
-## Top
-  * Typeclasses: `Int <: [ NumInt Int ]` show (esp for repl JIT)
-  * Linear types; dependent types required to quantify relative linearity `Lin t ≥ Lin f => t → u`
-  * expand lambda-mixfixes with explicit holes & reject unsaturated mixfix words
-  * mixfix scope
 ## Parse
   * allow tabs instead of spaces
   * Pattern guards
@@ -34,11 +29,14 @@
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
   * figure out end of let-in in mixfix parser ?! `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
   * repl parser: multiline case / let
+  * expand lambda-mixfixes with explicit holes
 ## Types
   * Annotations (record , sum , TPi)
+  * Typeclasses: `Int <: [ NumInt Int ]` show (esp for repl JIT)
   * THFieldCollision
   * Dependent normalisation
   * first class polymorphism
+  * Linear types; dependent types required to quantify relative linearity `Lin t ≥ Lin f => t → u`
 ## Functor modules and records (infer a module as a TT (Abs | Record) + ImportList , HNames , MixfixNames , LinSubs)
   * file = implicit `filename = record`
   * pattern assignments `(a , b) = (1 , 3)`

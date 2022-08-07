@@ -302,5 +302,7 @@ testWrapper inv recBranch t = case inv of
 
 eqTypesRec (TyGround [THMuBound n]) (TyGround [THMu m _]) = m == n
 eqTypesRec (TyGround [THMu m _]) (TyGround [THMuBound n]) = m == n
+eqTypesRec (TyGround [THMu m t1]) (TyGround [THMu n t2]) =
+  t1 == mapType (\case { THMuBound x | x == n → THMuBound m ; x → x }) t2
 eqTypesRec t1 t2 = -- trace (prettyTyRaw t1 <> " =? " <> prettyTyRaw t2) $
   t1 == t2
