@@ -1,17 +1,18 @@
 ## surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
+  * xcompose
   * move to f2fs
 ## ?
   * Advanced recursive types µ insufficient `PTree a = Leaves a | Cons (PTree (a , a))`
-  * Linear variables (vbruijn | sourceArg | binding | literal | Extern [ | Field | Label ]) + occurs + src Info (all β-subbed with Term)
-  * equality constraints are central to GADTs
+  * equality constraints are central to GADTs `Gabriel Scherer and Didier Rémy. GADTs meet subtyping.` `https://okmij.org/ftp/ML/first-class-modules/#GADT`
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
   * audit oldcachedmodule , seems slightly broken
+  * make freevars explicit in let-binds so their types make sense
 ## Top Priority
+  * get let dependencies (and infer mutual let binds)
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * improve pipelining of Main to stop once requested work is done
 ## µ-roll
-  * rollmerge recvars (unwords) : µe.[4.0 | 4.1 {µd.[4.0 | 4.1 {C , d}] , e}]
   * subtyping mu-roll; `splitAt : %i32 -> µb.[C {A , b} | N] → {l : µc.[C {A , c} | N] , r : µb.[N]}` (list.ii: also diff with returning Nil vs xs)
   * nonEmptySubsequences
 ## µ-elim derivations (identify fixpoints in coresyn / mutual functions)
@@ -33,48 +34,45 @@
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
   * figure out end of let-in in mixfix parser ?! `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
   * repl parser: multiline case / let
-## SSA
-  * local/extern names in ssa form
-  * normalize order of fields/labels for codegen (sort on size then textual name)
-  * case-splits + lambdas as data (for optimal beta-reduction)
 ## Types
   * Annotations (record , sum , TPi)
   * THFieldCollision
   * Dependent normalisation
   * first class polymorphism
-  * replace fnSig with typedTT
-  * `typeOf : (t : Type) -> Type` shortcut to access (and alias) an inferred type
 ## Functor modules and records (infer a module as a TT (Abs | Record) + ImportList , HNames , MixfixNames , LinSubs)
   * file = implicit `filename = record`
   * pattern assignments `(a , b) = (1 , 3)`
   * file = let-block = opened record (allow use/open/mutual statements)
-  * dups | linearity ? on BindNames + FNames
   * BindName LName FName MFName overlap
   * use | open | mutual allowed in let-blocks / opened record
   * scoped HNames = path <.> field
-  * re-generalise let-binds once escaped tvars resolved
+  * Linear variables (vbruijn | sourceArg | binding | literal | Extern [ | Field | Label ]) + occurs + src Info (β-subbable with Term)
   ? scope | dependency graph: imports / records / let-bindings / labelNames(!)
   ? imported names as inputs to the module?
   ? file | module (inter-)dependencies
-
+  ? not evaluated args eg. `if_then_else_` dependently evaluates/needs each arg
 ## Beta-optimality:
   * λ Minimise normal forms on composition: Lambda encoding + lifting + sharing
+  * case-splits as data
   * Partial applications extracted and specialised for beta optimality
   * Fns passed as args must have interpretable format
+## SSA
+  * local/extern names in ssa form
+  * normalize order of fields/labels for codegen (sort on size then textual name)
 ## Error messages
   * Warn nonsense type joins | infer a dependent type
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
 ## Unimportant
-  * --math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4
+  * math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4
+  * upgrade mu-merge to modify varsubs table
   * switch to codeberg
   * Instantiation & Generalisation is also beta-reduction and could be improved
   * List comprehensions
   * cache version
   * Allow inspection of papped args
   * BitSetMap upgrades for [0..64] and sequential names [n..m]: rm Tuple
-  * Pattern PTT: custom unPat function to support any patterns
-  * optimise instantiation
+  * Pattern PTT: custom unPat function to support any patterns eg. `fact (<? 2) = 1`
   * avoid generalising type annotations; directly make a THBi rather than tvars
   * tycon let-bindings addresses (f = let l = .. in .. => `f.l`)
   * error messages via prettyprinter Doc
@@ -91,3 +89,5 @@
   * optimise co-occurences by merging instantly
   * 'StrIntName' new datatype, during parsing link growable vector + hashmap
   * Function = Constructor + rewrite rules ?
+  * replace fnSig with typedTT
+  * `typeOf : (t : Type) -> Type` shortcut to access (and alias) an inferred type

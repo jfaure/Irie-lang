@@ -11,20 +11,21 @@ import Errors
 import TypeCheck ( check )
 import TCState
 import DesugarParse ( matches2TT, patterns2TT )
-import Externs ( typeOfLit, readField, readLabel, readParseExtern, readQParseExtern )
+import Externs ( typeOfLit, readField, readLabel, readParseExtern, readQParseExtern, extBinds )
 import Mixfix ( solveMixfixes )
 import Generalise ( generalise )
 
 import Control.Lens ( (^.), use, (<<%=), (<.=), (<<.=), (%=), (.=), Field2(_2) )
 import Data.List ( unzip4, zipWith3 )
-import qualified Data.Vector as V ( Vector, (!), fromList, fromListN, unsafeFreeze )
+import qualified Data.Vector as V ( Vector, (!), fromList, fromListN, unsafeFreeze, last )
 import qualified Data.Vector.Mutable as MV ( MVector, modify, new, read, replicate, write )
 import qualified BitSetMap as BSM ( fromList, fromListWith, singleton )
 
 judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
-  modName = pm ^. P.moduleName
-  nArgs   = pm ^. P.parseDetails . P.nArgs
-  pBinds' = V.fromListN nBinds (pm ^. P.bindings)
+  modName   = pm ^. P.moduleName
+  nArgs     = pm ^. P.parseDetails . P.nArgs
+  modBinds' = pm ^. P.parseDetails . P.topBinds
+  pBinds'   = V.fromListN nBinds (pm ^. P.bindings)
 --nFields = M.size (pm ^. P.parseDetails . P.fields)
 --nLabels = M.size (pm ^. P.parseDetails . P.labels)
 --normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
@@ -55,6 +56,7 @@ judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
       , _escapedVars = emptyBitSet
       , _leakedVars  = emptyBitSet
       , _deadVars    = emptyBitSet
+      , _bindsInScope= modBinds'
 
       , _recVars     = emptyBitSet
       , _coOccurs    = _
@@ -63,7 +65,7 @@ judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
     pure (JudgedModule modIName modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
           , st ^. errors) --TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
--- uninline expr and prefer qualified binding
+-- uninline expr and insert qualified binding
 judgeLocalBind b = use thisMod ≫= \modINm → use wip ≫= \wip' → use pBinds ≫= \binds → judgeBind binds wip' b <&> \case
   Core _ ty → Core (Var $ VQBind (mkQName modINm b)) ty -- no need to inline the body yet
   t → t
@@ -104,14 +106,12 @@ judgeBind ttBinds wip' bindINm = use thisMod ≫= \modINm → (wip' `MV.read` bi
     typeAnn ← getAnnotationType (P.fnSig abs)
     MV.write wip' bindINm (Mutual jb freeVars isRec tvarIdx typeAnn)
 
-    -- Generalise unless more mutuals to infer first
-    letBinds ← (.&. complement svLets) <$> use letBounds
-
-    (bitSet2IntList letBinds) `forM_` \l → regeneralise l
+--  letBinds ← (.&. complement svLets) <$> use letBounds
+--  (bitSet2IntList letBinds) `forM_` \l → regeneralise l
 
     if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
       then pure jb
-      else fromJust . head <$> generaliseBinds False letBinds svEscapes svLeaked (bindINm : bitSet2IntList ms) -- <* clearBiSubs 0
+      else fromJust . head <$> generaliseBinds False svEscapes svLeaked (bindINm : bitSet2IntList ms) -- <* clearBiSubs 0
   b → error (show b)
 
 -- Converting user types to Types = Generalise to simplify and normalise the type
@@ -129,31 +129,33 @@ getAnnotationType ttAnn = case ttAnn of
     x         → pure x
   Just t → tyExpr <$> infer t -- no need to generalise if not Abs since no pi bounds
 
-regeneralise ∷ Int → TCEnv s ()
-regeneralise l = use wip ≫= \wip' → do -- regeneralise all let-bounds whose escaped vars are now resolved
+-- let-bindings may contain unresolved tvars
+regeneralise ∷ Bool → Int → TCEnv s ()
+regeneralise makeLet l = use wip ≫= \wip' → do -- regeneralise all let-bounds whose escaped vars are now resolved
   MV.read wip' l ≫= \case -- escapes have been resolved, need to solve them in our partially generalised types
     LetBound r (Core t ty) → (Core t <$> generalise 0 (Right ty)) ≫= MV.write wip' l . LetBound r
-    _ → error "attempt to regenaralise non-let-bound"
---  _ → () <$ traceM "attempt to regenaralise non-let-bound"
+    BindOK   r (Core t ty) → (Core t <$> generalise 0 (Right ty)) ≫= MV.write wip' l . (if makeLet then LetBound else BindOK) r
+    _ → pure () -- <* traceM ("attempt to regeneralise non-let-bound: " <> show l)
+--  _ → error "attempt to regenaralise non-let-bound"
 
-generaliseBinds ∷ Bool → BitSet → BitSet → BitSet → [Int] → TCEnv s [Expr]
-generaliseBinds regen letBinds svEscapes svLeaked ms = use wip ≫= \wip' → ms `forM` \m → MV.read wip' m ≫= \case
-  -- ! the order is relevant
+generaliseBinds ∷ Bool → BitSet → BitSet → [Int] → TCEnv s [Expr]
+generaliseBinds regen svEscapes svLeaked ms = use wip ≫= \wip' → ms `forM` \m → MV.read wip' m ≫= \case
+  -- ! The order in which mutuals are generalise these is relevant
   Mutual naiveExpr freeVs isRec recTVar annotation → do
     (ars , inferred) ← case naiveExpr of
       Core expr coreTy → (\(ars , ty) → (ars , Core expr ty)) <$> do -- generalise the type
         (args , ty , free) ← case expr of
           Abs ars free _x _fnTy → pure (ars , coreTy , free) -- ? TODO why not free .|. freeVs
-          _ → pure ([] , coreTy , freeVs)
+          _                     → pure ([] , coreTy , freeVs)
         -- rec | mutual: if this bind : τ was used within itself then something bisubed with -τ
         _cast ← use bis ≫= \v → MV.read v recTVar <&> _mSub ≫= \case
           TyGround [] → BiEQ <$ MV.write v recTVar (BiSub ty (TyGround [])) -- not recursive / mutual
           _t          → bisub ty (TyVar recTVar) -- ! recursive | mutual ⇒ bisub with -τ (itself)
-        bl ← use blen
-        when global_debug $ use bis ≫= \b → [0..bl -1] `forM_` \i → MV.read b i ≫= \e → traceM (show i <> " = " <> show e)
         escaped ← use escapedVars
-        g ← generalise escaped (Left recTVar)
-        when (free == 0 && null ms) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars 
+        g       ← generalise escaped (Left recTVar)
+        when global_debug $ use bis ≫= \b → use blen ≫= \bl →
+          [0 .. bl -1] `forM_` \i → MV.read b i ≫= \e → traceM (show i <> " = " <> show e)
+        when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars 
         pure (intList2BitSet (fst <$> args) , g)
       Ty t → pure $ (emptyBitSet,) $ Ty $ if not isRec then t else case t of
         -- v should µbinder be inside the pi type ?
@@ -169,8 +171,10 @@ generaliseBinds regen letBinds svEscapes svLeaked ms = use wip ≫= \wip' → ms
     done ← case (annotation , inferred) of -- Only Core type annotations are worth replacing inferred ones
       (Just ann , Core e inferredTy) → Core e <$> checkAnnotation ann inferredTy
       _                              → pure inferred
-    if e == 0 then MV.write wip' m (BindOK isRec done) else (letBounds %= (`setBit` m)) *> MV.write wip' m (LetBound isRec done)
---  when (ars .&. e /= 0) (regeneralise m)
+    MV.write wip' m (BindOK isRec done)
+    unless (null (drop 1 ms)) (regeneralise False `mapM_` ms) -- necessary eg. splitAt where let-bindings access this bind
+--  if e == 0 then MV.write wip' m (BindOK isRec done) else (letBounds %= (`setBit` m)) *> MV.write wip' m (LetBound isRec done)
+--  when (ars .&. l /= 0) (regeneralise m *> traceM "regen")
     pure done
   BindOK _r e   → pure e -- already handled mutual
   LetBound _r e → pure e -- already handled mutual
@@ -250,13 +254,21 @@ infer = let
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  in \case
+  P.LetBinds ls tt → do
+    svScope ← bindsInScope <<%= (.|. ls)
+    inTT ← infer tt
+    bitSet2IntList ls `forM_` regeneralise True
+    bindsInScope .= svScope
+    pure inTT
   P.WildCard → pure $ Core Question (TyGround [])
   P.Var v → case v of -- vars : lookup in appropriate environment
     P.VLocal l     → use argVars ≫= (`MV.read` l) <&> \t → Core (Var (VArg l)) (TyVar t)
-    P.VBind b      → use bindWIP ≫= \(this , _) → when (this == b) (bindWIP . _2 .= True) *> judgeLocalBind b ≫= \case
-      -- don't inline type aliases; we want to reuse them to improve error messages
-      Ty{} → use thisMod <&> \mod → Ty (TyAlias (mkQName mod b))
-      t    → pure t
+    P.VBind b      → use bindsInScope ≫= \scoped → if scoped `testBit` b
+      then use bindWIP ≫= \(this , _) → when (this == b) (bindWIP . _2 .= True) *> judgeLocalBind b ≫= \case
+        -- don't inline type aliases; we want to reuse them to improve error messages
+        Ty{} → use thisMod <&> \mod → Ty (TyAlias (mkQName mod b))
+        t    → pure t
+      else use externs ≫= \e → PoisonExpr <$ (errors . scopeFails %= (ScopeLetBound b :))
     P.VExtern i    → use thisMod ≫= \mod → use externs ≫= \e → use openModules ≫= \open →
       handleExtern (readParseExtern open mod e i)
     _ → _

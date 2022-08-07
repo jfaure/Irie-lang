@@ -32,13 +32,7 @@
       src = fakeSrc.outPath;
       cabalProjectFileName = "cabal.project";
       modules = [{ packages = { }; }];
-#     shell = {
-#       buildDepends = [pkgs.gnumake];
-#       withHoogle = true;
-#       tools.haskell-language-server = { };
-#       exactDeps = true;
-#       nativeBuildInputs = [ pkgs.gnumake pkgs.cabal-install ];
-#       };
+      shell.tools = { cabal = {}; };
       };
   formatCheckFor = system: let pkgs = nixpkgsFor system; in
     pkgs.runCommand "format-check" {

@@ -31,6 +31,7 @@ data TCEnvState s = TCEnvState {
  , _blen        ∷ Int                -- cursor for bis which may have spare space
  , _bis         ∷ MV.MVector s BiSub -- typeVars
  , _argVars     ∷ MV.MVector s Int   -- arg IName → TVar map (Arg i ⇒ TVar i made it harder to trim bisubs)
+ , _bindsInScope∷ BitSet             -- easily figure out which let bindings are in scope
 
  -- tvar kinds (see Generalise.hs)
  , _escapedVars ∷ BitSet  -- TVars of shallower let-nests (don't generalize)

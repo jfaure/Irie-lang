@@ -1,4 +1,4 @@
 flattenTree = [32m∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → µd.[Nil | Cons {A , µd.[Nil]}][0m
 
-squish = [32m∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → D → µd.[Cons {A , d}][0m
+squish = [35mlet [0m[32m∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → D → µd.[Cons {A , d}][0m
 

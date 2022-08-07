@@ -20,7 +20,7 @@ singleton = [32m∏ A → A → [Cons {A , [Nil]}][0m
 
 repeat = [32m∏ A B → A → µb.[Cons {A , b}][0m
 
-xs = [32m∏ A → µa.[Cons {τ(6) , a}][0m
+xs = [35mlet [0m[32m∏ A → µa.[Cons {⊥ , a}][0m
 
 foldr = [32m∏ A B C → (A → B → B) → B → µc.[Nil | Cons {A , c}] → B[0m
 
@@ -50,17 +50,17 @@ filter = [32m∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Ni
 
 fromCString = [32m∏ A → %ptr(PrimInt 8) → µa.[Nil | Cons {%i8 , a}][0m
 
-go = [32m∏ A B → {!0 : %i1 , !1 : A , !2 : %ptr(PrimInt 8)} → µb.[Nil | Cons {(%i8 & A) , b}][0m
+go = [35mlet [0m[32m∏ A B → {!0 : %i1 , !1 : A , !2 : %ptr(PrimInt 8)} → µb.[Nil | Cons {(%i8 & A) , b}][0m
 
 toCString = [32m∏ A B C → ((([Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}) & C) → {!0 : %i1 , !1 : %i8 , !2 : C}) → C → %ptr(PrimInt 8)[0m
 
-unravel = [32m∏ A B → [Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}[0m
+unravel = [35mlet [0m[32m∏ A B → [Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}[0m
 
-splitAt = [32m∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → {l : µc.[Nil | Cons {A , c}] , r : µb.[Nil]}[0m
+splitAt = [32m∏ A B C → %i32 → µb.[Nil | Cons {A , µb.[Nil | Cons {⊤ , b}]}] → {l : µc.[Nil | Cons {A , c}] , r : µb.[Nil]}[0m
 
 z = [32m∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : [Nil]}[0m
 
-span = [32m∏ A B → (A → %i1) → µb.[Nil | Cons {A , b}] → {l : µb.[Nil | Cons {A , b}] , r : µb.[Nil | Cons {A , b}]}[0m
+span = [32m∏ A B → (A → %i1) → µb.[Nil | Cons {A , b}] → µb.[Nil | Cons {A , b}][0m
 
 s = [32m∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : µa.[Nil | Cons {⊥ , a}]}[0m
 
@@ -74,7 +74,7 @@ foldr1 = [32m∏ A B → (A → A → A) → µb.[Cons {A , b}] → A[0m
 
 nubBy = [32m∏ A B C → (A → A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
 
-nub = [32m∏ A B C D → µb.[Nil | Cons {τ(43) & (A) , b}] → µc.[Nil | Cons {τ(43) & (A) , c}] → µd.[Nil | Cons {τ(43) & (A) , d}][0m
+nub = [35mlet [0m[32m∏ A B C D → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {A , d}][0m
 
 elemBy = [32m∏ A B C → (A → B → %i1) → B → µc.[Nil | Cons {A , c}] → (%i1 & %i1)[0m
 

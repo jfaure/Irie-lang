@@ -20,11 +20,17 @@ type IField    = QName
 type ILabel    = QName
 type TVarSet   = BitSet
 
--- Module = function of LiNames applied to everything in scope
--- names in this module with QTT info
--- ? occurs in different case-branches (ie. still linear)
-type LiName  = QName -- here the module name is used to indicate dups number
-type LiTable = V.Vector (Int , VName)
+-- LiName
+-- * explicit dup nodes ⇒ function args may be duped
+-- * mark let-bounds start,end , recursive and mutuals
+-- ? different dups in different case-branches ⇒ defer until branch known (potentially duped / dropped linames)
+-- ? dependency graph = LetScope ModIName
+-- ? open record
+-- 0. Module = \.. ⇒ let .. in exportlist (functor might be const)
+-- 1. Parse finds arg binds and uniquely names everything else as Extern
+-- 2. Resolve scope: scopeBitset → IName → LiTable LiName
+type LiName  = QName -- ! The modIName indicates amount of dups
+type LiTable = V.Vector VName
 
 data VName
  = VArg     IName -- introduced by lambda abstractions
@@ -41,7 +47,6 @@ data Term -- β-reducable (possibly to a type)
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
- -- Should add Lin info?
  | Abs     [(IName , Type)] BitSet Term Type -- arg inames, types, freevars, term, ty
  | App     Term [Term]    -- IName [Term]
 
@@ -67,6 +72,7 @@ data Term -- β-reducable (possibly to a type)
  | LetSpecs [Term{-.Abs-}] Term
  | Spec IName -- spec number and the Bind it came from
 
+ -- Used to make new functions internally (esp. specialisations)
  | VBruijn IName
  | BruijnAbs Int BitSet Term
 
@@ -153,15 +159,15 @@ data Expr
 -- | ExprApp  Expr [Expr] -- output of solvemixfixes
 -- | MFId     Expr
 
-data Bind -- indexes in the bindmap
+data Bind -- elements of the bindmap
  = Queued
- | Guard  { mutuals ∷ BitSet , tvar ∷ IName } -- Inference in progress; possibly a stack of its dependencies
+ | Guard  { mutuals ∷ BitSet , tvar ∷ IName } -- marker for stacking inference - if met again, its recursive/mutual
  -- | Marker for an inferred type waiting for generalisation (waiting for all mutual binds to be inferred)
  | Mutual { naiveExpr ∷ Expr , freeVs ∷ BitSet , recursive ∷ Bool , tvar ∷ IName , tyAnn ∷ Maybe Type }
+
  -- | Function already partially generalised, must be re-generalised once all free-vars are resolved
  | LetBound { recursive ∷ Bool , naiveExpr ∷ Expr }
-
- | BindKO -- failed type
+ | BindKO -- failed type inference
  | BindOK { recursive ∷ Bool , naiveExpr ∷ Expr } -- isRec
 
 -- | BindMutuals (V.Vector Expr)
@@ -183,7 +189,7 @@ data ExternVar
  | MixfixyVar Mixfixy           -- temp data fed to solvemixfixes
 
 data Mixfixy = Mixfixy
- { ambigBind   ∷ Maybe QName
+ { ambigBind   ∷ Maybe QName -- mixfixwords can also be standalone bindings, eg. `if_then_else_` and `then`
  , ambigMFWord ∷ [QMFWord]
  }
 
@@ -204,9 +210,7 @@ data BiCast
 data BiSub = BiSub {
    _pSub ∷ Type
  , _mSub ∷ Type
-}
-
-makeLenses ''BiSub
+}; makeLenses ''BiSub
 
 -- label for the different head constructors.
 data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTuple | KArray

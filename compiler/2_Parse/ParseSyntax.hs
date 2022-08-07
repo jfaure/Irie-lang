@@ -43,6 +43,7 @@ data ParseDetails = ParseDetails {
  , _newLines       ∷ [Int]
  , _scope          ∷ ModIName -- Spawn new module on each let block. (inference should .|. scopes)
  , _scopeCount     ∷ Int
+ , _topBinds       ∷ BitSet
 }
 data FnDef = FnDef {
    fnNm         ∷ HName
@@ -83,7 +84,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Label  LName [TT]
  | Match  [(LName , FreeVars , [Pattern] , TT)] (Maybe TT)
  | List   [TT]
- | NewScope ModIName TT -- marker for let-block / opened Module
+ | LetBinds BitSet TT -- marker for let-block / opened Module
 
  -- term primitives
  | Lit      Literal

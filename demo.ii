@@ -110,8 +110,8 @@ p1 = runParser pEof { input = Nil }
 --zero i m = i B& m =? 0
 --lookup k = \case
 --  Bin p m l r ⇒ if zero k m then lookup k l else lookup k r
---Tip kx x    ⇒ if k =? kx then Just x else Nothing
---None        ⇒ Nothing
+--Tip kx x      ⇒ if k =? kx then Just x else Nothing
+--None          ⇒ Nothing
 
 -- go x = case x of
 --   Nil ⇒ Nil
@@ -123,14 +123,8 @@ p1 = runParser pEof { input = Nil }
 --     Nil ⇒ Nil
 --     Cons w ws ⇒ append w (go ws)
 
---lp16 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r 1 (add 0)}  -- ∏ A → (%i1 → A) → {u : {a : %i32 , b : A} , v : {a : %i32 , b : A}}
-
--- Need to biunify escaped var f
---lp14 f = let r x g = { a = f x , b = g x } in r  -- ∏ A B C → (A → B) → A → (A → C) → {a : B , b : C}
--- r must be generalisable fully
---lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y ⇒ y.t)}
-
 span p xs = case xs of
   N ⇒ { l = xs , r = xs }
   C x xs2 ⇒ if p x then (let s = span p xs2 in { l = @C x s.l , r = s.r }) else { l = @N , r = xs }
 
+x = let f = 3 in f

@@ -79,8 +79,9 @@ addArgName    h = do
     Right  x → pure $ x
 addNewArgName h = do
   n ← moduleWIP . parseDetails . nArgs <<%= (1+)
-  moduleWIP . parseDetails . hNameArgs %= (\(x:xs) → M.insert h n x : xs)
-  pure n
+--moduleWIP . parseDetails . hNameArgs %= (\(x:xs) → M.insert h n x : xs)
+  (hNm , iNm) ← moduleWIP . parseDetails . hNameArgs %%= (\(x:xs) → let (old , newmap) = il h n x in ((h , old) , newmap : xs))
+  n <$ when (isJust iNm) (fail $ "duplicate lambda bound name: " <> show hNm)
 
 -- register an '_'; so () and funBind can make an implicit abstraction
 addUnderscoreArg i = Var (VLocal i) <$ (moduleWIP . parseDetails . underscoreArgs %= (`setBit` i))
@@ -259,6 +260,7 @@ parseModule ∷ FilePath → Text → Either (ParseErrorBundle Text Void) Module
       , _newLines       = []
       , _scope          = 0 -- 0 scope is the top-level of this file
       , _scopeCount     = 1
+      , _topBinds       = emptyBitSet
     }
   }
   end = (bindings %~ reverse)
@@ -328,10 +330,10 @@ addMixfixWords m mfdef = let
       ≫= \w → (Nothing :) . (Just w :) <$> addMFParts mfp
     _ → fail "panic: internal parse error with mixfixes"
 
-funBind ∷ Bool → LetRecT → Parser ()
+funBind ∷ Bool → LetRecT → Parser IName
 funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pMixfixWords ≫= \case
   [Just nm] → let pArgs = many (lexeme singlePattern) -- non-mixfix fn def can parse args immediately
-    in void $ funBind' isTop pArgs letRecT nm Nothing (symbol nm *> pArgs)
+    in funBind' isTop pArgs letRecT nm Nothing (symbol nm *> pArgs)
   mfdefHNames → let
 --  hNm = mixFix2Nm mfdefHNames
     pMixFixArgs = \case
@@ -343,7 +345,7 @@ funBind isTop letRecT = (<?> "binding") $ optional (reserved "rec") *> lexeme pM
     mfdefINames ← addMixfixWords mfdefHNames mfdef
     let mfdef = MixfixDef iNm mfdefINames prec
     iNm ← funBind' isTop (pure []) letRecT (mixFix2Nm mfdefHNames) (Just mfdef) (pMixFixArgs mfdefHNames)
-    pure ()
+    pure iNm
 
 some1 f = (:|) <$> f <*> many f
 
@@ -351,9 +353,10 @@ some1 f = (:|) <$> f <*> many f
 -- ⇒ pMFArgs should be used to parse extra equations on subsequent lines
 -- If this is a mixfix, args will be [] at this point
 funBind' ∷ Bool → Parser [Pattern] → LetRecT → Text → Maybe MixfixDef → Parser [Pattern] → Parser IName
-funBind' _isTop pArgs letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
+funBind' isTop pArgs letRecT nm mfDef pMFArgs = (<?> "function body") $ mdo
   iNm ← addBindName nm -- add in mfix in case of recursive references
     <* addBind (FnDef nm letRecT mfDef free eqns ann)
+  when isTop (moduleWIP . parseDetails . topBinds %= (`setBit` iNm))
   ((eqns , ann) , free) ← newArgNest $ do
     ann  ← optional tyAnn
     eqns ← choice -- TODO maybe don't allow `_+_ a b = add a b`
@@ -514,12 +517,12 @@ tt = anyTT
     (`App` [scrut]) <$> caseSplits
 
   letIn = let
-    pletBinds _letStart (letRecT ∷ LetRecT) = newLetNest $ do
+    pletBinds _letStart (letRecT ∷ LetRecT) = {-newLetNest $-} do
       scn -- go to first indented binding
       ref ← use indent
       svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
-      indentedItems ref scn (funBind False letRecT) (reserved "in") *> reserved "in"
-      tt
+      letBinds ← indentedItems ref scn (funBind False letRecT) (reserved "in") <* reserved "in"
+      LetBinds (intList2BitSet letBinds) <$> tt
     in do
       letStart ← use indent
       inExpr ← (reserved "let" *> pletBinds letStart Let)

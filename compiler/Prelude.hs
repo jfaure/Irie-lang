@@ -88,3 +88,14 @@ allM ∷ Monad m ⇒ (a → m Bool) → [a] → m Bool
 allM f = \case
   []   → pure True
   b:bs → f b ≫= \bv → if bv then allM f bs else pure False
+
+{-# INLINE imap #-}
+{-# INLINE anyM #-}
+{-# INLINE allM #-}
+{-# INLINE intList2BitSet #-}
+{-# INLINE bitSet2IntList #-}
+{-# INLINE popCnt #-}
+{-# INLINE foldl1 #-}
+{-# INLINE emptyBitSet #-}
+{-# INLINE setNBits #-}
+{-# INLINE fromJust #-}

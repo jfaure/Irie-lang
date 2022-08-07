@@ -30,7 +30,7 @@ data Import = Import {
 }
 
 -- only direct dependencies are saved; main tracks the work stack to detect cycles
-type ModDeps = Integer -- bitmask
+type ModDeps = BitSet
 data ModDependencies = ModDependencies { deps ∷ Integer , dependents ∷ Integer } deriving Show
 
 data GlobalResolver = GlobalResolver {
@@ -89,7 +89,7 @@ readQParseExtern openMods thisModIName (exts ∷ Externs) modNm iNm = if
       Lit{}   → e
       Instr{} → e
       Var{}   → e -- var indirection
-      _ → Core (Var $ VQBind $ mkQName modNm iNm) t
+      _ → Core (Var $ VQBind (mkQName modNm iNm)) t
     PoisonExpr → PoisonExpr
     x → x -- types and sets
   | otherwise → NotOpened (exts.eModNamesV V.! modNm) (fst ((exts.extBinds V.! modNm) V.! iNm))
