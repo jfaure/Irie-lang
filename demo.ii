@@ -103,21 +103,16 @@ p1 = runParser pEof { input = Nil }
 -- = Bin Prefix Mask (IntMap a) (IntMap a) -- prefix of a key up to (not incl.) the switching bit
 -- | Tip Key a
 -- | Nil
---fromMaybe a = \case
---  Nothing ⇒ a
---  Just x  ⇒ x
 
---zero i m = i B& m =? 0
---lookup k = \case
---  Bin p m l r ⇒ if zero k m then lookup k l else lookup k r
---Tip kx x      ⇒ if k =? kx then Just x else Nothing
---None          ⇒ Nothing
+fromMaybe a = \case
+  Nothing ⇒ a
+  Just x  ⇒ x
 
-go x = case x of
-  Nil ⇒ Nil
-  Cons v vs ⇒ {-Cons ' '-} (append v (go vs))
+zero i m = i B& m =? 0
+lookup k = \case
+  Bin p m l r ⇒ if zero k m then lookup k l else lookup k r
+  Tip kx x    ⇒ if k =? kx then Just x else Nothing
+  None        ⇒ Nothing
 
--- unwords :: [[Char]] -> [Char]
-unwords ws = case ws of
-  Nil ⇒ Nil
-  Cons w ws ⇒ append w (go ws)
+--f = let x = 3 in x
+--g = let x = 3 in x

@@ -517,7 +517,7 @@ tt = anyTT
     (`App` [scrut]) <$> caseSplits
 
   letIn = let
-    pletBinds _letStart (letRecT ∷ LetRecT) = {-newLetNest $-} do
+    pletBinds _letStart (letRecT ∷ LetRecT) = {- newLetNest $-} do
       scn -- go to first indented binding
       ref ← use indent
       svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems

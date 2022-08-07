@@ -12,6 +12,7 @@
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * improve pipelining of Main to stop once requested work is done
   * predicates should return a Label
+  * fix let-bind scopes (let-bound names are in global scope)
 ## µ-roll
   * subtyping mu-roll; `splitAt : %i32 -> µb.[C {A , b} | N] → {l : µc.[C {A , c} | N] , r : µb.[N]}` (list.ii: also diff with returning Nil vs xs)
   * nonEmptySubsequences

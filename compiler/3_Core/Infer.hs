@@ -384,10 +384,10 @@ infer = let
     alts ← infer `mapM` exprs
     def  ← sequenceA (infer <$> catchAll)
     let retTys  = tyOfExpr <$> (maybeToList def ++ alts)
-        retTy   = mergeTypeList False retTys -- ?? TODO why is this a negative merge
+        retTy   = mergeTypeList False retTys -- ? TODO why is this a negative merge
 
         altTys  = map (\argTVars → TyGround [THTyCon $ THTuple (V.fromList argTVars)]) argTVars
-        scrutSum = BSM.fromList $ zip labels altTys
+        scrutSum = BSM.fromList (zip labels altTys)
 --      scrutSumD = maybe scrutSum (\d → (qName2Key (mkQName 0 0) , tyOfExpr d) : scrutSum) def
         scrutTy = case def of
           Nothing → TyGround [THTyCon $ THSumTy scrutSum]

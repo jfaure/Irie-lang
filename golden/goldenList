@@ -74,7 +74,7 @@ scanl = [32m∏ A B C D → (A → B → A) → A → µc.[Nil | Cons {B , c}] 
 
 enumFromTo = [32m∏ A → %i32 → %i32 → µa.[Nil | Cons {%i32 , a}][0m
 
-foldr1 = [32m∏ A B → (A → A → A) → µb.[Cons {A , b}] → A[0m
+foldr1 = [32m∏ A B → (A → A → A) → µb.[Nil | Cons {A , b}] → A[0m
 
 nubBy = [32m∏ A B C → (A → A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
 

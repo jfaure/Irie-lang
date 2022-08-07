@@ -75,17 +75,15 @@ mergeRec = \case
 |]
       in S.describe "mergeRecords" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "mergeRec = [N | C] → {}\n"
+
   let e ∷ Text = [r|
-mergeRec = \case
-  N ⇒ { x = 1 }
-  C ⇒ { y = 1 }
 testParity n = let
   isEven n = ifThenElse (eq n 0) 1 (isOdd  (sub n 1))
-  isOdd n  = ifThenElse (eq n 0) 0 (isEven (sub n 1))
+  isOdd  n = ifThenElse (eq n 0) 0 (isEven (sub n 1))
   in isEven n
 |]
       in S.describe "let-mutuals" $ S.it (toS e) $ UniText (inferType e)
-        `S.shouldBe` UniText "mergeRec = [N | C] → {}\n"
+        `S.shouldBe` UniText "testParity = %i32 → %i1\n"
 
 testImports = do
   (fp1 , h1) ← SIO.openTempFile "/tmp/" "m1"
