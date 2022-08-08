@@ -12,8 +12,6 @@ take = [32m∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons 
 
 drop = [32m∏ A B → %i32 → µa.([Nil | Cons {⊤ , a}] & B) → ([Nil] & B)[0m
 
-fromMaybe = [32m∏ A → [Maybe {A} | Nothing] → (%i1 & A)[0m
-
 null = [32m[Nil | Cons {⊤ , ⊤}] → %i1[0m
 
 singleton = [32m∏ A → A → [Cons {A , [Nil]}][0m

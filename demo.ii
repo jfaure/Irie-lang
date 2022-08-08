@@ -1,11 +1,7 @@
 --rec1 v = { a = rec1 v , b = rec1 v }  -- ⊤ → µx.{a : x , b : x}
 
---testParity n = let
---  isEven n = ifThenElse (eq n 0) 1 (isOdd (sub n 1))
---  isOdd n  = ifThenElse (eq n 0) 0 (isEven (sub n 1))
---  in isEven n
-
 --rect (P : Set) : Set = record
+--Recangle = record
 --  f : Int
 --  g : Int
 import imports/prelude
@@ -17,22 +13,9 @@ import imports/list
 -- File CString ; Dir CString (List Dir)
 --printDirTree : Str -> Dir -> Str
 printDirTree prefix = \case
-  File f   ⇒ prefix ++ f
+  File f  ⇒ prefix ++ f
   Dir d r ⇒ prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
 -}
-
-{-
--- µc.[Cons {A , µc.[Nil]}] ⇒ µc.[Nil | Cons {A , c}]
--- ? roll into mutype: [Nil | Cons {[Cons {A , [Nil]}]
--- [a] -> [[a]]
-nonEmptySubSequences = \case
-  Nil ⇒ Nil
-  Cons x xs ⇒ let
-    f ys r = Cons ys (Cons (Cons x ys) r)
-    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
--}
-
---lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y ⇒ y.t)}
 
 --newtype ParsecT e s m a = ParsecT { unParser :: forall b.
 --  State s e ->
@@ -95,24 +78,14 @@ runParser p s = unParser p s (\a s ⇒ @COK s a)
 p1 = runParser pEof { input = Nil }
 -}
 
---g v v = v
-
--- Prefix = Int
--- Mask   = Int
--- IntMap a
--- = Bin Prefix Mask (IntMap a) (IntMap a) -- prefix of a key up to (not incl.) the switching bit
--- | Tip Key a
--- | Nil
-
-fromMaybe a = \case
-  Nothing ⇒ a
-  Just x  ⇒ x
-
-zero i m = i B& m =? 0
-lookup k = \case
-  Bin p m l r ⇒ if zero k m then lookup k l else lookup k r
-  Tip kx x    ⇒ if k =? kx then Just x else Nothing
-  None        ⇒ Nothing
-
 --f = let x = 3 in x
 --g = let x = 3 in x
+
+-- µc.[Cons {A , µc.[Nil]}] ⇒ µc.[Nil | Cons {A , c}]
+-- ? roll into mutype: [Nil | Cons {[Cons {A , [Nil]}]
+-- [a] -> [[a]]
+nonEmptySubSequences = \case
+  Nil       ⇒ Nil
+  Cons x xs ⇒ let
+    f ys r = Cons ys (Cons (Cons x ys) r)
+    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))

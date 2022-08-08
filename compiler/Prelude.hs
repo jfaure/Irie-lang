@@ -21,12 +21,12 @@ import Data.These
 import Text.Printf
 
 import Control.Applicative.Unicode hiding ((∅))
-import Control.Arrow.Unicode
-import Control.Category.Unicode
+--import Control.Arrow.Unicode
+--import Control.Category.Unicode
+--import Data.Foldable.Unicode
 import Control.Monad.Unicode
 import Data.Bool.Unicode
 import Data.Eq.Unicode
-import Data.Foldable.Unicode
 import Data.Function.Unicode
 import Data.List.Unicode
 import Data.Monoid.Unicode

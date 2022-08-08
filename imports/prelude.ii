@@ -41,3 +41,7 @@ if_then_else_ { l0 } = ifThenElse
 
 --identity : (a : Set) -> a
 identity x = x
+
+fromMaybe a = \case
+  Nothing ⇒ a
+  Just x  ⇒ x

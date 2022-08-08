@@ -9,7 +9,7 @@ length = foldr (\a b ⇒ b + 1) 0
 
 --printList : List Int -> Int
 printList l = case l of
-  Nil ⇒ 0
+  Nil       ⇒ 0
   Cons i ll ⇒ add (putNumber i) (printList ll)
 
 -- scansum: muroll & type intersection simplification
@@ -26,10 +26,6 @@ takeWhile p = \case
 drop n xs = if n <=? 0 then xs else case xs of
   Nil ⇒ Nil
   Cons x xs ⇒ drop (n - 1) xs
-
-fromMaybe l = case l of
-  Maybe b ⇒ b
-  Nothing ⇒ 0
 
 null l = case l of
   Cons x xs ⇒ 0

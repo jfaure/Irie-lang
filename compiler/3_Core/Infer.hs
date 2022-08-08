@@ -5,7 +5,7 @@ import Prim ( PrimInstr(MkPAp) )
 import BiUnify ( bisub )
 import qualified ParseSyntax as P
 import CoreSyn as C
-import CoreUtils ( isPoisonExpr, mergeTVar, mergeTypeList, mergeTypes, mkTyArrow, prependArrowArgsTy, tyExpr, tyOfExpr )
+import CoreUtils ( tyOfTy,  isPoisonExpr, mergeTVar, mergeTypeList, mergeTypes, mkTyArrow, prependArrowArgsTy, tyExpr, tyOfExpr )
 import TTCalculus ( ttApp )
 import Errors
 import TypeCheck ( check )

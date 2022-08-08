@@ -16,7 +16,7 @@ type NameMap      = M.Map HName IName
 type SourceOffset = Int
 
 data Module = Module { -- Contents of a File (Module = Function : _ → Record | Record)
-   _moduleName   ∷ HName -- the fileName
+   _moduleName   ∷ HName -- fileName
 -- , _modFunctor   ∷ [Pattern]
 -- , _modSig       ∷ Maybe TT
  , _imports      ∷ [HName] -- all imports used at any scope
@@ -24,6 +24,8 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
 
  , _parseDetails ∷ ParseDetails
 }
+-- To allow the repl to continue
+emptyParsedModule h = Module h [] [] (ParseDetails (0 , mempty) mempty (0 , mempty) 0 0 0 mempty mempty mempty [] 0 0 0)
 
 -- args and signature for the module (return type must be a record)
 -- data FunctorModule = FunctorModule [Pattern] (Maybe TT) SourceOffset
@@ -31,8 +33,8 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
 -- HNames and local scope
 data ParseDetails = ParseDetails {
    _hNameBinds     ∷ (Int , NameMap) -- also count anonymous (lambdas) (>= nameMap size)
- , _hNameLocals    ∷ [NameMap] -- let-bound names stack
- , _hNameArgs      ∷ [NameMap]
+-- , _hNameLocals    ∷ [NameMap] -- let-bound names stack (can rm now)
+ , _hNameArgs      ∷ [NameMap] -- TODO use a single map?
  , _hNameMFWords   ∷ (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
  , _freeVars       ∷ FreeVars
  , _underscoreArgs ∷ FreeVars

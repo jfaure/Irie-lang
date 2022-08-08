@@ -4,7 +4,7 @@ import BiUnify ( instantiate )
 import Control.Lens ( iforM_, use, (<<%=), (<<.=), (%=), (.=), over, Field1(_1), Field2(_2) )
 import CoreSyn ( global_debug, BiSub(BiSub), TyCon(THTuple, THArrow, THProduct, THSumTy , THSumOpen), TyHead(THMu, THBound, THMuBound, THTyCon, THPrim, THExt, THTop, THBot, THBi),
       Type(TyGround, TyVar, TyVars) )
-import CoreUtils ( mapType, invertMu, mergeTVar, mergeTypeList, mergeTypes, nullType, partitionType, startInvMu, testWrapper, tyLatticeEmpty )
+import CoreUtils --( mergeTVars, mapType, invertMu, mergeTVar, mergeTypeList, mergeTypes, nullType, partitionType, startInvMu, testWrapper, tyLatticeEmpty )
 import PrettyCore ( number2CapLetter, prettyTyRaw )
 import TCState ( biEqui, bis, blen, coOccurs, externs, hasRecs, leakedVars, muWrap, quants, recVars, seenVars, GenEnv, GenEnvState(GenEnvState), TCEnv )
 import qualified BitSetMap as BSM ( elems, traverseWithKey )
@@ -50,7 +50,7 @@ import qualified Data.Vector as V ( Vector, (!), cons, constructN, imapM, imapM_
 -- 2. Finalise: Remove, unify or generalise (with possible mu binder) TVars depending on results of co-occurence analysis
 generalise ∷ BitSet → (Either IName Type) → TCEnv s Type
 generalise escapees rawType = let
-  showTys t        = T.intercalate " , " (prettyTyRaw <$> t)
+  showTys t        = T.intercalate " ; " (prettyTyRaw <$> t)
   traceCoocs nVars coocs = V.take nVars coocs `iforM_` \i (p,m) → traceM (show i <> ": + [" <> showTys p <> " ]; - [" <> showTys m <> "]")
   in do
   when global_debug (traceM $ "Gen: " <> show rawType)
@@ -183,13 +183,14 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
 --rollMu t mwrap = pure t -- disable rollMu
   rollMu t mwrap = let
     tryInv (recBranch , m , mt , invMu) = when global_debug (traceM $ "roll µ? " <> prettyTyRaw t) *>
-      case (\inv → testWrapper inv recBranch t) <$> invMu of
+      case (\inv → testWrapper mt inv recBranch t) <$> invMu of
         [] → pure Nothing
         (x:xss) → let
           doWrap x = case x of -- Left = need to test more wraps ; Right Bool = unrolling OK | KO
             Left invMuNext → Nothing <$ (muWrap .= [(error "recBranch not set" , m , mt , [invMuNext])])
-            Right False    → pure Nothing
-            Right True     → let rolled = TyGround [THMu m mt] in Just rolled <$
+            Right Nothing  → pure Nothing
+--          Right (Just x) → let rolled = TyGround [THMu m mt] in Just rolled <$
+            Right (Just x) → let rolled = TyGround [THMu m x] in Just rolled <$
               when global_debug (traceM $ "Rolled µ! " <> prettyTyRaw t
                                      <> "\n     ⇒ " <> prettyTyRaw rolled)
               <* when (global_debug && not (null xss)) (traceM $ show xss) -- rec1
@@ -208,10 +209,18 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
         TyVars vs g → TyVars vs (goGround g)
         t → t
       mT = rmVars (intList2BitSet vs) t
+      wraps = vs <&> \m → (_ , m , mT , invertMu m (startInvMu m) mT)
+--    (ws , wraps) = unzip $ vs <&> \m → let inv = invertMu m (startInvMu m) mT in (if null inv then Left m else Right m , (_ , m , mT , inv))
+--    (norecs , recs) = partitionEithers ws
+--    retT = foldl (\ty m → TyGround [THMu m ty]) mT recs
+--    retTy = if null norecs then retT else mergeTypeGroundType True retT (THMuBound <$> norecs) -- todo pos
       retTy = foldl (\ty m → TyGround [THMu m ty]) mT vs
-      in retTy <$ case vs of
-        m : _ms → let invMu = invertMu m (startInvMu m) mT in (muWrap .= [(_ , m , mT , invMu)]) -- TODO why are we ignoring ms
-        _ → pure ()
+      in do
+        muWrap %= (wraps ++ )
+        pure retTy
+--    in retTy <$ case vs of
+--      [m] → let invMu = invertMu m (startInvMu m) mT in (muWrap .= [(_ , m , mT , invMu)]) -- TODO why are we ignoring ms
+--      _ → pure ()
     in addMus (bitSet2IntList (vs .&. wrappedRecs)) t ≫= \case
       -- prevent stacking µa.µa. after mu-rolling
       TyGround [THMu m t@(TyGround ts)] | Just (THMu _n ty) ← find (\case {THMu n _ → n == m ; _ → False}) ts

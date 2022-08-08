@@ -60,14 +60,14 @@ tyLatticeEmpty pos = \case
 hasVar t v = case t of
   TyGround{}  → False
   TyVar w     → v == w
-  TyVars vs g → testBit vs v
+  TyVars vs _ → testBit vs v
 
 --mkTHArrow ∷ [[TyHead]] → [TyHead] → Type
 mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
 
 getArrowArgs = \case
   TyGround [THTyCon (THArrow as r)] → (as , r)
-  TyGround [THBi i t] → getArrowArgs t
+  TyGround [THBi _ t] → getArrowArgs t
   t → trace ("not a function type: " <> prettyTyRaw t) ([] , t)
 
 -- appendArrowArgs [] = identity
@@ -97,12 +97,12 @@ isTyCon = \case
  _         → False
 
 tyOfTy ∷ Type → Type
-tyOfTy t = TyGround [THSet 0]
+tyOfTy _ = TyGround [THSet 0]
 
 tyExpr = \case -- get the type from an expr.
-  Ty t → Just t
+  Ty t     → Just t
   Core e t → Just (TyTerm e t)
-  expr → Nothing --error $ "expected type, got: " ++ show expr
+  _        → Nothing --error $ "expected type, got: " ++ show expr
 
 tyOfExpr = \case
   Core _x ty → ty
@@ -123,9 +123,9 @@ expr2Ty _judgeBind e = case e of
  x → error $ "raw term cannot be a type: " ++ show x
 
 bind2Expr = \case
-  BindOK isRec e   → e
-  LetBound isRec e → e
-  BindOpt _ _ e    → e
+  BindOK _isRec e   → e
+  LetBound _isRec e → e
+  BindOpt  _ _ e    → e
   x → error (show x)
 
 ------------------------
@@ -149,9 +149,9 @@ mergeTyUnions ∷ Bool → [TyHead] → [TyHead] → [TyHead]
 mergeTyUnions pos l1 l2 = let
   cmp a b = case (a,b) of
     (THBound a' , THBound b') → compare a' b'
-    (THMu m t , THMuBound n) → compare m n
-    (THMuBound n , THMu m t) → compare m n
-    _ → (kindOf a) `compare` (kindOf b)
+    (THMu m _ , THMuBound n) → compare m n
+    (THMuBound n , THMu m _) → compare m n
+    _ → kindOf a `compare` kindOf b
   in foldr (mergeTyHeadType pos) [] (sortBy cmp $ l2 ++ l1)
 
 mergeTyHeadType ∷ Bool → TyHead → [TyHead] → [TyHead]
@@ -224,8 +224,8 @@ mergeTVar v = \case
   TyVars ws g → TyVars (ws `setBit` v) g
   TyGround g  → TyVars (0  `setBit` v) g
 mergeTypes pos (TyGround a) (TyGround b)     = TyGround (mergeTyUnions pos a b)
-mergeTypes pos (TyVar v) t                   = mergeTVar v t
-mergeTypes pos t (TyVar v)                   = mergeTVar v t
+mergeTypes _   (TyVar v) t                   = mergeTVar v t
+mergeTypes _   t (TyVar v)                   = mergeTVar v t
 mergeTypes pos (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions pos g1 g2)
 mergeTypes pos (TyVars vs g1) (TyGround g2)  = TyVars vs (mergeTyUnions pos g1 g2)
 mergeTypes pos (TyGround g1) (TyVars vs g2)  = TyVars vs (mergeTyUnions pos g1 g2)
@@ -260,7 +260,7 @@ invertMu muVar inv cur = {-trace (prettyTyRaw cur) $-} let
         THSumTy tys   → BSM.toList tys -- V.toList $ BSM.elems tys
         THProduct tys → BSM.toList tys -- V.toList $ BSM.elems tys
         THTuple tys   → V.toList (V.indexed tys)
-    THMu m t    | m == muVar → [inv]
+    THMu m _t   | m == muVar → [inv]
     THMuBound m | m == muVar → [inv]
     _ → [] -- no mus in unguarded type or incorrect mu at leaf
   in case cur of
@@ -270,15 +270,18 @@ invertMu muVar inv cur = {-trace (prettyTyRaw cur) $-} let
   TyVar _v → []
   x → error (show x)
 
+test = invertMu 0 (startInvMu 0) (TyGround [THTyCon (THSumTy $ BSM.fromList [(0 , TyGround [THTyCon (THTuple mempty)])])])
+-- [Nil]
+
 -- test if an inverted Mu matches the next layer (a potential unrolling of the µ)
 -- This happens after type simplifications so there should be no tvars (besides escaped ones)
 -- Either (more wrappings to test) (end , True if wrapping is an unrolling)
-testWrapper ∷ InvMu → Int → Type → Either InvMu Bool
-testWrapper inv recBranch t = case inv of
-  Leaf _m             → Right True
+--testWrapper ∷ InvMu → Int → Type → Either InvMu (Maybe Type)
+testWrapper baseMuTy inv recBranch t = let ko = Right Nothing in case inv of
+  Leaf _m             → Right (Just baseMuTy) --True
   InvMu this r parent → if False && r /= recBranch -- Avoid pointless work if testing against wrong branch
 --then d_ (r , recBranch , this) (Right False)
-  then Right False
+  then ko
   else case {-d_ (recBranch , parent , this , t)-} (this , t) of
     (TyGround g1 , TyGround g2) → let
       partitionTyCons g = (\(t , o) → ((\case {THTyCon tycon → tycon ; _ → error "wtf" }) <$> t , o))
@@ -295,15 +298,17 @@ testWrapper inv recBranch t = case inv of
         _ → False
       in if muOK {-|| o1 /= o2-}
          then case parent of
-           Leaf{}    → Right True -- OK found an unrolling
+           Leaf{}    → Right $ Just baseMuTy -- Just (TyGround (mergeTyUnions True g1 g2)) -- OK found an unrolling
            nextInvMu → Left nextInvMu -- so far OK, more wraps to test
-         else Right False
-    _ → Right False
+         else ko
+    _ → ko
 -- TODO TyVars (presumably only relevant for let-bindings)
 
+-- TODO merge type joins: µc.[Cons {A , c & [Nil]}] ⇒ µc.[Nil | Cons {A , c}]
 eqTypesRec (TyGround [THMuBound n]) (TyGround [THMu m _]) = m == n
 eqTypesRec (TyGround [THMu m _]) (TyGround [THMuBound n]) = m == n
-eqTypesRec (TyGround [THMu m t1]) (TyGround [THMu n t2]) =
-  t1 == mapType (\case { THMuBound x | x == n → THMuBound m ; x → x }) t2
+eqTypesRec (TyGround [THMu m t1]) (TyGround [THMu n t2]) = -- trace ("eqµtypes? " <> show m <> " " <> show n <> " " <> prettyTyRaw t1 <> " =? " <> prettyTyRaw t2)
+  t1 == (if m == n then t2 else mapType (\case { THMuBound x | x == n → THMuBound m ; x → x }) t2)
+--True
 eqTypesRec t1 t2 = -- trace (prettyTyRaw t1 <> " =? " <> prettyTyRaw t2) $
   t1 == t2

@@ -123,9 +123,9 @@ goldenList opts fName goldName = S.goldenTextFile goldName $ do
 gold     = S.it "list.ii"        (goldenList "-p types" "imports/list.ii"        "golden/goldenList")
 mutual   = S.it "mutual.ii"      (goldenList "-p types" "imports/sumMul.ii"      "golden/sumMul")
 tree     = S.it "tree.ii"        (goldenList "-p types" "imports/tree.ii"        "golden/tree")
+intmap   = S.it "intmap.ii" (goldenList "-p types --no-color" "imports/intmap.ii" "golden/intmap")
 mixfixes = S.it "mixfixTests.ii" (goldenList "-p core --no-color" "imports/mixfixTests.ii" "golden/mixfixTests")
 
-g = S.sydTest gold
 s = S.sydTest $ do
   sequence_ fTests
   --sequence_ recTests
@@ -134,6 +134,4 @@ s = S.sydTest $ do
   mutual
   tree
   mixfixes
-
-m = S.sydTest $ do
-  mixfixes
+  intmap

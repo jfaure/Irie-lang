@@ -89,9 +89,10 @@ addUnderscoreArg i = Var (VLocal i) <$ (moduleWIP . parseDetails . underscoreArg
 -- search (local let bindings) first, then the main bindMap
 addBindName   h = do
   n ← use (moduleWIP . parseDetails . hNameBinds . _1)
-  r ← use (moduleWIP . parseDetails . hNameLocals) ≫= \case
-    [] → pd . hNameBinds  %%= insertOrRetrieveSZ h
-    _  → (pd . hNameLocals %%= insertOrRetrieveArg h n) <* addAnonBindName -- inc the sz counter
+  r ← pd . hNameBinds  %%= insertOrRetrieveSZ h
+--r ← use (moduleWIP . parseDetails . hNameLocals) ≫= \case
+--  [] → pd . hNameBinds  %%= insertOrRetrieveSZ h
+--  _  → (pd . hNameLocals %%= insertOrRetrieveArg h n) <* addAnonBindName -- inc the sz counter
   case r of
     Right _ → fail $ toS $ "Binding overwrites existing binding: '" <> h <> "'"
     Left  r → pure r
@@ -115,15 +116,15 @@ lookupBindName h = use (moduleWIP . parseDetails) ≫= \p → let
           moduleWIP . parseDetails . freeVars %= (`setBit` upStackArg)
           pure $ Just (VLocal upStackArg)
         Nothing → pure Nothing
-  tryLet = VBind  <$> (asum $ (M.lookup h) `map` (p ^. hNameLocals))
+--tryLet = VBind  <$> (asum $ (M.lookup h) `map` (p ^. hNameLocals))
   tryTop = VBind  <$> M.lookup h (p ^. hNameBinds . _2)
-  in tryArg ≫= \arg → Var <$> case choice [arg , tryLet , tryTop] of
+  in tryArg ≫= \arg → Var <$> case choice [arg , {-tryLet ,-} tryTop] of -- TODO rm tryTop
     Just i  → pure i
     Nothing → VExtern <$> addUnknownName h
 
 -- The names nest tracks the scope of local definitions
-newLetNest p = (moduleWIP . parseDetails . hNameLocals %= (M.empty :))
-       *> p <* (moduleWIP . parseDetails . hNameLocals %= drop 1)
+--newLetNest p = (moduleWIP . parseDetails . hNameLocals %= (M.empty :))
+--       *> p <* (moduleWIP . parseDetails . hNameLocals %= drop 1)
 
 getFreeVars = use (moduleWIP . parseDetails . freeVars)
 
@@ -250,7 +251,7 @@ parseModule ∷ FilePath → Text → Either (ParseErrorBundle Text Void) Module
         _hNameBinds     = (0 , M.empty)
       , _hNameMFWords   = (0 , M.empty)
       , _hNameArgs      = [] ∷ [M.Map HName IName] -- stack of lambda-bounds
-      , _hNameLocals    = [] ∷ [M.Map HName IName]
+--    , _hNameLocals    = [] ∷ [M.Map HName IName]
       , _freeVars       = emptyBitSet
       , _nArgs          = 0
       , _underscoreArgs = emptyBitSet
@@ -486,13 +487,13 @@ tt = anyTT
       _  → indentedItems ref scn doStmt (void (char ')'))
 
   caseSplits = let
+    caseAlt = (reserved "=>" <|> reserved "⇒") *> tt
     split = do
       svIndent
       lName ← idenNo_ ≫= newSLabel
       ((pats , splitFn) , free) ← newArgNest $ do
         pats  ← many singlePattern
-        reserved "=>" <|> reserved "⇒"
-        splitFn ← tt
+        splitFn ← caseAlt
         pure (pats , splitFn)
       pure (lName , free , pats , splitFn)
     splitIndent = do
@@ -507,9 +508,10 @@ tt = anyTT
           catchAll ← optional $ do
             pos ← L.indentLevel
             unless (pos == lvl) (fail "not final '_' pattern")
-            reservedChar '_' *> (reserved "=>" <|> reserved "⇒") *> tt
+            reservedChar '_' *> caseAlt
           pure (Match alts catchAll)
-    splitBraces = fail "" --braces $ 
+    splitBraces = let catchAll = optional (reservedChar ';' *> reservedChar '_' *> caseAlt)
+      in braces (split `sepBy` reservedChar ';' ≫= \alts → Match alts <$> catchAll)
     in splitBraces <|> splitIndent
   match = do
     scrut  ← tt

@@ -3,14 +3,12 @@ module ModulePaths where
 import System.FilePath.Posix as FilePath ( (<.>), (</>) )
 import qualified System.Directory as Dir ( doesFileExist )
 
-findModule ∷ [FilePath] → FilePath → IO FilePath --(Maybe FilePath)
+findModule ∷ [FilePath] → FilePath → IO (Either FilePath FilePath) --(Maybe FilePath)
  = \searchPath fName → let
-   checkExists [] f = error $ "couldn't find " <> show f <> " in search path\n" <> show searchPath
-   checkExists (sp:x) fName =
-     let fPath = sp </> fName
-     in Dir.doesFileExist fPath ≫= \e → if e
-       then pure fPath
-       else checkExists x fName
+   checkExists [] _ = pure (Left fName)
+   checkExists (sp:x) fName = let fPath = sp </> fName in Dir.doesFileExist fPath ≫= \case
+     True  → pure (Right fPath)
+     False → checkExists x fName
   in Dir.doesFileExist fName ≫= \case
-    True  → pure ("." </> fName)
+    True  → pure (Right ("." </> fName))
     False → checkExists searchPath (fName FilePath.<.> "ii")

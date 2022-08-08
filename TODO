@@ -62,6 +62,7 @@
   * Warn nonsense type joins | infer a dependent type
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
+  * Literal is out of Int range
 ## Unimportant
   * math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4
   * upgrade mu-merge to modify varsubs table

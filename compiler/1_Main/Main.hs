@@ -26,13 +26,13 @@ import qualified Data.Vector as V
 import qualified Data.Map    as M
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Binary as DB
-import Control.Lens ( (^.), Field2(_2) )
+import Control.Lens -- ( (^.), Field2(_2) )
 import System.Console.Haskeline ( defaultSettings, getInputLine, runInputT )
 import System.Directory ( createDirectoryIfMissing, doesFileExist, getModificationTime )
 import qualified System.IO as SIO (hClose)
 import Data.List (words)
 
-searchPath   = ["./" , "Library/"]
+searchPath   = ["./" , "imports/"]
 objPath      = ["./"]
 objDir'      = ".irie-obj/"
 objDir       = objDir' <> "@" -- prefix '@' to files in there
@@ -64,6 +64,7 @@ core       = sh $ demoFile <> " -p core"
 types      = sh $ demoFile <> " -p types"
 opt        = sh $ demoFile <> " -p simple"
 emitC      = sh $ demoFile <> " -p C"
+testRepl   = sh ""
 
 main = getArgs ≫= main'
 main' args = parseCmdLine args ≫= \cmdLine → do
@@ -78,7 +79,9 @@ main' args = parseCmdLine args ≫= \cmdLine → do
       ≫= putResults . handleJudgedModule
       ≫= codegen cmdLine
   files cmdLine `forM_` doFileCached cmdLine True resolver 0
-  when (repl cmdLine || null (files cmdLine) && null (strings cmdLine)) (replCore cmdLine)
+  when (repl cmdLine || (null (files cmdLine) && null (strings cmdLine))) $ let
+    patchFlags = cmdLine{ printPass = "types" : printPass cmdLine , repl = True , noColor = False }
+    in replCore (if null (printPass cmdLine) then patchFlags else cmdLine)
 
 type CachedData = JudgedModule
 decodeCoreFile ∷ FilePath → IO CachedData       = DB.decodeFile
@@ -105,12 +108,13 @@ doFileCached flags isMain resolver depStack fName = let
       judged ← decodeCoreFile cached ∷ IO CachedData -- even stale cached modules need to be read
       if fresh && not (recompile flags) && not isMain then pure (resolver , judged)
         --else go (rmModule modINm (bindNames judged) resolver) (Just modINm)
---      else go resolver (Just $ OldCachedModule (modIName judged) (bindNames judged)) -- <> V.fromList (M.keys (labelNames judged))))
         else go resolver (Just $ OldCachedModule (modIName judged) (bindNames judged <> V.fromList (M.keys (labelNames judged))))
 
-evalImports ∷ CmdLine → ModIName → GlobalResolver → BitSet → [Text] → IO (GlobalResolver, ModDependencies)
+evalImports ∷ CmdLine → ModIName → GlobalResolver → BitSet → [Text] → IO (Bool, GlobalResolver, ModDependencies)
 evalImports flags moduleIName resolver depStack fileNames = do
-  importPaths ← (findModule searchPath . toS) `mapM` fileNames
+  (nopath , importPaths) ← partitionEithers <$> (findModule searchPath . toS) `mapM` fileNames
+  nopath `forM_` \f → putStrLn $ ("couldn't find " <> show f <> " in search path\n" <> show searchPath ∷ Text)
+
   -- the compilation work stack is the same for each imported module
   -- TODO this foldM could be parallel
   (r , importINames) ← let
@@ -118,7 +122,7 @@ evalImports flags moduleIName resolver depStack fileNames = do
     in foldM inferImport (resolver , []) importPaths
   let modDeps = ModDependencies { deps = foldl setBit emptyBitSet importINames , dependents = emptyBitSet }
       r' = foldl (\r imported → addDependency imported moduleIName r) r importINames
-  pure (r' , modDeps)
+  pure (null nopath , r' , modDeps)
 
 -- Parse , judge , simplify a module (depending on cmdline flags)
 --text2Core ∷ CmdLine → Maybe OldCachedModule → GlobalResolver → ModDeps → FilePath → Text
@@ -129,11 +133,11 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
       resolver = if isJust maybeOldModule then resolver' else addModName modIName (T.pack fName) resolver'
   when ("source" `elem` printPass flags) (putStr =≪ readFile fName)
   parsed ← case parseModule fName progText of
-    Left e  → putStrLn (errorBundlePretty e) *> exitWith (ExitFailure 1) -- ExitSuccess
+    Left e  → putStrLn (errorBundlePretty e) $> P.emptyParsedModule (toS fName) -- TODO add to parse fails
     Right r → pure r
   when ("parseTree" `elem` printPass flags) (putStrLn (P.prettyModule parsed))
 
-  (modResolver , modDeps) ← evalImports flags modIName resolver (setBit depStack modIName) (parsed ^. P.imports)
+  (importsok , modResolver , modDeps) ← evalImports flags modIName resolver (setBit depStack modIName) (parsed ^. P.imports)
   pure $ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule
 
 -- Judge the module and update the global resolver
@@ -206,7 +210,9 @@ putResults (flags , coreOK , errors , bindSrc , srcInfo , fName , r , j , (oType
   unless (outHandle == stdout) (SIO.hClose outHandle)
   when (doCacheCore && not (noCache flags))
     $ DB.encodeFile resolverCacheFName r *> cacheFile fName j
-  T.IO.putStrLn $ show fName <> " " <> "(" <> show (modIName j) <> ") " <> (if coreOK then "OK" <> (if isJust oSimple then " Simplified" else " Raw") else "KO")
+  unless (repl flags) $ let
+    okMsg = if coreOK then "OK" <> (if isJust oSimple then " Simplified" else " Raw") else "KO"
+    in T.IO.putStrLn $ show fName <> " " <> "(" <> show (modIName j) <> ") " <>  okMsg
   pure (r , j)
 
 ---------------------------------
@@ -235,8 +241,8 @@ replCore ∷ CmdLine → IO ()
 replCore cmdLine = let
   doLine l = text2Core cmdLine Nothing primResolver 0 "<stdin>" l
     ≫= putResults . handleJudgedModule
-    ≫= codegen cmdLine
-    ≫= print . V.last . allBinds . fst
+--  ≫= codegen cmdLine
+--  ≫= print . V.last . allBinds . fst
   in void $ replWith cmdLine $ \cmdLine line → cmdLine <$ doLine line
 
 --replJIT ∷ CmdLine → IO ()
@@ -249,8 +255,6 @@ replCore cmdLine = let
 --    LD.runINJIT jit (Just (llMod , "test" , \_ → pure ()))
 --    pure state
 
-repl2 = mapM T.IO.putStrLn =≪ replWith [] (\st line → pure $! line : st)
-
-testrepl = replCore defaultCmdLine
+--repl2 = mapM T.IO.putStrLn =≪ replWith [] (\st line → pure $! line : st)
 
 --testjit = LD.testJIT

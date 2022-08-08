@@ -46,7 +46,6 @@
   in {
   project = perSystem projectFor;
   flake = perSystem (system: (projectFor system).flake {});
-# devShell = perSystem (system: with nixpkgsFor system; mkShell { buildInputs = [ nixUnstable cabal-install gnumake ]; });
 
   # this could be done automatically, but would reduce readabilit
   packages = perSystem (system: self.flake.${system}.packages);

@@ -226,6 +226,7 @@ data JudgedModule = JudgedModule {
  , labelNames  ∷ M.Map HName IName
  , judgedBinds ∷ V.Vector Bind
 }
+--emptyJudgedModule iNm hNm = JudgedModule iNm hNm 0 mempty mempty mempty mempty
 
 data OldCachedModule = OldCachedModule {
    oldModuleIName ∷ ModuleIName

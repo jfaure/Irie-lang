@@ -13,6 +13,7 @@ data Errors = Errors
   , _checkFails   ∷ [CheckError]
   , _scopeFails   ∷ [ScopeError]
   , _typeAppFails ∷ [TypeAppError]
+--, _parseFails   ∷ [Text]
 --  , _tmpFails     ∷ [TmpBiSubError]
   }
 emptyErrors = Errors [] [] [] []
