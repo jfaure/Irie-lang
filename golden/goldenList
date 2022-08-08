@@ -1,82 +1,82 @@
-List =  type [32mΠ(0 : τ1) µa.[Nil | Cons {([34mλ0[32m : τ1) , (([35mrecApp[32m [33mList[32m [34mλ0[32m) : τ2)}][0m
+List =  type Π(0 : τ1) µa.[Nil | Cons {(λ0 : τ1) , ((recApp List λ0) : τ2)}]
 
-Str =  type [32m[33mList[32m (type [32m%i8[32m)[0m
+Str =  type List (type %i8)
 
-length = [32m∏ A → µa.[Nil | Cons {⊤ , a}] → (%i1 & %i32)[0m
+length = ∏ A → µa.[Nil | Cons {⊤ , a}] → (%i1 & %i32)
 
-printList = [32m∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 & %i32)[0m
+printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 & %i32)
 
-scanSum = [32m∏ A → %i32 → A → µa.[Cons {%i32 , a}][0m
+scanSum = ∏ A → %i32 → A → µa.[Cons {%i32 , a}]
 
-take = [32m∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
+take = ∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
 
-drop = [32m∏ A B → %i32 → µa.([Nil | Cons {⊤ , a}] & B) → ([Nil] & B)[0m
+drop = ∏ A B → %i32 → µa.([Nil | Cons {⊤ , a}] & B) → ([Nil] & B)
 
-null = [32m[Nil | Cons {⊤ , ⊤}] → %i1[0m
+null = [Nil | Cons {⊤ , ⊤}] → %i1
 
-singleton = [32m∏ A → A → [Cons {A , [Nil]}][0m
+singleton = ∏ A → A → [Cons {A , [Nil]}]
 
-repeat = [32m∏ A B → A → µb.[Cons {A , b}][0m
+repeat = ∏ A B → A → µb.[Cons {A , b}]
 
-xs = [35mlet [0m[32m∏ A → µa.[Cons {⊥ , a}][0m
+xs = let ∏ A → µa.[Cons {⊥ , a}]
 
-foldr = [32m∏ A B C → (A → B → B) → B → µc.[Nil | Cons {A , c}] → B[0m
+foldr = ∏ A B C → (A → B → B) → B → µc.[Nil | Cons {A , c}] → B
 
-foldl = [32m∏ A B C → (A → B → A) → A → µc.[Nil | Cons {B , c}] → A[0m
+foldl = ∏ A B C → (A → B → A) → A → µc.[Nil | Cons {B , c}] → A
 
-c = [32m∏ A B → A → B → [Cons {A , B}][0m
+c = ∏ A B → A → B → [Cons {A , B}]
 
-append = [32m∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}][0m
+append = ∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}]
 
-_++_ = [32m∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}][0m
+_++_ = ∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}]
 
-concat = [32m∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {A , d}][0m
+concat = ∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {A , d}]
 
-consF = [32m∏ A B C → (A → B) → A → C → [Cons {B , C}][0m
+consF = ∏ A B C → (A → B) → A → C → [Cons {B , C}]
 
-mapFold = [32m∏ A B C D → (A → B) → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {B , d}][0m
+mapFold = ∏ A B C D → (A → B) → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {B , d}]
 
-map = [32m∏ A B C D → (A → B) → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {B , d}][0m
+map = ∏ A B C D → (A → B) → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {B , d}]
 
-concatMap = [32m∏ A B C D E → (A → µc.[Nil | Cons {B , c}]) → µd.[Nil | Cons {A , d}] → µe.[Nil | Cons {B , e}][0m
+concatMap = ∏ A B C D E → (A → µc.[Nil | Cons {B , c}]) → µd.[Nil | Cons {A , d}] → µe.[Nil | Cons {B , e}]
 
-unlines = [32m∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 & A) , d}][0m
+unlines = ∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 & A) , d}]
 
-unwords = [32m∏ A B C D E → µd.[Nil | Cons {µc.[Nil | Cons {A , c}] , d}] → µe.[Nil | Cons {(%i8 & A) , µe.[Nil | Cons {%i8 , e}]}][0m
+unwords = ∏ A B C D E → µd.[Nil | Cons {µc.[Nil | Cons {A , c}] , d}] → µe.[Nil | Cons {(%i8 & A) , e}]
 
-goUnwords = [35mlet [0m[32m∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 & A) , µd.[Nil | Cons {%i8 , d}]}][0m
+goUnwords = let ∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 & A) , d}]
 
-unfoldr = [32m∏ A B C → (A → [Nothing | Just {{val : B , seed : A}}]) → A → µc.[Nil | Cons {B , c}][0m
+unfoldr = ∏ A B C → (A → [Nothing | Just {{val : B , seed : A}}]) → A → µc.[Nil | Cons {B , c}]
 
-filter = [32m∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
+filter = ∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
 
-fromCString = [32m∏ A → %ptr(PrimInt 8) → µa.[Nil | Cons {%i8 , a}][0m
+fromCString = ∏ A → %ptr(PrimInt 8) → µa.[Nil | Cons {%i8 , a}]
 
-go = [35mlet [0m[32m∏ A B → {!0 : %i1 , !1 : A , !2 : %ptr(PrimInt 8)} → µb.[Nil | Cons {(%i8 & A) , b}][0m
+go = let ∏ A B → {!0 : %i1 , !1 : A , !2 : %ptr(PrimInt 8)} → µb.[Nil | Cons {(%i8 & A) , b}]
 
-toCString = [32m∏ A B C → ((([Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}) & C) → {!0 : %i1 , !1 : %i8 , !2 : C}) → C → %ptr(PrimInt 8)[0m
+toCString = ∏ A B C → ((([Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}) & C) → {!0 : %i1 , !1 : %i8 , !2 : C}) → C → %ptr(PrimInt 8)
 
-unravel = [35mlet [0m[32m∏ A B → [Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}[0m
+unravel = let ∏ A B → [Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}
 
-splitAt = [32m∏ A B C → %i32 → µb.[Nil | Cons {A , µb.[Nil | Cons {⊤ , b}]}] → {l : µc.[Nil | Cons {A , c}] , r : µb.[Nil]}[0m
+splitAt = ∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → {l : µc.[Nil | Cons {A , c}] , r : ([Nil] & b)}
 
-z = [32m∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : [Nil]}[0m
+z = ∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : [Nil]}
 
-span = [32m∏ A B → (A → %i1) → µb.[Nil | Cons {A , b}] → {l : µb.[Nil | Cons {A , b}] , r : µb.[Nil | Cons {A , b}]}[0m
+span = ∏ A B → (A → %i1) → µb.[Nil | Cons {A , b}] → {l : µb.[Nil | Cons {A , b}] , r : µb.[Nil | Cons {A , b}]}
 
-s = [32m∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : µa.[Nil | Cons {⊥ , a}]}[0m
+s = ∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : µa.[Nil | Cons {⊥ , a}]}
 
-reverse = [32m∏ A B C → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
+reverse = ∏ A B C → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
 
-scanl = [32m∏ A B C D → (A → B → A) → A → µc.[Nil | Cons {B , c}] → µd.[Nil | Cons {A , d}][0m
+scanl = ∏ A B C D → (A → B → A) → A → µc.[Nil | Cons {B , c}] → µd.[Nil | Cons {A , d}]
 
-enumFromTo = [32m∏ A → %i32 → %i32 → µa.[Nil | Cons {%i32 , a}][0m
+enumFromTo = ∏ A → %i32 → %i32 → µa.[Nil | Cons {%i32 , a}]
 
-foldr1 = [32m∏ A B → (A → A → A) → µb.[Nil | Cons {A , b}] → A[0m
+foldr1 = ∏ A B → (A → A → A) → µb.[Nil | Cons {A , b}] → A
 
-nubBy = [32m∏ A B C → (A → A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}][0m
+nubBy = ∏ A B C → (A → A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
 
-nub = [35mlet [0m[32m∏ A B C D → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {A , d}][0m
+nub = let ∏ A B C D → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {A , d}]
 
-elemBy = [32m∏ A B C → (A → B → %i1) → B → µc.[Nil | Cons {A , c}] → (%i1 & %i1)[0m
+elemBy = ∏ A B C → (A → B → %i1) → B → µc.[Nil | Cons {A , c}] → (%i1 & %i1)
 

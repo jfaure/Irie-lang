@@ -6,9 +6,10 @@
   * equality constraints are central to GADTs `Gabriel Scherer and Didier Rémy. GADTs meet subtyping.` `https://okmij.org/ftp/ML/first-class-modules/#GADT`
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
-  * audit oldcachedmodule , seems slightly broken
+  * audit oldcachedmodule , seems slightly broken (very possibly problem with BindOpt)
   * make freevars explicit in let-binds so their types make sense
 ## Top Priority
+  * mixfix patterns
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * improve pipelining of Main to stop once requested work is done
   * predicates should return a Label

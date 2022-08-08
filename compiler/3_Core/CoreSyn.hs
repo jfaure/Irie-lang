@@ -11,7 +11,7 @@ import qualified Data.Map.Strict as M ( Map )
 import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
 
-global_debug = False
+global_debug = True
 
 type ExtIName  = Int -- VExterns
 type BiSubName = Int -- index into bisubs

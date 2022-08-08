@@ -12,6 +12,7 @@ import imports/list
 {-
 -- File CString ; Dir CString (List Dir)
 --printDirTree : Str -> Dir -> Str
+-- !??
 printDirTree prefix = \case
   File f  ⇒ prefix ++ f
   Dir d r ⇒ prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
@@ -78,14 +79,13 @@ runParser p s = unParser p s (\a s ⇒ @COK s a)
 p1 = runParser pEof { input = Nil }
 -}
 
---f = let x = 3 in x
---g = let x = 3 in x
-
--- µc.[Cons {A , µc.[Nil]}] ⇒ µc.[Nil | Cons {A , c}]
--- ? roll into mutype: [Nil | Cons {[Cons {A , [Nil]}]
 -- [a] -> [[a]]
-nonEmptySubSequences = \case
-  Nil       ⇒ Nil
-  Cons x xs ⇒ let
-    f ys r = Cons ys (Cons (Cons x ys) r)
-    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+--nonEmptySubSequences = \case
+--  Nil       ⇒ Nil
+--  Cons x xs ⇒ let
+--    f ys r = Cons ys (Cons (Cons x ys) r)
+--    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+
+flattenTree t = let
+  squish (Node x ts) xs = @Cons x (foldr squish xs ts)
+  in squish t @Nil

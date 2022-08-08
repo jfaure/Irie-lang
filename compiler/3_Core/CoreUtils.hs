@@ -241,6 +241,7 @@ mergeTysNoop ∷ Bool → Type → Type → Maybe Type = \pos a b → Just $ mer
 -- This 'is' a zipper; like the cursor in a text editor or the pwd in a file system
 data InvMu
   = Leaf IName
+  | LeafMerge IName Type
   | InvMu
   { this      ∷ Type  -- A subtree of the µ. test
   , recBranch ∷ Int
@@ -264,9 +265,8 @@ invertMu muVar inv cur = {-trace (prettyTyRaw cur) $-} let
     THMuBound m | m == muVar → [inv]
     _ → [] -- no mus in unguarded type or incorrect mu at leaf
   in case cur of
-  -- TODO why are we dropping tvars ?
   TyGround gs   → concatMap (go cur) gs
-  TyVars _vs gs → concatMap (go cur) gs
+  TyVars _vs gs → concatMap (go cur) gs -- TODO why are we dropping tvars ?
   TyVar _v → []
   x → error (show x)
 
@@ -277,19 +277,19 @@ test = invertMu 0 (startInvMu 0) (TyGround [THTyCon (THSumTy $ BSM.fromList [(0 
 -- This happens after type simplifications so there should be no tvars (besides escaped ones)
 -- Either (more wrappings to test) (end , True if wrapping is an unrolling)
 --testWrapper ∷ InvMu → Int → Type → Either InvMu (Maybe Type)
-testWrapper baseMuTy inv recBranch t = let ko = Right Nothing in case inv of
+testWrapper baseMuTy inv recBranch rollable = let ko = Right Nothing in case inv of
   Leaf _m             → Right (Just baseMuTy) --True
   InvMu this r parent → if False && r /= recBranch -- Avoid pointless work if testing against wrong branch
 --then d_ (r , recBranch , this) (Right False)
   then ko
-  else case {-d_ (recBranch , parent , this , t)-} (this , t) of
-    (TyGround g1 , TyGround g2) → let
+  else case {-d_ (recBranch , parent , this , t)-} (this , rollable) of
+    (TyGround g1 , TyGround grollable) → let
       partitionTyCons g = (\(t , o) → ((\case {THTyCon tycon → tycon ; _ → error "wtf" }) <$> t , o))
         $ partition (\case {THTyCon{}→True;_→False}) g
-      ((t1 , _o1) , (t2 , _o2)) = (partitionTyCons g1 , partitionTyCons g2)
-      testGuarded t1 t2 = V.izipWith (\i t1 t2 → i == recBranch || eqTypesRec t1 t2) t1 t2
+      ((tight , _o1) , (trollable , _o2)) = (partitionTyCons g1 , partitionTyCons grollable)
+      testGuarded = V.izipWith (\i tight rollable → i == recBranch || eqTypesRec tight rollable)
       testBSM (i , (t1 , t2)) = i == recBranch || eqTypesRec t1 t2
-      muOK = case (t1 , t2) of
+      muOK = case (tight , trollable) of
         -- TODO roll + merge things like μx.[Cons {A , x & [Nil]} ⇒ μx.[Nil | Cons {A , x}
         ([THArrow a1 r1] , [THArrow a2 r2]) → and $ testGuarded (V.fromList $ r1 : a1) (V.fromList $ r2 : a2)
         ([THSumTy t1   ] , [THSumTy t2   ]) → and $ testBSM <$> BSM.toList (BSM.intersectionWith (,) t1 t2)
@@ -298,7 +298,7 @@ testWrapper baseMuTy inv recBranch t = let ko = Right Nothing in case inv of
         _ → False
       in if muOK {-|| o1 /= o2-}
          then case parent of
-           Leaf{}    → Right $ Just baseMuTy -- Just (TyGround (mergeTyUnions True g1 g2)) -- OK found an unrolling
+           Leaf{}         → Right (Just baseMuTy) -- Just (TyGround (mergeTyUnions True g1 g2)) -- OK found an unrolling
            nextInvMu → Left nextInvMu -- so far OK, more wraps to test
          else ko
     _ → ko
@@ -306,9 +306,11 @@ testWrapper baseMuTy inv recBranch t = let ko = Right Nothing in case inv of
 
 -- TODO merge type joins: µc.[Cons {A , c & [Nil]}] ⇒ µc.[Nil | Cons {A , c}]
 eqTypesRec (TyGround [THMuBound n]) (TyGround [THMu m _]) = m == n
-eqTypesRec (TyGround [THMu m _]) (TyGround [THMuBound n]) = m == n
-eqTypesRec (TyGround [THMu m t1]) (TyGround [THMu n t2]) = -- trace ("eqµtypes? " <> show m <> " " <> show n <> " " <> prettyTyRaw t1 <> " =? " <> prettyTyRaw t2)
+-- | merge via subtyping {[2.1 {A , [2.0]}] , µd.[2.0 | 2.1 {µc.[2.1 {A , c}] , d}]}
+eqTypesRec t1@(TyGround [THMu m _]) t2@(TyGround [THTyCon THSumTy{}]) =
+  trace ("hack eqtypes " <> prettyTyRaw t1 <> " ⇔ " <> prettyTyRaw t2)
+  True -- HACK (if we declare a mubound eq to a sumtype τ then the mubound must be unified with τ everywhere)
+eqTypesRec (TyGround [THMu m t1]) (TyGround [THMu n t2]) = trace ("eqµtypes? " <> show m <> " " <> show n <> " " <> prettyTyRaw t1 <> " =? " <> prettyTyRaw t2)
   t1 == (if m == n then t2 else mapType (\case { THMuBound x | x == n → THMuBound m ; x → x }) t2)
---True
 eqTypesRec t1 t2 = -- trace (prettyTyRaw t1 <> " =? " <> prettyTyRaw t2) $
   t1 == t2

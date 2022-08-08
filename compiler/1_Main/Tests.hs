@@ -120,11 +120,11 @@ goldenList opts fName goldName = S.goldenTextFile goldName $ do
    Main.sh (fName <> " --no-fuse -o" <> tmpFile <> " " <> opts)
    readFile tmpFile
 
-gold     = S.it "list.ii"        (goldenList "-p types" "imports/list.ii"        "golden/goldenList")
-mutual   = S.it "mutual.ii"      (goldenList "-p types" "imports/sumMul.ii"      "golden/sumMul")
-tree     = S.it "tree.ii"        (goldenList "-p types" "imports/tree.ii"        "golden/tree")
-intmap   = S.it "intmap.ii" (goldenList "-p types --no-color" "imports/intmap.ii" "golden/intmap")
-mixfixes = S.it "mixfixTests.ii" (goldenList "-p core --no-color" "imports/mixfixTests.ii" "golden/mixfixTests")
+gold     = S.it "list.ii"        (goldenList "-p types --no-color" "imports/list.ii"        "golden/goldenList")
+mutual   = S.it "mutual.ii"      (goldenList "-p types --no-color" "imports/sumMul.ii"      "golden/sumMul")
+tree     = S.it "tree.ii"        (goldenList "-p types --no-color" "imports/tree.ii"        "golden/tree")
+intmap   = S.it "intmap.ii"      (goldenList "-p types --no-color" "imports/intmap.ii"      "golden/intmap")
+mixfixes = S.it "mixfixTests.ii" (goldenList "-p core  --no-color" "imports/mixfixTests.ii" "golden/mixfixTests")
 
 s = S.sydTest $ do
   sequence_ fTests
