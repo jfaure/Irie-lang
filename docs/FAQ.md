@@ -1,5 +1,7 @@
-Q: Is this similar to OOP (object oriented) Subtyping?
-A: Absoluty not. The terminology is unfortunate: in subtyping literature, structural subtyping refers to a subtyping relation that relates only type constructors of the same arity. In OOP literature, structural subtying refers to implicitly formed relations from similar structures. Confusingly, this means structural typing requires non-structural subtyping. Irie's Subtyping always require conversion functions.
+Q: OOP (object oriented) Inheritance vs Subtyping?
+A: They are very different. The terminology is unfortunate: in subtyping literature, structural subtyping refers to a subtyping relation that relates only type constructors of the same arity. In OOP literature, structural subtying refers to implicitly formed relations from similar structures. Confusingly, this means structural typing requires non-structural subtyping. Irie's Subtyping always require conversion functions.
+Q: What are ⊤ and ⊥ ?
+A: ⊥ = ∀α.α can be used at any type, but cannot be constructed. ⊤ = ∃α.α can be constructed from any type , but cannot be used
 
 Q: Row polymorphism vs record subtyping?
 A: Row polymorphism requires the use of higher kinded presence variables. It can express some types subtyping cannot, like a label which may or may not be present, but must be an Int if present. Conversely, subtyping can express some types row polymorphism cannot, like a function taking 2 records and returning a field f if either of the inputs did.

@@ -1,5 +1,5 @@
 -- Comments on the same line as a binding are the expected result when runnning tests
-t1 a = ifThenElse a a 3 -- ∏ A → (%i1 & A) → (%i32 & A)
+t1 a = ifThenElse a a 3 -- ∏ A → (%i1 ⊓ A) → (%i32 ⊔ A)
 
 basic1   = 42            -- %i32
 basic2 x = 42            -- ⊤ → %i32
@@ -11,7 +11,7 @@ twice f x = f (f x)      -- ∏ A → (A → A) → A → A
 iffy a b c = ifThenElse a b c -- ∏ A → %i1 → A → A → A
 
 bool4 x y z = ifThenElse x y z  -- ∏ A → %i1 → A → A → A
-bool6 x y   = ifThenElse x y x  -- ∏ A → (%i1 & A) → A → A
+bool6 x y   = ifThenElse x y x  -- ∏ A → (%i1 ⊓ A) → A → A
 
 poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 } -- %i1
 poly2 = let _>_ = \a f => f a in { t = 1 } > (\y => y.t) -- %i1
@@ -34,17 +34,17 @@ records7 = ifThenElse 1 { a = 1 , b = 1 } { b = 0 , c = 42 } -- {b : %i1}
 --recordserror2 = (\x => { a = x }.b)       -- missing field: b in {a: A})
 
 -- v =? (∏ A → A → A) → %i1
-self i = ifThenElse ((i i) 1) 1 1 -- ∏ A → ((A → %i1 → %i1) & A) → %i1
+self i = ifThenElse ((i i) 1) 1 1 -- ∏ A → ((A → %i1 → %i1) ⊓ A) → %i1
 
-Selfapp0 x = x x      -- ∏ A B → ((A → B) & A) → B
-Selfapp1 x = x x x    -- ∏ A B → ((A → A → B) & A) → B
-Selfapp2 x y = x y x  -- ∏ A B C → ((A → B → C) & B) → A → C
-Selfapp3 x y = x x y  -- ∏ A B C → ((A → B → C) & A) → B → C
+Selfapp0 x = x x      -- ∏ A B → ((A → B) ⊓ A) → B
+Selfapp1 x = x x x    -- ∏ A B → ((A → A → B) ⊓ A) → B
+Selfapp2 x y = x y x  -- ∏ A B C → ((A → B → C) ⊓ B) → A → C
+Selfapp3 x y = x x y  -- ∏ A B C → ((A → B → C) ⊓ A) → B → C
 Selfapp4 = (\x => x x) (\x => x x) -- ⊥
-Selfapp5 x = {l = x x , r = x }    -- ∏ A B → ((A → B) & A) → {l : B , r : A}
+Selfapp5 x = {l = x x , r = x }    -- ∏ A B → ((A → B) ⊓ A) → {l : B , r : A}
 
 YComb f = (\x => f (x x)) (\x => f (x x)) -- ∏ A → (A → A) → A
-ZComb f = (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v)) -- ∏ A B C → ((A → B) → ((A → B) & C)) → C
+ZComb f = (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v)) -- ∏ A B C → ((A → B) → ((A → B) ⊓ C)) → C
 
 -- let polymorphism
 
@@ -56,9 +56,9 @@ letGen3 x = let y z = x z in y -- ∏ A B → (A → B) → A → B
 
 lp1   = let f = \x => x in {a = f 7 , b = f 1}     -- {a : %i32 , b : %i1}
 lp2 y = let f = \x => x  in {a = f y , b = f 1}    -- ∏ A → A → {a : A , b : %i1}
-lp3 y = let f = \x => y x in {a = f 7 , b = f 1}   -- ∏ A → ((%i1 & %i32) → A) → {a : A , b : A}
+lp3 y = let f = \x => y x in {a = f 7 , b = f 1}   -- ∏ A → ((%i1 ⊔ %i32) → A) → {a : A , b : A}
 lp4 y = let f = \x => x y in {a = f (\z => z) , b = f (\z => 1)} -- ∏ A → A → {a : A , b : %i1}
-lp5 y = let f = \x => x y in {a = f (\z => z) , b = f (\z => add 1 z)} -- ∏ A → (%i32 & A) → {a : A , b : %i32}
+lp5 y = let f = \x => x y in {a = f (\z => z) , b = f (\z => add 1 z)} -- ∏ A → (%i32 ⊓ A) → {a : A , b : %i32}
 
 --lerror1 = (\k => k (\x => let tmp = add x 1 in x)) (\f => f 1) -- cannot constrain %i1 <: %i32
 
@@ -67,22 +67,22 @@ lp5 y = let f = \x => x y in {a = f (\z => z) , b = f (\z => add 1 z)} -- ∏ A 
 
 -- Example loss of polymorphism due to extrusion – the identity function becomes less polymorphic:
 -- MLsub: (((a => (%i1 | %i32 | a)) => Top) => {u : (%i32 | a), v : (%i1 | a)})
---lp8 = \k => let test = (\id => {tmp = k id , res = id}.res) (\x => x) in {u = test 78 , v = test 1} -- ∏ A → ((A → (%i1 & %i32 & A)) → ⊤) → {u : (%i32 & A) , v : (%i1 & A)}
+--lp8 = \k => let test = (\id => {tmp = k id , res = id}.res) (\x => x) in {u = test 78 , v = test 1} -- ∏ A → ((A → (%i1 ⊓ %i32 ⊓ A)) → ⊤) → {u : (%i32 ⊓ A) , v : (%i1 ⊓ A)}
 lp9 = \k => let test = {tmp = k (\x => x) , res = (\x => x)}.res in {u = test 0 , v = test 1} -- ∏ A → ((A → A) → ⊤) → {u : %i1 , v : %i1}
 
 -- cases where a tmp function is defined but never used:
 -- Irie considers that unused let-bindings have no effect tvars in scope so these tests are moot
--- lp6 = \k => let test = k (\x => let tmp = add x 1 in x) in test -- ∏ A B → ((A & %i32 → A) → B) → B
--- lp10 = \k => let test = (\f => {l = k f , r = f}) (\x => let tmp = add x 1 in x) in test -- ∏ A → (((A & %i32) → (A & %i32)) → B) → {l: B, r: %i32}
+-- lp6 = \k => let test = k (\x => let tmp = add x 1 in x) in test -- ∏ A B → ((A ⊓ %i32 → A) → B) → B
+-- lp10 = \k => let test = (\f => {l = k f , r = f}) (\x => let tmp = add x 1 in x) in test -- ∏ A → (((A ⊓ %i32) → (A ⊓ %i32)) → B) → {l: B, r: %i32}
 -- lp11 = \a => (\k => let test = k (\x => let tmp = add x 1 in x) in test) (\f => f a) -- ∏ A → A → A
---lp12 = (\k => let test = k (\x => let tmp = (\y => add y 1) x in x) in test) -- ∏ A → (((%i32 & A) → A) → B) → B
---lp13 = (\k => let test = k (\x => let tmp = let f = \y => add y 1 in f x in x) in test) -- ∏ A → (((%i32 & A) → A) → B) → B
+--lp12 = (\k => let test = k (\x => let tmp = (\y => add y 1) x in x) in test) -- ∏ A → (((%i32 ⊓ A) → A) → B) → B
+--lp13 = (\k => let test = k (\x => let tmp = let f = \y => add y 1 in f x in x) in test) -- ∏ A → (((%i32 ⊓ A) → A) → B) → B
 --lp7 = \k => let test = k (\x => let tmp = add x 1 in ifThenElse 1 x 2) in test -- ∏ A → ((%i32 → %i32) → A) → A
 
 lp14 = \f => let r = \x => \g => { a = f x , b = g x } in r -- ∏ A B C → (A → B) → A → (A → C) → {a : B , b : C}
 lp15 = \f => let r = \x => \g => { a = g x } in {u = r 0 (add 1) , v = r 1 (add 0)} -- ⊤ → {u : {a : %i32} , v : {a : %i32}}
 lp16 = \f => let r = \x => \g => { a = g x , b = f x } in {u = r 0 (add 1) , v = r 1 (add 0)} -- ∏ A → (%i1 → A) → {u : {a : %i32 , b : A} , v : {a : %i32 , b : A}}
-lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)} -- ∏ A → ((%i1 & {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
+lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)} -- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
 
 ---------------------
 -- Recursive types --
@@ -112,11 +112,11 @@ rec1 v = { a = rec1 v , b = rec1 v } -- ∏ A B → ⊤ → µa.{a : a , b : a}
 --recscError  = let rec x = (let rec y = {u = y , v = (x y)} in 0) in 0 -- cannot constrain %i32 <: A → B
 --rec3  = (\x => (let y = (x x) in 0))                  -- ∏ A → A ∧ (A → ⊤) → %i32
 rec5  = \next => 0                                    -- ⊤ → %i1
---rec10 = let rec x = (\y => (let z = (x x) in y)) in x -- ∏ A B → A → µx.(A & (A → x))
+--rec10 = let rec x = (\y => (let z = (x x) in y)) in x -- ∏ A B → A → µx.(A ⊓ (A → x))
 --rec12 = let rec x = (\y => {u = y , v = (x x)}) in x  -- ∏ A → A → µxy.{u : A ∨ (A → x) , v : y}
 --rec12 = let rec x = (\y => {u = (x x) , v = y}) in x  -- ∏ A → A → µxy.{u : y, v : A ∨ (A → x)}
 --rec13 = let rec x = (\y => (let z = (y x) in y)) in x -- ∏ A → µx.(A ∧ (x → ⊤) → A)
---rec15 = let rec x = (let y = (x x) in (\z => z)) in (x (\y => y.u)) -- ∏ A → A & (A & {u : B} → µx.(A & B & (A & {u : B} → x)))
+--rec15 = let rec x = (let y = (x x) in (\z => z)) in (x (\y => y.u)) -- ∏ A → A ⊓ (A ⊓ {u : B} → µx.(A ⊓ B ⊓ (A ⊓ {u : B} → x)))
 
 misc0 = (\x => (let y = (x x.v) in 0))                  -- ⊤ → %i1
 -- ^ Note: simplesub says ∏ A → {v: A} ∧ (A → ⊤) → %i32

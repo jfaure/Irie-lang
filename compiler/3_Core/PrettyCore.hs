@@ -36,7 +36,7 @@ ansiRender = RenderOptions {
 prettyTyRaw ∷ Type → T.Text = toS . prettyTy ansiRender
 prettyTermRaw ∷ Term → T.Text = toS . prettyTerm ansiRender
 
-prettyTy   flags      = render flags . layoutPretty defaultLayoutOptions . pTy
+prettyTy   flags      = render flags . layoutPretty defaultLayoutOptions . pTy True
 prettyTerm flags      = render flags . layoutPretty defaultLayoutOptions . pTerm
 prettyExpr flags      = render flags . layoutPretty defaultLayoutOptions . pExpr
 
@@ -112,34 +112,37 @@ number2xyz = TL.toLower . number2CapLetter
 --  overflow = i `div` 3
 --  in if overflow > 0 then (letter `TL.cons` show overflow) else TL.singleton letter
 
-pTy ∷ Type → Doc Annotation
+pTy ∷ Bool → Type → Doc Annotation
 --pTy (TyUnion t) = case t of
-pTy = let
-  pPiArg (arg , ty) = viaShow arg <+> ":" <+> pTy ty
+pTy pos = let
+  pTy' = pTy pos
+  latChar = if pos then "⊔" else "⊓"
+  pPiArg (arg , ty) = viaShow arg <+> ":" <+> pTy' ty
   pTyUnion = \case
     [] → "_"
-    [x] → pTyHead x
-    ts  → parens $ hsep (punctuate " &" (pTyHeadParens <$> ts))
+    [x] → pTyHead pos x
+    ts  → parens $ hsep (punctuate (" " <> latChar) (pTyHeadParens pos <$> ts))
   in \case
   TyAlias q   → annotate (AQBindName q) ""
   TyVar  i    → "τ" <> viaShow i
   TyVars i [] → "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
-  TyVars i g  → "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> "&" <+> parens (pTyUnion g)
+  TyVars i g  → "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> latChar <+> parens (pTyUnion g)
   TyGround u  → pTyUnion u
-  TyIndexed t ars → pTy t <+> (hsep $ parens . pExpr <$> ars)
-  TyTerm term ty → parens $ pTerm term <+> ":" <+> pTy ty
-  TyPi (Pi args ty) → "Π" <> parens (hsep $ pPiArg <$> args) <+> pTy ty
+  TyIndexed t ars → pTy' t <+> (hsep $ parens . pExpr <$> ars)
+  TyTerm term ty → parens $ pTerm term <+> ":" <+> pTy' ty
+  TyPi (Pi args ty) → "Π" <> parens (hsep $ pPiArg <$> args) <+> pTy' ty
   TySi (Pi args ty) tyIndexes → _
 
-pTyHeadParens t = case t of
-  THTyCon THArrow{} → parens (pTyHead t)
-  _ → pTyHead t
+pTyHeadParens pos t = case t of
+  THTyCon THArrow{} → parens (pTyHead pos t)
+  _ → pTyHead pos t
 
-pTyHead ∷ TyHead → Doc Annotation
-pTyHead = let
-  parensIfArrow t = case t of -- only add parens if necessary
-    TyGround [THTyCon THArrow{}] → parens (pTy t)
-    _ → pTy t
+pTyHead ∷ Bool → TyHead → Doc Annotation
+pTyHead pos = let
+  pTy' = pTy pos
+  parensIfArrow pos' t = case t of -- only add parens if necessary
+    TyGround [THTyCon THArrow{}] → parens (pTy pos' t)
+    _ → pTy pos' t
   in \case
   THTop        → "⊤"
   THBot        → "⊥"
@@ -147,34 +150,34 @@ pTyHead = let
   THBound    i → pretty (number2CapLetter i)
   THMuBound  t → pretty (number2xyz t)
   THExt      i → case snd (primBinds V.! i) of
-    Ty t → pTy t
+    Ty t → pTy' t
     x → "<?? " <> viaShow x <> " ??>"
 
   THTyCon t → case t of
     THArrow [] ret → error $ toS $ "panic: fntype with no args: [] → (" <> prettyTy ansiRender ret <> ")"
-    THArrow args ret → hsep $ punctuate " →" ((parensIfArrow <$> args) <> [pTy ret])
+    THArrow args ret → hsep $ punctuate " →" ((parensIfArrow (not pos) <$> args) <> [pTy' ret])
     THSumTy l → let
       prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> case ty of
         TyGround [THTyCon (THTuple v)] | V.null v → ""
-        _ → space <> pTy ty
+        _ → space <> pTy' ty
       in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)))
     THSumOpen l d → let
       prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> case ty of
         TyGround [THTyCon (THTuple v)] | V.null v → ""
-        _ → space <> pTy ty
+        _ → space <> pTy' ty
       in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)) <> viaShow d)
     THProduct l → let
-      prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy ty
+      prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy' ty
       in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> BSM.toList l))
-    THTuple  l  → enclose "{" "}" (hsep $ punctuate " ," (pTy <$> V.toList l))
+    THTuple  l  → enclose "{" "}" (hsep $ punctuate " ," (pTy' <$> V.toList l))
 --  THArray    t → "Array " <> viaShow t
 
 --THMu m t → "µ" <> pretty (number2CapLetter m) <> "." <> parensIfArrow t
-  THMu m t → "µ" <> pretty (number2xyz m) <> "." <> parensIfArrow t
+  THMu m t → "µ" <> pretty (number2xyz m) <> "." <> parensIfArrow pos t
   THBi g t → let
     gs = if g == 0 then "" else "∏ " <> (hsep $ pretty . number2CapLetter <$> [0..g-1]) <> " → "
 --  ms = if m <= 0  then "" else "µ" <> pretty (number2xyz m) <> "."
-    in gs <> pTy t
+    in gs <> pTy' t
 --THPi pi  → "∏(" <> viaShow pi <> ")"
 --THSi pi arsMap → "Σ(" <> viaShow pi <> ") where (" <> viaShow arsMap <> ")"
 
@@ -193,15 +196,15 @@ pBind nm showTerm bind = pretty nm <> " = " <> case bind of
     showSpecs = if specs == 0 then "" else space <> parens "specs: " <> viaShow (bitSet2IntList specs)
     in parens ("nApps: " <> viaShow complex) <> showSpecs <+> pExpr expr
 
-pExprType = \case
-  Core term ty → annotate AType (pTy ty)
-  Ty t         → " type " <> annotate AType (pTy t)
+pExprType = let pos = True in \case
+  Core term ty → annotate AType (pTy pos ty)
+  Ty t         → " type " <> annotate AType (pTy pos t)
   ExprApp f a → pExpr f <> enclose "[" "]" (hsep $ pExpr <$> a)
   e → viaShow e
 
-pExpr = \case
-  Core term ty → pTerm term <> softline <> " : " <> annotate AType (pTy ty)
-  Ty t         → "type" <+> annotate AType (pTy t)
+pExpr = let pos = True in \case
+  Core term ty → pTerm term <> softline <> " : " <> annotate AType (pTy pos ty)
+  Ty t         → "type" <+> annotate AType (pTy pos t)
   ExprApp f a → pExpr f <> enclose "[" "]" (hsep $ pExpr <$> a)
   e → viaShow e
 

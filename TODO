@@ -1,22 +1,18 @@
 ## surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
-  * xcompose
   * move to f2fs
 ## ?
-  * Advanced recursive types µ insufficient `PTree a = Leaves a | Cons (PTree (a , a))`
-  * equality constraints are central to GADTs `Gabriel Scherer and Didier Rémy. GADTs meet subtyping.` `https://okmij.org/ftp/ML/first-class-modules/#GADT`
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
-  * audit oldcachedmodule , seems slightly broken (very possibly problem with BindOpt)
+  * audit oldcachedmodule , seems slightly broken (probably BindOpt) , also bring labels in scope
   * make freevars explicit in let-binds so their types make sense
+  * trim bisubs
+  * η-expand partial applications of primitives ⇒ so all appearance of primitive have arity n
 ## Top Priority
-  * mixfix patterns
+  * expr patterns + invert into case-tree (for mixfix patterns)
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * improve pipelining of Main to stop once requested work is done
   * predicates should return a Label
   * fix let-bind scopes (let-bound names are in global scope)
-## µ-roll
-  * subtyping mu-roll; `splitAt : %i32 -> µb.[C {A , b} | N] → {l : µc.[C {A , c} | N] , r : µb.[N]}` (list.ii: also diff with returning Nil vs xs)
-  * nonEmptySubsequences
 ## µ-elim derivations (identify fixpoints in coresyn / mutual functions)
   * catamorphism
   * codata for left folds
@@ -65,6 +61,15 @@
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
+  * strictly positive recursion
+  * underdetermined recursion: https://counterexamples.org/underdetermined-recursion.html
+    equirecursive ⇒ A = F[A] ; B = F[B] ⇒ A = B (unsound for arbitrary type-level functions F!)
+    if multiple solutions for X = F X; eg. F X = X ; A = Int ; B = String
+  * the avoidance problem (types about to go out of scope)
+  * don't assume injectivity!
+  * Need totality checker, else a Refl type may not terminate and thus not prove EQ
+  * Advanced recursive types µ insufficient `PTree a = Leaves a | Cons (PTree (a , a))`
+  * equality constraints are central to GADTs `Gabriel Scherer and Didier Rémy. GADTs meet subtyping.` `https://okmij.org/ftp/ML/first-class-modules/#GADT`
   * math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4
   * upgrade mu-merge to modify varsubs table
   * switch to codeberg

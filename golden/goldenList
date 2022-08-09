@@ -2,15 +2,15 @@ List =  type Π(0 : τ1) µa.[Nil | Cons {(λ0 : τ1) , ((recApp List λ0) : τ2
 
 Str =  type List (type %i8)
 
-length = ∏ A → µa.[Nil | Cons {⊤ , a}] → (%i1 & %i32)
+length = ∏ A → µa.[Nil | Cons {⊤ , a}] → (%i1 ⊔ %i32)
 
-printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 & %i32)
+printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 ⊔ %i32)
 
 scanSum = ∏ A → %i32 → A → µa.[Cons {%i32 , a}]
 
 take = ∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
 
-drop = ∏ A B → %i32 → µa.([Nil | Cons {⊤ , a}] & B) → ([Nil] & B)
+drop = ∏ A B → %i32 → µa.([Nil | Cons {⊤ , a}] ⊓ B) → ([Nil] ⊔ B)
 
 null = [Nil | Cons {⊤ , ⊤}] → %i1
 
@@ -40,11 +40,7 @@ map = ∏ A B C D → (A → B) → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons
 
 concatMap = ∏ A B C D E → (A → µc.[Nil | Cons {B , c}]) → µd.[Nil | Cons {A , d}] → µe.[Nil | Cons {B , e}]
 
-unlines = ∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 & A) , d}]
-
-unwords = ∏ A B C D E → µd.[Nil | Cons {µc.[Nil | Cons {A , c}] , d}] → µe.[Nil | Cons {(%i8 & A) , e}]
-
-goUnwords = let ∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 & A) , d}]
+unlines = ∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 ⊔ A) , d}]
 
 unfoldr = ∏ A B C → (A → [Nothing | Just {{val : B , seed : A}}]) → A → µc.[Nil | Cons {B , c}]
 
@@ -52,15 +48,11 @@ filter = ∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | C
 
 fromCString = ∏ A → %ptr(PrimInt 8) → µa.[Nil | Cons {%i8 , a}]
 
-go = let ∏ A B → {!0 : %i1 , !1 : A , !2 : %ptr(PrimInt 8)} → µb.[Nil | Cons {(%i8 & A) , b}]
+go = let ∏ A B → {!0 : %i1 , !1 : A , !2 : %ptr(PrimInt 8)} → µb.[Nil | Cons {(%i8 ⊔ A) , b}]
 
-toCString = ∏ A B C → ((([Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}) & C) → {!0 : %i1 , !1 : %i8 , !2 : C}) → C → %ptr(PrimInt 8)
+toCString = ∏ A B C → ((([Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}) ⊔ C) → {!0 : %i1 , !1 : %i8 , !2 : C}) → C → %ptr(PrimInt 8)
 
 unravel = let ∏ A B → [Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}
-
-splitAt = ∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → {l : µc.[Nil | Cons {A , c}] , r : ([Nil] & b)}
-
-z = ∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : [Nil]}
 
 span = ∏ A B → (A → %i1) → µb.[Nil | Cons {A , b}] → {l : µb.[Nil | Cons {A , b}] , r : µb.[Nil | Cons {A , b}]}
 
@@ -78,5 +70,5 @@ nubBy = ∏ A B C → (A → A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Ni
 
 nub = let ∏ A B C D → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {A , d}]
 
-elemBy = ∏ A B C → (A → B → %i1) → B → µc.[Nil | Cons {A , c}] → (%i1 & %i1)
+elemBy = ∏ A B C → (A → B → %i1) → B → µc.[Nil | Cons {A , c}] → (%i1 ⊔ %i1)
 

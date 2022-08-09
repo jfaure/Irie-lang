@@ -8,7 +8,6 @@ import TCState
 import PrettyCore (prettyTyRaw)
 import Externs (readPrimExtern)
 import qualified BitSetMap as BSM ( (!?), elems, mergeWithKey', singleton, toList, traverseWithKey )
-import qualified Data.IntMap as IM ( IntMap, (!?), fromList )
 import qualified Data.Vector.Mutable as MV ( read, write )
 import qualified Data.Vector as V ( Vector, (!), (++), fromList, ifoldM, length, zipWithM )
 import Control.Lens ( use, (%=) )
@@ -107,6 +106,7 @@ doInstantiate pos tvars ty = let -- use deadVars <&> did_ ≫= \leaked → let
       THProduct as   → THProduct <$> (r `mapM` as)
       THTuple as     → THTuple   <$> (r `mapM` as)
       THSumTy as     → THSumTy   <$> (r `mapM` as)
+      _ → _
     t → pure (0 , [t])
   instantiateGround g = mapFn `mapM` g <&> unzip <&> \(tvars , ty) → let
     tvs = foldr (.|.) 0 tvars
@@ -168,6 +168,7 @@ getTVarsTyHead = \case
     THProduct   r → foldr (.|.) 0 (getTVarsType <$> BSM.elems r)
     THSumTy     r → foldr (.|.) 0 (getTVarsType <$> BSM.elems r)
     THTuple     r → foldr (.|.) 0 (getTVarsType <$> r)
+    _ → _
 --THBi _ t → getTVarsType t
   _ → 0
 

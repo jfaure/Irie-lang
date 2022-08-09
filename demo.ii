@@ -1,4 +1,4 @@
---rec1 v = { a = rec1 v , b = rec1 v }  -- ⊤ → µx.{a : x , b : x}
+-- math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4
 
 --rect (P : Set) : Set = record
 --Recangle = record
@@ -6,17 +6,16 @@
 --  g : Int
 import imports/prelude
 import imports/list
+import imports/list2
 --import imports/question
 --import imports/ls
 
-{-
 -- File CString ; Dir CString (List Dir)
 --printDirTree : Str -> Dir -> Str
 -- !??
-printDirTree prefix = \case
-  File f  ⇒ prefix ++ f
-  Dir d r ⇒ prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
--}
+--printDirTree prefix = \case
+--  File f  ⇒ prefix ++ f
+--  Dir d r ⇒ prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
 
 --newtype ParsecT e s m a = ParsecT { unParser :: forall b.
 --  State s e ->
@@ -80,12 +79,14 @@ p1 = runParser pEof { input = Nil }
 -}
 
 -- [a] -> [[a]]
---nonEmptySubSequences = \case
---  Nil       ⇒ Nil
---  Cons x xs ⇒ let
---    f ys r = Cons ys (Cons (Cons x ys) r)
---    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+-- leaf merge
+nonEmptySubSequences = \case
+  Nil       ⇒ Nil
+  Cons x xs ⇒ let
+    f ys r = Cons ys (Cons (Cons x ys) r)
+    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
 
-flattenTree t = let
-  squish (Node x ts) xs = @Cons x (foldr squish xs ts)
-  in squish t @Nil
+-- merge-roll μ
+splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
+  Cons x xs ⇒ let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
+  Nil ⇒ { l = Nil , r = Nil }

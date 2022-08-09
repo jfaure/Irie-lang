@@ -37,6 +37,7 @@ judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
     wip'      ← MV.replicate nBinds Queued
     bis'      ← MV.new 64
     argVars'  ← MV.new nArgs
+    c         ← MV.new 0
     st ← execStateT (judgeBind pBinds' wip' `mapM_` [0 .. nBinds-1]) $ TCEnvState
 --  st ← execStateT (judgeBind `mapM_` [nBinds-1 , nBinds-2..0]) $ TCEnvState
       { _pBinds   = pBinds'
@@ -59,7 +60,7 @@ judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
       , _bindsInScope= modBinds'
 
       , _recVars     = emptyBitSet
-      , _coOccurs    = _
+      , _coOccurs    = c
       }
     wip''    ← V.unsafeFreeze (st ^. wip)
     pure (JudgedModule modIName modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''

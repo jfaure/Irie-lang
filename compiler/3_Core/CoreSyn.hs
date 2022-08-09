@@ -11,7 +11,7 @@ import qualified Data.Map.Strict as M ( Map )
 import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
 
-global_debug = True
+global_debug = False
 
 type ExtIName  = Int -- VExterns
 type BiSubName = Int -- index into bisubs
@@ -137,6 +137,7 @@ data TyHead
 
  | THBi Int Type -- Π A → F(A) polymorphic type to be instantiated on each use
  | THMu Int Type -- µx.F(x) recursive type is instantiated as Π A → A & F(A)`
+                 -- recursive types must be strictly covariant (avoid curry paradox)
 
  | THBound   IName  -- Π-bound tvar; instantiating Π-binder involves sub with fresh tvars
  | THMuBound IName  -- µ-bound tvar (must be guarded and covariant)

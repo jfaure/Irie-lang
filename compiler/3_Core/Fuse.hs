@@ -252,7 +252,7 @@ foldAbs argDefs free body ty args = use argTable ≫= \aT → let
   sv ← betaReducable `forM` \((i,ty) , arg) → ((i,) <$> MV.read aT i) <* MV.write aT i arg
   bodyOpt ← simpleTerm body -- Simplify and beta-reduce args
   useArgTable .= svUseAt
-  sv `forM` \(i,arg) → MV.write aT i arg
+  sv `forM_` \(i,arg) → MV.write aT i arg
 
   when (not (null resArgDefs)) (traceM $ "resArgDefs! " <> show resArgDefs)
   pure $ case trailingArgs of
@@ -277,7 +277,7 @@ simpleApp    f argsRaw = simpleTerm f ≫= \f' → (simpleTerm `traverse` argsRa
 simpleApp' ∷ Bool → Term → [Term] → SimplifierEnv s Term
 simpleApp' isRec f args = (nApps %= (1+)) *> case f of
   App f2 args2 → {-simpleTerm f2 ≫= \f2' →-} simpleApp' isRec f2 (args2 ++ args)
-  BruijnAbs n free body → foldBruijn n body args
+  BruijnAbs n _free body → foldBruijn n body args
   Abs argDefs free body ty → foldAbs argDefs free body ty args
   Instr i → pure $ simpleInstr i args
   Match retT branches d | [scrut] ← args → fuseMatch retT scrut branches d
@@ -305,13 +305,13 @@ fuseMatch ty scrut branches d = -- simpleTerm scrut' ≫= \scrut →
   let this = App (Match ty branches d) [scrut]
   in case scrut of
   -- Ideal: case-of-label
-  Label l params → let getTerm (Just (Core t ty)) = t
+  Label l params → let getTerm (Just (Core t _ty)) = t
 --  in simpleApp' False (getTerm ((branches IM.!? qName2Key l) <|> d)) params
     in simpleApp (getTerm ((branches BSM.!? qName2Key l) <|> d)) params
 
   -- Near-Ideal: case-of-case: push outer case into each branch of the inner Case
   -- frequently the inner case can directly fuse with the outer cases output labels
-  App (Match ty2 innerBranches innerDefault) [innerScrut] → let
+  App (Match ty2 innerBranches _innerDefault) [innerScrut] → let
     pushCase (Core (Abs ars free body ty) _ty) = do
       branch ← simpleApp' False (Match ty branches d) [body]
       let newTy = case branch of { Abs _ _ _ t → t ; _ → tyBot } -- lost the Ty
@@ -345,4 +345,4 @@ fuseMatch ty scrut branches d = -- simpleTerm scrut' ≫= \scrut →
   _ → pure this
 
 -- Try derive a Lens into an Arg
-getLens ∷ Term → Maybe Term = const Nothing
+-- getLens ∷ Term → Maybe Term = const Nothing

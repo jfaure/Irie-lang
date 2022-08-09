@@ -59,15 +59,6 @@ concatMap f xs = foldr (\x b ⇒ foldr c b (f x)) Nil xs
 --unlines ls = concat (mapFold (\l ⇒ append l (c '\n' Nil)) ls)
 unlines = concatMap (\l ⇒ append l (Cons '\n' Nil))
 
----- unwords :: [[Char]] -> [Char]
-unwords ws = let
-  goUnwords x = case x of
-    Nil ⇒ Nil
-    Cons v vs ⇒ Cons ' ' (append v (goUnwords vs))
-  in case ws of
-    Nil ⇒ Nil
-    Cons w ws ⇒ append w (goUnwords ws)
-
 unfoldr f b0 = case f b0 of
   Just ({ val as a , seed as b1 }) ⇒ Cons a (unfoldr f b1)
   Nothing       ⇒ Nil
@@ -86,12 +77,6 @@ toCString str = let
    Nil       ⇒ (0 , ? , ?)
    Cons x xs ⇒ (1 , x , xs)
  in unfoldArray unravel str
-
--- Int -> [a] -> ([a] , [a])
-splitAt n xs = if n <=? 0 then { l = Nil , r = xs } else case xs of
-  Cons x xs ⇒ let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
-  Nil ⇒ { l = Nil , r = Nil }
---Nil ⇒ { l = xs , r = xs }
 
 span p xs = case xs of
   Nil ⇒ { l = xs , r = xs }

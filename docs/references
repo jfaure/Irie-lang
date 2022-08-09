@@ -1,3 +1,6 @@
+counterexamples
+https://counterexamples.org/title.html
+
 Hyperscan: A Fast multi-pattern regex matcher for modern CPUS
 https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf
 
@@ -131,6 +134,9 @@ http://www.cse.chalmers.se/~nad/publications/danielsson-norell-mixfix.pdf
 
 Dependent types with subtyping and late-bound overloading
 https://www.irif.fr/~gc/papers/infcomp99.pdf
+
+Open GADTs and Declaration-site Variance: A Problem Statement
+http://lampwww.epfl.ch/~hmiller/scala2013/resources/pdfs/paper5.pdf
 
 GADT meet subtyping
 http://gallium.inria.fr/~remy/gadts/Scherer-Remy:gadts-subtyping@short2012.pdf

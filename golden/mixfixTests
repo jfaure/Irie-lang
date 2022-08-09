@@ -21,7 +21,7 @@ brac = (<_> (Int 3))  : %i32
 if1 = (IfThenE (Int 0) (Int 3) (Int 4))  : %i32
 
 if2 = (IfThenE (Int 0) (Int 1) (IfThenE (Int 1) (Int 3) (Int 4)))
- : (%i1 & %i32)
+ : (%i1 ⊔ %i32)
 
 if3 = (IfThenE (Int 1) (Int 5) (_*_ (_*_ (Int 0) (Int 2)) (Int 9)))  : %i32
 

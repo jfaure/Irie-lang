@@ -54,6 +54,7 @@ data GenEnvState s = GenEnvState {
  , _quants      ∷ Int  -- fresh names for generalised typevars [A..Z,A1..Z1..]
  , _quantsRec   ∷ Int  -- fresh names for generalised recursive typevars [x..y,x1..y1..]
  , _biEqui      ∷ MV.MVector s IName -- TVar → THBound; complement 0 indicates not gen yet
+ , _muBounds    ∷ MV.MVector s Type  -- covariant type bound for a μ type to merge as it is rolled
 }; makeLenses ''GenEnvState
 
 clearBiSubs ∷ Int → TCEnv s ()

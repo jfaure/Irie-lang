@@ -82,6 +82,7 @@ executable irie-exe
       compiler/4_Proc/
       compiler/5_Backends/
   default-extensions:
+      StrictData
       LambdaCase
       EmptyCase
       ViewPatterns

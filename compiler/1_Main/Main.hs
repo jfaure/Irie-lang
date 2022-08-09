@@ -80,7 +80,7 @@ main' args = parseCmdLine args ≫= \cmdLine → do
       ≫= codegen cmdLine
   files cmdLine `forM_` doFileCached cmdLine True resolver 0
   when (repl cmdLine || (null (files cmdLine) && null (strings cmdLine))) $ let
-    patchFlags = cmdLine{ printPass = "types" : printPass cmdLine , repl = True , noColor = False }
+    patchFlags = cmdLine{ printPass = "types" : printPass cmdLine , repl = True , noColor = False , noFuse = True }
     in replCore (if null (printPass cmdLine) then patchFlags else cmdLine)
 
 type CachedData = JudgedModule
@@ -176,7 +176,7 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
 --  in (\(nm,j) → (prettyBind' showTerm nm j)) <$> bs
     in uncurry (prettyBind' showTerm) <$> bs
   bindNamePairs = V.zip bindNames judgedBinds
-  bindSrc = BindSource _ bindNames _ (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
+  bindSrc = BindSource mempty bindNames mempty (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
   simpleBinds = runST $ V.unsafeThaw judgedBinds ≫= \cb →

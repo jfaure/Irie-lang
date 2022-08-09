@@ -57,9 +57,9 @@ ttApp retTy readBind handleExtern fn args = let --trace (clYellow (show fn <> " 
 --  Special instructions (esp. type constructors)
     Instr (TyInstr Arrow)  → expr2Ty readBind `mapM` args <&> \case
       { [a , b] → Ty (TyGround (mkTyArrow [a] b)) ; x → error $ "wrong arity for TyArrow" <> show x }
-    Instr (TyInstr MkIntN) | [Core (Lit (Int i)) ty] ← args →
+    Instr (TyInstr MkIntN) | [Core (Lit (Int i)) _ty] ← args →
       pure $ Ty (TyGround [THPrim (PrimInt $ fromIntegral i)])
-    Instr (MkPAp n) | f : args' ← args → ttApp' f args'
+    Instr (MkPAp _n) | f : args' ← args → ttApp' f args'
     coreFn → doApp coreFn args
   Ty f → pure $ Ty (TyIndexed f args) -- make no attempt to normalise types at this stage
 
@@ -79,7 +79,7 @@ normaliseType handleExtern args ty = let
     Var (VArg i)   → pure $ case piArgs IM.!? i of
       Just (Ty t) → t
       _ → (TyGround [THPoison])
-    RecApp f args → let recArgs = (\case { Var (VArg i) → i ; _ → (-1) }) <$> args
+    RecApp _f args → let recArgs = (\case { Var (VArg i) → i ; _ → (-1) }) <$> args
       in pure $ if all (`IM.member` piArgs) recArgs then (TyGround [THMuBound 0])
         else _
 --  Var (VQBind q) → _
@@ -92,6 +92,7 @@ normaliseType handleExtern args ty = let
       THSumTy ars   → THSumTy   <$> (normaliseT args `mapM` ars)
       THTuple ars   → THTuple   <$> (normaliseT args `mapM` ars)
       THProduct ars → THProduct <$> (normaliseT args `mapM` ars)
+      _ → _
     THMu m t → THMu m <$> normaliseT args t
     ok → pure $ case ok of
       THPrim{} → ok
@@ -102,7 +103,7 @@ normaliseType handleExtern args ty = let
     (ok , rest) = splitAt an piArgs
     in if pn == an -- check if args are the same in recursive applications
     then let --self = Nothing --(,args) <$> this
-      in normaliseT (IM.fromList (zipWith (\(i,t) e → (i,e)) ok tyArgs)) body
+      in normaliseT (IM.fromList (zipWith (\(i,_t) e → (i,e)) ok tyArgs)) body
     else _ --TySi (Pi rest body) (foldl (\m (i , val) → IM.insert (i , val) m) args tyArgs
 
   in case ty of
