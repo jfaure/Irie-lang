@@ -95,37 +95,39 @@ testImports = do
   SIO.hClose h2
   Main.sh (fp2 <> " -p types")
 
-testPhantomLabel = do
+testPhantomLabel = S.goldenTextFile (goldDir <> "phantomLabel") $ do
   _ ← SP.system "mv .irie-obj/* /tmp/"
   (fp1 , h1) ← SIO.openTempFile "/tmp/" "m1"
-  hPutStr h1 $ T.unlines ["lol (Cons x xs) = x" , "g = Cons"]
+  hPutStr h1 $ T.unlines ["lol (MyLabel x xs) = x"]
   SIO.hClose h1
-  Main.sh (fp1 <> " -p types")
+  Main.sh (fp1 <> " -p types --no-fuse")
   removeFile fp1
   h1 ← SIO.openFile fp1 WriteMode
-  hPutStr h1 $ ("gg = Cons" ∷ Text)
+  hPutStr h1 $ ("gg = MyLabel" ∷ Text)
   SIO.hClose h1
-  Main.sh (fp1 <> " -p types")
+  tmpFile ← (</> "tmp") <$> getCanonicalTemporaryDirectory
+  Main.sh (fp1 <> " -p types --no-color  --no-fuse -o" <> tmpFile)
+  readFile tmpFile
 
-tI = S.sydTest $ do
-  S.runIO testPhantomLabel
+ph = S.sydTest (S.it "phantom label" testPhantomLabel)
 
 --goldenList = S.goldenTextFile "golden/goldenList" $
 --  withSystemTempFile "goldenList" $ \tmpFile tmpHandle → do
 --    Main.sh ("imports/list.ii -p types --no-fuse -o" <> tmpFile)
 --    readFile tmpFile
 
-goldenInfer opts fName goldName = S.goldenTextFile goldName $ do
-   tmpFile ← (</> "tmp") <$> getCanonicalTemporaryDirectory
-   Main.sh (fName <> " --no-fuse -o" <> tmpFile <> " " <> opts)
-   readFile tmpFile
+goldDir = "goldenOutput/"
+goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
+  tmpFile ← (</> "tmp") <$> getCanonicalTemporaryDirectory
+  Main.sh (fName <> " --no-fuse -o" <> tmpFile <> " " <> opts)
+  readFile tmpFile
 
-list1    = S.it "list.ii"        (goldenInfer "-p types --no-color" "imports/list.ii"        "golden/goldenList")
-list2    = S.it "list2.ii"       (goldenInfer "-p types --no-color" "imports/list2.ii"       "golden/list2")
-mutual   = S.it "mutual.ii"      (goldenInfer "-p types --no-color" "imports/sumMul.ii"      "golden/sumMul")
-tree     = S.it "tree.ii"        (goldenInfer "-p types --no-color" "imports/tree.ii"        "golden/tree")
-intmap   = S.it "intmap.ii"      (goldenInfer "-p types --no-color" "imports/intmap.ii"      "golden/intmap")
-mixfixes = S.it "mixfixTests.ii" (goldenInfer "-p core  --no-color" "imports/mixfixTests.ii" "golden/mixfixTests")
+list1    = S.it "list.ii"        (goldenInfer "-p types --no-color" "imports/list.ii"        "goldenList")
+list2    = S.it "list2.ii"       (goldenInfer "-p types --no-color" "imports/list2.ii"       "list2")
+mutual   = S.it "mutual.ii"      (goldenInfer "-p types --no-color" "imports/sumMul.ii"      "sumMul")
+tree     = S.it "tree.ii"        (goldenInfer "-p types --no-color" "imports/tree.ii"        "tree")
+intmap   = S.it "intmap.ii"      (goldenInfer "-p types --no-color" "imports/intmap.ii"      "intmap")
+mixfixes = S.it "mixfixTests.ii" (goldenInfer "-p core  --no-color" "imports/mixfixTests.ii" "mixfixTests")
 
 s = S.sydTest $ do
   sequence_ fTests

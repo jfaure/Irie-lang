@@ -11,22 +11,35 @@ import qualified BitSetMap as BSM
 
 mkExtTy x = [THExt x]
 getPrimIdx = (primMap M.!?)
-getPrimTy nm = case getPrimIdx nm of -- case M.lookup nm primTyMap of
+getPrimTy nm = case getPrimIdx nm of
   Nothing → panic $ "panic: badly setup primtables; " <> nm <> " not in scope"
   Just i  → i
 
 primMap = M.fromList $ zipWith (\(nm,_val) i → (nm,i)) primTable [0..]
---primBinds ∷ V.Vector Expr = V.fromList $ snd <$> primTable
 primBinds ∷ V.Vector (HName , Expr) = V.fromList primTable
 
+primTable ∷ [(HName , Expr)]
 primTable = concat
-  [ (\(nm , x)         → (nm , Ty $ TyGround [THPrim x]) )                  <$> primTys
+  [ (\(nm , x)         → (nm , Ty $ TyGround [THPrim x]) )                 <$> primTys
+  , boolLabel
   , let tys2TyHead  (args , t) = TyGround $ mkTyArrow (TyGround . mkExtTy <$> args) (TyGround $ mkExtTy t) in
-    (\(nm , (i , tys)) → (nm , Core (Instr i) (tys2TyHead tys))) <$> primInstrs
-  , (\(nm , (i , t))   → (nm , Core (Instr i) $ TyGround t))                <$> instrs
-  , (\(nm , e)         → (nm , Ty $ TyGround [e]))                          <$> tyFns
+    (\(nm , (i , tys)) → (nm , Core (Instr i) (tys2TyHead tys)))           <$> primInstrs
+  , (\(nm , (i , t))   → (nm , Core (Instr i) (TyGround t)))               <$> instrs
+  , (\(nm , e)         → (nm , Ty (TyGround [e])))                         <$> tyFns
 -- , uncurry ExtFn <$> extFnBinds
   ]
+
+-- | Predicates need to return labels if they want to benefit from case-fusion and short-circuiting
+boolLabel ∷ [(HName , Expr)]
+boolLabel = let
+  trueLabel  = mkQName 0 1 -- 0.1
+  falseLabel = mkQName 0 0 -- 0.0
+  trueLabelT  = (unQName trueLabel  , TyGround [THTyCon (THTuple mempty)])
+  falseLabelT = (unQName falseLabel , TyGround [THTyCon (THTuple mempty)])
+  in [ ("BoolL" , Ty (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT , falseLabelT]))]))
+     , ("True"  , Core (Label trueLabel  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
+     , ("False" , Core (Label falseLabel mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
+     ]
 
 primTys ∷ [(HName , PrimType)] =
   [ ("Bool"    , PrimInt 1)

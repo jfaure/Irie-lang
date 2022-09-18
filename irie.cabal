@@ -54,8 +54,7 @@ executable irie-exe
       CoreUtils
       Errors
       Externs
-      Fuse
-      FusionEnv
+      FEnv
       Generalise
       Infer
       Mixfix
@@ -100,6 +99,10 @@ executable irie-exe
       DeriveGeneric
       OverloadedRecordDot
       UnicodeSyntax
+      DeriveFunctor
+      DeriveTraversable
+      DeriveFoldable
+--    TypeFamilies
   build-depends:
       base
     , blaze-builder
@@ -135,6 +138,7 @@ executable irie-exe
     , sydtest
     , temporary
     , base-unicode-symbols
+    , recursion-schemes
   default-language: Haskell2010
 
 --test-suite irie-test

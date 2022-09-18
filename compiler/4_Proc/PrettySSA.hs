@@ -1,5 +1,4 @@
 module PrettySSA where
-
 import SSA
 import Data.Text.Lazy as TL
 import Data.Text.Lazy.Builder as TLB
@@ -8,6 +7,7 @@ import Prettyprinter.Render.Util.SimpleDocTree
 import Prettyprinter.Internal as P
 import qualified Data.Vector as V
 import qualified PrettyCore
+import Data.Functor.Foldable
 
 data RenderOptions = RenderOptions
   { ansiColor  ∷ Bool
@@ -44,12 +44,12 @@ pModule (Module mName typedefs exts locals) =
   <> vsep (pFn   <$> V.toList locals)
 
 pExpr ∷ Expr → Doc Annotation
-pExpr = \case
-  Switch scrut alts def → "switch" <+> enclose "(" ")" (viaShow scrut) <> nest 2 (
-    hardline <> vsep ((\(i , e) → viaShow i <+> "⇒" <+> pExpr e) <$> alts) <> hardline <> pExpr def
+pExpr = cata $ \case
+  SwitchF scrut alts def → "switch" <+> enclose "(" ")" (viaShow scrut) <> nest 2 (
+    hardline <> vsep ((\(i , e) → viaShow i <+> "⇒" <+> e) <$> alts) <> hardline <> def
     )
-  ECallable (Prim i) → PrettyCore.prettyInstr i
-  x → viaShow x
+  ECallableF (Prim i) → PrettyCore.prettyInstr i
+  x → error ""
 
 pFn (Function decl a0 body) =
   pFnDecl decl <+> pExpr body

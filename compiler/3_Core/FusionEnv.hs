@@ -1,5 +1,6 @@
 {-# Language TemplateHaskell #-}
 module FusionEnv where
+{-
 import CoreSyn
 import ShowCore()
 import qualified Data.Vector.Mutable as MV
@@ -7,6 +8,7 @@ import qualified Data.Vector as V
 import qualified Data.Map as M
 import Control.Lens
 
+{-
 data RecFn
  = Cata    Term -- term successfully rewritten as a (higher-order) Cata
  | Stream  Term -- ie. unstream < f < stream
@@ -20,6 +22,7 @@ data FuseArg -- Which args are case-split and how
  | CaseFnArg FuseArg -- arg is a fn whose result is case-split (upto given structure)
 
  | LensedArg {- Lens -} -- What structure of the arg must be known to fuse with a case
+-}
 
 -- Re-use specialisations if the structure is identical
 data ArgShape
@@ -73,3 +76,4 @@ data Simplifier s = Simplifier {
 --  | APoly
 --  | ARec -- only in Array or Tree (also fn return | any covariant position?)
 --data SumRep = Enum | Peano | Wrap | Array [ArgKind] | Tree [ArgKind]
+---}

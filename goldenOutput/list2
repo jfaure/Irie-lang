@@ -1,0 +1,12 @@
+unwords = ∏ A B C D E → µd.[Nil | Cons {µc.[Nil | Cons {A , c}] , d}] → µe.[Nil | Cons {(%i8 ⊔ A) , e}]
+
+goUnwords = let ∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 ⊔ A) , d}]
+
+splitAt = ∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → {l : µc.[Nil | Cons {A , c}] , r : ([Nil] ⊔ B)}
+
+z = ∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : [Nil]}
+
+nonEmptySubSequences = ∏ A B C D → µb.[Nil | Cons {A , b}] → µd.[Nil | Cons {µc.[Cons {A , c}] , d}]
+
+f = let ∏ A B → A → B → [Cons {A , [Cons {[Cons {⊥ , A}] , B}]}]
+

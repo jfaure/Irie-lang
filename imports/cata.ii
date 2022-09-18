@@ -1,0 +1,51 @@
+import imports/prelude
+fmap f = \case
+  Done      ⇒ Done
+--Skip r    ⇒ Skip r
+  Yield x r ⇒ Yield x (f r)
+
+rcata f = f << fmap (rcata f)
+rana g = fmap (rana g) << g
+rhylo f g = f << fmap (rhylo f g) << g
+
+-- ∀s. stream (unstream s) ⇒ s
+Sfuse next (stream n0 s0) = stream (next << n0) s0
+Sana  (stream n s) = rana  n s
+Scata (stream n s) = rcata n s
+
+ana next seed = @stream next seed
+cata c (stream a seed) = rhylo c a seed
+
+map f = Sfuse \case
+  Done      ⇒ Done
+  Yield x r ⇒ Yield (f x) r
+
+enumFromTo lo hi = ana (\i ⇒ if i >? hi then Done else Yield i (i + 1)) lo
+
+sum = cata \case
+  Done      ⇒ 0
+  Yield x r ⇒ x + r
+
+--l = sum < map (add 1) < enumFromTo 5 10
+
+{-
+append s1 s2 = ana (\case
+  Done      ⇒ s2
+--Skip r    ⇒ Skip r
+  Yield x r ⇒ Yield x r
+  ) s1
+
+-}
+
+{-
+zip (Stream na sa) (Stream nb sb) = rana \(a0 , b0 , pair) ⇒
+  (sa , sb , Nothing) > case pair of
+    Nothing ⇒ case na a0 of
+      Done      ⇒ Done
+      Yield x a ⇒ Skip (a , b0 , Just x)
+--    Skip a    ⇒ Skip (a , b0 , Nothing)
+    Just x  ⇒ case nb b0 of
+      Done      ⇒ Done
+  --  Skip b    ⇒ Skip (a0 , b , Just x)
+      Yield y b ⇒ Yield (x , y) (a0 , b , Nothing)
+-}

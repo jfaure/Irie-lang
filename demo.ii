@@ -1,12 +1,21 @@
+--leftFold ∷ [Int] → Int → In
+--leftFold = cata $ \d acc → case d of
+--  Nil → acc
+--  F.Cons x xs → if x > 100 then acc else xs acc + x
+
 -- math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4
+-- let-scope depends on parse
+-- letscopeAfterMixfix y = if y then let x = 3 in x else y
 
 --rect (P : Set) : Set = record
 --Recangle = record
 --  f : Int
 --  g : Int
 import imports/prelude
-import imports/list
-import imports/list2
+--import imports/list
+--import imports/list2
+
+--import imports/cata
 --import imports/question
 --import imports/ls
 
@@ -17,76 +26,52 @@ import imports/list2
 --  File f  ⇒ prefix ++ f
 --  Dir d r ⇒ prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
 
---newtype ParsecT e s m a = ParsecT { unParser :: forall b.
---  State s e ->
---  (a -> State s e -> Hints (Token s) -> m b) -> -- consumed-OK
---  (ParseError s e -> State s e -> m b) -> -- consumed-error
---  (a -> State s e -> Hints (Token s) -> m b) -> -- empty-OK
---  (ParseError s e -> State s e -> m b) -> -- empty-error
---  m b
---  }
--- ParseState :
---   state  : { input : Stream , offset : Int }
---   → cok : a          -> ParseState -> m b
---   → cko : ParseError -> ParseState -> m b
---   → eok : a          -> ParseState -> m b
---   → eko : ParseError -> ParseState -> m b
---   → m b
--- ErrorItem t = Tokens (NonEmpty t) | Label (NonEmpty Char) | EndOfInput
+--x = let g = 3 in g
+--y = let g = 3 in g
 
 {-
-unParser (Parser p) = p
-pTakeP n = @Parser \s cok _ _ eko ⇒ let
-  split = splitAt n s.input
-  in if length split.l /=? n then eko "Bad length"
-    else cok split.l (s.input.set (split.r))
+fmap f = \case
+  Done      ⇒ Done
+--Skip r    ⇒ Skip r
+  Yield x r ⇒ Yield x (f r)
 
-pTakeWhileP f = @Parser \s cok _ eok _ ⇒ let
-  split = span f s.input
-  in if null split.l
-    then eok split.l s 
-      else cok split.l (s.input.set split.r)
+rcata f = f << fmap (rcata f)
+rana g = fmap (rana g) << g
+rhylo f g = f << fmap (rhylo f g) << g
 
-pEof = @Parser \s v v eok eko ⇒ if null s.input
-  then eok () s else eko "expected eof" s
+-- ∀s. stream (unstream s) ⇒ s
+Sfuse next (stream n0 s0) = stream (next << n0) s0
+Sana  (stream n s) = rana  n s
+Scata (stream n s) = rcata n s
 
-pTry p = @Parser \s cok _ eok eko ⇒ let
-  ko e _ = eko e s
-  in unParser p s cok ko eok ko -- override kos
+ana next seed = @stream next seed
+cata c (stream a seed) = rhylo c a seed
 
-pMap f p = @Parser \s cok cko eok eko ⇒
-  unParser p s (cok << f) cko (eok << f) eko
-pPure x = @Parser \s _ _ eok _ ⇒ eok x s
-pAp m k = @Parser \s cok cko eok eko ⇒ unParser m s
- (\x s2 ⇒ unParser k s2 (cok << x) cko (cok << x) cko) cko
-   (\x s2 ⇒ unParser k s2 (cok << x) cko (eok << x) eko) eko
-pBind m k = @Parser \s cok cko eok eko ⇒ unParser m s
- (\x s2 ⇒ unParser (k x) s2 cok cko cok cko) cko
-   (\x s2 ⇒ unParser k s2 (k x) cko eok eko) eko
-pZero = @Parser \s _ _ _ err ⇒ err "nothing" s
-pPlus m n = @Parser \s cok cko eok eko ⇒ let
-  mko err ms = let
-    ncko err s2 = cko "err1" ms -- ms longest match ms s2
-    neok x s2   = eok x s2
-    neko err s2 = eko "err2" ms -- longest match ms s2
-    in unParser n s cok ncko neok neko
-  in unParser m s cok cko eok mko -- override eko
+map f = Sfuse \case
+  Done      ⇒ Done
+  Yield x r ⇒ Yield (f x) r
 
-runParser p s = unParser p s (\a s ⇒ @COK s a)
-  (\err s ⇒ @CKO err) (\a s ⇒ @EOK a) (\err s ⇒ @EKO err)
+enumFromTo lo hi = ana (\i ⇒ if i >? hi then Done else Yield i (i + 1)) lo
 
-p1 = runParser pEof { input = Nil }
+sum = cata \case
+  Done      ⇒ 0
+  Yield x r ⇒ x + r
+
+--l = sum (enumFromTo 5 10)
+r = sum (map (add 1) (enumFromTo 5 10))
 -}
 
--- [a] -> [[a]]
--- leaf merge
-nonEmptySubSequences = \case
-  Nil       ⇒ Nil
-  Cons x xs ⇒ let
-    f ys r = Cons ys (Cons (Cons x ys) r)
-    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+bool2N = \case
+  True  ⇒ 1
+  False ⇒ 0
 
--- merge-roll μ
-splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
-  Cons x xs ⇒ let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
-  Nil ⇒ { l = Nil , r = Nil }
+-- go2 scruts (next s) ⇒ indicate structure needs both args
+go2 z i next s = case next s of
+  Done      ⇒ go1 z i
+  Yield x s ⇒ go2 (add z x) i next s
+
+go1 z i = let
+  nextRet x = case x of
+    True  ⇒ Yield (mul i i) False
+    False ⇒ Done
+  in ifThenElse (ge i 10) z (go2 z (add i 1) nextRet True)

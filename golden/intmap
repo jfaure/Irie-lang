@@ -1,4 +1,24 @@
-zero = %i32 → %i32 → %i1
+[31mNot in scope: [0mNothing
 
-lookup = ∏ A B C → %i32 → µa.[Bin {⊤ , %i32 , a , a} | Tip {%i32 , C} | None] → [Nothing | Just {C}]
+[31mNot in scope: [0mNothing
+
+[31mNot in scope: [0melse
+
+[31mNot in scope: [0mJust
+
+[31mNot in scope: [0mthen
+
+[31mNot in scope: [0m=?
+
+[31mNot in scope: [0mif
+
+[31mNot in scope: [0melse
+
+[31mNot in scope: [0mthen
+
+[31mNot in scope: [0mif
+
+[31mNot in scope: [0m=?
+
+[31mNot in scope: [0mB&
 

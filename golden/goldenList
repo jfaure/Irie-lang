@@ -1,74 +1,54 @@
-List =  type Π(0 : τ1) µa.[Nil | Cons {(λ0 : τ1) , ((recApp List λ0) : τ2)}]
+[31mNot in scope: [0melse
 
-Str =  type List (type %i8)
+[31mNot in scope: [0mthen
 
-length = ∏ A → µa.[Nil | Cons {⊤ , a}] → (%i1 ⊔ %i32)
+[31mNot in scope: [0mif
 
-printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 ⊔ %i32)
+[31mNot in scope: [0melse
 
-scanSum = ∏ A → %i32 → A → µa.[Cons {%i32 , a}]
+[31mNot in scope: [0mthen
 
-take = ∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
+[31mNot in scope: [0m>?
 
-drop = ∏ A B → %i32 → µa.([Nil | Cons {⊤ , a}] ⊓ B) → ([Nil] ⊔ B)
+[31mNot in scope: [0mif
 
-null = [Nil | Cons {⊤ , ⊤}] → %i1
+[31mNot in scope: [0melse
 
-singleton = ∏ A → A → [Cons {A , [Nil]}]
+[31mNot in scope: [0mthen
 
-repeat = ∏ A B → A → µb.[Cons {A , b}]
+[31mNot in scope: [0mif
 
-xs = let ∏ A → µa.[Cons {⊥ , a}]
+[31mNot in scope: [0melse
 
-foldr = ∏ A B C → (A → B → B) → B → µc.[Nil | Cons {A , c}] → B
+[31mNot in scope: [0mthen
 
-foldl = ∏ A B C → (A → B → A) → A → µc.[Nil | Cons {B , c}] → A
+[31mNot in scope: [0mif
 
-c = ∏ A B → A → B → [Cons {A , B}]
+[31mNot in scope: [0melse
 
-append = ∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}]
+[31mNot in scope: [0mthen
 
-_++_ = ∏ A B C → µb.[Nil | Cons {A , b}] → C → µc.[Cons {A , c}]
+[31mNot in scope: [0mif
 
-concat = ∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {A , d}]
+[31mNot in scope: [0m-
 
-consF = ∏ A B C → (A → B) → A → C → [Cons {B , C}]
+[31mNot in scope: [0melse
 
-mapFold = ∏ A B C D → (A → B) → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {B , d}]
+[31mNot in scope: [0mthen
 
-map = ∏ A B C D → (A → B) → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {B , d}]
+[31mNot in scope: [0m<=?
 
-concatMap = ∏ A B C D E → (A → µc.[Nil | Cons {B , c}]) → µd.[Nil | Cons {A , d}] → µe.[Nil | Cons {B , e}]
+[31mNot in scope: [0mif
 
-unlines = ∏ A B C D → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {(%i8 ⊔ A) , d}]
+[31mNot in scope: [0m-
 
-unfoldr = ∏ A B C → (A → [Nothing | Just {{val : B , seed : A}}]) → A → µc.[Nil | Cons {B , c}]
+[31mNot in scope: [0melse
 
-filter = ∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
+[31mNot in scope: [0mthen
 
-fromCString = ∏ A → %ptr(PrimInt 8) → µa.[Nil | Cons {%i8 , a}]
+[31mNot in scope: [0m<=?
 
-go = let ∏ A B → {!0 : %i1 , !1 : A , !2 : %ptr(PrimInt 8)} → µb.[Nil | Cons {(%i8 ⊔ A) , b}]
+[31mNot in scope: [0mif
 
-toCString = ∏ A B C → ((([Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}) ⊔ C) → {!0 : %i1 , !1 : %i8 , !2 : C}) → C → %ptr(PrimInt 8)
-
-unravel = let ∏ A B → [Nil | Cons {A , B}] → {!0 : %i1 , !1 : A , !2 : B}
-
-span = ∏ A B → (A → %i1) → µb.[Nil | Cons {A , b}] → {l : µb.[Nil | Cons {A , b}] , r : µb.[Nil | Cons {A , b}]}
-
-s = ∏ A → {l : µa.[Nil | Cons {⊥ , a}] , r : µa.[Nil | Cons {⊥ , a}]}
-
-reverse = ∏ A B C → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
-
-scanl = ∏ A B C D → (A → B → A) → A → µc.[Nil | Cons {B , c}] → µd.[Nil | Cons {A , d}]
-
-enumFromTo = ∏ A → %i32 → %i32 → µa.[Nil | Cons {%i32 , a}]
-
-foldr1 = ∏ A B → (A → A → A) → µb.[Nil | Cons {A , b}] → A
-
-nubBy = ∏ A B C → (A → A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
-
-nub = let ∏ A B C D → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}] → µd.[Nil | Cons {A , d}]
-
-elemBy = ∏ A B C → (A → B → %i1) → B → µc.[Nil | Cons {A , c}] → (%i1 ⊔ %i1)
+[31mNot in scope: [0m+
 

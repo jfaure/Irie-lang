@@ -265,7 +265,7 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
 
   -- Indicate which tycon branch a mu-type came from
   goGuarded _oldRecs pos branch guardedT = let
-    updateMu recBranch = \case { []→[] ; [(_lastI,m,mT,invC)] → [(recBranch,m,mT,invC)] ; _ → error ">1 mu branch" }
+    updateMu recBranch = map (\(_lastI,m,mT,invC) → (recBranch,m,mT,invC))
     in do
     t   ← goType pos guardedT
     mus ← muWrap <<.= []
@@ -290,7 +290,11 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
         pure (THProduct (fst <$> branches) , concatMap snd (BSM.elems branches))
       THSumTy     r → do
         branches ← BSM.traverseWithKey (goGuarded recVars pos) r
-        pure (THSumTy (fst <$> branches) , concatMap snd (BSM.elems branches))
+        let sumT = THSumTy (fst <$> branches) 
+            mT = TyGround [THTyCon sumT]
+        -- | ! HACK for prependToAll
+--      mwrap ← use hasRecs <&> \r → bitSet2IntList ((0 `setBit` 3)) <&> \m → (0 , m , mT , invertMu m (startInvMu m) mT)
+        pure (sumT , {-mwrap ++-} concatMap snd (BSM.elems branches))
       THSumOpen r d → do
         branches ← BSM.traverseWithKey (goGuarded recVars pos) r
         open     ← goGuarded recVars pos (-1) d -- ! branch keys should never be negative TODO use prelude module

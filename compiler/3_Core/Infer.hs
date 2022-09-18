@@ -76,8 +76,7 @@ judgeLocalBind b = use thisMod ≫= \modINm → use wip ≫= \wip' → use pBind
 -- This includes noting leaked and escaped typevars
 judgeBind ∷ V.Vector P.FnDef → MV.MVector s Bind → IName → TCEnv s Expr
 judgeBind ttBinds wip' bindINm = use thisMod ≫= \modINm → (wip' `MV.read` bindINm) ≫= \case
-  BindOK _isRec e   → pure e
-  LetBound _isRec e → pure e
+  BindOK _ _ _isRec e  → pure e
   Mutual _e _freeVs _isRec tvar _tyAnn → pure (Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)) -- don't inline the expr
 
   Guard mutuals tvar → do
@@ -133,8 +132,10 @@ getAnnotationType ttAnn = case ttAnn of
 regeneralise ∷ Bool → Int → TCEnv s ()
 regeneralise makeLet l = use wip ≫= \wip' → do -- regeneralise all let-bounds whose escaped vars are now resolved
   MV.read wip' l ≫= \case -- escapes have been resolved, need to solve them in our partially generalised types
-    LetBound r (Core t ty) → (Core t <$> generalise 0 (Right ty)) ≫= MV.write wip' l . LetBound r
-    BindOK   r (Core t ty) → (Core t <$> generalise 0 (Right ty)) ≫= MV.write wip' l . (if makeLet then LetBound else BindOK) r
+--  LetBound r (Core t ty) → (Core t <$> generalise 0 (Right ty)) ≫= MV.write wip' l . LetBound r
+--  BindOK o r (Core t ty) → (Core t <$> generalise 0 (Right ty)) ≫= MV.write wip' l . (if makeLet then LetBound else BindOK o) r
+    BindOK o _letbound r (Core t ty) →
+      (Core t <$> generalise 0 (Right ty)) ≫= MV.write wip' l . (BindOK o makeLet) r
     _ → pure () -- <* traceM ("attempt to regeneralise non-let-bound: " <> show l)
 --  _ → error "attempt to regenaralise non-let-bound"
 
@@ -171,13 +172,12 @@ generaliseBinds svEscapes svLeaked ms = use wip ≫= \wip' → ms `forM` \m → 
     done ← case (annotation , inferred) of -- Only Core type annotations are worth replacing inferred ones
       (Just ann , Core e inferredTy) → Core e <$> checkAnnotation ann inferredTy
       _                              → pure inferred
-    MV.write wip' m (BindOK isRec done)
+    MV.write wip' m (BindOK 0 False isRec done) -- todo letbound?
     unless (null (drop 1 ms)) (regeneralise False `mapM_` ms) -- necessary eg. splitAt where let-bindings access this bind
---  if e == 0 then MV.write wip' m (BindOK isRec done) else (letBounds %= (`setBit` m)) *> MV.write wip' m (LetBound isRec done)
+--  if e == 0 then MV.write wip' m (BindOK 0 isRec done) else (letBounds %= (`setBit` m)) *> MV.write wip' m (LetBound isRec done)
 --  when (ars .&. l /= 0) (regeneralise m *> traceM "regen")
     pure done
-  BindOK _r e   → pure e -- already handled mutual
-  LetBound _r e → pure e -- already handled mutual
+  BindOK _ _ _r e → pure e -- already handled mutual
   b → error (show b)
 
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
@@ -308,6 +308,8 @@ infer = let
         handleExtern (readQParseExtern open modIName e (modName q) (unQName q))
       MFExpr{}   → PoisonExpr <$ (errors . scopeFails %= (AmbigBind "mixfix word" [] :))
       core → pure core
+    -- if y then (letIn x else y) ⇒ need to extract [x else y] from sub-juxtstream
+--  juxt' = concatMap (\case { P.LetBinds ls (P.Juxt o2 inE) → inE ; t → [t] }) juxt
     in solveMixfixes <$> (infer `mapM` juxt) ≫= inferExprApp srcOff
 
   P.Cons construct → use externs ≫= \ext → do

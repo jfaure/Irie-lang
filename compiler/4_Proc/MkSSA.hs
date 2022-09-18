@@ -145,7 +145,7 @@ cgCore wip i nm b = let
 cgBind ∷ Int → CGEnv s CGWIP
 cgBind i = gets wipBinds ≫= \wip → MV.read wip i ≫= \case
   WIPCore (nm , b) → case b of
-    BindOK isRec b → cgCore wip i nm b
+    BindOK n letbound isRec b → cgCore wip i nm b
     BindOpt _ _ b  → cgCore wip i nm b
 --  Ty ty → pure $ ssaTy ty
   x → pure x

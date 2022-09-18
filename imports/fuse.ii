@@ -36,7 +36,8 @@ go1 z i = let
 {-
 -- Full example
 fromMaybe x = case x of
-  Nothing => 0
+  Nothing ⇒ 0
+  Just a  ⇒ a
 
 nextEnum n = case bool2Bool (ge n 10) of
   True  => Done

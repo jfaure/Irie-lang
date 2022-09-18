@@ -1,0 +1,4 @@
+flattenTree = ∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → µd.[Nil | Cons {A , d}]
+
+squish = let ∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → D → µd.[Cons {A , d}]
+

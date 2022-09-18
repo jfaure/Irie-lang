@@ -1,5 +1,5 @@
 -- Core Language. compiler pipeline = Text >> Parse >> Core >> STG >> SSA
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell , TypeFamilies #-}
 module CoreSyn (module CoreSyn , module QName , ModIName) where
 import Control.Lens ( makeLenses )
 import MixfixSyn ( ModIName, QMFWord )
@@ -10,6 +10,7 @@ import qualified Data.IntMap.Strict as IM ( IntMap )
 import qualified Data.Map.Strict as M ( Map )
 import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
+import Data.Functor.Foldable.TH (makeBaseFunctor)
 
 global_debug = False
 
@@ -31,6 +32,8 @@ type TVarSet   = BitSet
 -- 2. Resolve scope: scopeBitset → IName → LiTable LiName
 type LiName  = QName -- ! The modIName indicates amount of dups
 type LiTable = V.Vector VName
+type CaseID = Int
+type BranchID = Int
 
 data VName
  = VArg     IName -- introduced by lambda abstractions
@@ -60,6 +63,8 @@ data Term -- β-reducable (possibly to a type)
  -----------------------------------------------
  -- Extra info built for/by simplification --
  -----------------------------------------------
+ | Case CaseID Term -- term is the scrutinee. This makes inlining very cheap
+
  | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
  | LinAbs [(LiName , Bool , Type)] Term Type -- indicate if dups its arg
 
@@ -167,9 +172,9 @@ data Bind -- elements of the bindmap
  | Mutual { naiveExpr ∷ Expr , freeVs ∷ BitSet , recursive ∷ Bool , tvar ∷ IName , tyAnn ∷ Maybe Type }
 
  -- | Function already partially generalised, must be re-generalised once all free-vars are resolved
- | LetBound { recursive ∷ Bool , naiveExpr ∷ Expr }
+-- | LetBound { recursive ∷ Bool , naiveExpr ∷ Expr }
  | BindKO -- failed type inference
- | BindOK { recursive ∷ Bool , naiveExpr ∷ Expr } -- isRec
+ | BindOK { optLevel ∷ Int , letBound ∷ Bool , recursive ∷ Bool , naiveExpr ∷ Expr } -- isRec
 
 -- | BindMutuals (V.Vector Expr)
 
@@ -243,3 +248,5 @@ data BindSource = BindSource {
  , srcFieldNames   ∷ V.Vector (V.Vector HName)
  , allNames        ∷ V.Vector (V.Vector (HName , Expr))
 }
+
+makeBaseFunctor ''Term

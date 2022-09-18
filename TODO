@@ -1,40 +1,39 @@
-## surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
+## meta
+  * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
+  * https://documentation.divio.com/
   * move to f2fs
 ## ?
+  * η-expand primitives + Match ⇒ so all appearance have correct arity
+  * Fusion (pap-spec etc..)
+  * type application, esp. perfect tree
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
   * audit oldcachedmodule , seems slightly broken (probably BindOpt) , also bring labels in scope
   * make freevars explicit in let-binds so their types make sense
   * trim bisubs
-  * η-expand partial applications of primitives ⇒ so all appearance of primitive have arity n
 ## Top Priority
-  * expr patterns + invert into case-tree (for mixfix patterns)
+  * optimise over _<_ applications
+  * mixfix patterns; mixfix labels vs mixfix binds ≫ parse TT ≫ VExtern ≫ new VArg | VBruijns ≫ invert into case-tree
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * improve pipelining of Main to stop once requested work is done
   * predicates should return a Label
   * fix let-bind scopes (let-bound names are in global scope)
-## µ-elim derivations (identify fixpoints in coresyn / mutual functions)
-  * catamorphism
-  * codata for left folds
-## Fusion
-  * Append sub-functions to module (case branches , specialisations , pap-specs)
-  * Arg shapes keys to lookup specialisations
-  * max destructure; indicate pointless specializing (esp. scanSum)
+  * cata defined with let doesn't generalise (is recursive let-bound problematic?)
 ## Parse
   * allow tabs instead of spaces
   * Pattern guards
-  * improve patterns2TT (add tuple of label , add literal) and eqn matches
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
   * figure out end of let-in in mixfix parser ?! `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
   * repl parser: multiline case / let
   * expand lambda-mixfixes with explicit holes
 ## Types
   * Annotations (record , sum , TPi)
-  * Typeclasses: `Int <: [ NumInt Int ]` show (esp for repl JIT)
+  * Ad-hoc polymorphism: `Int <: [ NumInt Int ]` show (esp for repl JIT)
   * THFieldCollision
   * Dependent normalisation
   * first class polymorphism
   * Linear types; dependent types required to quantify relative linearity `Lin t ≥ Lin f => t → u`
+  * splitAt with Nils should also simplify
 ## Functor modules and records (infer a module as a TT (Abs | Record) + ImportList , HNames , MixfixNames , LinSubs)
   * file = implicit `filename = record`
   * pattern assignments `(a , b) = (1 , 3)`

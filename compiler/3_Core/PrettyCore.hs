@@ -188,10 +188,10 @@ pBind nm showTerm bind = pretty nm <> " = " <> case bind of
   Guard m tvar      → "GUARD : "   <> viaShow m <> viaShow tvar
   Mutual m free isRec tvar tyAnn → "MUTUAL: " <> viaShow m <> viaShow isRec <> viaShow tvar <> viaShow tyAnn
   Queued → "Queued"
-  BindOK isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
-    in if showTerm then recKW <> pExpr expr else pExprType expr
-  LetBound isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
-    in annotate AKeyWord "let " <> if showTerm then recKW <> pExpr expr else pExprType expr
+  BindOK n lbound isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
+    in (if lbound then "let" else "") <+> if showTerm then viaShow n <+> recKW <> pExpr expr else pExprType expr
+--LetBound isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
+--  in annotate AKeyWord "let " <> if showTerm then recKW <> pExpr expr else pExprType expr
   BindOpt complex specs expr → let
     showSpecs = if specs == 0 then "" else space <> parens "specs: " <> viaShow (bitSet2IntList specs)
     in parens ("nApps: " <> viaShow complex) <> showSpecs <+> pExpr expr
@@ -253,6 +253,7 @@ pTerm = let
   Label   l t    → parens $ "@" <> prettyLabel l <+> hsep (parens . pTerm <$> t)
 --RecLabel l i t → prettyLabel l <> parens (viaShow i) <> "@" <> hsep (parens . pExpr <$> t)
   Match caseTy ts d → prettyMatch caseTy ts d
+  Case caseID scrut → parens $ "Case" <> viaShow caseID <+> pTerm scrut
 --RecMatch ts d → let
 --  showLabel l (i,t) = prettyLabel (QName l) <> "(" <> viaShow i<> ") ⇒ " <> pE' "   " t
 --  in clMagenta "\\recCase " <> "\n      "

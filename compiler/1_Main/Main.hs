@@ -5,14 +5,15 @@ import qualified ParseSyntax as P
 import Parser (parseModule)
 import ModulePaths (findModule)
 import Externs
-import CoreSyn ( ModIName, BindSource(BindSource), JudgedModule(JudgedModule, bindNames, labelNames, modIName), OldCachedModule(OldCachedModule, oldModuleIName), SrcInfo(..) )
+import CoreSyn -- ( ModIName, BindSource(BindSource), JudgedModule(JudgedModule, bindNames, labelNames, modIName), OldCachedModule(OldCachedModule, oldModuleIName), SrcInfo(..) )
 import Errors
 import CoreBinary()
 import CoreUtils (bind2Expr)
 import PrettyCore ( ansiRender, prettyBind, RenderOptions(ansiColor, bindSource) )
 import qualified PrettySSA
 import Infer (judgeModule)
-import Fuse (simplifyBindings)
+--import Fuse (simplifyBindings)
+import FEnv (simplifyBindings)
 import MkSSA (mkSSAModule)
 import C (mkC)
 
@@ -32,10 +33,10 @@ import System.Directory ( createDirectoryIfMissing, doesFileExist, getModificati
 import qualified System.IO as SIO (hClose)
 import Data.List (words)
 
-searchPath   = ["./" , "imports/"]
-objPath      = ["./"]
-objDir'      = ".irie-obj/"
-objDir       = objDir' <> "@" -- prefix '@' to files in there
+searchPath = ["./" , "imports/"]
+objPath    = ["./"]
+objDir'    = ".irie-obj/"
+objDir     = objDir' <> "@" -- prefix '@' to files in there
 getCachePath fName = let
   -- ./module == module for cache purposes so they must be converted
   normalise fName = case fName of
@@ -84,7 +85,7 @@ main' args = parseCmdLine args ≫= \cmdLine → do
     in replCore (if null (printPass cmdLine) then patchFlags else cmdLine)
 
 type CachedData = JudgedModule
-decodeCoreFile ∷ FilePath → IO CachedData       = DB.decodeFile
+decodeCoreFile ∷ FilePath → IO CachedData      = DB.decodeFile
 encodeCoreFile ∷ FilePath → CachedData → IO () = DB.encodeFile
 cacheFile fp jb = createDirectoryIfMissing False objDir *> encodeCoreFile (getCachePath fp) jb
 

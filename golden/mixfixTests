@@ -1,33 +1,74 @@
-<_> = λ 0 ⇒ λ0  : ∏ A → A → A
+[31mNot in scope: [0m-
 
-plus = _+_  : %i32 → %i32 → %i32
+[31mNot in scope: [0m*
 
-zero = (_+_ (Int 0) (Int 0))  : %i32
+[31mNot in scope: [0m*
 
-one = (_+_ (Int 0) (_+_ (Int 1) (Int 2)))  : %i32
+[31mNot in scope: [0m*
 
-prec1 = (_+_ (Int 0) (_*_ (Int 1) (Int 2)))  : %i32
+[31mNot in scope: [0m*
 
-prec2 = (_+_ (_*_ (Int 0) (Int 1)) (Int 2))  : %i32
+[31mNot in scope: [0melse
 
-prec3 = (_+_ (_*_ (Int 0) (_+_ (Int 1) (Int 2))) (Int 3))  : %i32
+[31mNot in scope: [0m+
 
-lassoc = (_+_ (_+_ (Int 0) (Int 1)) (Int 2))  : %i32
+[31mNot in scope: [0mthen
 
-rassoc = type %i32 → %fDoubleTy → %i1
+[31mNot in scope: [0mand
 
-brac = (<_> (Int 3))  : %i32
+[31mNot in scope: [0mif
 
-if1 = (IfThenE (Int 0) (Int 3) (Int 4))  : %i32
+[31mNot in scope: [0m*
 
-if2 = (IfThenE (Int 0) (Int 1) (IfThenE (Int 1) (Int 3) (Int 4)))
- : (%i1 ⊔ %i32)
+[31mNot in scope: [0m*
 
-if3 = (IfThenE (Int 1) (Int 5) (_*_ (_*_ (Int 0) (Int 2)) (Int 9)))  : %i32
+[31mNot in scope: [0melse
 
-if4 = (IfThenE (PredInstr AND (Int 1) (Int 0))
-  (_+_ (Int 5) (Int 1))
-  (_*_ (_*_ (Int 0) (Int 7)) (Int 9)))  : %i32
+[31mNot in scope: [0mthen
 
-math1 = (IntInstr Sub (_*_ (_*_ (Int 1) (Int 9)) (Int 6)) (Int 2))  : %i32
+[31mNot in scope: [0mif
+
+[31mNot in scope: [0melse
+
+[31mNot in scope: [0mthen
+
+[31mNot in scope: [0mif
+
+[31mNot in scope: [0melse
+
+[31mNot in scope: [0mthen
+
+[31mNot in scope: [0mif
+
+[31mNot in scope: [0melse
+
+[31mNot in scope: [0mthen
+
+[31mNot in scope: [0mif
+
+[31mNot in scope: [0m->
+
+[31mNot in scope: [0m->
+
+[31mNot in scope: [0m+
+
+[31mNot in scope: [0m+
+
+[31mNot in scope: [0m+
+
+[31mNot in scope: [0m*
+
+[31mNot in scope: [0m+
+
+[31mNot in scope: [0m*
+
+[31mNot in scope: [0m*
+
+[31mNot in scope: [0m+
+
+[31mNot in scope: [0m+
+
+[31mNot in scope: [0m+
+
+[31mNot in scope: [0m_+_
 

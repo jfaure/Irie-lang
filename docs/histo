@@ -1,0 +1,35 @@
+https://blog.sumtypeofway.com/posts/recursion-schemes-part-4.html
+
+CV-coalgebras describe tree automata. And in turn, coalgebras describe finite-state automata, and R-coalgebras describe stream automata
+
+-- Convert from a natural number to its foldable equivalent, and vice versa.
+expand :: Int -> Term Nat
+expand 0 = In Zero
+expand n = In (Next (expand (n - 1)))
+
+compress :: Nat (Attr Nat a) -> Int
+compress Zero              = 0
+compress (Next (Attr _ x)) = 1 + compress x
+
+type Cent = Int
+coins ∷ [Cent] = [50 , 25 , 10 , 5 , 1]
+
+-- Attr  is an adaptive cache for a fold over any data structure
+
+-- Attr is stack of (change 0 (change 1 ..))
+change :: Cent -> Int
+change amt = let
+  -- lookup is !! over [] (but we could use a different functor inside Attr)
+  lookup :: Attr Nat a -> Int -> a
+  lookup cache 0 = attribute cache
+  lookup cache n = lookup inner (n - 1) where (Next inner) = hole cache
+  go :: Nat (Attr Nat Int) -> Int
+  go Zero = 1
+  go curr@(Next attr) = let
+    given               = compress curr
+    validCoins          = filter (<= given) coins
+    remaining           = map (given -) validCoins
+    (zeroes, toProcess) = partition (== 0) remaining
+    results             = sum (map (lookup attr) toProcess)
+    in length zeroes + results
+  in histo go (expand amt)

@@ -1,5 +1,6 @@
 -- Simplification pass on Core syntax
-module Fuse (simplifyBindings) where
+module Fuse where -- (simplifyBindings) where
+{-
 import FusionEnv
 import SimplifyInstr
 import Prim
@@ -14,7 +15,7 @@ import qualified Data.Vector as V
 import Data.List (unzip3)
 import Control.Lens
 
--- η-reduction ⇒ f x = g x     ⊢ f = g
+-- η-reduction ⇒ f x = g x    ⊢ f = g
 -- β-reduction ⇒ (\x ⇒ f x) y ⊢ f y
 -- The env contains a map of β-reducing args
 simplifyBindings ∷ IName → Int → Int → MV.MVector s Bind → ST s (Simplifier s)
@@ -26,13 +27,13 @@ simplifyBindings modIName nArgs nBinds bindsV = do
   argSubs     ← MV.generate nArgs (\i → Var (VArg i))
   (simpleBind `mapM` [0 .. nBinds-1] {-*> doReSpecs-}) `execStateT` Simplifier {
     _thisMod     = modIName
-  , _extBinds    = _ --allBinds
+  , _extBinds    = mempty _ --allBinds
   , _cBinds      = bindsV
   , _nApps       = 0 -- measure the size of the callgraph
   , _useArgTable = False
   , _argTable    = argSubs
   , _bruijnArgs  = V.empty
-  , _self        = _
+  , _self        = -1
 
   , _nSpecs      = 0
   , _prevSpecs   = 0 -- lags behind nSpecs
@@ -163,6 +164,8 @@ specialiseBind bindN mod thisF q i bruijnN argStructure = let
     then [] <$ (specialiseTerm i bruijnN specF argShapes argStructure ≫= cacheSpec)
     else use bindSpecs ≫= \bs → MV.read bs bindN ≫= \bindspecs → use letSpecs ≫= \ls → do
       MV.modify bs (`setBit` i) unQ
+      cs ← use cachedSpecs
+      traceShowM (MV.length cs)
       use cachedSpecs ≫= \cs → MV.read cs unQ <&> (M.!? argShapes) ≫= \case
         Just reuse → [unQ] <$ MV.write ls i (Just (Spec reuse)) <* traceM ("re-use specialisation: " <> show i <> " ⇒ " <> show reuse)
         Nothing    → [unQ] <$ specialiseTerm i bruijnN specF argShapes argStructure
@@ -346,3 +349,4 @@ fuseMatch ty scrut branches d = -- simpleTerm scrut' ≫= \scrut →
 
 -- Try derive a Lens into an Arg
 -- getLens ∷ Term → Maybe Term = const Nothing
+-}

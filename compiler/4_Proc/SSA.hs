@@ -16,12 +16,14 @@
 -- IrieTree: { Ptr , Len , [ Tag , elemSize ] }
 -- IrieArray
 
+{-# LANGUAGE TemplateHaskell , TypeFamilies #-}
 module SSA where
 import Prim
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified CoreSyn
 import qualified ShowCore()
+import Data.Functor.Foldable.TH (makeBaseFunctor)
 
 type V = V.Vector
 
@@ -140,3 +142,6 @@ deriving instance Show FunctionDecl
 deriving instance Show Function
 deriving instance Show Type
 deriving instance Show Module
+
+makeBaseFunctor ''Type
+makeBaseFunctor ''Expr

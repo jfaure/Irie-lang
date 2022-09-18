@@ -36,6 +36,7 @@ rank (see e.g. [Gurevich 1983; Goerdt 1992; Goerdt and Seidl 1990; Hillebrand an
 Kanellakis 1996; Asperti 2015])
 
 Duality In action (2012 Paul Downen ; Zena M. Ariola)
+https://par.nsf.gov/servlets/purl/10300563
 
 The Abstract Calculus
 https://medium.com/@maiavictor/the-abstract-calculus-fe8c46bcf39c
@@ -214,3 +215,6 @@ http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.36.4961&rep=rep1&type=p
 
 elaborating dependent (co)pattern matching
 https://dl.acm.org/doi/10.1145/3236770
+
+Goto statement considered harmful
+https://homepages.cwi.nl/~storm/teaching/reader/Dijkstra68.pdf

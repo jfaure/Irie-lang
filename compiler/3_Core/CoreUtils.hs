@@ -123,8 +123,7 @@ expr2Ty _judgeBind e = case e of
  x → error $ "raw term cannot be a type: " ++ show x
 
 bind2Expr = \case
-  BindOK _isRec e   → e
-  LetBound _isRec e → e
+  BindOK n l _isRec e   → e
   BindOpt  _ _ e    → e
   x → error (show x)
 
@@ -280,7 +279,7 @@ test = invertMu 0 (startInvMu 0) (TyGround [THTyCon (THSumTy $ BSM.fromList [(0 
 testWrapper baseMuTy inv recBranch rollable = let ko = Right Nothing in case inv of
   Leaf _m             → Right (Just baseMuTy) --True
   InvMu this r parent → if r /= recBranch -- Avoid pointless work if testing against wrong branch
---then d_ (r , recBranch , this) (Right False)
+--then d_ (r , recBranch , this) (Right (Just baseMuTy))
   then ko
   else case {-d_ (recBranch , parent , this , rollable) $-} (this , rollable) of
     (TyGround g1 , TyGround grollable) → let
@@ -304,17 +303,20 @@ testWrapper baseMuTy inv recBranch rollable = let ko = Right Nothing in case inv
     _ → ko
 -- TODO TyVars (presumably only relevant for let-bindings)
 
--- TODO merge type joins: µc.[Cons {A , c & [Nil]}] ⇒ µc.[Nil | Cons {A , c}]
-eqTypesRec t1 t2 = go t1 t2 where
+eqTypesRec t1 t2 = -- trace ("eqtypes " <> prettyTyRaw t1 <> " ⇔ " <> prettyTyRaw t2) $
+  go t1 t2 where
   go (TyGround [THMuBound n]) (TyGround [THMu m _]) = m == n
 -- | merge via subtyping {[2.1 {A , [2.0]}] , µd.[2.0 | 2.1 {µc.[2.1 {A , c}] , d}]}
-  go (TyGround [THMu m _]) (TyGround [THTyCon THSumTy{}]) =
-    trace ("hack eqtypes " <> prettyTyRaw t1 <> " ⇔ " <> prettyTyRaw t2)
+  go (TyGround [THMu _ _]) (TyGround [THTyCon THSumTy{}]) =
+--  trace ("hack eqtypes " <> prettyTyRaw t1 <> " ⇔ " <> prettyTyRaw t2)
     True -- HACK (if we declare a mubound eq to a sumtype τ then the mubound must be unified with τ everywhere)
   go (TyGround [THMu m t1]) (TyGround [THMu n t2]) =
     trace ("eqµtypes? " <> show m <> " " <> show n <> " " <> prettyTyRaw t1 <> " =? " <> prettyTyRaw t2)
     $ t1 == (if m == n then t2 else mapType (\case { THMuBound x | x == n → THMuBound m ; x → x }) t2)
 -- TODO merge tys and propagate μ-rolls
 --go (TyGround [THTop]) t2 = trace (prettyTyRaw t1 <> " =? " <> prettyTyRaw t2) True
+
+  -- | HACK! merges thbounds
+  go (TyGround [THBound{}]) (TyGround [THBound{}]) = True
   go _ _ = -- trace (prettyTyRaw t1 <> " =? " <> prettyTyRaw t2) $
     t1 == t2
