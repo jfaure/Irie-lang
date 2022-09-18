@@ -18,7 +18,7 @@ tr t x = trace (prettyTyRaw t) x
 -- <a href="#Marker></a>
 -- <h1 id="Marker">There's a link to here!</h1>
 data Annotation
- = ANone | AArg IName | ABindName IName | AQBindName  QName | AQLabelName QName | AQFieldName QName -- Names
+ = ANone | AArg IName | ABindName IName | AQBindName QName | AQSpecName QName| AQLabelName QName | AQFieldName QName -- Names
  | AInstr | ALiteral | AType  | AAbs | AKeyWord | AExternType
 -- | ASrcLoc -- for clickable html
 
@@ -75,6 +75,7 @@ render flags = let
     in case a of
     ANone         → addColor (getColor a) b
     AArg i        → addColor (getColor a)  ("λ" <> fromString (show i) <> b)
+    AQSpecName  q → addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
     AQBindName  q → addColor (getColor a) $ case allNames <$> bindSource flags of
       Nothing  → "π(" <> (fromText (showRawQName q)) <> ")"
       Just nms → fromText $ fst (nms V.! modName q V.! unQName q)
@@ -270,7 +271,7 @@ pTerm = let
 
   LetSpecs ts t → "letSpecs:" <+> viaShow ts <> hardline <> pTerm t
 --Spec i args   → "Spec:" <+> viaShow i <+> nest 2 (sep (pTerm <$> args))
-  Spec i    → "(Spec:" <+> viaShow i <> ")"
+  Spec q    → "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
 
   x → error $ show x
 

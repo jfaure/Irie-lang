@@ -75,5 +75,3 @@ go1 z i = let
     True  ⇒ Yield (mul i i) False
     False ⇒ Done
   in ifThenElse (ge i 10) z (go2 z (add i 1) nextRet True)
-
-rr = {}

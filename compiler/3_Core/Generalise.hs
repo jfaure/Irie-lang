@@ -291,7 +291,7 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
       THSumTy     r → do
         branches ← BSM.traverseWithKey (goGuarded recVars pos) r
         let sumT = THSumTy (fst <$> branches) 
-            mT = TyGround [THTyCon sumT]
+--          mT = TyGround [THTyCon sumT]
         -- | ! HACK for prependToAll
 --      mwrap ← use hasRecs <&> \r → bitSet2IntList ((0 `setBit` 3)) <&> \m → (0 , m , mT , invertMu m (startInvMu m) mT)
         pure (sumT , {-mwrap ++-} concatMap snd (BSM.elems branches))

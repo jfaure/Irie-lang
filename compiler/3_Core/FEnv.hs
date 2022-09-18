@@ -90,25 +90,33 @@ mkSpec q body args = let
    , argShapes)
    = unzip3 ret
   solveArg ∷ Term → State Int ([Term] , [Term] , ArgShape)
-  solveArg = \case
+  solveArg arg = case arg of
+    Var (VQBind q) → pure ([] , [arg] , ShapeQBind q)
     Label l ars → traverse solveArg ars <&> \case
-      [] → ([] , [Label l []] , ShapeLabel l [])
+      [] → ([] , [arg] , ShapeLabel l []) -- lone label is like a constant VQBind
       (a : ars) → let
         go (u,r,s) (u',r',s') = (u ++ u' , [Label l (r ++ r')] , ShapeLabel l [s' , s])
         in foldl go a ars
-    rawArg      → gets identity ≫= \bruijn → modify (1+) $> ([rawArg] , [VBruijn bruijn] , ShapeNone)
+    rawArg         → gets identity ≫= \bruijn → modify (1+) $> ([rawArg] , [VBruijn bruijn] , ShapeNone)
   in do
---traceM (prettyTermRaw body)
---concat repackedArgs `forM` (traceM . prettyTermRaw)
   let rawSpec = App body (concat repackedArgs)
+  traceM "raw spec"
+  traceM (prettyTermRaw rawSpec)
   spec ← simpleTerm rawSpec
-  s ← addSpec (either modName identity q) argShapes bruijnN spec
-  pure (App (Spec s) (concat unstructuredArgs))
+  traceM "simple spec"
+  traceM (prettyTermRaw spec)
+  traceM ""
 
-inlineStructure ∷ QName → _ → [Term] → SimplifierEnv s Term
+  s ← addSpec (either modName identity q) argShapes bruijnN spec
+  -- TODO inline the spec again if we're wrapping more structure!
+  case unQName s of
+    0 → inlineSpec s <&> \f → App f (concat unstructuredArgs)
+    _ → pure (App (Spec s) (concat unstructuredArgs))
+
+inlineStructure ∷ QName → wrapCases → [Term] → SimplifierEnv s Term
 inlineStructure q cs args = use thisMod ≫= \mod → let
   unQ = unQName q
-  noInline = (Var (VQBind q))
+  noInline = App (Var (VQBind q)) args
   in do
   is ← inlineStack <<%= (`setBit` unQ)
   if mod /= modName q || (is `testBit` unQ)
@@ -153,19 +161,23 @@ simplifyBindings modIName nArgs nBinds bindsV = do
     , _branchLen   = 0
     }
 
+-- always inline?
+inlineSpec q = use specBound ≫= \sb → snd <$> MV.read sb (unQName q)
+
 traceSpecs ∷ Int → SimplifierEnv s ()
 traceSpecs nBinds = do
   sb ← use specBound
   sl ← use specsLen
-  [0..sl-1] `forM_` \i → MV.read sb i ≫= \(b , t) → traceM (show b <> " : " <> prettyTermRaw t)
+  traceM "-- Specs --"
+  [0..sl-1] `forM_` \i → MV.read sb i ≫= \(b , t) → traceM ("spec " <> show i <> " = Bruijn(" <> show b <> "). " <> prettyTermRaw t)
   sc ← use specCache
-  [0..nBinds-1] `forM_` \i → MV.read sc i ≫= \m → if M.null m then pure () else traceM $ show i <> " : " <> show m
+  [0..nBinds-1] `forM_` \i → MV.read sc i ≫= \m → if M.null m then pure () else traceM $ "π" <> show i <> " specs " <> show m
 
 simpleBind ∷ Int → SimplifierEnv s Bind
 simpleBind bindN = use cBinds ≫= \cb → MV.read cb bindN ≫= \b → do
   mod ← use thisMod
   self .= bindN
-  MV.write cb bindN (BindOpt (complement 0) emptyBitSet (Core (Var (VQBind (mkQName mod bindN))) tyBot)) -- used to generate VBind here
+  MV.write cb bindN (BindOpt (complement 0) emptyBitSet (Core (Var (VQBind (mkQName mod bindN))) tyBot))
 
   (new , isRec , l) ← case b of
     BindOK n l isRec body@(Core t ty) → if n /= 0 then pure (body , isRec , l)
@@ -187,19 +199,21 @@ simpleBind bindN = use cBinds ≫= \cb → MV.read cb bindN ≫= \b → do
 simpleTerm ∷ Term → SimplifierEnv s Term
 simpleTerm = RS.para $ \case
   VarF v → case v of
-    VArg i   → use argTable ≫= \at → MV.read at i
+    VArg i   → use argTable ≫= \at → MV.read at i -- ≫= \a → a <$ traceM (show i <> " β " <>  prettyTermRaw a) 
     VQBind i → pure (Var (VQBind i))
+    v        → pure (Var v) -- ext | foreign
+  SpecF q     → inlineSpec q
   AppF f args → case fst f of
     -- paramorphism catches Abs so we can setup β-reduction env before running f
     -- ! This assumes simpleTerm never changes argDefs
-    Abs ((Lam argDefs free ty , body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \(a,b,r) → r
+    Abs ((Lam argDefs free _ty , _body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \(_,_,r) → r
     _     → snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
---RecAppF f args → case fst f of
---  Abs (Lam argDefs free body ty) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \(a,b,r) → r
---  _     → snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
+  RecAppF f args → case fst f of
+    Abs ((Lam argDefs free _ty , _body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \(_,_,r) → r
+    _     → snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
   t → embed <$> sequence (fmap snd t)
 
-inBetaEnv ∷ [(Int , Type)] → BitSet → [Term] → SimplifierEnv s a → SimplifierEnv s (_ , _ , a)
+inBetaEnv ∷ [(Int , Type)] → BitSet → [Term] → SimplifierEnv s a → SimplifierEnv s ([(Int , Type)] , [Term] , a)
 inBetaEnv argDefs _free args go = let
   (resArgDefs , trailingArgs , betaReducable) = partitionThese (align argDefs args)
   in do
@@ -215,7 +229,7 @@ inBetaEnv argDefs _free args go = let
 -- Note. if some arg is substituted with a fn of itself (while deriving specialisations),
 -- do not β-reduce it there: Excessive calls to simpleTerm are incorrect
 foldAbs ∷ ABS → [Term] → SimplifierEnv s Term
-foldAbs (Lam argDefs free _ty , body) args = use argTable ≫= \aT → do
+foldAbs (Lam argDefs free _ty , body) args = do
   (resArgDefs , trailingArgs , bodyOpt) ← inBetaEnv argDefs free args (simpleTerm body)
   when (not (null resArgDefs)) (traceM $ "resArgDefs! " <> show resArgDefs)
   pure $ case trailingArgs of
@@ -224,15 +238,16 @@ foldAbs (Lam argDefs free _ty , body) args = use argTable ≫= \aT → do
 
 -- one-step fusion
 simpleApp ∷ Term → [Term] → SimplifierEnv s Term
-simpleApp f sArgs = case f of {-let sArgs = sequence args in f ≫= \case-}
-  App f2 args2             → simpleApp f2 (sArgs ++ args2) -- can try again
+simpleApp f sArgs = case f of
+  Instr i      → pure (simpleInstr i sArgs)
+  App f2 args2 → simpleApp f2 (sArgs ++ args2) -- can try again
 
   -- app-abs uncaught by para (was inlined) ⇒ need to resimplify body, which is why case&branch extraction is important
---Abs argDefs free body ty → foldAbs argDefs free body ty sArgs
+--Abs (Lam argDefs free ty , body) → foldAbs argDefs free body ty sArgs
+  Abs _ → error "" -- foldAbs argDefs free body ty sArgs
 
-  Instr i                  → pure (simpleInstr i sArgs)
 --Lens
-  Case caseId scrut → error $ show caseId
+--Case caseId scrut → error $ show caseId
   Match retT branches d | [scrut] ← sArgs → do
     -- regrettably the base functor doesn't realise Expr also contains Terms
     br ← branches `forM` \((Lam ars free ty , body)) → simpleTerm body <&> \body' → (Lam ars free ty , body')

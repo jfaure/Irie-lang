@@ -100,7 +100,7 @@ normaliseType handleExtern args ty = let
 
   normalisePiApp piArgs body tyArgs = let -- TODO check arg types match piArg types !
     pn = length piArgs ; an = length tyArgs
-    (ok , rest) = splitAt an piArgs
+    (ok , _rest) = splitAt an piArgs
     in if pn == an -- check if args are the same in recursive applications
     then let --self = Nothing --(,args) <$> this
       in normaliseT (IM.fromList (zipWith (\(i,_t) e → (i,e)) ok tyArgs)) body
