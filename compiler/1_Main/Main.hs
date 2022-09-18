@@ -139,6 +139,7 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
   when ("parseTree" `elem` printPass flags) (putStrLn (P.prettyModule parsed))
 
   (importsok , modResolver , modDeps) ← evalImports flags modIName resolver (setBit depStack modIName) (parsed ^. P.imports)
+  unless importsok (putStrLn ("failed some imports" ∷ Text))
   pure $ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule
 
 -- Judge the module and update the global resolver

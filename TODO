@@ -3,6 +3,7 @@
   * https://documentation.divio.com/
   * move to f2fs
 ## ?
+  * track branch freevars
   * η-expand primitives + Match ⇒ so all appearance have correct arity
   * Fusion (pap-spec etc..)
   * type application, esp. perfect tree
