@@ -41,6 +41,10 @@ data VName
  | VExt     IName -- forward references, primitives, imported names (incl mixfixwords)
  | VForeign HName -- opaque name resolved at linktime
 
+data Lam = Lam [(IName , Type)] BitSet Type -- arg inames, types, freevars, term, ty
+type ABS = (Lam , Term)
+
+-- for makeBaseFunctor to work we must make the fixpoints obvious: No mutual recursion
 data Term -- β-reducable (possibly to a type)
  = Var     !VName
  | Lit     !Literal
@@ -50,15 +54,15 @@ data Term -- β-reducable (possibly to a type)
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
- | Abs     [(IName , Type)] BitSet Term Type -- arg inames, types, freevars, term, ty
+ | Abs     ABS
  | App     Term [Term]    -- IName [Term]
 
  | Cons    (BSM.BitSetMap Term) -- (IM.IntMap Term)
- | Tuple   (V.Vector Term) -- Alternate version of Cons where indexes are sequential
+ | Tuple   (V.Vector Term)      -- Alternate version of Cons where indexes are sequential
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Term] --[Expr]
- | Match   Type (BSM.BitSetMap Expr) (Maybe Expr) -- Type is the return type
+ | Match   Type (BSM.BitSetMap ABS) (Maybe ABS) -- TODO use explicit scrut arg: bruijn η-expand unapplied Matches
 
  -----------------------------------------------
  -- Extra info built for/by simplification --
@@ -69,13 +73,10 @@ data Term -- β-reducable (possibly to a type)
  | LinAbs [(LiName , Bool , Type)] Term Type -- indicate if dups its arg
 
  | RecApp   Term [Term] -- direct recursion
- -- annotate where fixpoints are
- | RecLabel ILabel (V.Vector Int) [Expr]
- | RecMatch (BSM.BitSetMap (V.Vector Int , Expr)) (Maybe Expr)
 
  -- Named Specialised recursive fns can (mutually) recurse with themselves
  | LetSpecs [Term{-.Abs-}] Term
- | Spec IName -- spec number and the Bind it came from
+ | Spec QName -- mod = bind it came from , unQ = spec number
 
  -- Used to make new functions internally (esp. specialisations)
  | VBruijn IName
@@ -249,4 +250,5 @@ data BindSource = BindSource {
  , allNames        ∷ V.Vector (V.Vector (HName , Expr))
 }
 
+makeBaseFunctor ''Expr
 makeBaseFunctor ''Term

@@ -13,6 +13,7 @@
   * trim bisubs
 ## Top Priority
   * optimise over _<_ applications
+  * mutuals ⇒ rec over product
   * mixfix patterns; mixfix labels vs mixfix binds ≫ parse TT ≫ VExtern ≫ new VArg | VBruijns ≫ invert into case-tree
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * improve pipelining of Main to stop once requested work is done

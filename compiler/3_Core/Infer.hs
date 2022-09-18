@@ -146,8 +146,8 @@ generaliseBinds svEscapes svLeaked ms = use wip ≫= \wip' → ms `forM` \m → 
     (_ars , inferred) ← case naiveExpr of
       Core expr coreTy → (\(ars , ty) → (ars , Core expr ty)) <$> do -- generalise the type
         (args , ty , free) ← case expr of
-          Abs ars free _x _fnTy → pure (ars , coreTy , free) -- ? TODO why not free .|. freeVs
-          _                     → pure ([] , coreTy , freeVs)
+          Abs (Lam ars free _fnTy , _t) → pure (ars , coreTy , free) -- ? TODO why not free .|. freeVs
+          _                           → pure ([] , coreTy , freeVs)
         -- rec | mutual: if this bind : τ was used within itself then something bisubed with -τ
         _cast ← use bis ≫= \v → MV.read v recTVar <&> _mSub ≫= \case
           TyGround [] → BiEQ <$ MV.write v recTVar (BiSub ty (TyGround [])) -- not recursive / mutual
@@ -290,7 +290,7 @@ infer = let
       Core x ty → case args of
         []  → Core x ty
         args → let fnTy = prependArrowArgsTy argTVars ty
-          in Core (Abs (zip args argTVars) freeVars x fnTy) fnTy
+          in Core (Abs (Lam (zip args argTVars) freeVars fnTy , x)) fnTy
       Ty retTy → Ty $ case args of
         []   → retTy
         args → TyPi (Pi (zip args argTVars) retTy)
@@ -398,12 +398,12 @@ infer = let
         matchTy = TyGround $ mkTyArrow [scrutTy] retTy
         argAndTys  = zipWith zip args argTVars
         altsMap = let
-          addAbs ty (Core t _) args = Core (Abs args 0 t ty) ty
-          addAbs _ty PoisonExpr _ = PoisonExpr
+          addAbs ty (Core t _) args = (Lam args 0 ty , t)
+--        addAbs _ty PoisonExpr _ = Lam [] 0 Poison tyBot
           addAbs _ty e _ = error (show e)
           in BSM.fromList $ zip labels (zipWith3 addAbs retTys alts argAndTys)
     pure $ if isPoisonExpr `any` alts then PoisonExpr else
-      Core (Match retTy altsMap def) matchTy
+      Core (Match retTy altsMap Nothing) matchTy -- TODO def
 
   P.Lit l  → pure $ Core (Lit l) (TyGround [typeOfLit l])
 

@@ -138,7 +138,7 @@ emitFunction nm i args t ty = gets wipBinds ≫= \wip →
 cgCore ∷ p → Int → Text → CoreSyn.Expr → CGEnv s CGWIP
 cgCore wip i nm b = let
   in setTop True *> case b of
-  Core (Abs args free t _ty) ty → emitFunction nm i args t ty
+  Core (Abs ((Lam args free _ty) , t)) ty → emitFunction nm i args t ty
   Core t ty  → emitFunction nm i [] t ty
   PoisonExpr → panic $ "attempted to codegen a poison expr: " <> nm
 
@@ -166,23 +166,23 @@ cgExpr t = let
   App f args → setTop False *> cgApp f args
   RecApp f args → setTop False *> cgApp f args
 
-  RecLabel label fixPoints exprs → mdo
-    et  ← exprs `forM` \(Core t ty) → (,) <$> cgExpr t <*> ssaTy ty
-    exp ← gets expectedTy
-    let (es , ts) = unzip et
-        tagE   = Fin 32 (fromIntegral $ qName2Key label)
-        datas  = let
-          boxTy = exp -- V.fromList ts V.! fp
-          boxElem vals fp =
-            V.modify (\v → MV.modify v (Boxed boxTy) fp) vals
-          in V.foldl boxElem (V.fromList es) fixPoints
-        dataT  = TTuple (V.fromList ts)
-        sumVal = Struct dataT datas
+--RecLabel label fixPoints exprs → mdo
+--  et  ← exprs `forM` \(Core t ty) → (,) <$> cgExpr t <*> ssaTy ty
+--  exp ← gets expectedTy
+--  let (es , ts) = unzip et
+--      tagE   = Fin 32 (fromIntegral $ qName2Key label)
+--      datas  = let
+--        boxTy = exp -- V.fromList ts V.! fp
+--        boxElem vals fp =
+--          V.modify (\v → MV.modify v (Boxed boxTy) fp) vals
+--        in V.foldl boxElem (V.fromList es) fixPoints
+--      dataT  = TTuple (V.fromList ts)
+--      sumVal = Struct dataT datas
 --               BitCast dataT (Struct dataT datas)
-        ret = SumData mempty (LitE tagE) sumVal
-    pure $ case exp of
-      TPoly → ToPoly exp ret
-      _     → BitCast exp ret
+--      ret = SumData mempty (LitE tagE) sumVal
+--  pure $ case exp of
+--    TPoly → ToPoly exp ret
+--    _     → BitCast exp ret
   Label i tts            → _
   Match ty labels d      → _
   Cons  fields           → _
@@ -220,7 +220,7 @@ doCast cast term = case cast of
   CastOver asmIdx preCast (Core fn _) retTy → case term of
     RawFields ty fields → _
 
-emitMatchApp ∷ Expr → BSM.BitSetMap CoreSyn.Expr → w → CGEnv s Expr
+emitMatchApp ∷ Expr → BSM.BitSetMap ABS → w → CGEnv s Expr
 emitMatchApp (Arg i) alts d = do
   (arg , argT) ← gets argTable ≫= \at → MV.read at i
   tys ← case argT of
@@ -229,7 +229,7 @@ emitMatchApp (Arg i) alts d = do
       val = Extract (charPtr_t)  1 arg
   emitMatchApp (SumData tys tag val) alts d
 emitMatchApp (SumData sumTy tag val) alts d = let
-  emitBranch tagQ (Core (Abs ars _ body _) t) = gets argTable ≫= \at → gets thisMod ≫= \mod → let
+  emitBranch tagQ ((Lam ars _ _) , body) = gets argTable ≫= \at → gets thisMod ≫= \mod → let
     tag = if modName (QName tagQ) == mod then unQName (QName tagQ) else error "non local qname" -- HACK
     branchTy@(TStruct typedef subTys) = sumTy V.! tag
     val' = UnUnion tag branchTy val --BitCast branchTy val

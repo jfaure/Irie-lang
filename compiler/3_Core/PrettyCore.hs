@@ -189,7 +189,7 @@ pBind nm showTerm bind = pretty nm <> " = " <> case bind of
   Mutual m free isRec tvar tyAnn → "MUTUAL: " <> viaShow m <> viaShow isRec <> viaShow tvar <> viaShow tyAnn
   Queued → "Queued"
   BindOK n lbound isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
-    in (if lbound then "let" else "") <+> if showTerm then viaShow n <+> recKW <> pExpr expr else pExprType expr
+    in (if lbound then "let " else "") <> if showTerm then {-viaShow n <+>-} recKW <> pExpr expr else pExprType expr
 --LetBound isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
 --  in annotate AKeyWord "let " <> if showTerm then recKW <> pExpr expr else pExprType expr
   BindOpt complex specs expr → let
@@ -217,16 +217,19 @@ pTerm = let
     VQBind q   → annotate (AQBindName q) ""
     VExt i     → "E" <> viaShow i -- <> dquotes (toS $ (srcExtNames bindSrc) V.! i)
     VForeign i → "foreign " <> viaShow i
+  prettyLam ((Lam ars free ty) , term) = let
+    prettyArg (i , ty) = viaShow i
+    in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " ⇒ " <> pTerm term
   prettyFreeArgs x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
   prettyMatch caseTy ts d = let
 --  showLabel l t = indent 2 (prettyLabel (QName l)) <+> indent 2 (pExpr t)
-    showLabel l t = prettyLabel (QName l) <+> pExpr t
+    showLabel l t = prettyLabel (QName l) <+> prettyLam t
     in annotate AKeyWord "\\case " <> nest 2 ( -- (" : " <> annotate AType (pTy caseTy)) <> hardline
 --    hardline <> (vsep (BSM.foldrWithKey (\l k → (showLabel l k :)) [] ts))
       hardline <> (vsep (Prelude.foldr (\(l,k) → (showLabel l k :)) [] (BSM.toList ts)))
-      <> maybe "" (\catchAll → hardline <> ("_ ⇒ " <> pExpr catchAll)) d
+      <> maybe "" (\catchAll → hardline <> ("_ ⇒ " <> prettyLam catchAll)) d
       )
   in \case
 --Hole → " _ "
@@ -234,9 +237,7 @@ pTerm = let
   Var     v → pVName v
   VBruijn b → "VBruijn" <> viaShow b
   Lit     l → annotate ALiteral $ parens (viaShow l)
-  Abs ars free term ty → let
-    prettyArg (i , ty) = viaShow i
-    in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " ⇒ " <> pTerm term
+  Abs l → prettyLam l
   BruijnAbs n free body → parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> pTerm body
 --   <> ": " <> annotate AType (pTy ty)
   RecApp f args → parens (annotate AKeyWord "recApp" <+> pTerm f <+> sep (pTerm <$> args))
@@ -269,7 +270,7 @@ pTerm = let
 
   LetSpecs ts t → "letSpecs:" <+> viaShow ts <> hardline <> pTerm t
 --Spec i args   → "Spec:" <+> viaShow i <+> nest 2 (sep (pTerm <$> args))
-  Spec i    → "Spec:" <+> viaShow i
+  Spec i    → "(Spec:" <+> viaShow i <> ")"
 
   x → error $ show x
 
