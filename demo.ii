@@ -68,10 +68,10 @@ bool2N = \case
 -- go2 scruts (next s) ⇒ indicate structure needs both args
 go2 z i next s = case next s of
   Done      ⇒ go1 z i
-  Yield x s ⇒ go2 (add z x) i next s
+  Yield x S ⇒ go2 (add z x) i next S
 
 go1 z i = let
-  nextRet x = case x of
+  nextRet = \case
     True  ⇒ Yield (mul i i) False
     False ⇒ Done
   in ifThenElse (ge i 10) z (go2 z (add i 1) nextRet True)
