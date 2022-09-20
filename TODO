@@ -4,8 +4,6 @@
   * move to f2fs
 ## ?
   * track branch freevars
-  * η-expand primitives + Match ⇒ so all appearance have correct arity
-  * Fusion (pap-spec etc..)
   * type application, esp. perfect tree
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)

@@ -47,6 +47,7 @@ data Type
  | TGMPInt
  | TGMPFloat
  | TVoid -- no ty
+ deriving Show
 
 data FunctionDecl = FunctionDecl {
    name  ∷ Text
@@ -60,18 +61,19 @@ data Function = Function {
  , body   ∷ Expr
 }
 
-data Callable
+data Callable expr
  = LocalFn IName
  | Prim    PrimInstr
- | Op      Expr  Type -- Arg or PAp or result of Switch
+ | Op      expr  Type -- Arg or PAp or result of Switch
+ deriving (Functor , Traversable , Foldable , Show)
 data Expr
  = Arg    IName
  | Local  IName -- Dup
  | Extern IName
  | LitE   Literal
 
- | ECallable Callable
- | Call      Callable [Expr]
+ | ECallable (Callable Expr)
+ | Call      (Callable Expr) [Expr]
  | Switch    Expr [(Int , Expr)] Expr -- scrut alts default
  | PAp Expr  [Expr]
 
@@ -99,6 +101,7 @@ data Expr
  | Let [(IName , Expr , Type)] Expr -- assign Args
  | Alloca Type -- for gmp
  | Void -- top | {}
+ deriving Show
 
 sumTag_t = TPrim (PrimInt 32)
 
@@ -106,11 +109,11 @@ builtins = V.fromList [
  ]
 
 type Off = Expr
-type ROS = V ROSField
-data ROSField
+type ROS = V (ROSField Expr)
+data ROSField expr
  = ROSFieldMem { fieldOffset ∷ Off  , sumOffset ∷ Maybe Off } -- record of sum
- | ROSFloats   { fieldFloat  ∷ Expr , sumTag ∷ Maybe Expr }
- deriving Show
+ | ROSFloats   { fieldFloat  ∷ expr , sumTag ∷ Maybe expr }
+ deriving (Show , Functor , Foldable , Traversable)
 
 -----------------------
 -- Generation: MkSSA --
@@ -136,11 +139,8 @@ data CGWIP
   | WIPTy    IName -- index to typedef map
   deriving Show
 
-deriving instance Show Expr
-deriving instance Show Callable
 deriving instance Show FunctionDecl
 deriving instance Show Function
-deriving instance Show Type
 deriving instance Show Module
 
 makeBaseFunctor ''Type

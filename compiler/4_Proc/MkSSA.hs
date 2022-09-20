@@ -37,18 +37,18 @@ mkSSAModule coreMod@(JudgedModule modIName modName nArgs bindNames pFields pLabe
     at ← MV.new nArgs
     v  ← V.unsafeThaw (WIPCore <$> V.zip bindNames coreBinds)
     st ← (cgBind `mapM` [0 .. nBinds-1]) `execStateT` CGState {
-      wipBinds = v
-    , typeDef  = 0
+      wipBinds    = v
+    , typeDef     = 0
     , wipTypeDefs = []
-    , top = True
-    , argTable = at
-    , locCount = 0
-    , muDefs   = mempty
-    , expectedTy = TVoid
-    , thisMod = modIName
+    , top         = True
+    , argTable    = at
+    , locCount    = 0
+    , muDefs      = mempty
+    , expectedTy  = TVoid
+    , thisMod     = modIName
     }
     fns ← V.unsafeFreeze (wipBinds st)
-    pure $ Module modName (V.reverse $ V.fromList $ wipTypeDefs st) mempty (wip2Fn <$> fns)
+    pure $ Module modName (V.reverse $ V.fromList (wipTypeDefs st)) mempty (wip2Fn <$> fns)
 
 typeOfInstr i = TPrim (PrimInt 32)
 

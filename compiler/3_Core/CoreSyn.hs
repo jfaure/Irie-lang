@@ -12,7 +12,7 @@ import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
 import Data.Functor.Foldable.TH (makeBaseFunctor)
 
-global_debug = False
+global_debug = True
 
 type ExtIName  = Int -- VExterns
 type BiSubName = Int -- index into bisubs
@@ -62,7 +62,7 @@ data Term -- β-reducable (possibly to a type)
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Term] --[Expr]
- | Match   Term Type (BSM.BitSetMap ABS) (Maybe ABS) -- TODO use explicit scrut arg: bruijn η-expand unapplied Matches
+ | Match   Term Type (BSM.BitSetMap ABS) (Maybe ABS)
 
  -----------------------------------------------
  -- Extra info built for/by simplification --
@@ -91,7 +91,7 @@ data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr
 type Uni     = Int  -- a universe of types
 type TyMinus = Type -- input  types (lattice meet ∧) eg. args
 type TyPlus  = Type -- output types (lattice join ∨)
-type GroundType = [TyHead]
+type GroundType = [THead Type]
 tyTop = TyGround []
 tyBot = TyGround []
 
@@ -121,16 +121,17 @@ instance Eq Type where
   TyVars j [] == TyVar i     = j == (0 `setBit` i)
   _           == _           = False
 
-data TyCon -- Type constructors
- = THArrow    [TyMinus] TyPlus   -- degenerate case of THPi (bot → top is the largest)
- | THTuple    (V.Vector  TyPlus) -- ordered form of THproduct
- | THProduct  (BSM.BitSetMap TyPlus)
- | THSumTy    (BSM.BitSetMap TyPlus)
- | THSumOpen  (BSM.BitSetMap TyPlus) TyPlus -- [li : τi | (lj : pj for lj ∉ li)]
- deriving Eq
+data TyCon t -- Type constructors
+ = THArrow    [TyMinus] t   -- degenerate case of THPi (bot → top is the largest)
+ | THTuple    (V.Vector t) -- ordered form of THproduct
+ | THProduct  (BSM.BitSetMap t)
+ | THSumTy    (BSM.BitSetMap t)
+ | THSumOpen  (BSM.BitSetMap t) t -- [li : τi | (lj : pj for lj ∉ li)]
+ deriving (Eq , Functor , Foldable , Traversable)
 
 -- Head constructors in the profinite distributive lattice of types
-data TyHead
+type TyHead = THead Type
+data THead ty
  = THPrim     PrimType
  | THExt      IName -- ix to builtins (use getExprType to get Type from Expr) -- rm
  | THAlias    QName
@@ -138,16 +139,16 @@ data TyHead
  | THPoison         -- marker for inconsistencies found during inference
  | THTop | THBot
 
- | THFieldCollision Type Type | THLabelCollision Type Type
- | THTyCon !TyCon -- BitSet cache contained tvars?
+ | THFieldCollision ty ty | THLabelCollision ty ty
+ | THTyCon !(TyCon Type) -- BitSet cache contained tvars?
 
- | THBi Int Type -- Π A → F(A) polymorphic type to be instantiated on each use
- | THMu Int Type -- µx.F(x) recursive type is instantiated as Π A → A & F(A)`
-                 -- recursive types must be strictly covariant (avoid curry paradox)
+ | THBi Int ty -- Π A → F(A) polymorphic type to be instantiated on each use
+ | THMu Int ty -- µx.F(x) recursive type is instantiated as Π A → A & F(A)`
+               -- recursive types must be strictly covariant (avoid curry paradox)
 
  | THBound   IName  -- Π-bound tvar; instantiating Π-binder involves sub with fresh tvars
  | THMuBound IName  -- µ-bound tvar (must be guarded and covariant)
- deriving Eq
+ deriving (Eq , Functor , Traversable , Foldable)
 
 data Expr
  = Core     Term Type
@@ -252,3 +253,4 @@ data BindSource = BindSource {
 
 makeBaseFunctor ''Expr
 makeBaseFunctor ''Term
+makeBaseFunctor ''Type

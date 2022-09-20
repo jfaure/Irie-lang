@@ -41,7 +41,6 @@ data FEnv s = FEnv
  , _self        ∷ IName
  , _structure   ∷ [CaseID] -- passed down to indicate we're building a fusable
  , _argTable    ∷ MV.MVector s Term
- , _useArgTable ∷ Bool   -- toggle to beta-reduce or not
  , _activeBetas ∷ BitSet
  , _specStack   ∷ BitSet -- ensure not to inline a spec into itself
  , _bindStack   ∷ BitSet
@@ -182,7 +181,6 @@ simplifyBindings modIName nArgs nBinds bindsV = do
     , _self        = -1
     , _structure   = []
     , _argTable    = argSubs
-    , _useArgTable = False
     , _activeBetas = emptyBitSet
 
     , _specStack   = emptyBitSet
@@ -232,14 +230,12 @@ inBetaEnv ∷ [(Int , Type)] → BitSet → [Term] → SimplifierEnv s Term → 
 inBetaEnv argDefs _free args go = let
   (resArgDefs , trailingArgs , betaReducable) = partitionThese (align argDefs args)
   in do
-  svUseAt ← useArgTable <<.= True
   aT ← use argTable
   sv ← betaReducable `forM` \((i,_ty) , arg) → ((i,) <$> MV.read aT i) <* MV.write aT i arg
   svB ← activeBetas <<%= (.|. intList2BitSet (fst . fst <$> betaReducable))
   r ← go <&> \case
     Abs (_lam , t) → t -- rm the abs wrapper (para can't do it preemptively)
     x → x
-  useArgTable .= svUseAt
   activeBetas .= svB
   sv `forM_` \(i , arg) → MV.write aT i arg
   pure (resArgDefs , trailingArgs , r)
@@ -256,7 +252,7 @@ bruijnEnv n _free args go = do
   (bruijnArgs .= svBruijn)
   pure r
 
--- Note. if we beta-reduce an arg with some fn of itself (while deriving specialisations)
+-- Note. if we β-reduce an arg with some fn of itself (while deriving specialisations)
 -- must not β-reduce it again: ie. Excessive calls to simpleTerm are incorrect. para helps guarantee this
 simpleTerm ∷ Term → SimplifierEnv s Term
 simpleTerm = RS.para go where

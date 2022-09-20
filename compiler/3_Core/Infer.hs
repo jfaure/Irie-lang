@@ -10,7 +10,7 @@ import TTCalculus ( ttApp )
 import Errors
 import TypeCheck ( check )
 import TCState
-import DesugarParse ( matches2TT, patterns2TT )
+import DesugarParse ( matches2TT )
 import Externs ( typeOfLit, readField, readLabel, readParseExtern, readQParseExtern )
 import Mixfix ( solveMixfixes )
 import Generalise ( generalise )
@@ -31,9 +31,6 @@ judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
 --nLabels = M.size (pm ^. P.parseDetails . P.labels)
 --normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
 --normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
---fromRevListN n l = V.create $ do
---  v ← MV.new n
---  v <$ zipWithM (\i e → MV.write v i e) [n-1,n-2..0] l
   in runST $ do
     wip'      ← MV.replicate nBinds Queued
     bis'      ← MV.new 64
@@ -272,7 +269,6 @@ infer = let
       else PoisonExpr <$ (errors . scopeFails %= (ScopeLetBound b :))
     P.VExtern i    → use thisMod ≫= \mod → use externs ≫= \e → use openModules ≫= \open →
       handleExtern (readParseExtern open mod e i)
-    _ → _
 
   P.ForeignF i tt   → tt <&> \case
     PoisonExpr → PoisonExpr
@@ -383,10 +379,11 @@ infer = let
     argTVars ← getArgTVars `mapM` args
     splits   ← sequence branches
     def      ← sequenceA catchAll
+    Core scrut gotScrutTy ← pscrut
     let retTys  = tyOfExpr <$> maybe splits (:splits) def
         retTy   = mergeTypeList False retTys -- ? TODO why is this a negative merge
 
-        altTys  = map (\argTVars → TyGround [THTyCon $ THTuple (V.fromList argTVars)]) argTVars
+        altTys   = map (\argTVars → TyGround [THTyCon $ THTuple (V.fromList argTVars)]) argTVars
         scrutSum = BSM.fromList (zip labels altTys)
 --      scrutSumD = maybe scrutSum (\d → (qName2Key (mkQName 0 0) , tyOfExpr d) : scrutSum) def
         scrutTy = TyGround [THTyCon $ case def of
@@ -399,8 +396,8 @@ infer = let
           addAbs _ty e _ = error (show e)
           in BSM.fromList $ zip labels (zipWith3 addAbs retTys splits (zipWith zip args argTVars))
 
-    Core scrut gotScrutTy ← pscrut
     (BiEQ , retT) ← biUnifyApp matchTy [gotScrutTy] -- TODO biret
+
     pure $ if isPoisonExpr `any` splits then PoisonExpr else
       Core (Match scrut retT altsMap Nothing) retT -- TODO default
 

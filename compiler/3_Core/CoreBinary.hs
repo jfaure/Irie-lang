@@ -1,3 +1,4 @@
+{-# Language FlexibleInstances #-}
 module CoreBinary where
 import MixfixSyn
 import CoreSyn
@@ -9,7 +10,7 @@ deriving instance Generic VName
 deriving instance Generic QName
 deriving instance Generic Term
 deriving instance Generic LensOp
-deriving instance Generic TyCon
+deriving instance Generic (TyCon Type)
 deriving instance Generic TyHead
 deriving instance Generic Type
 deriving instance Generic Bind
@@ -48,7 +49,7 @@ instance Binary QName
 instance Binary Lam
 instance Binary Term
 instance Binary LensOp
-instance Binary TyCon
+instance Binary (TyCon Type)
 instance Binary TyHead
 instance Binary Type
 instance Binary Bind

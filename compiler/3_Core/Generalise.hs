@@ -1,9 +1,8 @@
 -- Biunfication records constraints , generalisation makes sense of them
 module Generalise (generalise,) where
 import BiUnify ( instantiate )
-import Control.Lens -- ( iforM_, use, (<<%=), (<<.=), (%=), (.=), over, Field1(_1), Field2(_2) )
-import CoreSyn ( global_debug, BiSub(BiSub), TyCon(THTuple, THArrow, THProduct, THSumTy , THSumOpen), TyHead(THMu, THBound, THMuBound, THTyCon, THPrim, THExt, THTop, THBot, THBi),
-      Type(TyGround, TyVar, TyVars) )
+import Control.Lens
+import CoreSyn
 import CoreUtils --( mergeTVars, mapType, invertMu, mergeTVar, mergeTypeList, mergeTypes, nullType, partitionType, startInvMu, testWrapper, tyLatticeEmpty )
 import PrettyCore ( number2CapLetter, prettyTyRaw )
 import TCState
@@ -11,6 +10,7 @@ import qualified BitSetMap as BSM ( elems, traverseWithKey )
 import qualified Data.Vector.Mutable as MV ( length, modify, read, replicate, write )
 import qualified Data.Text as T -- ( intercalate )
 import qualified Data.Vector as V ( Vector, (!), cons, constructN, imapM, imapM_, length, take, toList, unsafeFreeze )
+import Data.Functor.Foldable
 
 -- Simplification removes (or unifies with another type) as many tvars as possible
 -- Generalisation allows polymorphic types to be instantiated with fresh tvars on each use.
@@ -132,7 +132,10 @@ judgeVars nVars escapees _leaks recursives coocs = V.constructN nVars $ \prevSub
     -- but in v+w+ or v-w- no shortcuts: "unify v with w" means "replace occurs of v with w"
     -- avoid unifying rec and non-rec vars (recMask .&.)
     vPvM = case bitSet2IntList $ (recMask .&. collectCoocVs (pVars ++ mVars)) `clearBit` v of
-      w : _ → if vIsRec then SubVar w else Remove
+
+      -- TODO cannot shortcut to Remove because:
+      -- v subvar w; > remove w because coocs with x; but v doesn't and thus was removed without trace !
+      w : _ → if True || vIsRec then SubVar w else Remove
       _     → Generalise
     -- Aggressively merge recursive vars even if only partial co-occurence
     vPvMRec = let partialRecCoocs = complement prevTVs .&. recMask .&. foldr (.|.) 0 (pVars ++ mVars) `clearBit` v
@@ -252,8 +255,7 @@ subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
       let hasMu (TyGround t) = any (\case { THMuBound{} → True ; _ → False }) t
           hasMu _ = False
 
-      if null grounds || hasMu vars -- TODO maybe not good enough since vars can contain groundtypes
-        then pure vars
+      if null grounds {- || hasMu vars -} then pure vars
         else checkRec vs recs $ case vars of
           -- TODO if typemerge mu bound m & t , bubble t upwards to outer occurences of m
 --        TyGround [THMuBound m] → trace ("!drop μ-merge " <> show m <> ": " <> prettyTyRaw (mergeTypeList pos grounds)) vars
@@ -347,7 +349,7 @@ substTypeMerge pos loops guarded ty =  let
     THBi n t → instantiate pos n t ≫= substGuarded pos  -- a generalised let-bound function
 --  THMu m t → instantiate 0 (TyGround [THMu m t]) ≫= substGuarded pos
     THMu m t → substGuarded pos (TyGround [THMu m t])
-    x → error $ show x --pure [x]
+    x → error $ show x
   in do
   vs ← bitSet2IntList tvars `forM` \x → mergeTVar x <$> substTypeVar pos x loops guarded
   ts ← substTyHead `mapM` others

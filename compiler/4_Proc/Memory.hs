@@ -26,9 +26,9 @@ data SSAMemOps e
  | MCons        [e]             -- merge args
  | MGetRetMem                   -- Sz → Ptr
 
-serialise   ∷ V ROSField → Expr
+serialise   ∷ V (ROSField Expr) → Expr
 serialise   ros = _
-unserialise ∷ Expr → V ROSField
+unserialise ∷ Expr → V (ROSField Expr)
 unserialise mem = _
 
 memOp2SSA ∷ SSAMemOps e → SSA.CGEnv s Expr

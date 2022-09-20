@@ -61,6 +61,7 @@ sum = cata \case
 r = sum (map (add 1) (enumFromTo 5 10))
 -}
 
+{-
 bool2N = \case
   True  ⇒ 1
   False ⇒ 0
@@ -74,8 +75,10 @@ g1 z i = let
     True  ⇒ @Yield (mul i i) False
     False ⇒ @Done
   in ifThenElse (ge i 10) z (g2 z (add i 1) nextRet True)
+-}
 
---foldr1 f l = case l of
---  Cons x xs ⇒ case xs of
---    Nil ⇒ x
---    Cons y ys ⇒ f x (foldr1 f xs)
+-- Only changed Case to be always applied..
+foldr1 f l = case l of
+  Cons x xs ⇒ case xs of
+    Nil ⇒ x
+    Cons y ys ⇒ f x (foldr1 f xs)

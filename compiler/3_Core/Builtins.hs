@@ -1,7 +1,7 @@
 -- Builtins: the interface to compiler primitives is a (hardcoded) standard importable module
--- * the Prelude supplies mixfixes and more convenient access to many primitives
--- * construct a vector of primitives
--- * supply a (Map HName IName) to resolve names to indexes
+-- ! the Prelude supplies mixfixes and more convenient access to these primitives
+-- * constructs a vector of primitives
+-- * supplys a (Map HName IName) to resolve names to indexes
 module Builtins (primBinds , primMap , typeOfLit) where
 import Prim
 import CoreSyn
@@ -9,8 +9,10 @@ import qualified Data.Map.Strict as M ( (!?), fromList )
 import qualified Data.Vector as V ( Vector, fromList )
 import qualified BitSetMap as BSM
 
-mkExtTy x = [THExt x]
+mkExtTy x  = [THExt x]
 getPrimIdx = (primMap M.!?)
+
+getPrimTy ∷ HName → IName
 getPrimTy nm = case getPrimIdx nm of
   Nothing → panic $ "panic: badly setup primtables; " <> nm <> " not in scope"
   Just i  → i
@@ -18,9 +20,10 @@ getPrimTy nm = case getPrimIdx nm of
 primMap = M.fromList $ zipWith (\(nm,_val) i → (nm,i)) primTable [0..]
 primBinds ∷ V.Vector (HName , Expr) = V.fromList primTable
 
+primType2Type x = Ty (TyGround [THPrim x])
 primTable ∷ [(HName , Expr)]
 primTable = concat
-  [ (\(nm , x)         → (nm , Ty $ TyGround [THPrim x]) )                 <$> primTys
+  [ (\(nm , x)         → (nm , primType2Type x)) <$> primTys
   , boolLabel
   , let tys2TyHead  (args , t) = TyGround $ mkTyArrow (TyGround . mkExtTy <$> args) (TyGround $ mkExtTy t) in
     (\(nm , (i , tys)) → (nm , Core (Instr i) (tys2TyHead tys)))           <$> primInstrs
@@ -31,15 +34,16 @@ primTable = concat
 
 -- | Predicates need to return labels if they want to benefit from case-fusion and short-circuiting
 boolLabel ∷ [(HName , Expr)]
-boolLabel = let
-  trueLabel  = mkQName 0 1 -- 0.1
-  falseLabel = mkQName 0 0 -- 0.0
-  trueLabelT  = (unQName trueLabel  , TyGround [THTyCon (THTuple mempty)])
-  falseLabelT = (unQName falseLabel , TyGround [THTyCon (THTuple mempty)])
-  in [ ("BoolL" , Ty (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT , falseLabelT]))]))
-     , ("True"  , Core (Label trueLabel  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
-     , ("False" , Core (Label falseLabel mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
-     ]
+boolLabel =
+  [ ("BoolL" , Ty (TyGround [boolL]))
+  , ("True"  , Core (Label trueLabel  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
+  , ("False" , Core (Label falseLabel mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
+  ]
+trueLabel  = mkQName 0 1 -- 0.1
+falseLabel = mkQName 0 0 -- 0.0
+trueLabelT  = (unQName trueLabel  , TyGround [THTyCon (THTuple mempty)])
+falseLabelT = (unQName falseLabel , TyGround [THTyCon (THTuple mempty)])
+boolL       = THTyCon (THSumTy (BSM.fromList [trueLabelT , falseLabelT]))
 
 primTys ∷ [(HName , PrimType)] =
   [ ("Bool"    , PrimInt 1)
@@ -58,6 +62,7 @@ primTys ∷ [(HName , PrimType)] =
   , ("CStruct" , PrimCStruct)
   ]
 
+--b = boolL
 [i, bi, b, f, c, ia, str, set , i64 , dirp , dirent , cstruct] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64" , "DIR*" , "dirent*" , "CStruct"]
 
 --substPrimTy i = THPrim $ primTyBinds V.! i
@@ -77,7 +82,7 @@ mkTHTuple vs = THTyCon $ THProduct $ BSM.fromList (zip (qName2Key . mkQName 0 <$
 mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
 mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (TyGround . singleton <$> args) (TyGround $ [retTy])
 
-instrs ∷ [(HName , (PrimInstr , [TyHead]))] = [
+instrs ∷ [(HName , (PrimInstr , GroundType))] = [
 --[ ("addOverflow" , (AddOverflow , mkTHArrow [TyGround [THExt i] , TyGround []] (TyGround [])))
 --, ("unlink"      , (Unlink , mkTyArrow [[THExt str] , mkTHArrow [THExt c,THExt str] (THExt str)] [THExt str]))
 --, ("link"        , (Link , mkTHArrow [THExt c] (THExt str)))
@@ -102,7 +107,17 @@ instrs ∷ [(HName , (PrimInstr , [TyHead]))] = [
 
   , ("readFile"  , (ReadFile  , mkTHArrow [THExt str] (THExt str)))
   , ("writeFile" , (WriteFile , mkTHArrow [THExt str] (THExt str)))
+
+  , ("leL"     , (NumInstr (PredInstr LECmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("geL"     , (NumInstr (PredInstr GECmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("ltL"     , (NumInstr (PredInstr LTCmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("gtL"     , (NumInstr (PredInstr GTCmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("eqL"     , (NumInstr (PredInstr EQCmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("neL"     , (NumInstr (PredInstr NEQCmp) , mkTHArrow [iTy , iTy]    boolL))
+  , ("boolORL" ,  (NumInstr (PredInstr OR )   , mkTHArrow [boolL, boolL] boolL))
+  , ("boolANDL", (NumInstr (PredInstr AND )   , mkTHArrow [boolL, boolL] boolL))
   ]
+iTy = THPrim (PrimInt 32)
 
 primInstrs ∷ [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("Arrow" , (TyInstr Arrow  , ([set,set] , set)))
@@ -128,7 +143,7 @@ primInstrs ∷ [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("fadd"  , (NumInstr (FracInstr FAdd  ) , ([f, f] , f) ))
   , ("fsub"  , (NumInstr (FracInstr FSub  ) , ([f, f] , f) ))
   , ("fmul"  , (NumInstr (FracInstr FMul  ) , ([f, f] , f) ))
---, ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , f) ))
+  , ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , b) ))
   , ("le"    , (NumInstr (PredInstr LECmp ) , ([i, i] , b) ))
   , ("ge"    , (NumInstr (PredInstr GECmp ) , ([i, i] , b) ))
   , ("lt"    , (NumInstr (PredInstr LTCmp ) , ([i, i] , b) ))

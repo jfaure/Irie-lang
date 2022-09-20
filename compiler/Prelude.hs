@@ -3,7 +3,7 @@ module Prelude
  ( module Protolude , module Data.Align , module Data.These
  -- unicode
  , module Control.Applicative.Unicode, module Control.Monad.Unicode, module Data.Bool.Unicode, module Data.Eq.Unicode, module Data.Function.Unicode, module Data.List.Unicode, module Data.Monoid.Unicode, module Data.Ord.Unicode, module Data.String.Unicode, module Numeric.Natural.Unicode, module Prelude.Unicode
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , (≫=) , (=≪))
+ , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , (≫=) , (=≪) , fromRevListN)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -40,6 +40,10 @@ type String = [Char]
 type IName  = Int
 type ModuleIName = Int
 type HName  = Text
+
+fromRevListN n l = V.create $ do
+  v ← MV.new n
+  v <$ zipWithM (\i e → MV.write v i e) [n-1,n-2..0] l
 
 --error (s ∷ String) = panic $ toS s
 fromJust = fromMaybe (panic "fromJust")
