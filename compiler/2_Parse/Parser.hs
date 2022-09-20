@@ -23,6 +23,7 @@ import Control.Lens ( (^.), use, (%%=), (<%=), (<<%=), (%=), (%~), (.=), Field1(
 import qualified Data.Map.Strict as M ( Map, (!?), elems, empty, lookup, size, insert, insertLookupWithKey, insertWith )
 import qualified Data.Set as S ( fromList, member )
 import qualified Data.Text as T ( all, any, append, concat, null, snoc, empty )
+import DesugarParse (mkCase)
 --import qualified Text.Megaparsec.Debug as DBG
 
 -- debug fns
@@ -515,9 +516,9 @@ tt = anyTT
             pos ← L.indentLevel
             unless (pos == lvl) (fail "not final '_' pattern")
             reservedChar '_' *> caseAlt
-          pure (Match scrut alts catchAll)
+          pure (Case scrut (mkCase alts) catchAll)
     splitBraces = let catchAll = optional (reservedChar ';' *> reservedChar '_' *> caseAlt)
-      in braces (split `sepBy` reservedChar ';' ≫= \alts → Match scrut alts <$> catchAll)
+      in braces (split `sepBy` reservedChar ';' ≫= \alts → Case scrut (mkCase alts) <$> catchAll)
     in splitBraces <|> splitIndent
   match = do
     scrut ← tt

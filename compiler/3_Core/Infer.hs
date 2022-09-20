@@ -16,10 +16,11 @@ import Mixfix ( solveMixfixes )
 import Generalise ( generalise )
 
 import Control.Lens ( (^.), use, (<<%=), (<<.=), (%=), (.=), Field2(_2) )
-import Data.List ( unzip4, zipWith3 )
+import Data.List ( unzip3, zipWith3 )
 import qualified Data.Vector as V ( Vector, (!), fromList, fromListN, unsafeFreeze )
 import qualified Data.Vector.Mutable as MV ( MVector, modify, new, read, replicate, write )
 import qualified BitSetMap as BSM ( fromList, fromListWith, singleton )
+import Data.Functor.Foldable
 
 judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
   modName   = pm ^. P.moduleName
@@ -253,15 +254,15 @@ infer = let
      x          → error (show x)
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
- in \case
-  P.LetBinds ls tt → do
+ in cata $ \case
+  P.LetBindsF ls tt → do
     svScope ← bindsInScope <<%= (.|. ls)
-    inTT ← infer tt
+    inTT ← tt
     bitSet2IntList ls `forM_` regeneralise True
     bindsInScope .= svScope
     pure inTT
-  P.WildCard → pure $ Core Question (TyGround [])
-  P.Var v → case v of -- vars : lookup in appropriate environment
+  P.WildCardF → pure $ Core Question (TyGround [])
+  P.VarF v → case v of -- vars : lookup in appropriate environment
     P.VLocal l     → use argVars ≫= (`MV.read` l) <&> \t → Core (Var (VArg l)) (TyVar t)
     P.VBind b      → use bindsInScope ≫= \scoped → if scoped `testBit` b
       then use bindWIP ≫= \(this , _) → when (this == b) (bindWIP . _2 .= True) *> judgeLocalBind b ≫= \case
@@ -273,15 +274,15 @@ infer = let
       handleExtern (readParseExtern open mod e i)
     _ → _
 
-  P.Foreign i tt   → infer tt <&> \case
+  P.ForeignF i tt   → tt <&> \case
     PoisonExpr → PoisonExpr
     ty         → Core (Var (VForeign i)) (fromMaybe (error $ "not a type: " <> show ty) (tyExpr ty))
-  P.ForeignVA i tt → infer tt <&> \case
+  P.ForeignVAF i tt → tt <&> \case
     PoisonExpr → PoisonExpr
     ty         → Core (Var (VForeign i)) (fromMaybe (error $ "not a type: " <> show ty) (tyExpr ty))
 
   -- TODO shouldn't be tyAnn here if it is ignored
-  P.Abs (P.FnDef _hNm _letRecT _mf freeVars matches _tyAnn) → let
+  P.AbsF (P.FnDef _hNm _letRecT _mf freeVars matches _tyAnn) → let
     (argsAndTys , tt) = matches2TT matches
     (args , _argAnns)  = unzip argsAndTys
     in do
@@ -296,8 +297,8 @@ infer = let
         args → TyPi (Pi (zip args argTVars) retTy)
       t → t
 
-  P.App fTT argsTT → infer fTT ≫= \f → (infer `mapM` argsTT) ≫= inferApp (-1) f
-  P.Juxt srcOff juxt → let
+  P.AppF fTT argsTT → fTT ≫= \f → sequence argsTT ≫= inferApp (-1) f
+  P.JuxtF srcOff juxt → let
     inferExprApp srcOff = \case
       ExprApp _fE [] → panic "impossible: empty expr App"
       ExprApp fE argsE → inferExprApp srcOff fE ≫= \case
@@ -310,20 +311,20 @@ infer = let
       core → pure core
     -- if y then (letIn x else y) ⇒ need to extract [x else y] from sub-juxtstream
 --  juxt' = concatMap (\case { P.LetBinds ls (P.Juxt o2 inE) → inE ; t → [t] }) juxt
-    in solveMixfixes <$> (infer `mapM` juxt) ≫= inferExprApp srcOff
+    in solveMixfixes <$> sequence juxt ≫= inferExprApp srcOff
 
-  P.Cons construct → use externs ≫= \ext → do
+  P.ConsF construct → use externs ≫= \ext → do
     let (fieldsLocal , rawTTs) = unzip construct
         fields = qName2Key . readField ext <$> fieldsLocal
-    exprs ← infer `mapM` rawTTs
+    exprs ← sequence rawTTs
     let (tts , tys) = unzip $ (\case { Core t ty → (t , ty) ; x → error $ show x }) <$> exprs
         mkFieldCol = \a b → TyGround [THFieldCollision a b]
         retTycon = THProduct (BSM.fromListWith mkFieldCol $ zip fields tys)
     pure $ if isPoisonExpr `any` exprs
       then PoisonExpr
-      else Core (Cons (BSM.fromList $ zip fields tts)) (TyGround [THTyCon retTycon])
+      else Core (Prod (BSM.fromList $ zip fields tts)) (TyGround [THTyCon retTycon])
 
-  P.TTLens o tt fieldsLocal maybeSet → use externs ≫= \ext → infer tt ≫= \record → let
+  P.TTLensF o tt fieldsLocal maybeSet → use externs ≫= \ext → tt ≫= \record → let
       fields = readField ext <$> fieldsLocal
       recordTy = tyOfExpr record
       mkExpected ∷ Type → Type
@@ -335,13 +336,13 @@ infer = let
 
       -- LeafTy → Record → Record & { path : LeafTy }
       -- + is right for mergeTypes since this is output
-      P.LensSet x  → infer x <&> \case
+      P.LensSet x  → x <&> \case
 --      new@(Core _newLeaf newLeafTy) → Core (TTLens f fields (LensSet new)) (mergeTypes True objTy (mkExpected newLeafTy))
         leaf@(Core _newLeaf newLeafTy) →  -- freshBiSubs 1 ≫= \[i] → bisub recordTy (mkExpected TyVar i)
           Core (TTLens object fields (LensSet leaf)) (mergeTypes True objTy (mkExpected newLeafTy))
         _ → PoisonExpr
 
-      P.LensOver x → infer x ≫= \fn → do
+      P.LensOver x → x ≫= \fn → do
          (ac , rc , outT , rT) ← freshBiSubs 3 ≫= \[inI , outI , rI] → let
            inT = TyVar inI ; outT = TyVar outI
            in do -- need 3 fresh TVars since we cannot assume anything about the "fn" or the "record"
@@ -363,30 +364,26 @@ infer = let
     PoisonExpr → pure PoisonExpr
     t → error $ "record type must be a term: " <> show t
 
-  P.Label localL tts → use externs ≫= \ext → (infer `mapM` tts) <&> judgeLabel (readLabel ext localL)
+  P.LabelF localL tts → use externs ≫= \ext → sequence tts <&> judgeLabel (readLabel ext localL)
 
   -- Sumtype declaration
-  P.Gadt alts → use externs ≫= \ext → do
+  P.GadtF alts → use externs ≫= \ext → do
     let getTy = fromMaybe (TyGround [THPoison]) . tyExpr
         mkLabelCol a b = TyGround [THLabelCollision a b]
     sumArgsMap ← alts `forM` \(l , tyParams , _gadtSig@Nothing) → do
-      params ← tyParams `forM` \t → getTy <$> infer t
+      params ← tyParams `forM` \t → getTy <$> t
       pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
     pure $ Ty $ TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap]
 
-  P.Match pscrut alts catchAll → use externs ≫= \ext → let
-    -- * desugar all patterns in the alt fns (whose args are parameters of the label)
-    -- * ret type is a join of all the labels
-    desugarFns = \(lname , _free , pats , tt) → let
-      (argsAndTys , e) = patterns2TT pats tt
-      (args , _argAnns) = unzip argsAndTys
-      in (qName2Key (readLabel ext lname) , args , _ , e)
-    (labels , args , _ , branches) = unzip4 (desugarFns <$> alts)
+  P.CaseF pscrut caseSplits catchAll → use externs ≫= \ext → let
+    (labelsRaw , argsAndTys , branches) = unzip3 caseSplits
+    labels = qName2Key . readLabel ext <$> labelsRaw
+    args   = map fst <$> argsAndTys
     in do
     argTVars ← getArgTVars `mapM` args
-    alts     ← infer `mapM` branches
-    def  ← sequenceA (infer <$> catchAll)
-    let retTys  = tyOfExpr <$> maybe alts (:alts) def
+    splits   ← sequence branches
+    def      ← sequenceA catchAll
+    let retTys  = tyOfExpr <$> maybe splits (:splits) def
         retTy   = mergeTypeList False retTys -- ? TODO why is this a negative merge
 
         altTys  = map (\argTVars → TyGround [THTyCon $ THTuple (V.fromList argTVars)]) argTVars
@@ -400,13 +397,13 @@ infer = let
           addAbs ty (Core t _) args = (Lam args 0 ty , t)
 --        addAbs _ty PoisonExpr _ = Lam [] 0 Poison tyBot
           addAbs _ty e _ = error (show e)
-          in BSM.fromList $ zip labels (zipWith3 addAbs retTys alts (zipWith zip args argTVars))
+          in BSM.fromList $ zip labels (zipWith3 addAbs retTys splits (zipWith zip args argTVars))
 
-    Core scrut gotScrutTy ← infer pscrut
+    Core scrut gotScrutTy ← pscrut
     (BiEQ , retT) ← biUnifyApp matchTy [gotScrutTy] -- TODO biret
-    pure $ if isPoisonExpr `any` alts then PoisonExpr else
+    pure $ if isPoisonExpr `any` splits then PoisonExpr else
       Core (Match scrut retT altsMap Nothing) retT -- TODO default
 
-  P.Lit l  → pure $ Core (Lit l) (TyGround [typeOfLit l])
+  P.LitF l  → pure $ Core (Lit l) (TyGround [typeOfLit l])
 
-  x → error $ "not implemented: inference of: " <> show x
+  x → error $ "not implemented: inference of: " <> show (embed $ P.Question <$ x)

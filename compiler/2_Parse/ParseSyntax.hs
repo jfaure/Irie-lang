@@ -7,6 +7,7 @@ import MixfixSyn ( MFWord, MixfixDef, ModIName )
 import Control.Lens ( (^.), makeLenses )
 import Text.Megaparsec.Pos ( Pos )
 import qualified Data.Map.Strict as M ( Map )
+import Data.Functor.Foldable.TH (makeBaseFunctor)
 
 type FName        = IName -- record  fields
 type LName        = IName -- sumtype labels
@@ -61,9 +62,9 @@ data LetRecT = Let | Rec | LetOrRec
 data TTName
  = VLocal  IName
  | VBind   IName | VExtern IName -- TODO rm both since don't understand scopes
- | VToResolve QName -- scope (let-bind / record) found in
+-- | VToResolve QName -- scope (let-bind / record) found in
 
-data LensOp a = LensGet | LensSet a | LensOver a deriving Show
+data LensOp a = LensGet | LensSet a | LensOver a deriving (Show , Functor , Foldable , Traversable)
 data DoStmt  = Sequence TT | Bind IName TT -- | Let
 data TT -- Type | Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
@@ -84,7 +85,8 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Cons   [(FName , TT)] -- can be used to type itself
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
- | Match  TT [(LName , FreeVars , [Pattern] , TT)] (Maybe TT)
+-- | Match  TT [(LName , FreeVars , [Pattern] , TT)] (Maybe TT)
+ | Case   TT [(LName , [(IName , Maybe TT)] , TT)] (Maybe TT) -- label , fnargs , body
  | List   [TT]
  | LetBinds BitSet TT -- marker for let-block / opened Module
 
@@ -122,6 +124,7 @@ data ParseState = ParseState {
 makeLenses ''ParseState
 makeLenses ''ParseDetails
 makeLenses ''Module
+makeBaseFunctor ''TT
 
 showL ind = Prelude.concatMap $ (('\n' : ind) <>) . show
 prettyModule m = show (m^.moduleName) <> " {\n"

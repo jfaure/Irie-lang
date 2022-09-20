@@ -57,7 +57,7 @@ data Term -- β-reducable (possibly to a type)
  | Abs     ABS
  | App     Term [Term]    -- IName [Term]
 
- | Cons    (BSM.BitSetMap Term) -- (IM.IntMap Term)
+ | Prod    (BSM.BitSetMap Term) -- (IM.IntMap Term)
  | Tuple   (V.Vector Term)      -- Alternate version of Cons where indexes are sequential
  | TTLens  Term [IField] LensOp
 

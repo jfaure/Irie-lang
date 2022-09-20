@@ -244,7 +244,7 @@ pTerm = let
     PartialAppF extraTs fn args → "PartialApp " <> viaShow extraTs <> parens (fn <> fillSep args)
     InstrF   p → annotate AInstr (prettyInstr p)
     CastF  i t → parens (viaShow i) <> enclose "<" ">" (viaShow t)
-    ConsF    ts → let
+    ProdF    ts → let
       doField (field , val) = prettyField (QName field) <> ".=" <> val
       in enclose "{ " " }" (hsep $ punctuate ";" (doField <$> BSM.toList ts))
     LabelF   l []   → "@" <> prettyLabel l

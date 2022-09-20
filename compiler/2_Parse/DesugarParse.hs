@@ -1,11 +1,18 @@
-module DesugarParse (matches2TT , patterns2TT) where
-import Prim
+module DesugarParse (mkCase , matches2TT , patterns2TT) where
 import ParseSyntax
-import CoreSyn (Term(Instr))
-import Data.List (findIndex)
+import Data.List (unzip4)
 
 type FnArg = (IName , Maybe TT) -- arg and maybe type sig
 type Body  = TT
+
+mkCase ∷ [(LName , FreeVars , [Pattern] , TT)] → [(LName , [FnArg] , TT)]
+mkCase alts = let
+  desugarFns = \(lname , _free , pats , tt) → let
+    (argsAndTys , e) = patterns2TT pats tt -- [Pattern] → Term → ([FnArg] , Term)
+--  (args , _argAnns) = unzip argsAndTys
+--  in (qName2Key (readLabel ext lname) , args , _ , e)
+    in (lname , argsAndTys , e)
+  in desugarFns <$> alts
 
 matches2TT ∷ NonEmpty FnMatch → ([FnArg] , Body)
 matches2TT matches = foldl1 addCase ((\(FnMatch pats e) → patterns2TT pats e) <$> matches)
@@ -48,7 +55,7 @@ convPat = \case
     -- t is the term returned by this case expression
     in \t → case pat of
     PWildCard      → t -- pcomp names the arg but it's never used
-    PLabel l pats  → Match (thisArg) [(l , emptyBitSet , pats , t)] Nothing
+    PLabel l pats  → Case thisArg (mkCase [(l , emptyBitSet , pats , t)]) Nothing
     PLit lit       → _ -- LitEq lit thisArg t
     PTuple  fields → let
     -- Note the convention that negative numbers indicate tuple indexing
