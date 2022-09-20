@@ -374,36 +374,38 @@ infer = let
       pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
     pure $ Ty $ TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap]
 
-  P.Match alts catchAll → use externs ≫= \ext → let
+  P.Match pscrut alts catchAll → use externs ≫= \ext → let
     -- * desugar all patterns in the alt fns (whose args are parameters of the label)
     -- * ret type is a join of all the labels
     desugarFns = \(lname , _free , pats , tt) → let
       (argsAndTys , e) = patterns2TT pats tt
       (args , _argAnns) = unzip argsAndTys
       in (qName2Key (readLabel ext lname) , args , _ , e)
-    (labels , args , _ , exprs) = unzip4 $ (desugarFns <$> alts)
+    (labels , args , _ , branches) = unzip4 (desugarFns <$> alts)
     in do
     argTVars ← getArgTVars `mapM` args
-    alts ← infer `mapM` exprs
+    alts     ← infer `mapM` branches
     def  ← sequenceA (infer <$> catchAll)
-    let retTys  = tyOfExpr <$> (maybeToList def ++ alts)
+    let retTys  = tyOfExpr <$> maybe alts (:alts) def
         retTy   = mergeTypeList False retTys -- ? TODO why is this a negative merge
 
         altTys  = map (\argTVars → TyGround [THTyCon $ THTuple (V.fromList argTVars)]) argTVars
         scrutSum = BSM.fromList (zip labels altTys)
 --      scrutSumD = maybe scrutSum (\d → (qName2Key (mkQName 0 0) , tyOfExpr d) : scrutSum) def
-        scrutTy = case def of
-          Nothing → TyGround [THTyCon $ THSumTy scrutSum]
-          Just t  → TyGround [THTyCon $ THSumOpen scrutSum (tyOfExpr t)]
+        scrutTy = TyGround [THTyCon $ case def of
+          Nothing → THSumTy scrutSum
+          Just t  → THSumOpen scrutSum (tyOfExpr t)]
         matchTy = TyGround $ mkTyArrow [scrutTy] retTy
-        argAndTys  = zipWith zip args argTVars
         altsMap = let
           addAbs ty (Core t _) args = (Lam args 0 ty , t)
 --        addAbs _ty PoisonExpr _ = Lam [] 0 Poison tyBot
           addAbs _ty e _ = error (show e)
-          in BSM.fromList $ zip labels (zipWith3 addAbs retTys alts argAndTys)
+          in BSM.fromList $ zip labels (zipWith3 addAbs retTys alts (zipWith zip args argTVars))
+
+    Core scrut gotScrutTy ← infer pscrut
+    (BiEQ , retT) ← biUnifyApp matchTy [gotScrutTy] -- TODO biret
     pure $ if isPoisonExpr `any` alts then PoisonExpr else
-      Core (Match retTy altsMap Nothing) matchTy -- TODO def
+      Core (Match scrut retT altsMap Nothing) retT -- TODO default
 
   P.Lit l  → pure $ Core (Lit l) (TyGround [typeOfLit l])
 

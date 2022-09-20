@@ -184,7 +184,7 @@ cgExpr t = let
 --    TPoly → ToPoly exp ret
 --    _     → BitCast exp ret
   Label i tts            → _
-  Match ty labels d      → _
+--Match ty labels d      → _
   Cons  fields           → _
   TTLens tt _fields lens → cgExpr tt
   x → error $ "MkSSA: not ready for term: " <> show x
@@ -203,8 +203,8 @@ cgApp f ars = let
       (eT    , TPoly) → FromPoly eT r
       (a     , b    ) → r
   in case f of
-  Match ty alts d | [a] ← ars → cgExpr a ≫= \scrut →
-    emitMatchApp scrut alts d
+--Match ty alts d | [a] ← ars → cgExpr a ≫= \scrut →
+--  emitMatchApp scrut alts d
 --RecMatch alts d | [a] ← ars → cgExpr a ≫= \scrut →
 --  emitMatchApp scrut alts d
   Instr i → Call (Prim i) <$> (cgExpr `mapM` ars)

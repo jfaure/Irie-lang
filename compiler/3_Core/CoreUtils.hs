@@ -118,13 +118,13 @@ expr2Ty _judgeBind e = case e of
 -- Var (VBind i) → pure [THRecSi i []]
    Var (VArg x)  → pure $ TyVar x --[THVar x] -- TODO ?!
 -- App (Var (VBind fName)) args → pure [THRecSi fName args]
-   x → error $ "raw term cannot be a type: " ++ show e
+   _ → error $ "raw term cannot be a type: " ++ show e
  PoisonExpr → pure $ TyGround [THPoison]
  x → error $ "raw term cannot be a type: " ++ show x
 
 bind2Expr = \case
-  BindOK n l _isRec e   → e
-  BindOpt  _ _ e    → e
+  BindOK _ _ _isRec e → e
+  BindOpt  _ _ e      → e
   x → error (show x)
 
 ------------------------

@@ -13,6 +13,8 @@
   * make freevars explicit in let-binds so their types make sense
   * trim bisubs
 ## Top Priority
+  * foldr1 broken (nested cases?)
+  * cata defined with let doesn't generalise (is recursive let-bound problematic?)
   * optimise over _<_ applications
   * mutuals ⇒ rec over product
   * mixfix patterns; mixfix labels vs mixfix binds ≫ parse TT ≫ VExtern ≫ new VArg | VBruijns ≫ invert into case-tree
@@ -20,7 +22,6 @@
   * improve pipelining of Main to stop once requested work is done
   * predicates should return a Label
   * fix let-bind scopes (let-bound names are in global scope)
-  * cata defined with let doesn't generalise (is recursive let-bound problematic?)
 ## Parse
   * allow tabs instead of spaces
   * Pattern guards

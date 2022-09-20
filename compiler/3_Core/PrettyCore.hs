@@ -11,6 +11,7 @@ import Data.Text.Lazy.Builder as TLB
 import Prettyprinter
 import Prettyprinter.Render.Util.SimpleDocTree
 import Prettyprinter.Internal as P
+import Data.Functor.Foldable hiding (Cons)
 
 tr t x = trace (prettyTyRaw t) x
 
@@ -210,17 +211,14 @@ pExpr = let pos = True in \case
   e → viaShow e
 
 pTerm = let
-  parensAbs f = case f of { Abs{} → parens ; _ → identity }
-  parensApp f = case f of { App{} → parens ; _ → identity }
   pVName = \case
     VArg i     → annotate (AArg i)       ""
---  VBind i    → "VBind" <> viaShow i -- error $ "not a QBind: " <> show i --annotate (ABindName i)  ""
     VQBind q   → annotate (AQBindName q) ""
     VExt i     → "E" <> viaShow i -- <> dquotes (toS $ (srcExtNames bindSrc) V.! i)
     VForeign i → "foreign " <> viaShow i
   prettyLam ((Lam ars free ty) , term) = let
     prettyArg (i , ty) = viaShow i
-    in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " ⇒ " <> pTerm term
+    in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " ⇒ " <> term
   prettyFreeArgs x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
@@ -232,48 +230,39 @@ pTerm = let
       hardline <> (vsep (Prelude.foldr (\(l,k) → (showLabel l k :)) [] (BSM.toList ts)))
       <> maybe "" (\catchAll → hardline <> ("_ ⇒ " <> prettyLam catchAll)) d
       )
-  in \case
---Hole → " _ "
-  Question → " ? "
-  Var     v → pVName v
-  VBruijn b → "VBruijn" <> viaShow b
-  Lit     l → annotate ALiteral $ parens (viaShow l)
-  Abs l → prettyLam l
-  BruijnAbs n free body → parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> pTerm body
---   <> ": " <> annotate AType (pTy ty)
-  RecApp f args → parens (annotate AKeyWord "recApp" <+> pTerm f <+> sep (pTerm <$> args))
-  App (Match caseTy ts d) args → sep ((\t → (parensApp t) (pTerm t)) <$> args) <+> " > " <+> prettyMatch caseTy ts d
-  App f args    → parens ((parensAbs f) (pTerm f) <+> nest 2 (sep (pTerm <$> args)))
-  PartialApp extraTs fn args → "PartialApp " <> viaShow extraTs <> parens (pTerm fn <> fillSep (pTerm <$> args))
-  Instr   p → annotate AInstr (prettyInstr p)
-  Cast  i t → parens (viaShow i) <> enclose "<" ">" (viaShow t)
-
-  Cons    ts → let
-    doField (field , val) = prettyField (QName field) <> ".=" <> pTerm val
-    in enclose "{ " " }" (hsep $ punctuate ";" (doField <$> BSM.toList ts))
-  Label   l []   → "@" <> prettyLabel l
-  Label   l t    → parens $ "@" <> prettyLabel l <+> hsep (parens . pTerm <$> t)
---RecLabel l i t → prettyLabel l <> parens (viaShow i) <> "@" <> hsep (parens . pExpr <$> t)
-  Match caseTy ts d → prettyMatch caseTy ts d
-  Case caseID scrut → parens $ "Case" <> viaShow caseID <+> pTerm scrut
---RecMatch ts d → let
---  showLabel l (i,t) = prettyLabel (QName l) <> "(" <> viaShow i<> ") ⇒ " <> pE' "   " t
---  in clMagenta "\\recCase " <> "\n      "
---    <> T.intercalate "\n      " (IM.foldrWithKey (\l k → (showLabel l k :)) [] ts) <> "\n     _ " <> maybe "Nothing" pET d <> "\n"
-
---List    ts → "[" <> (T.concatMap pE ts) <> "]"
-  TTLens r target ammo → let
-    pLens = \case
-      LensGet          → " . get "
-      LensSet  tt      → " . set "  <> parens (pExpr tt)
-      LensOver cast tt → " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr tt)
-    in pTerm r <> " . " <> hsep (punctuate "." $ prettyField <$> target) <> pLens ammo
-
-  LetSpecs ts t → "letSpecs:" <+> viaShow ts <> hardline <> pTerm t
---Spec i args   → "Spec:" <+> viaShow i <+> nest 2 (sep (pTerm <$> args))
-  Spec q    → "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
-
-  x → error $ show x
+  ppTermF = \case
+  --Hole → " _ "
+    QuestionF → " ? "
+    VarF     v → pVName v
+    VBruijnF b → "B" <> viaShow b
+    LitF     l → annotate ALiteral $ parens (viaShow l)
+    AbsF l     → prettyLam l
+    BruijnAbsF n free body → parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
+    RecAppF f args → parens (annotate AKeyWord "recApp" <+> f <+> sep args)
+    MatchF arg caseTy ts d → arg <+> " > " <+> prettyMatch caseTy ts d
+    AppF f args    → parens (f <+> nest 2 (sep args))
+    PartialAppF extraTs fn args → "PartialApp " <> viaShow extraTs <> parens (fn <> fillSep args)
+    InstrF   p → annotate AInstr (prettyInstr p)
+    CastF  i t → parens (viaShow i) <> enclose "<" ">" (viaShow t)
+    ConsF    ts → let
+      doField (field , val) = prettyField (QName field) <> ".=" <> val
+      in enclose "{ " " }" (hsep $ punctuate ";" (doField <$> BSM.toList ts))
+    LabelF   l []   → "@" <> prettyLabel l
+    LabelF   l t    → parens $ "@" <> prettyLabel l <+> hsep (parens <$> t)
+    CaseF caseID scrut → parens $ "Case" <> viaShow caseID <+> scrut
+  --List    ts → "[" <> (T.concatMap pE ts) <> "]"
+    TTLensF r target ammo → let
+      pLens = \case
+        LensGet          → " . get "
+        LensSet  tt      → " . set "  <> parens (pExpr tt)
+        LensOver cast tt → " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr tt)
+      in r <> " . " <> hsep (punctuate "." $ prettyField <$> target) <> pLens ammo
+    SpecF q    → "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
+  parensApp f args = parens $ parens f <+> nest 2 (sep args)
+  in para $ \case
+    -- parens if necessary
+    AppF f args | Abs{} ← fst f → parensApp (snd f) (snd <$> args)
+    x → ppTermF (fmap snd x)
 
 prettyInstr = \case
   NumInstr i → case i of

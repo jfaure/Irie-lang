@@ -172,7 +172,8 @@ blockComment = let -- still need to count newlines
   in void $ skipBlockComment "{-" "-}" <|> skipBlockComment "(*" "*)"
 
 lexeme, lexemen ∷ Parser a → Parser a -- parser then whitespace
-[lexeme, lexemen] = L.lexeme <$> [sc , scn]
+lexeme  = L.lexeme sc
+lexemen = L.lexeme scn
 symbol ∷ Text → Parser Text --verbatim strings
 symbol = L.symbol sc
 
@@ -424,7 +425,7 @@ tt = anyTT
    [ reserved "_" *> (addAnonArgName ≫= addUnderscoreArg)
    , reserved "?" $> WildCard
    , letIn
-   , (reserved "\\case" <|> reserved "λcase") *> caseSplits
+   , (reserved "\\case" <|> reserved "λcase") *> lambdaCase
    , (reservedChar '\\' <|> reservedChar 'λ') *> lambda
    , reserved "do" *> doExpr
    , reserved "case"   *> match
@@ -486,7 +487,12 @@ tt = anyTT
                    <> show i <> " < " <> show ref
       _  → indentedItems ref scn doStmt (void (char ')'))
 
-  caseSplits = let
+  -- Wrap in Abs
+  lambdaCase = addAnonArgName ≫= \scrut →
+     (\caseExpr → Abs (FnDef "lambda" Let Nothing 0 (FnMatch [PArg scrut] caseExpr :| []) Nothing))
+       <$> caseSplits (Var (VLocal scrut))
+
+  caseSplits scrut = let
     caseAlt = (reserved "=>" <|> reserved "⇒") *> tt
     split = do
       svIndent
@@ -509,14 +515,14 @@ tt = anyTT
             pos ← L.indentLevel
             unless (pos == lvl) (fail "not final '_' pattern")
             reservedChar '_' *> caseAlt
-          pure (Match alts catchAll)
+          pure (Match scrut alts catchAll)
     splitBraces = let catchAll = optional (reservedChar ';' *> reservedChar '_' *> caseAlt)
-      in braces (split `sepBy` reservedChar ';' ≫= \alts → Match alts <$> catchAll)
+      in braces (split `sepBy` reservedChar ';' ≫= \alts → Match scrut alts <$> catchAll)
     in splitBraces <|> splitIndent
   match = do
-    scrut  ← tt
+    scrut ← tt
     reserved "of"
-    (`App` [scrut]) <$> caseSplits
+    caseSplits scrut
 
   letIn = let
     pletBinds _letStart (letRecT ∷ LetRecT) = {- newLetNest $-} do

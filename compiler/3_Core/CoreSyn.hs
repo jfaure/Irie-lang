@@ -62,7 +62,7 @@ data Term -- β-reducable (possibly to a type)
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Term] --[Expr]
- | Match   Type (BSM.BitSetMap ABS) (Maybe ABS) -- TODO use explicit scrut arg: bruijn η-expand unapplied Matches
+ | Match   Term Type (BSM.BitSetMap ABS) (Maybe ABS) -- TODO use explicit scrut arg: bruijn η-expand unapplied Matches
 
  -----------------------------------------------
  -- Extra info built for/by simplification --
@@ -172,7 +172,7 @@ data Bind -- elements of the bindmap
  -- | Marker for an inferred type waiting for generalisation (waiting for all mutual binds to be inferred)
  | Mutual { naiveExpr ∷ Expr , freeVs ∷ BitSet , recursive ∷ Bool , tvar ∷ IName , tyAnn ∷ Maybe Type }
 
- -- | Function already partially generalised, must be re-generalised once all free-vars are resolved
+-- | Function already partially generalised, must be re-generalised once all free-vars are resolved
 -- | LetBound { recursive ∷ Bool , naiveExpr ∷ Expr }
  | BindKO -- failed type inference
  | BindOK { optLevel ∷ Int , letBound ∷ Bool , recursive ∷ Bool , naiveExpr ∷ Expr } -- isRec

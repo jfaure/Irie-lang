@@ -22,11 +22,11 @@ addCase (accArgs , acc) (nextArgs , nextAcc) = let
     in App abs (Var . VLocal . fst <$> accArgs)
   in case acc of
   -- Need to merge cases when possible
-  App (Match ls Nothing) [Var (VLocal arg1)] → case nextAcc of
-    App (Match l2s d) [Var (VLocal arg2)] | findIndex ((==arg1) . fst) accArgs == findIndex ((==arg2) . fst) nextArgs → let
-      patchedL2s = fmap (subArgs nextArgs) <$> l2s
-      in (accArgs , App (Match (ls ++ patchedL2s) d) [Var (VLocal arg1)])
-    _ → (accArgs , Match ls (Just $ subArgs nextArgs nextAcc))
+--Match (Var (VLocal arg1)) ls Nothing  → case nextAcc of
+--  (Match (Var (VLocal arg2)) l2s d) | findIndex ((==arg1) . fst) accArgs == findIndex ((==arg2) . fst) nextArgs → let
+--    patchedL2s = fmap (subArgs nextArgs) <$> l2s
+--    in (accArgs , Match (Var VLocal arg1) (ls ++ patchedL2s) d)
+--  _ → (accArgs , Match ls (Just (subArgs nextArgs nextAcc)))
   tt → d_ ("redundant Pattern match: " <> show nextAcc ∷ Text) (accArgs , tt) -- we are already matching unconditionally..
 
 -- The Maybe function returned by convPat serves to convert nested Pattern Apps into nested cases
@@ -48,7 +48,7 @@ convPat = \case
     -- t is the term returned by this case expression
     in \t → case pat of
     PWildCard      → t -- pcomp names the arg but it's never used
-    PLabel l pats  → App (Match [(l , emptyBitSet , pats , t)] Nothing) [thisArg]
+    PLabel l pats  → Match (thisArg) [(l , emptyBitSet , pats , t)] Nothing
     PLit lit       → _ -- LitEq lit thisArg t
     PTuple  fields → let
     -- Note the convention that negative numbers indicate tuple indexing

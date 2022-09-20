@@ -84,7 +84,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Cons   [(FName , TT)] -- can be used to type itself
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
- | Match  [(LName , FreeVars , [Pattern] , TT)] (Maybe TT)
+ | Match  TT [(LName , FreeVars , [Pattern] , TT)] (Maybe TT)
  | List   [TT]
  | LetBinds BitSet TT -- marker for let-block / opened Module
 

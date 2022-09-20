@@ -65,13 +65,17 @@ bool2N = \case
   True  ⇒ 1
   False ⇒ 0
 
--- go2 scruts (next s) ⇒ indicate structure needs both args
-go2 z i next s = case next s of
-  Done      ⇒ go1 z i
-  Yield x S ⇒ go2 (add z x) i next S
+g2 z i next s = case next s of
+  Done      ⇒ g1 z i
+  Yield x S ⇒ g2 (add z x) i next S
 
-go1 z i = let
+g1 z i = let
   nextRet = \case
-    True  ⇒ Yield (mul i i) False
-    False ⇒ Done
-  in ifThenElse (ge i 10) z (go2 z (add i 1) nextRet True)
+    True  ⇒ @Yield (mul i i) False
+    False ⇒ @Done
+  in ifThenElse (ge i 10) z (g2 z (add i 1) nextRet True)
+
+--foldr1 f l = case l of
+--  Cons x xs ⇒ case xs of
+--    Nil ⇒ x
+--    Cons y ys ⇒ f x (foldr1 f xs)
