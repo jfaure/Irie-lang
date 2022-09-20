@@ -35,3 +35,16 @@ insertLeftmost new = para $ \case -- para pairs the original tree with results o
   NodeF i ((_orig, recur) : tts)) → -- use orignal tree except for leftmost node
     let (origs, _recurs) = unzip tts in Node i (recur : origs)
       -- tts :: [(Tree Int, Tree Int)]
+
+collatzLength :: Int -> Int
+collatzLength = let
+  algebra Nil        = 0
+  algebra (Cons _ x) = x + 1
+  elgotCoalgebra 1 = Left 1
+  elgotCoalgebra n = Right $ Cons n $ if n `mod` 2 == 0 then (div n 2) else (3 * n + 1)
+  in elgot algebra elgotCoalgebra
+
+cata  :: (Base t (Identity a) -> a) -> t -> a
+para  :: (Base t (t, a) -> a) -> t -> a
+histo :: (Base t (Cofree (Base t) a) -> a) -> t -> a
+-- All are comonads

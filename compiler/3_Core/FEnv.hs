@@ -12,8 +12,17 @@ import BitSetMap as BSM
 import Data.Functor.Foldable as RS
 import Control.Lens
 import Data.List (unzip3)
+import Control.Comonad.Env as Env
+import Control.Comonad.Cofree as Cofree
 
-debug_fuse = True
+-- error: specialising on VArg before β-reduction of fused branch-Abs
+
+-- Match = fuse > β-reduce branch > more fusion?
+-- case  → fuse ||| structure wrap
+-- QBind → inline (specialise) > wrapping Match
+-- ! case-fusion creates more β-reduction
+
+debug_fuse = False
 
 -- The only optimisation worth doing is fusing Match with Labels
 -- Most of the complexity here addresses fusion accross fn (partial) applications
@@ -49,8 +58,8 @@ data FEnv s = FEnv
  , _bindStack   ∷ BitSet
 
  , _specCache   ∷ MV.MVector s (M.Map [ArgShape] IName) -- Bind → Spec cache
- -- v INamed fresh specialisations: (bruijnN , body) -- Nothing marks recursive specs, ie. noinline
- , _specBound   ∷ MV.MVector s (Maybe (Int , Term))
+ -- v INamed fresh specialisations: -- Nothing marks recursive specs, ie. noinline
+ , _specBound   ∷ MV.MVector s (Maybe Term)
  , _specsLen    ∷ Int
  , _bruijnArgs  ∷ Maybe (V.Vector Term) -- fresh argNames for specialisations
 
@@ -70,7 +79,7 @@ addCase newCase = do
 
 addBranch newBranch = do
   n  ← branchLen <<%= (1+)
-  br ← use branches 
+  br ← use branches
   s  ← (branches <.=) =≪ if MV.length br <= n then MV.grow br 32 else pure br
   n <$ MV.write s n newBranch
 
@@ -80,19 +89,15 @@ addSpec s bruijnN term = do
   specs ← (specBound <.=) =≪ if MV.length sb <= s
     then MV.grow sb 32 ≫= \v → v <$ ([s..s+31] `forM_` \i → MV.write v i Nothing)
     else pure sb
-  MV.write specs s (Just (bruijnN , term))
+  MV.write specs s (Just (if bruijnN == 0 then term else BruijnAbs bruijnN 0 term))
 
--- Replace all label | const args with new deBruijn argNames
--- q is (either spec to respecialise or bind to specialise)
-data MkSpec = ReSpec QName | SpecBind QName
-mkSpec ∷ MkSpec → Term → [Term] → SimplifierEnv s (Maybe Term)
-mkSpec q body args = let
+destructureArgs ∷ [Term] → (Int , [Term] , [Term] , [ArgShape])
+destructureArgs args = let
   (ret , bruijnN) = traverse solveArg args `runState` 0
   (  unstructuredArgsL -- subExpressions of Labels , now deBruijn args
-   , repackedArgs      -- original args with label subExprs replaced with deBruijn args
+   , repackedArgsL     -- original args with label subExprs replaced with deBruijn args
    , argShapes)
    = unzip3 ret
-  unstructuredArgs = concat unstructuredArgsL
   solveArg ∷ Term → State Int ([Term] , [Term] , ArgShape)
   solveArg arg = case arg of
     Var (VQBind q) → pure ([] , [arg] , ShapeQBind q)
@@ -102,16 +107,26 @@ mkSpec q body args = let
         go (u,r,s) (u',r',s') = (u ++ u' , [Label l (r ++ r')] , ShapeLabel l [s' , s])
         in foldl go a ars
     rawArg         → gets identity ≫= \bruijn → modify (1+) $> ([rawArg] , [VBruijn bruijn] , ShapeNone)
-  rawSpec = App body (concat repackedArgs)
+  in (bruijnN , concat unstructuredArgsL , concat repackedArgsL , argShapes)
+
+-- Replace all label | const args with new deBruijn argNames
+-- q is (either spec to respecialise or bind to specialise)
+data MkSpec = ReSpec QName | SpecBind QName
+mkSpec ∷ MkSpec → Term → [Term] → SimplifierEnv s (Maybe Term)
+mkSpec q body args = let
+  (bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
+  rawSpec = App body repackedArgs -- Simplifying this will produce our specialisation as λBruijn → body'
   bindName = case q of { ReSpec q → modName q ; SpecBind q → unQName q }
   dontSpec = all (\case { ShapeNone → True ; _ → False }) argShapes -- TODO return shapes?
   in if dontSpec then pure Nothing else Just <$> do
   s ← specsLen <<%= (1+) -- reserve a slot (this spec may be recursive)
   use specCache ≫= \sc → MV.modify sc (M.insert argShapes s) bindName -- immediately register it for recursive specs
-  when debug_fuse $ traceM $ "raw spec " <> show s <> "\n" <> prettyTermRaw rawSpec
+
+  when debug_fuse $ traceM $ "raw spec " <> show s <> "\n" <> show argShapes <> "\n" <> prettyTermRaw rawSpec
   spec ← simpleTerm rawSpec
   when debug_fuse $ traceM $ "simple spec " <> show s <> "\n" <> prettyTermRaw spec <> "\n"
   addSpec s bruijnN spec
+
   let specName = mkQName bindName s -- bindName . Spec number
   case s of -- TODO inline iff we're under some cases!
 --  s → inlineSpec specName ≫= \case -- HACK
@@ -125,23 +140,27 @@ mkSpec q body args = let
 inlineSpec q = let unQ = unQName q in use specStack ≫= \ss → if ss `testBit` unQ then pure (Spec q)
   else use specBound ≫= \sb → MV.read sb unQ ≫= \case
     Nothing → pure (Spec q)
-    Just (b , t) → (specStack %= (`setBit` unQ)) $> if b == 0 then t else BruijnAbs b 0 t
+    Just t → (specStack %= (`setBit` unQ)) $> t -- if b == 0 then t else BruijnAbs b 0 t
 
 -- Inline partially a binding if we believe something will fuse
 inlineMaybe ∷ QName → wrapCases → [Term] → SimplifierEnv s Term
-inlineMaybe q cs args = use thisMod ≫= \mod → let
+inlineMaybe q cs args' = simpleTerm `mapM` args' ≫= \args → use thisMod ≫= \mod → let
   bindINm = unQName q
   noInline = App (Var (VQBind q)) args
+  (_bruijnN , unstructuredArgs , _repackedArgs , argShapes) = destructureArgs args
   in do
   -- search for a cached specialisation of this bind
-  use specCache ≫= \sc → MV.read sc bindINm <&> (M.!? (getArgShape <$> args)) ≫= \case
-    Just sName → use specBound ≫= \sb → (fmap snd <$> MV.read sb sName) ≫= \case
-      Nothing → pure $ case noInline of -- ? Are we first-time simplifying the spec
-        -- TODO if applying a spec, need to unwrap the args !
-        _ → App (Spec (mkQName bindINm sName)) args -- noInline -- Recursion guard (don't stack specialising recursive fns)
---      _ → noInline -- first time simplifying the spec, don't replace with itself
---    Just s  → pure $ App s args -- simpleApp s args
-      Just s  → simpleApp s args
+--betaArgs ← use argTable ≫= \aT → [0..MV.length aT - 1] `forM` \i → MV.read aT i
+--  <&> \case { Var (VArg l) | l == i → Nothing ; x → Just (i , x) }
+--traceShowM betaArgs
+--traceM $ "inlineMaybe: " <> show argShapes <> "\n" <> prettyTermRaw (App (Var (VQBind q)) args) <> "\n"
+  use specCache ≫= \sc → MV.read sc bindINm <&> (M.!? argShapes) ≫= \case
+    Just sName → use specBound ≫= \sb → MV.read sb sName ≫= let
+      -- since we're applying a spec, need to unwrap the args
+      in \case
+      -- v Recursion guard (don't stack specialising same arg shapes)
+      Nothing → pure $ App (Spec (mkQName bindINm sName)) unstructuredArgs
+      Just s  → simpleApp s unstructuredArgs
     Nothing → {-use bindStack ≫= \bindstack →-} if mod /= modName q -- || bindstack `testBit` bindINm
       then pure noInline
       else simpleBind bindINm ≫= \case -- make a specialisation
@@ -197,7 +216,7 @@ traceSpecs nBinds = do
   sl ← use specsLen
   traceM "-- Specs --"
   [0..sl-1] `forM_` \i → MV.read sb i ≫= \case
-    Just (_ , t) → traceM ("spec " <> show i <> " = " <> prettyTermRaw t)
+    Just t → traceM ("spec " <> show i <> " = " <> prettyTermRaw t)
     Nothing      → pure ()
   sc ← use specCache
   [0..nBinds-1] `forM_` \i → MV.read sc i ≫= \m → if M.null m then pure () else traceM $ "π" <> show i <> " specs " <> show m
@@ -219,26 +238,38 @@ simpleBind bindN = use cBinds ≫= \cb → MV.read cb bindN ≫= \b → do
 
 -- Note. if we beta-reduce an arg with some fn of itself (while deriving specialisations)
 -- must not β-reduce it again: ie. Excessive calls to simpleTerm are incorrect
--- para helps clarify the recursion, each step gives (pre-image , image) of the recursion
+-- para-histo morphism gives us both pre-images and images of the recursion
+-- ⇒ We can seed β-reduction env on (App Abs ..) (para), then simplify body and finally roll-up fuse results (histo)
+-- EnvT comonad contains para inputs , Cofree comonad contains the history
+simpleTerm2 ∷ Term → SimplifierEnv s Term
+simpleTerm2 = gpara distHisto go where
+  go ∷ TermF (EnvT Term (Cofree TermF) (SimplifierEnv s Term)) → SimplifierEnv s Term
+  go = \case
+    VBruijnF v → use bruijnArgs <&> maybe (VBruijn v) (V.! v)
+    AppF f _args → let (fPara , _fHist) = runEnvT f in case fPara of
+--    Abs ((Lam argDefs free _ty , _body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \(_,_,r) → r
+--    BruijnAbs n free _t → traverse snd args ≫= \ars → bruijnEnv n free ars (snd f)
+      _     → _ -- snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
+    t → embed <$> sequence (fmap ((\(a Cofree.:< _) → a) . snd . runEnvT) t)
+    -- Cofree TermF (SimplifierEnv _ Term)
+
 simpleTerm ∷ Term → SimplifierEnv s Term
-simpleTerm = RS.para $ \case
-  VBruijnF v → use bruijnArgs <&> maybe (VBruijn v) (V.! v)
-  VarF v → case v of
-    VArg i   → use argTable ≫= \at → MV.read at i -- ≫= \a → a <$ traceM (show i <> " β " <>  prettyTermRaw a) 
-    VQBind i → pure (Var (VQBind i))
-    v        → pure (Var v) -- ext | foreign
-  SpecF q     → inlineSpec q
-  AppF f args → case fst f of
-    -- paramorphism catches Abs so we can setup β-reduction env before running f
-    -- ! This assumes simpleTerm never changes argDefs
-    Abs ((Lam argDefs free _ty , _body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \(_,_,r) → r
-    BruijnAbs n _free _t → error $ show n
-    _     → snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
-  RecAppF f args → case fst f of
-    Abs ((Lam argDefs free _ty , _body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \(_,_,r) → r
-    BruijnAbs n _free _t → error $ show n
-    _     → snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
-  t → embed <$> sequence (fmap snd t)
+simpleTerm = RS.para go where
+  go ∷ TermF (Term , SimplifierEnv s Term) -> SimplifierEnv s Term
+  go = \case
+    VBruijnF v → use bruijnArgs <&> maybe (VBruijn v) (V.! v)
+    VarF v → case v of
+      VArg i   → use argTable ≫= \at → MV.read at i -- ≫= \a → a <$ traceM (show i <> " β " <>  prettyTermRaw a)
+      VQBind i → pure (Var (VQBind i))
+      v        → pure (Var v) -- ext | foreign
+    SpecF q     → inlineSpec q
+    AppF f args → case fst f of
+      -- paramorphism catches Abs so we can setup β-reduction env before running f
+      -- ! This assumes simpleTerm never changes argDefs
+      Abs ((Lam argDefs free _ty , _body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \(_,_,r) → r
+      BruijnAbs n free _t → traverse snd args ≫= \ars → bruijnEnv n free ars (snd f)
+      _     → snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
+    t → embed <$> sequence (fmap snd t)
 
 inBetaEnv ∷ [(Int , Type)] → BitSet → [Term] → SimplifierEnv s Term → SimplifierEnv s ([(Int , Type)] , [Term] , Term)
 inBetaEnv argDefs _free args go = let
@@ -254,6 +285,18 @@ inBetaEnv argDefs _free args go = let
   sv `forM_` \(i , arg) → MV.write aT i arg
   pure (resArgDefs , trailingArgs , r)
 
+bruijnEnv ∷ Int → BitSet → [Term] → SimplifierEnv s Term → SimplifierEnv s Term
+bruijnEnv n _free args go = do
+--traceM $ "BRUIJN" <> show n <> " " <> prettyTermRaw t <> "  $$$  " <> foldr (<>) "" (map prettyTermRaw args)
+  svBruijn ← bruijnArgs <<.= Just (V.fromList args)
+  when (isJust svBruijn) $ error "stacking bruijn β-reduction"
+  when (n /= length args) (error "bruijnPap")
+  r ← go <&> \case
+    BruijnAbs _ _ t → t
+    x → x
+  (bruijnArgs .= svBruijn)
+  pure r
+
 -- Perform β-reduction on an Abs. Have to simplify the body (again)
 -- Note. if some arg is substituted with a fn of itself (while deriving specialisations),
 -- do not β-reduce it there: Excessive calls to simpleTerm are incorrect
@@ -266,7 +309,7 @@ foldAbs (Lam argDefs free _ty , body) args = do
     []  → pure bodyOpt
     ars → simpleApp bodyOpt ars
 
--- one-step fusion
+-- one-step fusion on images of recursion
 simpleApp ∷ Term → [Term] → SimplifierEnv s Term
 simpleApp f sArgs = let noop = App f sArgs in case f of
   Instr i      → pure (simpleInstr i sArgs)
@@ -279,11 +322,13 @@ simpleApp f sArgs = let noop = App f sArgs in case f of
   -- app-abs uncaught by para (was inlined) ⇒ need to resimplify body, which is why case&branch extraction is important
 --Abs (Lam argDefs free ty , body) → foldAbs argDefs free body ty sArgs
   Abs _ → error "" -- foldAbs argDefs free body ty sArgs
-  BruijnAbs n _free t → do
-    svBruijn ← bruijnArgs <<.= Just (V.fromList sArgs)
-    when (isJust svBruijn) $ error "stacking bruijn β-reduction"
-    when (n /= length sArgs) (error "bruijnPap")
-    simpleTerm t <* (bruijnArgs .= svBruijn)
+  BruijnAbs n _free t → pure $ BruijnAbs n _free t
+--BruijnAbs n _free t → do
+--  traceM $ "BRUIJN" <> show n <> " " <> prettyTermRaw t <> "  $$$  " <> foldr (<>) "" (map prettyTermRaw sArgs)
+--  svBruijn ← bruijnArgs <<.= Just (V.fromList sArgs)
+--  when (isJust svBruijn) $ error "stacking bruijn β-reduction"
+--  when (n /= length sArgs) (error "bruijnPap")
+--  simpleTerm t <* (bruijnArgs .= svBruijn)
 
 --Lens
 --Case caseId scrut → error $ show caseId

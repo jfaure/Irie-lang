@@ -232,8 +232,8 @@ infer = let
      BiEQ → args'
      _    → _
 
-   checkRec e@(Core (App (Var (VQBind q)) args) t) = use thisMod ≫= \mod → use bindWIP <&> \b →
-     if modName q == mod && unQName q == fst b && snd b then Core (RecApp (Var (VQBind q)) args) t else e
+-- checkRec e@(Core (App (Var (VQBind q)) args) t) = use thisMod ≫= \mod → use bindWIP <&> \b →
+--   if modName q == mod && unQName q == fst b && snd b then Core (RecApp (Var (VQBind q)) args) t else e
    checkRec e = pure e
 
    in if any isPoisonExpr (f : args) then pure PoisonExpr else do
