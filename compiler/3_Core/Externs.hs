@@ -9,7 +9,7 @@
 -- * The 0 module (compiler primitives) is used to mark tuple fields (forall n 0.n)
 module Externs (GlobalResolver(..) , ModDeps, ModDependencies(..), addModule2Resolver , addModName , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readQParseExtern , readLabel , readField , readPrimExtern , resolveImports , typeOfLit , addDependency)
 where
-import Builtins ( primBinds, primMap, typeOfLit )
+import Builtins ( primBinds , primMap , typeOfLit , primLabelHNames , primLabelMap , primFieldHNames , primFieldMap )
 import CoreSyn
 import ShowCore()
 import MixfixSyn ( mfw2qmfw, MFWord, QMFWord )
@@ -57,10 +57,10 @@ data GlobalResolver = GlobalResolver {
 primResolver ∷ GlobalResolver = let primModName = "(builtinPrimitives)" in
   GlobalResolver
   1 (M.singleton primModName 0) (IM.singleton 0 <$> primMap)
-  mempty mempty
+  primLabelMap primFieldMap
   (V.singleton primModName)
   (V.singleton primBinds) -- primitive bindings
-  (V.singleton mempty) (V.singleton mempty) (V.singleton (ModDependencies 0 0)) mempty
+  (V.singleton primLabelHNames) (V.singleton primFieldHNames) (V.singleton (ModDependencies 0 0)) mempty
 
 -------------
 -- Externs --

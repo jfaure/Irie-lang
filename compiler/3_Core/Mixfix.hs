@@ -106,6 +106,39 @@ solveMixfixes ∷ [Expr] → Expr = let
   in \s → either ((error $!) . traceShowId . errorBundlePretty) identity (runParser (pExpr True) "<mixfix resolver>" (JuxtStream s))
 
 {-
+data MFMatcher
+ = Insufficient MFWords
+ | MFOK [Expr] -- next train
+ | Match (Either Text Expr)
+solveMixfixes3 ∷ [Expr] → Expr
+solveMixfixes3 juxt = let
+  isMF = \case { MFExpr{} → True ; _ → False }
+  -- now train should match mfws exactly
+  extractMFs train = let
+    (ars , train2) = break isMF train
+    next = case train2 of
+      []          → []
+      mf : train2 → mf : extractMFs next
+    in case ars of
+    []      → next
+    f : ars → (if null ars then f else ExprApp f ars) : next
+
+  -- [(Fixity , QName , Expr)]
+  parseMFs = let
+    matchMFWArg Nothing (MFExpr _)           → _ -- Nested startprefixes breaks alignWith
+    matchMFWArg Nothing e                    → Right e
+    matchMFWArg (Just i) (MFExpr (MFPart j)) → if i == j then Right e else Left "mfword mismatch"
+    in \case
+    [noMF] → noMF
+    MFExpr (QStartPrefix (MixfixDef mb mfws fixityR) qNmr) : train
+      → alignWith (these Insufficient MFOK matchMFWArg) (drop 1 mfws) train
+    larg : MFExpr (QStartPostfix (MixfixDef mb mfWs fixityR) qNmr) : train
+      → alignWith (these Insufficient MFOK matchMFWArg) (drop 2 mfws) train
+
+  parseMFs (extractMFs juxt)
+-}
+
+{-
 data ParseTreeF r = MFArgF Expr | MFFightF [r] Mixfixy [([r] , Mixfixy)]
 -- | ArgF Expr
 -- | MFPre MixfixDef          [(MFWord , [Expr])]

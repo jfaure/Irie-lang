@@ -2,10 +2,10 @@
 -- ! the Prelude supplies mixfixes and more convenient access to these primitives
 -- * constructs a vector of primitives
 -- * supplys a (Map HName IName) to resolve names to indexes
-module Builtins (primBinds , primMap , typeOfLit) where
+module Builtins (primBinds , primMap , typeOfLit , primLabelHNames , primLabelMap , primFieldHNames , primFieldMap) where
 import Prim
 import CoreSyn
-import qualified Data.Map.Strict as M ( (!?), fromList )
+import qualified Data.Map.Strict as M ( Map , (!?) , fromList )
 import qualified Data.Vector as V ( Vector, fromList )
 import qualified BitSetMap as BSM
 
@@ -32,18 +32,26 @@ primTable = concat
 -- , uncurry ExtFn <$> extFnBinds
   ]
 
--- | Predicates need to return labels if they want to benefit from case-fusion and short-circuiting
+-- Primitive Labels
+-- * Predicates must return labels so if_then_else_ can fuse
 boolLabel ∷ [(HName , Expr)]
 boolLabel =
   [ ("BoolL" , Ty (TyGround [boolL]))
   , ("True"  , Core (Label trueLabel  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
   , ("False" , Core (Label falseLabel mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
   ]
-trueLabel  = mkQName 0 1 -- 0.1
 falseLabel = mkQName 0 0 -- 0.0
-trueLabelT  = (unQName trueLabel  , TyGround [THTyCon (THTuple mempty)])
-falseLabelT = (unQName falseLabel , TyGround [THTyCon (THTuple mempty)])
+trueLabel  = mkQName 0 1 -- 0.1
+trueLabelT  = (qName2Key trueLabel  , TyGround [THTyCon (THTuple mempty)])
+falseLabelT = (qName2Key falseLabel , TyGround [THTyCon (THTuple mempty)])
 boolL       = THTyCon (THSumTy (BSM.fromList [trueLabelT , falseLabelT]))
+
+primLabelHNames = V.fromList ["False" , "True"] ∷ V.Vector HName
+primLabelMap    = M.fromList [("True" , trueLabel) , ("False" , falseLabel)] ∷ M.Map HName QName
+
+-- Primitive field Names
+primFieldHNames = mempty ∷ V.Vector HName
+primFieldMap    = mempty ∷ M.Map HName QName
 
 primTys ∷ [(HName , PrimType)] =
   [ ("Bool"    , PrimInt 1)
@@ -83,13 +91,13 @@ mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
 mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (TyGround . singleton <$> args) (TyGround $ [retTy])
 
 instrs ∷ [(HName , (PrimInstr , GroundType))] = [
---[ ("addOverflow" , (AddOverflow , mkTHArrow [TyGround [THExt i] , TyGround []] (TyGround [])))
---, ("unlink"      , (Unlink , mkTyArrow [[THExt str] , mkTHArrow [THExt c,THExt str] (THExt str)] [THExt str]))
---, ("link"        , (Link , mkTHArrow [THExt c] (THExt str)))
-    ("strtol"      , (StrToL  , mkTHArrow [THExt str] (THExt i)))
-  , ("mkTuple"     , (MkTuple , [THTyCon $ THTuple mempty]))
-  , ("ifThenElse"  , (IfThenE , [THBi 1 $ TyGround $ mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]))
-  , ("getcwd"      , (GetCWD  , [THExt str]))
+--[ ("addOverflow"   , (AddOverflow , mkTHArrow [TyGround [THExt i] , TyGround []] (TyGround [])))
+--, ("unlink"        , (Unlink , mkTyArrow [[THExt str] , mkTHArrow [THExt c,THExt str] (THExt str)] [THExt str]))
+--, ("link"          , (Link , mkTHArrow [THExt c] (THExt str)))
+    ("strtol"        , (StrToL  , mkTHArrow [THExt str] (THExt i)))
+  , ("mkTuple"       , (MkTuple , [THTyCon $ THTuple mempty]))
+  , ("ifThenElseInt1", (IfThenE , [THBi 1 $ TyGround $ mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]))
+  , ("getcwd"        , (GetCWD  , [THExt str]))
 
   -- TODO fix type (set → set → A → B)
   , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 $ TyGround $ mkTHArrow [THExt set , THExt set , THBound 0] (THBound 0) ]))
@@ -108,12 +116,13 @@ instrs ∷ [(HName , (PrimInstr , GroundType))] = [
   , ("readFile"  , (ReadFile  , mkTHArrow [THExt str] (THExt str)))
   , ("writeFile" , (WriteFile , mkTHArrow [THExt str] (THExt str)))
 
-  , ("leL"     , (NumInstr (PredInstr LECmp ) , mkTHArrow [iTy , iTy]    boolL))
-  , ("geL"     , (NumInstr (PredInstr GECmp ) , mkTHArrow [iTy , iTy]    boolL))
-  , ("ltL"     , (NumInstr (PredInstr LTCmp ) , mkTHArrow [iTy , iTy]    boolL))
-  , ("gtL"     , (NumInstr (PredInstr GTCmp ) , mkTHArrow [iTy , iTy]    boolL))
-  , ("eqL"     , (NumInstr (PredInstr EQCmp ) , mkTHArrow [iTy , iTy]    boolL))
-  , ("neL"     , (NumInstr (PredInstr NEQCmp) , mkTHArrow [iTy , iTy]    boolL))
+--, ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , b) ))
+  , ("le"      , (NumInstr (PredInstr LECmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("ge"      , (NumInstr (PredInstr GECmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("lt"      , (NumInstr (PredInstr LTCmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("gt"      , (NumInstr (PredInstr GTCmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("eq"      , (NumInstr (PredInstr EQCmp ) , mkTHArrow [iTy , iTy]    boolL))
+  , ("ne"      , (NumInstr (PredInstr NEQCmp) , mkTHArrow [iTy , iTy]    boolL))
   , ("boolORL" ,  (NumInstr (PredInstr OR )   , mkTHArrow [boolL, boolL] boolL))
   , ("boolANDL", (NumInstr (PredInstr AND )   , mkTHArrow [boolL, boolL] boolL))
   ]
@@ -143,13 +152,13 @@ primInstrs ∷ [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("fadd"  , (NumInstr (FracInstr FAdd  ) , ([f, f] , f) ))
   , ("fsub"  , (NumInstr (FracInstr FSub  ) , ([f, f] , f) ))
   , ("fmul"  , (NumInstr (FracInstr FMul  ) , ([f, f] , f) ))
-  , ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , b) ))
-  , ("le"    , (NumInstr (PredInstr LECmp ) , ([i, i] , b) ))
-  , ("ge"    , (NumInstr (PredInstr GECmp ) , ([i, i] , b) ))
-  , ("lt"    , (NumInstr (PredInstr LTCmp ) , ([i, i] , b) ))
-  , ("gt"    , (NumInstr (PredInstr GTCmp ) , ([i, i] , b) ))
-  , ("eq"    , (NumInstr (PredInstr EQCmp ) , ([i, i] , b) ))
-  , ("ne"    , (NumInstr (PredInstr NEQCmp) , ([i, i] , b) ))
+--, ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , b) ))
+--, ("le"    , (NumInstr (PredInstr LECmp ) , ([i, i] , b) ))
+--, ("ge"    , (NumInstr (PredInstr GECmp ) , ([i, i] , b) ))
+--, ("lt"    , (NumInstr (PredInstr LTCmp ) , ([i, i] , b) ))
+--, ("gt"    , (NumInstr (PredInstr GTCmp ) , ([i, i] , b) ))
+--, ("eq"    , (NumInstr (PredInstr EQCmp ) , ([i, i] , b) ))
+--, ("ne"    , (NumInstr (PredInstr NEQCmp) , ([i, i] , b) ))
   , ("boolOR",  (NumInstr (PredInstr OR )   , ([b, b] , b) ))
   , ("boolAND", (NumInstr (PredInstr AND )  , ([b, b] , b) ))
   , ("zext"  , (Zext  , ([b] , i) ))

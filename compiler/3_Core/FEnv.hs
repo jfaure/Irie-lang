@@ -70,6 +70,7 @@ addSpec s bruijnN term = do
   let etaReduced = if bruijnN == 0 then term else case term of 
         -- η-reduce bruijns: eg. \Bruijn 2 ⇒ f B0 B1 rewrites to f
         App f args | and $ Prelude.imap (\i arg → case arg of { (VBruijn x) → x == i ; _ → False }) args → f
+        App (BruijnAbs 1 _free (Match (VBruijn 0) t branches d)) [scrut] → Match scrut t branches d
         _ → BruijnAbs bruijnN 0 term
       -- check if fn is larger than 1 apps, otherwise can inline it for free - the State monad allows this to shortcut
       fnSize ∷ Int
@@ -142,7 +143,7 @@ inlineMaybe q cs args = use thisMod ≫= \mod → let
   use specCache ≫= \sc → MV.read sc bindINm <&> (M.!? argShapes) ≫= \case
     Just sName → use specBound ≫= \sb → MV.read sb sName ≫= let
       -- since we're applying a spec, need to unwrap the args
-      in d_ (argShapes , sName) $ \case
+      in {-d_ (argShapes , sName) $-} \case
       -- v Recursion guard (don't stack specialising same arg shapes)
       Nothing → pure $ App (Spec (mkQName bindINm sName)) unstructuredArgs
       Just (_ , s) → simpleApp s unstructuredArgs
@@ -154,6 +155,11 @@ inlineMaybe q cs args = use thisMod ≫= \mod → let
           -- Also may as well cache non-recursive specs rather than alwaysinline
           → fromMaybe noInline <$> mkSpec (SpecBind q) inlineF args
         _ → pure noInline
+
+forceInline ∷ QName → SimplifierEnv s (Maybe Term)
+forceInline q = simpleBind (unQName q) <&> \case -- make a specialisation
+  BindOK _o _l _r (Core inlineF _ty) → Just inlineF
+  _ → Nothing
 
 -- Is this worth inlining
 -- | Does fn Case any of its args
@@ -196,14 +202,15 @@ simplifyBindings modIName nArgs nBinds bindsV = do
 
 --traceSpecs ∷ Int → SimplifierEnv s ()
 traceSpecs nBinds = do
-  sb ← use specBound
   sl ← use specsLen
-  traceM "-- Specs --"
-  [0..sl-1] `forM_` \i → MV.read sb i ≫= \case
-    Just (_ , t) → traceM ("spec " <> show i <> " = " <> prettyTermRaw t)
-    Nothing      → pure ()
-  sc ← use specCache
-  [0..nBinds-1] `forM_` \i → MV.read sc i ≫= \m → if M.null m then pure () else traceM $ "π" <> show i <> " specs " <> show m
+  when (sl /= 0) $ do
+    sb ← use specBound
+    traceM "-- Specs --"
+    [0..sl-1] `forM_` \i → MV.read sb i ≫= \case
+      Just (_ , t) → traceM ("spec " <> show i <> " = " <> prettyTermRaw t)
+      Nothing      → pure ()
+    sc ← use specCache
+    [0..nBinds-1] `forM_` \i → MV.read sc i ≫= \m → if M.null m then pure () else traceM $ "π" <> show i <> " specs " <> show m
 
 -- read from bindList, simplify or return binding and guard recursion
 simpleBind ∷ Int → SimplifierEnv s Bind
@@ -221,7 +228,9 @@ simpleBind bindN = use cBinds ≫= \cb → MV.read cb bindN ≫= \b → do
   newB <$ MV.write cb bindN newB
 
 -- newBinds must not re-use wip β-reduction env from a previous bind in the stack
-newBetaEnv go = (activeBetas <<.= emptyBitSet) ≫= \svBetas → go <* (activeBetas .= svBetas)
+newBetaEnv go = (activeBetas <<.= emptyBitSet) ≫= \svBetas → (bruijnArgs <<.= Nothing) ≫= \svBruijn →
+  go
+  <* (activeBetas .= svBetas) <* (bruijnArgs .= svBruijn)
 
 inBetaEnv ∷ [(Int , Type)] → BitSet → [Term] → SimplifierEnv s Term → SimplifierEnv s ([(Int , Type)] , [Term] , Term)
 inBetaEnv argDefs _free args go = let
@@ -239,15 +248,15 @@ inBetaEnv argDefs _free args go = let
 
 bruijnEnv ∷ Int → BitSet → [Term] → SimplifierEnv s Term → SimplifierEnv s Term
 bruijnEnv n _free args go = do
---traceM $ "BRUIJN" <> show n <> " " <> prettyTermRaw t <> "  $$$  " <> foldr (<>) "" (map prettyTermRaw args)
-  svBruijn ← bruijnArgs <<.= Just (V.fromList args)
-  when (isJust svBruijn) $ error "stacking bruijn β-reduction"
   when (n /= length args) (error "bruijnPap")
-  r ← go <&> \case
-    BruijnAbs _ _ t → t
-    x → x
-  (bruijnArgs .= svBruijn)
-  pure r
+  let unBruijnAbs = \case
+        BruijnAbs _ _ t → t
+        x → x
+      newEnv args go = (bruijnArgs <<.= Just (V.fromList args)) ≫= \svBruijn → go <* (bruijnArgs .= svBruijn)
+  use bruijnArgs ≫= \case
+    -- stacked bruijns: β-reduce the args in the new β-env (the body cannot reference the new bruijn args)
+    Just _  → (simpleTerm `mapM` args) *> newEnv args (go <&> unBruijnAbs)
+    Nothing → newEnv args $ go <&> unBruijnAbs
 
 -- Note. if we β-reduce an arg with some fn of itself (while deriving specialisations)
 -- must not β-reduce it again: ie. Excessive calls to simpleTerm are incorrect. para helps guarantee this
@@ -265,12 +274,14 @@ simpleTerm = RS.para go where
     AppF f args → case fst f of
       -- paramorphism catches Abs so we can setup β-reduction env before running f
       -- ! This assumes simpleTerm never changes argDefs
-      Abs ((Lam argDefs free _ty , _body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \([],[],r) → r
+      Abs ((Lam argDefs free _ty , _body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) ≫= \case
+        ([],[],r) → pure r
+        ([] , trailingArgs , r) → simpleTerm (App r trailingArgs)
+        x → error $ show x
       BruijnAbs n free _t → traverse snd args ≫= \ars → bruijnEnv n free ars (snd f)
       Spec q → traverse snd args ≫= inlineSpecApp q
       _      → snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
-    MatchF scrut retT branches d → snd scrut ≫= \sc
-      → fuseMatch retT sc (map snd <$> branches) (map snd <$> d)
+    MatchF scrut retT branches d → snd scrut ≫= \sc → fuseMatch retT sc (map snd <$> branches) (map snd <$> d)
     -- Don't leak β-envs
     t → embed <$> sequence (fmap snd t)
 
@@ -282,8 +293,14 @@ simpleApp f sArgs = let noop = App f sArgs in case f of
   App f1 args1   → simpleApp f1 (args1 ++ sArgs) -- can try again
 --Lens
 --Case caseId scrut   → error $ show caseId
-  Abs _                 → error "uncaught Abs-App"
-  BruijnAbs _n _free _t → error "uncaught BruijnAbs-App"
+--BruijnAbs 1 _free (Match (VBruijn 0) t branches d) | [scrut] ← sArgs → pure $ Match scrut t branches d
+  -- TODO which fusion step let this slip
+  BruijnAbs n free t   → bruijnEnv n free sArgs (simpleTerm t) -- TODO avoid this random resimplification !
+  BruijnAbs _n _free t → error $ "uncaught BruijnAbs-App: " <> show t
+  Abs _                → error "uncaught Abs-App"
+--Abs (Lam argDefs free t , body) → inBetaEnv argDefs free sArgs (simpleTerm body) ≫= \case
+--  ([] , [] , ret)           → pure ret
+--  ([] , trailingArgs , ret) → simpleApp ret trailingArgs
   opaqueFn → use structure ≫= \case
     [] → pure noop
     -- If we're building a scrutinee, partial inline upto the fusable structure
@@ -301,7 +318,7 @@ fuseMatch retT scrut branches d = case scrut of
   -- trivial case-of-label Delay simplifying case-alts until we setup β-env:
   Label l params → let
     Just (Lam argDefs free _ty , body) = (branches BSM.!? qName2Key l) <|> d
-    in inBetaEnv argDefs free params body <&> \(_resArgDefs@[] , _trailingArgs@[] , ret) → ret
+    in inBetaEnv argDefs free params body <&> \([] , [] , ret) → ret
 
   -- case-of-case: push outer case into each branch,
   -- then the inner case fuses with outer case output labels
@@ -317,6 +334,10 @@ fuseMatch retT scrut branches d = case scrut of
 --Var (VQBind q) → forceInline q ≫= \case
 --  Just scrutInline → fuseMatch retT scrutInline branches d
 --  Nothing → error "failed to inline" -- pure noop
+  App (Var (VQBind q)) args → forceInline q ≫= \case
+    Just f  → simpleTerm (App f args) ≫= \scrut2 → fuseMatch retT scrut2 branches d
+    Nothing → error "failed to inline"
+--App (b@BruijnAbs{}) args →  error $ show b
 
   -- opaque scrut = App | Arg ; ask scrut to be inlined up to Label;
   -- This will require specialising | inlining enclosing function

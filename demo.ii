@@ -75,51 +75,35 @@ r = sum (map (add 1) (enumFromTo 5 10))
 --    Nil ⇒ x
 --    Cons y ys ⇒ f x (foldr1 f xs)
 
-{-
-fromMaybe x = case x of
-  Nothing ⇒ 0
-  Just a  ⇒ a
+ifThenElseL cond a b = case cond of
+  True  ⇒ a
+  False ⇒ b
 
 -- sumAppend n = sum [m * m | m ← [1..n]]
 -- = foldl _+_ 0 (concatMap (\m ⇒ pure (m * m)) (enum 1 n)
-bool2Bool i = ifThenElse i @true @false
-nextEnum n = case bool2Bool (ge n 10) of
-  true  ⇒ @Done
-  false ⇒ @Yield n (add 1 n)
+nextEnum n = case n >=? 10 of
+  True  ⇒ @Done
+  False ⇒ @Yield n (1 + n)
 
 nextConcatMap i nest = case nest of
-  Just (Stream next s0) ⇒ case next s0 of
-    Done      ⇒ @Skip i Nothing
-    Skip s    ⇒ @Skip i (Just (Stream next s))
-    Yield y s ⇒ @Yield y i (Just (Stream next s))
-  Nothing ⇒ case nextEnum i of
+  J (Stream next s0) ⇒ case next s0 of
+    Done      ⇒ @Skip i @N
+    Skip s    ⇒ @Skip i (J (Stream next s))
+    Yield y s ⇒ @Yield y i (J (Stream next s))
+  N ⇒ case nextEnum i of
     Done   ⇒ Done
-    Skip i ⇒ Skip i Nothing
+    Skip i ⇒ Skip i N
     Yield x i ⇒ let
       nextRet x = \case
-        true  ⇒ Yield (mul x x) false
-        false ⇒ Done
-      in Skip i (Just (Stream (nextRet x) true))
+        True  ⇒ Yield (mul x x) False
+        False ⇒ Done
+      in Skip i (J (Stream (nextRet x) True))
 
 go z s0 s1 = case nextConcatMap s0 s1 of
   Done        ⇒ z
   Skip s q    ⇒ go z s q
-  Yield x s q ⇒ go (add z x) s q
+  Yield x s q ⇒ go (z + x) s q
 
-sumAppend n = go 0 n Nothing
+sumAppend n = go 0 n N
+
 -- expect z i = if i >? n then z else expect (z + i ∗ i) (i + 1)
--}
-
-bool2N = \case
-  True  => 1
-  False => 0
-
-g2 z i (Wrap next) s = case next s of
-  Done      => g1 z i
-  Yield x s => g2 (z + x) i (Wrap next) s
-
-g1 z i = let
-  nextRet x = case x of
-    True  => Yield (i * i) False
-    False => Done
-  in if i >? 10 then z else g2 z (i + 1) (Wrap nextRet) True

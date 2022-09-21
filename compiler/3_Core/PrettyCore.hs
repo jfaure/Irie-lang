@@ -63,9 +63,9 @@ render flags = let
   prettyQName ∷ Maybe (V.Vector (V.Vector HName)) → QName → T.Text
   prettyQName names q = let
     showText q names = toS $ (names V.! modName q) V.! unQName q
-    in if modName q == 0 -- a "fieldName"; a tuple index since its in the Builtins module
-    then "!" <> show (unQName q)
-    else maybe (showRawQName q) (showText q) names
+    -- a "fieldName"; a tuple index since its in the Builtins module
+--  in if modName q == 0 then "!" <> show (unQName q) else maybe (showRawQName q) (showText q) names
+    in (if modName q == 0 then "!" else "") <> maybe (showRawQName q) (showText q) names
 
   doAnn ∷ Annotation → Annotation → Builder → Builder
   doAnn prev a b = let

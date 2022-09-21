@@ -191,7 +191,7 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
   bindSrc = BindSource mempty bindNames mempty (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
-  (newSpecs , simpleBinds) = if noFuse flags then (Nothing , judgedBinds)
+  (newSpecs , simpleBinds) = if noFuse flags || not coreOK then (Nothing , judgedBinds)
     else runST $ V.unsafeThaw judgedBinds ≫= \cb → do
       specs ← simplifyBindings modI nArgs (V.length judgedBinds) cb
       binds ← V.unsafeFreeze cb
