@@ -11,6 +11,12 @@ import Data.List (partition)
 import qualified BitSetMap as BSM
 import qualified Data.Vector as V
 
+getArgShape ∷ Term → ArgShape
+getArgShape = \case
+  Label l params → ShapeLabel l (getArgShape <$> params)
+  Var (VQBind q) → ShapeQBind q
+  _ → ShapeNone
+
 isPoisonExpr ∷ Expr → Bool = (\case { PoisonExpr → True ; _ → False })
 
 mapType ∷ (TyHead → TyHead) → Type → Type

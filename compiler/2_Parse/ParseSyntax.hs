@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell , TypeFamilies #-}
 {-# OPTIONS  -funbox-strict-fields #-}
 module ParseSyntax where
 import Prim ( Literal )

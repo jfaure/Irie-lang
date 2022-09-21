@@ -61,24 +61,65 @@ sum = cata \case
 r = sum (map (add 1) (enumFromTo 5 10))
 -}
 
+-- f n = sum [ k * m | k ← [1..n] , m ← [1..k] ]
+-- T[E | ] = return E
+-- T[E | B , Q] = guard B T[E | Q]
+-- T[E | P ← L , Q] = let f P = True ; f _ = False
+--                        g P = T[E | Q]
+--                    in concatMap (\x ⇒ guard (f x) (g x)) L
+-- T[E | let decls , Q] = let decls in T [E | Q]
+
+--merge all co-occurs of recursive var into the μ-binder
+--foldr1 f l = case l of
+--  Cons x xs ⇒ case xs of
+--    Nil ⇒ x
+--    Cons y ys ⇒ f x (foldr1 f xs)
+
 {-
-bool2N = \case
-  True  ⇒ 1
-  False ⇒ 0
+fromMaybe x = case x of
+  Nothing ⇒ 0
+  Just a  ⇒ a
 
-g2 z i next s = case next s of
-  Done      ⇒ g1 z i
-  Yield x S ⇒ g2 (add z x) i next S
+-- sumAppend n = sum [m * m | m ← [1..n]]
+-- = foldl _+_ 0 (concatMap (\m ⇒ pure (m * m)) (enum 1 n)
+bool2Bool i = ifThenElse i @true @false
+nextEnum n = case bool2Bool (ge n 10) of
+  true  ⇒ @Done
+  false ⇒ @Yield n (add 1 n)
 
-g1 z i = let
-  nextRet = \case
-    True  ⇒ @Yield (mul i i) False
-    False ⇒ @Done
-  in ifThenElse (ge i 10) z (g2 z (add i 1) nextRet True)
+nextConcatMap i nest = case nest of
+  Just (Stream next s0) ⇒ case next s0 of
+    Done      ⇒ @Skip i Nothing
+    Skip s    ⇒ @Skip i (Just (Stream next s))
+    Yield y s ⇒ @Yield y i (Just (Stream next s))
+  Nothing ⇒ case nextEnum i of
+    Done   ⇒ Done
+    Skip i ⇒ Skip i Nothing
+    Yield x i ⇒ let
+      nextRet x = \case
+        true  ⇒ Yield (mul x x) false
+        false ⇒ Done
+      in Skip i (Just (Stream (nextRet x) true))
+
+go z s0 s1 = case nextConcatMap s0 s1 of
+  Done        ⇒ z
+  Skip s q    ⇒ go z s q
+  Yield x s q ⇒ go (add z x) s q
+
+sumAppend n = go 0 n Nothing
+-- expect z i = if i >? n then z else expect (z + i ∗ i) (i + 1)
 -}
 
--- Only changed Case to be always applied..
-foldr1 f l = case l of
-  Cons x xs ⇒ case xs of
-    Nil ⇒ x
-    Cons y ys ⇒ f x (foldr1 f xs)
+bool2N = \case
+  True  => 1
+  False => 0
+
+g2 z i (Wrap next) s = case next s of
+  Done      => g1 z i
+  Yield x s => g2 (z + x) i (Wrap next) s
+
+g1 z i = let
+  nextRet x = case x of
+    True  => Yield (i * i) False
+    False => Done
+  in if i >? 10 then z else g2 z (i + 1) (Wrap nextRet) True

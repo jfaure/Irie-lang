@@ -1,5 +1,5 @@
 {-# Language TemplateHaskell #-}
-module FEnv where
+module FEnv (simplifyBindings) where
 import CoreSyn
 import SimplifyInstr
 import Prim
@@ -13,7 +13,7 @@ import Data.Functor.Foldable as RS
 import Control.Lens
 import Data.List (unzip3)
 
-debug_fuse = False
+debug_fuse = True
 
 -- The only optimisation worth doing is fusing Match with Labels
 -- All cases "eventually" receive structure; fusion blocks on args | recursion
@@ -23,22 +23,9 @@ debug_fuse = False
 -- ? static arg transformation vs partial specialisation
 
 -- specialisations are keyed on arg structure (labels | constants)
-data ArgShape
- = ShapeNone
- | ShapeLabel ILabel [ArgShape]
- | ShapeQBind QName
- deriving (Ord , Eq , Show)
-
-getArgShape ∷ Term → ArgShape
-getArgShape = \case
-  Label l params → ShapeLabel l (getArgShape <$> params)
-  Var (VQBind q) → ShapeQBind q
-  _ → ShapeNone
-
 data FEnv s = FEnv
  { _thisMod     ∷ IName
  , _cBinds      ∷ MV.MVector s Bind
- , _self        ∷ IName
  , _structure   ∷ [CaseID] -- passed down to indicate we're building a fusable
  , _argTable    ∷ MV.MVector s Term
  , _activeBetas ∷ BitSet
@@ -47,7 +34,7 @@ data FEnv s = FEnv
 
  , _specCache   ∷ MV.MVector s (M.Map [ArgShape] IName) -- Bind → Spec cache
  -- v INamed fresh specialisations: -- Nothing marks recursive specs, ie. noinline
- , _specBound   ∷ MV.MVector s (Maybe Term)
+ , _specBound   ∷ MV.MVector s (Maybe (FnSize , Term))
  , _specsLen    ∷ Int
  , _bruijnArgs  ∷ Maybe (V.Vector Term) -- fresh argNames for specialisations
 
@@ -66,7 +53,7 @@ stackFn betaReducable go = do
 
 addCase newCase = do
   n  ← caseLen <<%= (1+)
-  s  ← use cases ≫= \cs → (cases <.=) =≪ if MV.length cs <= n then MV.grow cs 32 else pure cs
+  s  ← use cases≫= \cs → (cases <.=) =≪ if MV.length cs <= n then MV.grow cs 32 else pure cs
   n <$ MV.write s n newCase
 
 addBranch newBranch = do
@@ -74,13 +61,24 @@ addBranch newBranch = do
   s  ← use branches ≫= \br → (branches <.=) =≪ if MV.length br <= n then MV.grow br 32 else pure br
   n <$ MV.write s n newBranch
 
-addSpec ∷ Int → Int → Term → SimplifierEnv s ()
+addSpec ∷ Int → Int → Term → SimplifierEnv s FnSize
 addSpec s bruijnN term = do
   sb    ← use specBound
   specs ← (specBound <.=) =≪ if MV.length sb <= s
     then MV.grow sb 32 ≫= \v → v <$ ([s..s+31] `forM_` \i → MV.write v i Nothing)
     else pure sb
-  MV.write specs s (Just (if bruijnN == 0 then term else BruijnAbs bruijnN 0 term))
+  let etaReduced = if bruijnN == 0 then term else case term of 
+        -- η-reduce bruijns: eg. \Bruijn 2 ⇒ f B0 B1 rewrites to f
+        App f args | and $ Prelude.imap (\i arg → case arg of { (VBruijn x) → x == i ; _ → False }) args → f
+        _ → BruijnAbs bruijnN 0 term
+      -- check if fn is larger than 1 apps, otherwise can inline it for free - the State monad allows this to shortcut
+      fnSize ∷ Int
+      fnSize = cata go etaReduced `evalState` 0 where
+        go = \case 
+          AppF f ars → get ≫= \n → if n > 2 then pure n else modify (1+) *> ((\f ars → f + sum ars) <$> f <*> sequence ars)
+          _ → pure 0
+      smallFn = fnSize <= 1
+  smallFn <$ MV.write specs s (Just (smallFn , etaReduced))
 
 destructureArgs ∷ [Term] → (Int , [Term] , [Term] , [ArgShape])
 destructureArgs args = let
@@ -94,9 +92,7 @@ destructureArgs args = let
     Var (VQBind q) → pure ([] , [arg] , ShapeQBind q)
     Label l ars → traverse solveArg ars <&> \case
       [] → ([] , [Label l []] , ShapeLabel l []) -- lone label is like a constant VQBind
-      (a : ars) → let
-        go (u,r,s) (u',r',s') = (u ++ u' , [Label l (r ++ r')] , ShapeLabel l [s' , s])
-        in foldl go a ars
+      ars → unzip3 ars & \(uL , rL , shL) → (concat uL , [Label l (concat rL)] , ShapeLabel l shL)
     rawArg         → gets identity ≫= \bruijn → modify (1+) $> ([rawArg] , [VBruijn bruijn] , ShapeNone)
   in (bruijnN , concat unstructuredArgsL , concat repackedArgsL , argShapes)
 
@@ -116,22 +112,24 @@ mkSpec q body args = let
   when debug_fuse $ traceM $ "raw spec " <> show s <> "\n" <> show argShapes <> "\n" <> prettyTermRaw rawSpec
   spec ← simpleTerm rawSpec
   when debug_fuse $ traceM $ "simple spec " <> show s <> "\n" <> prettyTermRaw spec <> "\n"
-  addSpec s bruijnN spec
+  small ← addSpec s bruijnN spec
 
   let specName = mkQName bindName s -- bindName . Spec number
-  case s of -- TODO inline iff we're under some cases!
---  s → inlineSpec specName ≫= \case -- HACK
---    Label l p → pure (Label l (p ++ unstructuredArgs))
---    spec      → simpleApp spec unstructuredArgs
-    _ → pure $ if null unstructuredArgs then Spec specName
-               else App (Spec specName) unstructuredArgs
+  if small -- TODO also inline iff we're under some cases!
+  then inlineSpecApp specName unstructuredArgs
+  else pure $ if null unstructuredArgs then Spec specName
+              else App (Spec specName) unstructuredArgs
 
 -- should always inline when non-recursive
 -- TODO this should depend on wrappingCases
 inlineSpec q = let unQ = unQName q in use specStack ≫= \ss → if ss `testBit` unQ then pure (Spec q)
   else use specBound ≫= \sb → MV.read sb unQ ≫= \case
     Nothing → pure (Spec q)
-    Just t  → (specStack %= (`setBit` unQ)) $> t -- if b == 0 then t else BruijnAbs b 0 t
+    Just (_fnSz , t) → (specStack %= (`setBit` unQ)) $> t
+
+inlineSpecApp specName args = inlineSpec specName ≫= \case
+  f@BruijnAbs{} → simpleTerm (App f args) -- have to re-simplify the body with new args (β-optimality?)
+  f → simpleApp f args 
 
 -- Inline partially a binding if we believe something will fuse
 inlineMaybe ∷ QName → wrapCases → [Term] → SimplifierEnv s Term
@@ -147,7 +145,7 @@ inlineMaybe q cs args = use thisMod ≫= \mod → let
       in d_ (argShapes , sName) $ \case
       -- v Recursion guard (don't stack specialising same arg shapes)
       Nothing → pure $ App (Spec (mkQName bindINm sName)) unstructuredArgs
-      Just s  → simpleApp s unstructuredArgs
+      Just (_ , s) → simpleApp s unstructuredArgs
     Nothing → if mod /= modName q
       then pure noInline
       else simpleBind bindINm ≫= \case -- make a specialisation
@@ -157,10 +155,6 @@ inlineMaybe q cs args = use thisMod ≫= \mod → let
           → fromMaybe noInline <$> mkSpec (SpecBind q) inlineF args
         _ → pure noInline
 
-forceInline q = simpleBind (unQName q) <&> \case
-  BindOK _o _l _r (Core inlineF _ty) → Just inlineF
-  _ → Nothing
-
 -- Is this worth inlining
 -- | Does fn Case any of its args
 -- | Does fn produce any Labels
@@ -168,17 +162,16 @@ shouldSpec _fnInfo _args _caseWraps = True
   -- unfused cases have a dependency tree: (ScrutApp | ScrutArg) ⇒ each case: [Args] required to reduce
   -- * inline only happens upto cases/branches
 
-simplifyBindings ∷ IName → Int → Int → MV.MVector s Bind → ST s (FEnv s)
+simplifyBindings ∷ IName → Int → Int → MV.MVector s Bind → ST s (Maybe Specialisations)
 simplifyBindings modIName nArgs nBinds bindsV = do
   argSubs ← MV.new nArgs
   br      ← MV.new 32
   cs      ← MV.new 32
   sc      ← MV.replicate nBinds mempty -- ? should we save specs in their bindings
   sb      ← MV.replicate 5 Nothing -- TODO test grow with small values here
-  ((simpleBind `mapM` [0 .. nBinds - 1]) *> traceSpecs nBinds) `execStateT` FEnv
+  s ← ((simpleBind `mapM_` [0 .. nBinds - 1]) *> traceSpecs nBinds) `execStateT` FEnv
     { _thisMod     = modIName
     , _cBinds      = bindsV
-    , _self        = -1
     , _structure   = []
     , _argTable    = argSubs
     , _activeBetas = emptyBitSet
@@ -196,14 +189,18 @@ simplifyBindings modIName nArgs nBinds bindsV = do
     , _caseLen     = 0
     , _branchLen   = 0
     }
+  let slen = s._specsLen
+  sb' ← map (fromMaybe $ error "no specialisation?") . V.take slen <$> V.unsafeFreeze s._specBound
+  sc' ← V.unsafeFreeze s._specCache
+  pure $ if slen == 0 then Nothing else Just (Specialisations sb' sc')
 
-traceSpecs ∷ Int → SimplifierEnv s ()
+--traceSpecs ∷ Int → SimplifierEnv s ()
 traceSpecs nBinds = do
   sb ← use specBound
   sl ← use specsLen
   traceM "-- Specs --"
   [0..sl-1] `forM_` \i → MV.read sb i ≫= \case
-    Just t → traceM ("spec " <> show i <> " = " <> prettyTermRaw t)
+    Just (_ , t) → traceM ("spec " <> show i <> " = " <> prettyTermRaw t)
     Nothing      → pure ()
   sc ← use specCache
   [0..nBinds-1] `forM_` \i → MV.read sc i ≫= \m → if M.null m then pure () else traceM $ "π" <> show i <> " specs " <> show m
@@ -264,13 +261,14 @@ simpleTerm = RS.para go where
         else pure (Var (VArg i))-- ≫= \a → a <$ traceM (show i <> " β " <>  prettyTermRaw a)
       VQBind i → pure (Var (VQBind i))
       v        → pure (Var v) -- ext | foreign
-    SpecF q     → inlineSpec q
+--  SpecF q     → inlineSpec q
     AppF f args → case fst f of
       -- paramorphism catches Abs so we can setup β-reduction env before running f
       -- ! This assumes simpleTerm never changes argDefs
       Abs ((Lam argDefs free _ty , _body)) → traverse snd args ≫= \ars → inBetaEnv argDefs free ars (snd f) <&> \([],[],r) → r
       BruijnAbs n free _t → traverse snd args ≫= \ars → bruijnEnv n free ars (snd f)
-      _     → snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
+      Spec q → traverse snd args ≫= inlineSpecApp q
+      _      → snd f ≫= \rawF → traverse snd args ≫= simpleApp rawF
     MatchF scrut retT branches d → snd scrut ≫= \sc
       → fuseMatch retT sc (map snd <$> branches) (map snd <$> d)
     -- Don't leak β-envs
@@ -296,7 +294,6 @@ simpleApp f sArgs = let noop = App f sArgs in case f of
       Spec _         → pure noop -- inlineSpecMaybe?
       Var (VQBind q) → inlineMaybe q cs sArgs -- partial inline if produces / consumes labels
       x → error (toS (prettyTermRaw x) <> "\n" <> (concatMap ((++ "\n") . toS . prettyTermRaw) sArgs))
---    Case caseID scrut → use cases ≫= \c → MV.read c caseID ≫= \(br , d) → fuseMatch _ (pure scrut) br d
 
 -- Crucially we fuse first to then simplify only the relevant branches in the new fused β-env
 fuseMatch ∷ Type → Term → BitSetMap (Lam, (SimplifierEnv s Term)) → Maybe (Lam, (SimplifierEnv s Term)) → SimplifierEnv s Term
@@ -315,16 +312,17 @@ fuseMatch retT scrut branches d = case scrut of
     optD        = pushCase <$> innerDefault
     in fuseMatch ty2 innerScrut optBranches optD
 
-  Spec q → inlineSpec q ≫= \s → fuseMatch retT s branches d
+--Spec q → inlineSpec q ≫= \s → fuseMatch retT s branches d
 
-  Var (VQBind q) → forceInline q ≫= \case
-    Just scrutInline → fuseMatch retT scrutInline branches d
-    Nothing → error "failed to inline" -- pure noop
+--Var (VQBind q) → forceInline q ≫= \case
+--  Just scrutInline → fuseMatch retT scrutInline branches d
+--  Nothing → error "failed to inline" -- pure noop
 
   -- opaque scrut = App | Arg ; ask scrut to be inlined up to Label;
   -- This will require specialising | inlining enclosing function
   -- un-inline the case
   _opaque → do
+--  traceM $ "opaque: " <> (prettyTermRaw opaque)
     br ← sequence $ fmap sequence branches
     dd ← sequence $ fmap sequence d
     caseID ← addCase (br , dd)

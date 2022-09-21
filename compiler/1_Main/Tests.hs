@@ -119,15 +119,20 @@ ph = S.sydTest (S.it "phantom label" testPhantomLabel)
 goldDir = "goldenOutput/"
 goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
   tmpFile ← (</> "tmp") <$> getCanonicalTemporaryDirectory
-  Main.sh (fName <> " --no-fuse -o" <> tmpFile <> " " <> opts)
+  Main.sh (fName <> " -o" <> tmpFile <> " " <> opts)
   readFile tmpFile
 
-list1    = S.it "list.ii"        (goldenInfer "-p types --no-color" "imports/list.ii"        "goldenList")
-list2    = S.it "list2.ii"       (goldenInfer "-p types --no-color" "imports/list2.ii"       "list2")
-mutual   = S.it "mutual.ii"      (goldenInfer "-p types --no-color" "imports/sumMul.ii"      "sumMul")
-tree     = S.it "tree.ii"        (goldenInfer "-p types --no-color" "imports/tree.ii"        "tree")
-intmap   = S.it "intmap.ii"      (goldenInfer "-p types --no-color" "imports/intmap.ii"      "intmap")
-mixfixes = S.it "mixfixTests.ii" (goldenInfer "-p core  --no-color" "imports/mixfixTests.ii" "mixfixTests")
+list1    = S.it "list.ii"        (goldenInfer "-p types --no-fuse --no-color" "imports/list.ii"        "goldenList")
+list2    = S.it "list2.ii"       (goldenInfer "-p types --no-fuse --no-color" "imports/list2.ii"       "list2")
+mutual   = S.it "mutual.ii"      (goldenInfer "-p types --no-fuse --no-color" "imports/sumMul.ii"      "sumMul")
+tree     = S.it "tree.ii"        (goldenInfer "-p types --no-fuse --no-color" "imports/tree.ii"        "tree")
+intmap   = S.it "intmap.ii"      (goldenInfer "-p types --no-fuse --no-color" "imports/intmap.ii"      "intmap")
+mixfixes = S.it "mixfixTests.ii" (goldenInfer "-p core  --no-fuse --no-color" "imports/mixfixTests.ii" "mixfixTests")
+
+specialise = S.it "simpleMutual.ii" (goldenInfer "-p simple  --no-color" "imports/SpecialisationTests/SimpleMutual.ii" "simpleMutual")
+
+specTests = S.sydTest $ do
+  specialise
 
 s = S.sydTest $ do
   sequence_ fTests

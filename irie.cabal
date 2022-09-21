@@ -38,7 +38,6 @@ executable irie-exe
   other-modules:
       BitSetMap
       CmdLine
-      LiName
       Prelude
       Prim
       QName

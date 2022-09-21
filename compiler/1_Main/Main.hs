@@ -5,19 +5,18 @@ import qualified ParseSyntax as P
 import Parser (parseModule)
 import ModulePaths (findModule)
 import Externs
-import CoreSyn -- ( ModIName, BindSource(BindSource), JudgedModule(JudgedModule, bindNames, labelNames, modIName), OldCachedModule(OldCachedModule, oldModuleIName), SrcInfo(..) )
+import CoreSyn
 import Errors
 import CoreBinary()
 import CoreUtils (bind2Expr)
 import PrettyCore ( ansiRender, prettyBind, RenderOptions(ansiColor, bindSource) )
 import qualified PrettySSA
 import Infer (judgeModule)
---import Fuse (simplifyBindings)
 import FEnv (simplifyBindings)
 import MkSSA (mkSSAModule)
 import C (mkC)
 
-import Text.Megaparsec ( errorBundlePretty )
+import Text.Megaparsec ( errorBundlePretty , ParseErrorBundle )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy.IO as TL.IO
@@ -66,6 +65,17 @@ types      = sh $ demoFile <> " -p types"
 opt        = sh $ demoFile <> " -p simple"
 emitC      = sh $ demoFile <> " -p C"
 testRepl   = sh ""
+
+data Stage
+  = SImportsKO BitSet Stage -- Can still continue
+  | SParsed (Either (ParseErrorBundle Text Void) P.Module)
+  -- (flags , fName , judgedModule , newResolver , _exts , errors , srcInfo)
+  | SJudged (CmdLine , [Char] , JudgedModule , GlobalResolver , Externs , Errors , Maybe SrcInfo)
+  | SOpt    (GlobalResolver , JudgedModule)
+--  | SSSA -- we don't cache these atm
+--  | MachineCode
+
+type PipeLine = (CmdLine , GlobalResolver , Stage)
 
 main = getArgs ≫= main'
 main' args = parseCmdLine args ≫= \cmdLine → do
@@ -162,7 +172,7 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
     (parsed ^. P.parseDetails . P.hNamesNoScope)     -- unknownNames not in local scope
     maybeOldModule
   (judgedModule , errors) = judgeModule nBinds parsed (deps modDeps) modIName nArgs hNames exts srcInfo
-  JudgedModule _modIName _modNm _nArgs bindNames _a _b judgedBinds = judgedModule
+  JudgedModule _modIName _modNm _nArgs bindNames _a _b judgedBinds specs = judgedModule
 
   newResolver = addModule2Resolver tmpResolver modIName
     (V.zip bindNames (bind2Expr <$> judgedBinds)) labelNames (iMap2Vector fieldMap) labelMap fieldMap modDeps
@@ -172,7 +182,7 @@ handleJudgedModule ∷ (CmdLine, f, JudgedModule, GlobalResolver, e1, Errors, e2
   → ( CmdLine, Bool, Errors, BindSource, e2, f, GlobalResolver, JudgedModule
      , (Maybe (V.Vector TL.Text), Maybe (V.Vector TL.Text), Maybe (V.Vector TL.Text)))
 handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors , srcInfo) = let
-  JudgedModule modI modNm nArgs bindNames a b judgedBinds = judgedModule
+  JudgedModule modI modNm nArgs bindNames a b judgedBinds specs = judgedModule
   nameBinds showTerm bs = let
     prettyBind' = prettyBind ansiRender { bindSource = Just bindSrc , ansiColor = not (noColor flags) }
 --  in (\(nm,j) → (prettyBind' showTerm nm j)) <$> bs
@@ -181,9 +191,12 @@ handleJudgedModule (flags , fName , judgedModule , newResolver , _exts , errors 
   bindSrc = BindSource mempty bindNames mempty (labelHNames newResolver) (fieldHNames newResolver) (allBinds newResolver)
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
-  simpleBinds = runST $ V.unsafeThaw judgedBinds ≫= \cb →
-      simplifyBindings modI nArgs (V.length judgedBinds) cb *> V.unsafeFreeze cb
-  judgedFinal = JudgedModule modI modNm nArgs bindNames a b (if noFuse flags then judgedBinds else simpleBinds)
+  (newSpecs , simpleBinds) = if noFuse flags then (Nothing , judgedBinds)
+    else runST $ V.unsafeThaw judgedBinds ≫= \cb → do
+      specs ← simplifyBindings modI nArgs (V.length judgedBinds) cb
+      binds ← V.unsafeFreeze cb
+      pure (specs , binds)
+  judgedFinal = JudgedModule modI modNm nArgs bindNames a b simpleBinds newSpecs
 
   testPass p = coreOK && p `elem` printPass flags && not (quiet flags)
   oTypes  = if testPass "types"  then Just $ nameBinds False bindNamePairs else Nothing

@@ -225,7 +225,7 @@ pTerm = let
   prettyMatch caseTy ts d = let
 --  showLabel l t = indent 2 (prettyLabel (QName l)) <+> indent 2 (pExpr t)
     showLabel l t = prettyLabel (QName l) <+> prettyLam t
-    in annotate AKeyWord "\\case " <> nest 2 ( -- (" : " <> annotate AType (pTy caseTy)) <> hardline
+    in brackets $ annotate AKeyWord "\\case " <> nest 2 ( -- (" : " <> annotate AType (pTy caseTy)) <> hardline
 --    hardline <> (vsep (BSM.foldrWithKey (\l k → (showLabel l k :)) [] ts))
       hardline <> (vsep (Prelude.foldr (\(l,k) → (showLabel l k :)) [] (BSM.toList ts)))
       <> maybe "" (\catchAll → hardline <> ("_ ⇒ " <> prettyLam catchAll)) d

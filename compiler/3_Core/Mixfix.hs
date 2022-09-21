@@ -7,6 +7,7 @@ import ShowCore()
 import qualified Data.List as DL -- ( length, init, last, span )
 import Text.Megaparsec
 import Control.Monad (fail)
+import Data.Functor.Foldable
 
 -- Temporary exprs for solveMixfixes
 --data TMPExpr
@@ -103,3 +104,38 @@ solveMixfixes ∷ [Expr] → Expr = let
     f → option f (ExprApp f <$> args) ≫= \larg → if doPostFix
       then option larg $ try $ pPostFix Nothing larg <&> \(Nothing , [v]) → v else pure larg
   in \s → either ((error $!) . traceShowId . errorBundlePretty) identity (runParser (pExpr True) "<mixfix resolver>" (JuxtStream s))
+
+{-
+data ParseTreeF r = MFArgF Expr | MFFightF [r] Mixfixy [([r] , Mixfixy)]
+-- | ArgF Expr
+-- | MFPre MixfixDef          [(MFWord , [Expr])]
+-- | MFPost MixfixDef [Expr]  [(MFWord , [Expr])]
+
+solveMixfixes2 ∷ [Expr] → _ = ghylo distCata distApo solveFixity mkTree where
+  mkApp (f:ars) = if null ars then f else ExprApp f ars
+  isMF = \case { MFExpr{} → True ; _ → False }
+
+  mkTree train case break isMF train of
+    (larg   , [])              → MFArgF (mkApp larg)
+    (larg   , [MFExpr m])      → MFPostF (mkApp larg) m
+    (larg   , (MFExpr m : es)) → let
+      getMFWs = catMaybes $ \case
+        QStartPrefix (MixfixDef mb mfws fixityR) qNmr  | null largs       → Just (drop 1 mfws , fixityR , qNmr)
+        QStartPostfix (MixfixDef mb mfWs fixityR) qNmr | not (null largs) → Just (drop 2 mfws , fixityR , qNmr)
+        _ → Nothing
+
+      pMFWords ∷ [MFWord] → [Expr] → Maybe [Expr]
+      pMFWords mfws train = foldl nextMFW train mfws where
+        nextMFW mfw train2 = break isMF train2
+
+      in fromJust $ pMFWords (fromJust $ head $ getMFWs qmfs)
+
+  solveFixity = \case
+    MFArgF e → e 
+    MFFightF largs lm mfStack →
+      if mixfixBind lm == mixfixBind rm && assoc (fixity lm) == AssocNone
+        then error $ "operator not associative: " <> show qNml
+      else else if prec (fixity lm) > prec (fixity lr) || (mixfixBind lm == mixfixBind rm) && assoc lm /= AssocRight)
+        then -- l wins midArg
+        else -- r wins
+-}

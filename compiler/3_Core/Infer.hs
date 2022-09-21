@@ -11,7 +11,7 @@ import Errors
 import TypeCheck ( check )
 import TCState
 import DesugarParse ( matches2TT )
-import Externs ( typeOfLit, readField, readLabel, readParseExtern, readQParseExtern )
+import Externs ( typeOfLit, readField, readLabel, readParseExtern, readQParseExtern , Externs )
 import Mixfix ( solveMixfixes )
 import Generalise ( generalise )
 
@@ -22,6 +22,7 @@ import qualified Data.Vector.Mutable as MV ( MVector, modify, new, read, replica
 import qualified BitSetMap as BSM ( fromList, fromListWith, singleton )
 import Data.Functor.Foldable
 
+judgeModule ∷ Int -> P.Module -> BitSet -> ModuleIName -> p -> V.Vector HName -> Externs.Externs -> p1 -> (JudgedModule, Errors)
 judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
   modName   = pm ^. P.moduleName
   nArgs     = pm ^. P.parseDetails . P.nArgs
@@ -61,7 +62,7 @@ judgeModule nBinds pm importedModules modIName _nArgs hNames exts _source = let
       , _coOccurs    = c
       }
     wip''    ← V.unsafeFreeze (st ^. wip)
-    pure (JudgedModule modIName modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip''
+    pure (JudgedModule modIName modName nArgs hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) wip'' Nothing
           , st ^. errors) --TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
 
 -- uninline expr and insert qualified binding
@@ -379,8 +380,10 @@ infer = let
     argTVars ← getArgTVars `mapM` args
     splits   ← sequence branches
     def      ← sequenceA catchAll
-    Core scrut gotScrutTy ← pscrut
-    let retTys  = tyOfExpr <$> maybe splits (:splits) def
+    pscrut ≫= \case 
+      PoisonExpr → pure PoisonExpr
+      Core scrut gotScrutTy → let
+        retTys  = tyOfExpr <$> maybe splits (:splits) def
         retTy   = mergeTypeList False retTys -- ? TODO why is this a negative merge
 
         altTys   = map (\argTVars → TyGround [THTyCon $ THTuple (V.fromList argTVars)]) argTVars
@@ -395,11 +398,10 @@ infer = let
 --        addAbs _ty PoisonExpr _ = Lam [] 0 Poison tyBot
           addAbs _ty e _ = error (show e)
           in BSM.fromList $ zip labels (zipWith3 addAbs retTys splits (zipWith zip args argTVars))
-
-    (BiEQ , retT) ← biUnifyApp matchTy [gotScrutTy] -- TODO biret
-
-    pure $ if isPoisonExpr `any` splits then PoisonExpr else
-      Core (Match scrut retT altsMap Nothing) retT -- TODO default
+        in do
+        (BiEQ , retT) ← biUnifyApp matchTy [gotScrutTy] -- TODO biret
+        pure $ if isPoisonExpr `any` splits then PoisonExpr else
+          Core (Match scrut retT altsMap Nothing) retT -- TODO default
 
   P.LitF l  → pure $ Core (Lit l) (TyGround [typeOfLit l])
 

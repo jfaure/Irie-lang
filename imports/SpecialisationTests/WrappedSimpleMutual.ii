@@ -1,0 +1,13 @@
+bool2N = \case
+  True  => 1
+  False => 0
+
+g2 z i (Wrap next) s = case next s of
+  Done      => g1 z i
+  Yield x s => g2 (z + x) i (Wrap next) s
+
+g1 z i = let
+  nextRet x = case x of
+    True  => Yield (i * i) False
+    False => Done
+  in if i >? 10 then z else g2 z (i + 1) (Wrap nextRet) True

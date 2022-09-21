@@ -12,7 +12,7 @@ import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
 import Data.Functor.Foldable.TH (makeBaseFunctor)
 
-global_debug = True
+global_debug = False
 
 type ExtIName  = Int -- VExterns
 type BiSubName = Int -- index into bisubs
@@ -157,8 +157,8 @@ data Expr
  | PoisonExpr
 
  -- Temporary exprs for solveMixfixes; TODO should extract to new data
- | QVar     QName --(ModuleIName , IName)
- | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
+ | QVar     QName
+ | MFExpr   Mixfixy
  | ExprApp  Expr [Expr] -- output of solvemixfixes
 
 --data MixfixSolved
@@ -233,7 +233,18 @@ data JudgedModule = JudgedModule {
  , fieldNames  ∷ M.Map HName IName -- can we use Vector instead of Map?
  , labelNames  ∷ M.Map HName IName
  , judgedBinds ∷ V.Vector Bind
+ , specs       ∷ Maybe Specialisations
 }
+
+type FnSize = Bool -- <=? 1 App
+data Specialisations = Specialisations { specBinds ∷ V.Vector (FnSize , Term) , specsCache ∷ V.Vector (M.Map [ArgShape] IName) }
+
+data ArgShape
+ = ShapeNone
+ | ShapeLabel ILabel [ArgShape]
+ | ShapeQBind QName
+ deriving (Ord , Eq , Show , Generic)
+
 --emptyJudgedModule iNm hNm = JudgedModule iNm hNm 0 mempty mempty mempty mempty
 
 data OldCachedModule = OldCachedModule {

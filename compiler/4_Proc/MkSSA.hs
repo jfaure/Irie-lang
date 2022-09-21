@@ -27,7 +27,7 @@ int_t = TPrim (PtrTo (PrimInt 32))
 
 setTop t = modify $ \x→x{top = t}
 
-mkSSAModule coreMod@(JudgedModule modIName modName nArgs bindNames pFields pLabels coreBinds) = let
+mkSSAModule coreMod@(JudgedModule modIName modName nArgs bindNames pFields pLabels coreBinds specs) = let
   nArgs  = 100 -- TODO !
   nBinds = V.length coreBinds
   wip2Fn = \case

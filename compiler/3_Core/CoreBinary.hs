@@ -43,6 +43,7 @@ deriving instance Generic BitInstrs
 deriving instance Generic NumInstrs
 deriving instance Generic GMPSpecial
 deriving instance Generic POSIXType
+deriving instance Generic Specialisations
 
 instance Binary VName
 instance Binary QName
@@ -65,6 +66,8 @@ instance Binary Mixfixy
 instance Binary Prec
 instance Binary MixfixDef
 instance Binary Assoc
+instance Binary ArgShape
+instance Binary Specialisations
 
 -- primitives
 instance Binary Literal
