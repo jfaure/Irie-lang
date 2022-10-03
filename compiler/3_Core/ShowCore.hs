@@ -18,4 +18,5 @@ deriving instance Show BiCast
 deriving instance Show ExternVar
 deriving instance Show Mixfixy
 deriving instance Show Lam
+deriving instance Show LamB
 deriving instance Show Specialisations

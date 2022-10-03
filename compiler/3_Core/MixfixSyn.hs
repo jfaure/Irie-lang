@@ -13,6 +13,7 @@ data MixfixDef = MixfixDef {
  , mfWords    ∷ MFWords
  , fixity     ∷ Prec
 }
+instance Eq MixfixDef where (MixfixDef m _ _) == (MixfixDef n _ _) = m == n
 
 data MFWord -- points to it's binding
   = StartPrefix  MixfixDef IName
@@ -24,6 +25,7 @@ data QMFWord -- qualified
   = QStartPrefix  MixfixDef QName --(ModIName , IName)
   | QStartPostfix MixfixDef QName --(ModIName , IName)
   | QMFPart       QName --(ModIName , IName)
+  deriving Eq
 
 mfw2qmfw modNm = \case
   StartPrefix  m i → QStartPrefix  m (mkQName modNm i)--(modNm , i)

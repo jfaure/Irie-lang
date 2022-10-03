@@ -26,11 +26,12 @@ data TCEnvState s = TCEnvState {
  , _letBounds   ∷ BitSet
 
  -- Biunification state
+ , _bruijnArgVars :: V.Vector Int    -- bruijn arg -> TVar map
  , _bindWIP     ∷ (IName , Bool)     -- to identify recursion and mutuals (Bool indicates recursion)
  , _tmpFails    ∷ [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen        ∷ Int                -- cursor for bis which may have spare space
  , _bis         ∷ MV.MVector s BiSub -- typeVars
- , _argVars     ∷ MV.MVector s Int   -- arg IName → TVar map (Arg i ⇒ TVar i made it harder to trim bisubs)
+ , _argVars     ∷ MV.MVector s Int   -- arg IName -> TVar map (Arg i => TVar i made it harder to trim bisubs)
  , _bindsInScope∷ BitSet             -- easily figure out which let bindings are in scope
 
  -- tvar kinds (see Generalise.hs)

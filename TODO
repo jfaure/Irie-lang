@@ -1,19 +1,27 @@
 ## meta
+  * discord: use it in the browser with xdg-desktop-portal-wlr 
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
   * move to f2fs
+# recent
+  * make case apps always labels ?
+  * @ patterns in TT ?
+  * Fusion: lambda lifting (if subterms of App (or Match) all contain lambdas, share them)
+  * exceptT compiler pipeline
+  * binds aren't removed from current module when deleted
 ## ?
-  * track branch freevars
+  * freevar types must be explicit type of let-binds
   * type application, esp. perfect tree
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
-  * audit oldcachedmodule , seems slightly broken (probably BindOpt) , also bring labels in scope
-  * make freevars explicit in let-binds so their types make sense
+  * audit oldcachedmodule , seems slightly broken (probably BindOpt)
   * trim bisubs
+  * rewrite rollµ as a catamorphism
 ## Top Priority
-  * Pat must be Term: mixfix patterns; mixfix labels vs mixfix binds ≫ parse TT ≫ VExtern ≫ new VArg | VBruijns ≫ invert into case-tree
+  * μ: bubble up rec type joins
+  * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
+  * expand lambda-mixfixes with explicit holes
   * cata defined with let doesn't generalise (is recursive let-bound problematic?)
-  * fix let-bind scopes (let-bound names are in global scope)
   * mutuals ⇒ recurse over product category
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * improve Main: explicit pipeline
@@ -21,9 +29,7 @@
   * allow tabs instead of spaces
   * Pattern guards
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
-  * figure out end of let-in in mixfix parser ?! `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
   * repl parser: multiline case / let
-  * expand lambda-mixfixes with explicit holes
 ## Types
   * Annotations (record , sum , TPi)
   * Ad-hoc polymorphism: `Int <: [ NumInt Int ]` show (esp for repl JIT)
@@ -33,7 +39,7 @@
   * Linear types; dependent types required to quantify relative linearity `Lin t ≥ Lin f => t → u`
   * splitAt with Nils should also simplify
 ## Functor modules and records (infer a module as a TT (Abs | Record) + ImportList , HNames , MixfixNames , LinSubs)
-  * file = implicit `filename = record`
+  * file = implicit `filename = module` if not given
   * pattern assignments `(a , b) = (1 , 3)`
   * file = let-block = opened record (allow use/open/mutual statements)
   * BindName LName FName MFName overlap
@@ -53,11 +59,13 @@
   * local/extern names in ssa form
   * normalize order of fields/labels for codegen (sort on size then textual name)
 ## Error messages
+  * qualified bindings
   * Warn nonsense type joins | infer a dependent type
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
+  * merge case-branches that re-case the same thing
   * strictly positive recursion
   * underdetermined recursion: https://counterexamples.org/underdetermined-recursion.html
     equirecursive ⇒ A = F[A] ; B = F[B] ⇒ A = B (unsound for arbitrary type-level functions F!)
@@ -67,10 +75,8 @@
   * Need totality checker, else a Refl type may not terminate and thus not prove EQ
   * Advanced recursive types µ insufficient `PTree a = Leaves a | Cons (PTree (a , a))`
   * equality constraints are central to GADTs `Gabriel Scherer and Didier Rémy. GADTs meet subtyping.` `https://okmij.org/ftp/ML/first-class-modules/#GADT`
-  * math2 = 1 + 2 * 3 + 4 -- should be: (1 + (2 * 3)) + 4
   * upgrade mu-merge to modify varsubs table
   * switch to codeberg
-  * Instantiation & Generalisation is also beta-reduction and could be improved
   * List comprehensions
   * cache version
   * Allow inspection of papped args

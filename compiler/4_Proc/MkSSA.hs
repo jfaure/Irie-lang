@@ -11,6 +11,11 @@ import qualified Data.Vector as V
 import qualified BitSetMap as BSM
 import qualified Data.IntMap as IM
 
+--nFields = M.size (pm ^. P.parseDetails . P.fields)
+--nLabels = M.size (pm ^. P.parseDetails . P.labels)
+--normFields = argSort nFields (pm ^. P.parseDetails . P.fields)
+--normLabels = argSort nLabels (pm ^. P.parseDetails . P.labels)
+
 addLocal ∷ CGEnv s Int
 addLocal = do
   l ← gets locCount

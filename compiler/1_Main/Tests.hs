@@ -43,43 +43,43 @@ readTestsFromfile fName = let
 caseTests = do
   let e ∷ Text = [r|
 printList l = case l of
-  Nil ⇒ 2
-  Cons i ll ⇒ add (putNumber i) (printList ll)
+  @Nil ⇒ 2
+  @Cons i ll ⇒ add (putNumber i) (printList ll)
 |] in S.describe "printList" $ S.it (toS e) $ UniText (inferType e)
       `S.shouldBe` UniText "printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → %i32\n"
 
   let e ∷ Text = [r|
 -- need Nil and Cons in scope
 unfoldr f b0 = case f b0 of
-  Just ({ val as a , seed as b1 }) ⇒ Cons a (unfoldr f b1)
-  Nothing       ⇒ Nil
+  @Just ({ val as a , seed as b1 }) ⇒ Cons a (unfoldr f b1)
+  @Nothing       ⇒ Nil
 null x = case x of
-  Nil ⇒ 1
-  Cons ⇒ 0
+  @Nil ⇒ 1
+  @Cons ⇒ 0
 |]
       in S.describe "unfoldr" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "unfoldr = ∏ A B C → (A → [Just {{val : B , seed : A}} | Nothing]) → A → µc.[Nil | Cons {B , c}]\n"
 
   let e ∷ Text = [r|
 filter pred l = case l of
-  Nil ⇒ Nil
-  Cons x xs ⇒ ifThenElse (pred x) (Cons x (filter pred xs)) (filter pred xs)
-|]
+  @Nil ⇒ Nil
+  @Cons x xs ⇒ ifThenElseInt1 (pred x) (Cons x (filter pred xs)) (filter pred xs)
+ |]
       in S.describe "filter" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "filter = ∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]\n"
 
   let e ∷ Text = [r|
 mergeRec = \case
-  N ⇒ { x = 1 }
-  C ⇒ { y = 1 }
+  @N ⇒ { x = 1 }
+  @C ⇒ { y = 1 }
 |]
       in S.describe "mergeRecords" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "mergeRec = [N | C] → {}\n"
 
   let e ∷ Text = [r|
 testParity n = let
-  isEven n = ifThenElse (eq n 0) 1 (isOdd  (sub n 1))
-  isOdd  n = ifThenElse (eq n 0) 0 (isEven (sub n 1))
+  isEven n = ifThenElseInt1 (eq n 0) 1 (isOdd  (sub n 1))
+  isOdd  n = ifThenElseInt1 (eq n 0) 0 (isEven (sub n 1))
   in isEven n
 |]
       in S.describe "let-mutuals" $ S.it (toS e) $ UniText (inferType e)
@@ -144,3 +144,5 @@ s = S.sydTest $ do
   tree
   mixfixes
   intmap
+
+testMixfixes = S.sydTest mixfixes

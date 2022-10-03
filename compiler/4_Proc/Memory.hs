@@ -65,6 +65,13 @@ getRecHeader args = Nothing
 --     = \b t f ⇒ (b f t) -- share lambdas
 -- (\b ⇒ not (not b)) = \x t f ⇒ x t f
 --
+-- proof.
+-- not (not x)
+-- (\b t f ⇒ b f t) ((\b t f ⇒ b f t) x)
+-- (\b t f ⇒ b f t) (\t f ⇒ x f t)
+-- \t f ⇒ (\t f ⇒ x f t) f t
+-- \t f ⇒ x t f
+--
 -- Fusion using non-statically known number of applications
 -- (Inc x) = let
 --   case_e = λe λo λi e

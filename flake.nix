@@ -30,7 +30,7 @@
     in (nixpkgsFor system).haskell-nix.cabalProject' {
       inherit compiler-nix-name;
       src = fakeSrc.outPath;
-      cabalProjectFileName = "cabal.project";
+#     cabalProject = "";
       modules = [{ packages = { }; }];
       shell.tools = { cabal = {}; };
       };

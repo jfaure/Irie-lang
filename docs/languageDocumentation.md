@@ -1,4 +1,4 @@
-Note. this requires expansion (last update: August 2021)
+Note. this requires expansion (last updated: August 2021)
 # Top level
 An Irie file is a dependent record (A list of bindings). It's "module signature" is the type of this record. Records contain assignments and mixfix definitions
 

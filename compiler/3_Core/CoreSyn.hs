@@ -2,7 +2,7 @@
 {-# LANGUAGE TemplateHaskell , TypeFamilies #-}
 module CoreSyn (module CoreSyn , module QName , ModIName) where
 import Control.Lens ( makeLenses )
-import MixfixSyn ( ModIName, QMFWord )
+import MixfixSyn ( ModIName , QMFWord , Prec )
 import Prim ( Literal, PrimInstr, PrimType )
 import QName ( fieldBit, labelBit, maxIName, maxModuleName, mkQName, modName, moduleBits, qName2Key, unQName, QName(..) )
 import qualified BitSetMap as BSM ( BitSetMap )
@@ -41,8 +41,9 @@ data VName
  | VExt     IName -- forward references, primitives, imported names (incl mixfixwords)
  | VForeign HName -- opaque name resolved at linktime
 
-data Lam = Lam [(IName , Type)] BitSet Type -- arg inames, types, freevars, term, ty
-type ABS = (Lam , Term)
+data LamB = LamB Int {-BitSet-} Term
+data Lam  = Lam [(IName , Type)] BitSet Type -- arg inames, types, freevars, term, ty
+type ABS  = (Lam , Term)
 
 -- for makeBaseFunctor to work we must make the fixpoints obvious: No mutual recursion
 data Term -- β-reducable (possibly to a type)
@@ -55,6 +56,9 @@ data Term -- β-reducable (possibly to a type)
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
  | Abs     ABS
+ | VBruijn IName
+ | BruijnAbs Int BitSet Term
+ | BruijnAbsTyped Int BitSet Term [(Int , Type)] Type -- ints are there to recover arg metadata
  | App     Term [Term]    -- IName [Term]
 
  | Prod    (BSM.BitSetMap Term) -- (IM.IntMap Term)
@@ -63,10 +67,13 @@ data Term -- β-reducable (possibly to a type)
 
  | Label   ILabel [Term] --[Expr]
  | Match   Term Type (BSM.BitSetMap ABS) (Maybe ABS)
+ | CaseB   Term Type (BSM.BitSetMap Term) (Maybe Term)
 
  -----------------------------------------------
  -- Extra info built for/by simplification --
  -----------------------------------------------
+ | MatchB  Term (BSM.BitSetMap LamB) LamB -- Bruijn match (must have a default, even if Poison)
+
  | Case CaseID Term -- term is the scrutinee. This makes inlining very cheap
 
  | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
@@ -77,10 +84,6 @@ data Term -- β-reducable (possibly to a type)
  -- Named Specialised recursive fns can (mutually) recurse with themselves
  | LetSpecs [Term{-.Abs-}] Term
  | Spec QName -- mod = bind it came from , unQ = spec number
-
- -- Used to make new functions internally (esp. specialisations)
- | VBruijn IName
- | BruijnAbs Int BitSet Term
 
  | PartialApp [Type] Term [Term] --Top level PAp ⇒ Abs (only parse generates fresh argnames)
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
@@ -140,7 +143,7 @@ data THead ty
  | THTop | THBot
 
  | THFieldCollision ty ty | THLabelCollision ty ty
- | THTyCon !(TyCon Type) -- BitSet cache contained tvars?
+ | THTyCon !(TyCon ty) -- BitSet cache contained tvars?
 
  | THBi Int ty -- Π A → F(A) polymorphic type to be instantiated on each use
  | THMu Int ty -- µx.F(x) recursive type is instantiated as Π A → A & F(A)`
@@ -155,17 +158,7 @@ data Expr
  | Ty       Type
  | Set      !Int Type
  | PoisonExpr
-
- -- Temporary exprs for solveMixfixes; TODO should extract to new data
- | QVar     QName
- | MFExpr   Mixfixy
- | ExprApp  Expr [Expr] -- output of solvemixfixes
-
---data MixfixSolved
--- = QVar     QName
--- | MFExpr   Mixfixy --MFWord -- removed by solvemixfixes
--- | ExprApp  Expr [Expr] -- output of solvemixfixes
--- | MFId     Expr
+ | PoisonExprWhy Text
 
 data Bind -- elements of the bindmap
  = Queued
@@ -177,6 +170,7 @@ data Bind -- elements of the bindmap
 -- | LetBound { recursive ∷ Bool , naiveExpr ∷ Expr }
  | BindKO -- failed type inference
  | BindOK { optLevel ∷ Int , letBound ∷ Bool , recursive ∷ Bool , naiveExpr ∷ Expr } -- isRec
+ | LetBound
 
 -- | BindMutuals (V.Vector Expr)
 

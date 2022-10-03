@@ -2,7 +2,7 @@
 -- ! the Prelude supplies mixfixes and more convenient access to these primitives
 -- * constructs a vector of primitives
 -- * supplys a (Map HName IName) to resolve names to indexes
-module Builtins (primBinds , primMap , typeOfLit , primLabelHNames , primLabelMap , primFieldHNames , primFieldMap) where
+module Builtins (primBinds , primMap , typeOfLit , primLabelHNames , primLabelMap , primFieldHNames , primFieldMap , builtinFalse , builtinTrue) where
 import Prim
 import CoreSyn
 import qualified Data.Map.Strict as M ( Map , (!?) , fromList )
@@ -37,17 +37,17 @@ primTable = concat
 boolLabel ∷ [(HName , Expr)]
 boolLabel =
   [ ("BoolL" , Ty (TyGround [boolL]))
-  , ("True"  , Core (Label trueLabel  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
-  , ("False" , Core (Label falseLabel mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
+  , ("True"  , Core (Label builtinTrue  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
+  , ("False" , Core (Label builtinFalse mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
   ]
-falseLabel = mkQName 0 0 -- 0.0
-trueLabel  = mkQName 0 1 -- 0.1
-trueLabelT  = (qName2Key trueLabel  , TyGround [THTyCon (THTuple mempty)])
-falseLabelT = (qName2Key falseLabel , TyGround [THTyCon (THTuple mempty)])
+builtinFalse = mkQName 0 0 -- 0.0
+builtinTrue = mkQName 0 1 -- 0.1
+falseLabelT = (qName2Key builtinFalse , TyGround [THTyCon (THTuple mempty)])
+trueLabelT  = (qName2Key builtinTrue  , TyGround [THTyCon (THTuple mempty)])
 boolL       = THTyCon (THSumTy (BSM.fromList [trueLabelT , falseLabelT]))
 
 primLabelHNames = V.fromList ["False" , "True"] ∷ V.Vector HName
-primLabelMap    = M.fromList [("True" , trueLabel) , ("False" , falseLabel)] ∷ M.Map HName QName
+primLabelMap    = M.fromList [("True" , builtinTrue) , ("False" , builtinFalse)] ∷ M.Map HName QName
 
 -- Primitive field Names
 primFieldHNames = mempty ∷ V.Vector HName
@@ -107,7 +107,7 @@ instrs ∷ [(HName , (PrimInstr , GroundType))] = [
       in [THBi 1 $ TyGround $ mkTHArrow [THBound 0 , unfoldRet , THBound 0] (THExt str)]))
 
   -- %ptr(A) → (Bool , A , %ptr(A))    == str → (Bool , char , str)
-  , ("nextElem" , (NextElem , mkTHArrow [THExt str] (mkTHTuple $ TyGround <$> [[THExt b] , [THExt c] , [THExt str]]) ))
+  , ("nextElem" , (NextElem , mkTHArrow [THExt str] (mkTHTuple $ TyGround <$> [[boolL] , [THExt c] , [THExt str]]) ))
   , ("toCStruct"       , (ToCStruct       , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (THExt cstruct)] ))
   , ("toCStructPacked" , (ToCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (THExt cstruct)] ))
   , ("fromCStruct", (FromCStruct , [THBi 1 $ TyGround $ mkTHArrow [THExt cstruct] (THBound 0)] ))
@@ -123,8 +123,8 @@ instrs ∷ [(HName , (PrimInstr , GroundType))] = [
   , ("gt"      , (NumInstr (PredInstr GTCmp ) , mkTHArrow [iTy , iTy]    boolL))
   , ("eq"      , (NumInstr (PredInstr EQCmp ) , mkTHArrow [iTy , iTy]    boolL))
   , ("ne"      , (NumInstr (PredInstr NEQCmp) , mkTHArrow [iTy , iTy]    boolL))
-  , ("boolORL" ,  (NumInstr (PredInstr OR )   , mkTHArrow [boolL, boolL] boolL))
-  , ("boolANDL", (NumInstr (PredInstr AND )   , mkTHArrow [boolL, boolL] boolL))
+  , ("boolOR"  ,  (NumInstr (PredInstr OR )   , mkTHArrow [boolL, boolL] boolL))
+  , ("boolAND" , (NumInstr (PredInstr AND )   , mkTHArrow [boolL, boolL] boolL))
   ]
 iTy = THPrim (PrimInt 32)
 
@@ -159,8 +159,8 @@ primInstrs ∷ [(HName , (PrimInstr , ([IName] , IName)))] =
 --, ("gt"    , (NumInstr (PredInstr GTCmp ) , ([i, i] , b) ))
 --, ("eq"    , (NumInstr (PredInstr EQCmp ) , ([i, i] , b) ))
 --, ("ne"    , (NumInstr (PredInstr NEQCmp) , ([i, i] , b) ))
-  , ("boolOR",  (NumInstr (PredInstr OR )   , ([b, b] , b) ))
-  , ("boolAND", (NumInstr (PredInstr AND )  , ([b, b] , b) ))
+--, ("boolOR",  (NumInstr (PredInstr OR )   , ([b, b] , b) ))
+--, ("boolAND", (NumInstr (PredInstr AND )  , ([b, b] , b) ))
   , ("zext"  , (Zext  , ([b] , i) ))
   , ("sdiv"  , (NumInstr (IntInstr SDiv) , ([i, i] , i) ))
   , ("srem"  , (NumInstr (IntInstr SRem) , ([i, i] , i) ))

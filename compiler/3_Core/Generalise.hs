@@ -48,7 +48,7 @@ import Data.Functor.Foldable
 --   * save TVar co-occurences
 --   * Co-occurence analysis: attempt to remove or unify tvars
 -- 2. Finalise: Remove, unify or generalise (with possible mu binder) TVars depending on results of co-occurence analysis
-generalise ∷ BitSet → (Either IName Type) → TCEnv s Type
+generalise ∷ BitSet → Either IName Type → TCEnv s Type
 generalise escapees rawType = let
   showTys t        = T.intercalate " ; " (prettyTyRaw <$> t)
   traceCoocs nVars coocs = V.take nVars coocs `iforM_` \i (p,m) → traceM (show i <> ": +[" <> showTys p <> " ]; -[" <> showTys m <> "]")
@@ -158,6 +158,7 @@ judgeVars nVars escapees _leaks recursives coocs = V.constructN nVars $ \prevSub
 
 -- Final step; use VarSubs to eliminate all (unleaked & unescaped) TVars
 -- Also attempt to roll µtypes
+-- modifies biEq and Mubinds
 subGen ∷ V.Vector VarSub → BitSet → Type → GenEnv s Type
 subGen tvarSubs leakedVars raw = use biEqui ≫= \biEqui' → let
   generaliseRecVar = generaliseVar
@@ -328,6 +329,7 @@ substTypeVar pos v loops guarded = if
        then pure (TyVars loops' [])
        else substTypeMerge pos loops' guarded ty
 
+-- Calls instantiate , reads Bisubs and builds cooc vector
 substTypeMerge ∷ Bool → Integer → Integer → Type → TCEnv s Type
 substTypeMerge pos loops guarded ty =  let
   (tvars , others) = partitionType ty
@@ -354,3 +356,18 @@ substTypeMerge pos loops guarded ty =  let
   vs ← bitSet2IntList tvars `forM` \x → mergeTVar x <$> substTypeVar pos x loops guarded
   ts ← substTyHead `mapM` others
   pure (mergeTypeList pos (vs ++ ts))
+
+{-
+TODO start with BiUnify.instantiate
+
+subst2 ∷ Bool → Type → Type
+subst2 pos loops guarded = let
+  go ∷ _
+  go vars = \case
+--  THTyCon (THArrow ars r) → 
+--  x → embed x
+  in cata $ \case
+    TyGroundF g  → go 0  <$> g
+    TyVarsF vs g → go vs <$> g
+--  x → embed x
+-}

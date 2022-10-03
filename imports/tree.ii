@@ -5,3 +5,10 @@ import imports/list
 flattenTree t = let
   squish (Node x ts) xs = @Cons x (foldr squish xs ts)
   in squish t @Nil
+
+-- File CString ; Dir CString (List Dir)
+--printDirTree : Str -> Dir -> Str
+-- !??
+--printDirTree prefix = \case
+--  File f  ⇒ prefix ++ f
+--  Dir d r ⇒ prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r

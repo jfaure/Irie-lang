@@ -44,7 +44,6 @@ underlying adjunction is pre-composition PreMaybe ⊣ RanMaybe
 -- Conjugate Hylomorphisms --
 -----------------------------
 
-
 Rolling rule: base functor shaping recursion is composed from 2 other functors & allows swapping
 Conjugate rule: shunt functors between producer and consumer parts of the hylo
 

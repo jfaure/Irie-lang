@@ -116,8 +116,8 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
   resolver = let
     -- temporarily mark field/label names (use 2 bits from the iname, not the module name which tracks their origin)
     -- instead resolveName could use 3 maps, but would be slow since frequently entire maps would come back negative
-    labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
-    fields = IM.singleton modIName . (`setBit` fieldBit) <$> fieldMap
+    labels = IM.singleton modIName . (\i → i `setBit` labelBit) <$> labelMap
+    fields = IM.singleton modIName . (\i → i `setBit` fieldBit) <$> fieldMap
     -- Deleted names from the old module won't be overwritten so must be explicitly removed
     rmStaleNames nameMap = let
       collect = V.foldl (\stale nm → if M.member nm localNames then stale else nm : stale) []
@@ -126,7 +126,7 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
         Just oldMod → foldr (\staleName m → M.update (Just . IM.filterWithKey (\k _v → k /= oldMod)) staleName m) nameMap staleNames
         Nothing → nameMap
     in rmStaleNames $ M.unionsWith IM.union
-      [((\iNm → IM.singleton modIName iNm) <$> localNames) , curResolver , labels , fields]
+      [((\iNms → IM.singleton modIName iNms) <$> localNames) , curResolver , labels , fields]
 
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map → IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]

@@ -44,6 +44,7 @@ prettyExpr flags      = render flags . layoutPretty defaultLayoutOptions . pExpr
 prettyBind ∷ RenderOptions → Bool → T.Text → Bind → TL.Text
 prettyBind flags showTerm nm b = render flags . layoutPretty defaultLayoutOptions $ pBind nm showTerm b <> hardline
 
+showRawQName q = show (modName q) <> "." <> show (unQName q)
 --------------
 -- Renderer --
 --------------
@@ -59,7 +60,6 @@ render flags = let
     STAnn ann contents → doAnn prevAnn ann (renderTree ann contents)
     STConcat contents  → foldMap (renderTree prevAnn) contents
 
-  showRawQName q = show (modName q) <> "." <> show (unQName q)
   prettyQName ∷ Maybe (V.Vector (V.Vector HName)) → QName → T.Text
   prettyQName names q = let
     showText q names = toS $ (names V.! modName q) V.! unQName q
@@ -190,6 +190,7 @@ pBind nm showTerm bind = pretty nm <> " = " <> case bind of
   Guard m tvar      → "GUARD : "   <> viaShow m <> viaShow tvar
   Mutual m free isRec tvar tyAnn → "MUTUAL: " <> viaShow m <> viaShow isRec <> viaShow tvar <> viaShow tyAnn
   Queued → "Queued"
+  LetBound -> "Letbound"
   BindOK n lbound isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
     in (if lbound then "let " else "") <> if showTerm then {-viaShow n <+>-} recKW <> pExpr expr else pExprType expr
 --LetBound isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
@@ -201,13 +202,11 @@ pBind nm showTerm bind = pretty nm <> " = " <> case bind of
 pExprType = let pos = True in \case
   Core term ty → annotate AType (pTy pos ty)
   Ty t         → " type " <> annotate AType (pTy pos t)
-  ExprApp f a → pExpr f <> enclose "[" "]" (hsep $ pExpr <$> a)
   e → viaShow e
 
 pExpr = let pos = True in \case
   Core term ty → pTerm term <> softline <> " : " <> annotate AType (pTy pos ty)
   Ty t         → "type" <+> annotate AType (pTy pos t)
-  ExprApp f a → pExpr f <> enclose "[" "]" (hsep $ pExpr <$> a)
   e → viaShow e
 
 pTerm = let
@@ -216,17 +215,17 @@ pTerm = let
     VQBind q   → annotate (AQBindName q) ""
     VExt i     → "E" <> viaShow i -- <> dquotes (toS $ (srcExtNames bindSrc) V.! i)
     VForeign i → "foreign " <> viaShow i
-  prettyLam ((Lam ars free ty) , term) = let
+  prettyLam (Lam ars free ty , term) = let
     prettyArg (i , ty) = viaShow i
     in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " ⇒ " <> term
+  prettyBruijn (LamB i term) =
+    (annotate AAbs $ "λB " <> viaShow i) <> {-prettyFreeArgs free <>-} " ⇒ " <> pTerm term -- todo no cata here
   prettyFreeArgs x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
-  prettyMatch caseTy ts d = let
---  showLabel l t = indent 2 (prettyLabel (QName l)) <+> indent 2 (pExpr t)
+  prettyMatch prettyLam caseTy ts d = let
     showLabel l t = prettyLabel (QName l) <+> prettyLam t
     in brackets $ annotate AKeyWord "\\case " <> nest 2 ( -- (" : " <> annotate AType (pTy caseTy)) <> hardline
---    hardline <> (vsep (BSM.foldrWithKey (\l k → (showLabel l k :)) [] ts))
       hardline <> (vsep (Prelude.foldr (\(l,k) → (showLabel l k :)) [] (BSM.toList ts)))
       <> maybe "" (\catchAll → hardline <> ("_ ⇒ " <> prettyLam catchAll)) d
       )
@@ -238,8 +237,11 @@ pTerm = let
     LitF     l → annotate ALiteral $ parens (viaShow l)
     AbsF l     → prettyLam l
     BruijnAbsF n free body → parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
+    BruijnAbsTypedF n free body argMetas retTy → parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
     RecAppF f args → parens (annotate AKeyWord "recApp" <+> f <+> sep args)
-    MatchF arg caseTy ts d → arg <+> " > " <+> prettyMatch caseTy ts d
+--  MatchF  arg caseTy ts d → arg <+> " > " <+> prettyMatch prettyLam (Just caseTy) ts d
+    MatchBF arg ts d → arg <+> " > " <+> prettyMatch prettyBruijn Nothing ts (Just d)
+    CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing ts d
     AppF f args    → parens (f <+> nest 2 (sep args))
     PartialAppF extraTs fn args → "PartialApp " <> viaShow extraTs <> parens (fn <> fillSep args)
     InstrF   p → annotate AInstr (prettyInstr p)
@@ -257,12 +259,18 @@ pTerm = let
         LensSet  tt      → " . set "  <> parens (pExpr tt)
         LensOver cast tt → " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr tt)
       in r <> " . " <> hsep (punctuate "." $ prettyField <$> target) <> pLens ammo
-    SpecF q    → "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
+    SpecF q      -> "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
+    PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
+    TupleF    {} -> error "tuple"
+    LinF      {} -> error "lin"
+    LinAbsF   {} -> error "linabs"
+    LetSpecsF {} -> error "letspecs"
+--  x → _
   parensApp f args = parens $ parens f <+> nest 2 (sep args)
   in para $ \case
     -- parens if necessary
     AppF f args | Abs{} ← fst f → parensApp (snd f) (snd <$> args)
-    x → ppTermF (fmap snd x)
+    x → ppTermF (snd <$> x)
 
 prettyInstr = \case
   NumInstr i → case i of

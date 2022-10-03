@@ -1,5 +1,5 @@
 -- Comments on the same line as a binding are the expected result when runnning tests
-t1 a = ifThenElse a a 3 -- ∏ A → (%i1 ⊓ A) → (%i32 ⊔ A)
+t1 a = ifThenElseInt1 a a 3 -- ∏ A → (%i1 ⊓ A) → (%i32 ⊔ A)
 
 basic1   = 42            -- %i32
 basic2 x = 42            -- ⊤ → %i32
@@ -8,10 +8,10 @@ basic4 x = x 42          -- ∏ A → (%i32 → A) → A
 basic5   = (\x => x) 42  -- %i32
 twice f x = f (f x)      -- ∏ A → (A → A) → A → A
 -- ^ mlsub says: (A ∨ B → A) → B → A
-iffy a b c = ifThenElse a b c -- ∏ A → %i1 → A → A → A
+iffy a b c = ifThenElseInt1 a b c -- ∏ A → %i1 → A → A → A
 
-bool4 x y z = ifThenElse x y z  -- ∏ A → %i1 → A → A → A
-bool6 x y   = ifThenElse x y x  -- ∏ A → (%i1 ⊓ A) → A → A
+bool4 x y z = ifThenElseInt1 x y z  -- ∏ A → %i1 → A → A → A
+bool6 x y   = ifThenElseInt1 x y x  -- ∏ A → (%i1 ⊓ A) → A → A
 
 poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 } -- %i1
 poly2 = let _>_ = \a f => f a in { t = 1 } > (\y => y.t) -- %i1
@@ -28,13 +28,13 @@ records3 = { f = 42 }.f               -- %i32
 records4 = (\x => x.f) { f = 42 }     -- %i32
 records5 f = { x = f 42 }.x           -- ∏ A → (%i32 → A) → A
 records6 f = { x = f 42 , y = 123 }.y -- (%i32 → ⊤) → %i32
-records7 = ifThenElse 1 { a = 1 , b = 1 } { b = 0 , c = 42 } -- {b : %i1}
+records7 = ifThenElseInt1 1 { a = 1 , b = 1 } { b = 0 , c = 42 } -- {b : %i1}
 
 --recordserror1 = { a = 123 , b = 1 }.c  -- missing field: c in {a: %i32, b: %i1})
 --recordserror2 = (\x => { a = x }.b)       -- missing field: b in {a: A})
 
 -- v =? (∏ A → A → A) → %i1
-self i = ifThenElse ((i i) 1) 1 1 -- ∏ A → ((A → %i1 → %i1) ⊓ A) → %i1
+self i = ifThenElseInt1 ((i i) 1) 1 1 -- ∏ A → ((A → %i1 → %i1) ⊓ A) → %i1
 
 Selfapp0 x = x x      -- ∏ A B → ((A → B) ⊓ A) → B
 Selfapp1 x = x x x    -- ∏ A B → ((A → A → B) ⊓ A) → B
@@ -77,7 +77,7 @@ lp9 = \k => let test = {tmp = k (\x => x) , res = (\x => x)}.res in {u = test 0 
 -- lp11 = \a => (\k => let test = k (\x => let tmp = add x 1 in x) in test) (\f => f a) -- ∏ A → A → A
 --lp12 = (\k => let test = k (\x => let tmp = (\y => add y 1) x in x) in test) -- ∏ A → (((%i32 ⊓ A) → A) → B) → B
 --lp13 = (\k => let test = k (\x => let tmp = let f = \y => add y 1 in f x in x) in test) -- ∏ A → (((%i32 ⊓ A) → A) → B) → B
---lp7 = \k => let test = k (\x => let tmp = add x 1 in ifThenElse 1 x 2) in test -- ∏ A → ((%i32 → %i32) → A) → A
+--lp7 = \k => let test = k (\x => let tmp = add x 1 in ifThenElseInt1 1 x 2) in test -- ∏ A → ((%i32 → %i32) → A) → A
 
 lp14 = \f => let r = \x => \g => { a = f x , b = g x } in r -- ∏ A B C → (A → B) → A → (A → C) → {a : B , b : C}
 lp15 = \f => let r = \x => \g => { a = g x } in {u = r 0 (add 1) , v = r 1 (add 0)} -- ⊤ → {u : {a : %i32} , v : {a : %i32}}
@@ -101,8 +101,7 @@ ManyArgs = (\f => (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v))) (\f => \x
 lpRec1 = let rec f = \x => f x.u in f -- ∏ A → µa.{u : a} → ⊥
 
 -- merge two (∏ A → µa.(⊤ → a))
-lpRec2 = let r a = r in ifThenElse 1 r r  -- ∏ A → µa.(⊤ → a)
-
+lpRec2 = let r a = r in ifThenElseInt1 1 r r  -- ∏ A → µa.(⊤ → a)
 
 -- recursive
 -- µx.{a : x , b : x}

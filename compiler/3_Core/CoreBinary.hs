@@ -27,6 +27,7 @@ deriving instance Generic MixfixDef
 deriving instance Generic Prec
 deriving instance Generic Assoc
 deriving instance Generic Lam
+deriving instance Generic LamB
 
 -- Prim
 deriving instance Generic Literal
@@ -48,6 +49,7 @@ deriving instance Generic Specialisations
 instance Binary VName
 instance Binary QName
 instance Binary Lam
+instance Binary LamB
 instance Binary Term
 instance Binary LensOp
 instance Binary (TyCon Type)

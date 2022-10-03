@@ -24,6 +24,7 @@ data ScopeError
   | ScopeNotImported HName HName
   | AmbigBind  Text [(ModIName , IName)]
   | ScopeLetBound IName
+  deriving Show
 data TypeAppError = BadTypeApp { typeOperator ∷ Type , typeArgs ∷ [Expr] }
 
 data BiFail
@@ -75,10 +76,10 @@ formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annota
 
 formatScopeError = \case
   ScopeError h → clRed "Not in scope: "      <> h
-  ScopeLetBound i → clRed "Not in scope: "      <> show i
+  ScopeLetBound i → clRed "let-bound not in scope: "      <> show i
   ScopeNotImported h m → clRed "Not in scope " <> show h <> clBlue "\nnote. ∃: "
     <> show m <> "." <> h
-  AmbigBind  h many → clRed "Ambiguous binding: " <> h <> show many
+  AmbigBind h many → clRed "Ambiguous binding: " <> h <> show many
 
 formatTypeAppError = \case
   BadTypeApp f args → clRed "Cannot normalise type operator application: "

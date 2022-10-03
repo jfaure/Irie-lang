@@ -39,27 +39,27 @@ data FEnv s = FEnv
  , _bruijnArgs  ∷ Maybe (V.Vector Term) -- fresh argNames for specialisations
 
  -- name and extract all cases and branches (to cheapen duplication and inlining)
- , _branches    ∷ MV.MVector s Term -- always Abs
+-- , _branches    ∷ MV.MVector s Term -- always Abs
  , _cases       ∷ MV.MVector s (BSM.BitSetMap ABS , Maybe ABS) -- BranchIDs
  , _caseLen     ∷ CaseID
- , _branchLen   ∷ BranchID
+-- , _branchLen   ∷ BranchID
  }; makeLenses ''FEnv
 type SimplifierEnv s = StateT (FEnv s) (ST s)
 
-stackFn betaReducable go = do
-  aT ← use argTable
-  sv ← betaReducable `forM` \i → ((i,) <$> MV.read aT i) <* MV.write aT i (Var (VArg i))
-  go <* (sv `forM_` \(i , arg) → MV.write aT i arg)
+--stackFn betaReducable go = do
+--  aT ← use argTable
+--  sv ← betaReducable `forM` \i → ((i,) <$> MV.read aT i) <* MV.write aT i (Var (VArg i))
+--  go <* (sv `forM_` \(i , arg) → MV.write aT i arg)
 
 addCase newCase = do
   n  ← caseLen <<%= (1+)
   s  ← use cases≫= \cs → (cases <.=) =≪ if MV.length cs <= n then MV.grow cs 32 else pure cs
   n <$ MV.write s n newCase
 
-addBranch newBranch = do
-  n  ← branchLen <<%= (1+)
-  s  ← use branches ≫= \br → (branches <.=) =≪ if MV.length br <= n then MV.grow br 32 else pure br
-  n <$ MV.write s n newBranch
+--addBranch newBranch = do
+--  n  ← branchLen <<%= (1+)
+--  s  ← use branches ≫= \br → (branches <.=) =≪ if MV.length br <= n then MV.grow br 32 else pure br
+--  n <$ MV.write s n newBranch
 
 addSpec ∷ Int → Int → Term → SimplifierEnv s FnSize
 addSpec s bruijnN term = do
@@ -171,7 +171,7 @@ shouldSpec _fnInfo _args _caseWraps = True
 simplifyBindings ∷ IName → Int → Int → MV.MVector s Bind → ST s (Maybe Specialisations)
 simplifyBindings modIName nArgs nBinds bindsV = do
   argSubs ← MV.new nArgs
-  br      ← MV.new 32
+--br      ← MV.new 32
   cs      ← MV.new 32
   sc      ← MV.replicate nBinds mempty -- ? should we save specs in their bindings
   sb      ← MV.replicate 5 Nothing -- TODO test grow with small values here
@@ -190,10 +190,10 @@ simplifyBindings modIName nArgs nBinds bindsV = do
     , _specsLen    = 0
     , _bruijnArgs  = mempty
 
-    , _branches    = br
+ -- , _branches    = br
     , _cases       = cs
     , _caseLen     = 0
-    , _branchLen   = 0
+ -- , _branchLen   = 0
     }
   let slen = s._specsLen
   sb' ← map (fromMaybe $ error "no specialisation?") . V.take slen <$> V.unsafeFreeze s._specBound
@@ -214,18 +214,20 @@ traceSpecs nBinds = do
 
 -- read from bindList, simplify or return binding and guard recursion
 simpleBind ∷ Int → SimplifierEnv s Bind
-simpleBind bindN = use cBinds ≫= \cb → MV.read cb bindN ≫= \b → do
-  bindStack %= (`setBit` bindN)
-  MV.write cb bindN Queued
-  newB ← newBetaEnv $ case b of
-    BindOK n l isRec (Core t ty) → if n /= 0 then pure b else simpleTerm t <&> \case
-      -- catch top level partial application (ie. extra implicit args)
-      App (Instr (MkPAp _n)) (f2 : args2) → let
-        (arTs , retT) = getArrowArgs ty
-        in BindOK n l isRec $ Core (PartialApp arTs f2 args2) retT
-      newT → BindOK n l isRec $ Core newT ty
-    _x → pure {-$ trace ("not bindok: " <> show bindN <> " " <> show x ∷ Text)-} Queued
-  newB <$ MV.write cb bindN newB
+simpleBind bindN = use cBinds ≫= \cb → MV.read cb bindN ≫= \case
+  LetBound -> pure LetBound
+  b → do
+    bindStack %= (`setBit` bindN)
+    MV.write cb bindN Queued
+    newB ← newBetaEnv $ case b of
+      BindOK n l isRec (Core t ty) → if n /= 0 then pure b else simpleTerm t <&> \case
+        -- catch top level partial application (ie. extra implicit args)
+        App (Instr (MkPAp _n)) (f2 : args2) → let
+          (arTs , retT) = getArrowArgs ty
+          in BindOK n l isRec $ Core (PartialApp arTs f2 args2) retT
+        newT → BindOK n l isRec $ Core newT ty
+      _x → pure {-$ trace ("not bindok: " <> show bindN <> " " <> show x ∷ Text)-} Queued
+    newB <$ MV.write cb bindN newB
 
 -- newBinds must not re-use wip β-reduction env from a previous bind in the stack
 newBetaEnv go = (activeBetas <<.= emptyBitSet) ≫= \svBetas → (bruijnArgs <<.= Nothing) ≫= \svBruijn →
@@ -296,7 +298,7 @@ simpleApp f sArgs = let noop = App f sArgs in case f of
 --BruijnAbs 1 _free (Match (VBruijn 0) t branches d) | [scrut] ← sArgs → pure $ Match scrut t branches d
   -- TODO which fusion step let this slip
   BruijnAbs n free t   → bruijnEnv n free sArgs (simpleTerm t) -- TODO avoid this random resimplification !
-  BruijnAbs _n _free t → error $ "uncaught BruijnAbs-App: " <> show t
+--BruijnAbs _n _free t → error $ "uncaught BruijnAbs-App: " <> show t
   Abs _                → error "uncaught Abs-App"
 --Abs (Lam argDefs free t , body) → inBetaEnv argDefs free sArgs (simpleTerm body) ≫= \case
 --  ([] , [] , ret)           → pure ret

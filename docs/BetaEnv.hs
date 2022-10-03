@@ -122,10 +122,6 @@ SumData = data
     NextRegion     -- iff same size (iff at run alignment need to check if ok)
     Header         -- (List run + sumdata tags)
 
-
-
-
-
 Allocator:
 NewRetPtr : Sz -> Run
 mergeRuns : Run -> Run -> Run

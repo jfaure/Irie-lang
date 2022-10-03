@@ -30,12 +30,15 @@ executable irie-exe
     -Wunused-matches
     -Wunused-do-bind
     -Wwrong-do-bind
---  -Wname-shadowing:
+    -Wname-shadowing:
   mixins: 
       base (Prelude as BasePrelude)
     , base hiding (Prelude)
   main-is: Main.hs
   other-modules:
+      Scope
+      AdjointFolds
+      MUnrolls
       BitSetMap
       CmdLine
       Prelude
@@ -43,7 +46,7 @@ executable irie-exe
       QName
       ModulePaths
       Tests
-      DesugarParse
+      UnPattern
       Parser
       ParseSyntax
       BiUnify
@@ -101,6 +104,9 @@ executable irie-exe
       DeriveFunctor
       DeriveTraversable
       DeriveFoldable
+      TypeApplications
+      StandaloneKindSignatures
+      TypeOperators
 --    TypeFamilies
   build-depends:
       base
@@ -140,6 +146,10 @@ executable irie-exe
     , recursion-schemes
     , comonad
     , free
+    , indexed-traversable
+    , distributive
+    , adjunctions
+    , kan-extensions
   default-language: Haskell2010
 
 --test-suite irie-test

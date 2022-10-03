@@ -11,6 +11,12 @@ import Data.List (partition)
 import qualified BitSetMap as BSM
 import qualified Data.Vector as V
 
+mkLiteralEquality ∷ Literal → Term → Term
+mkLiteralEquality l x = case l of
+  Char c → App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
+  I32  i → App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
+  l → Poison $ "todo literal equality on " <> show l
+
 getArgShape ∷ Term → ArgShape
 getArgShape = \case
   Label l params → ShapeLabel l (getArgShape <$> params)
@@ -114,7 +120,6 @@ tyOfExpr = \case
   Core _x ty → ty
   Ty t       → tyOfTy t
   PoisonExpr → TyGround []
-  m@MFExpr{} → error $ "unexpected mfexpr: " <> show m
 
 -- expr2Ty ∷ _ → Expr → TCEnv s Type
 -- Expression is a type (eg. untyped lambda calculus is both a valid term and type)
