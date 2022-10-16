@@ -1,10 +1,10 @@
 -- Core Language. compiler pipeline = Text >> Parse >> Core >> STG >> SSA
-{-# LANGUAGE TemplateHaskell , TypeFamilies #-}
+{-# LANGUAGE TemplateHaskell #-}
 module CoreSyn (module CoreSyn , module QName , ModIName) where
 import Control.Lens ( makeLenses )
-import MixfixSyn ( ModIName , QMFWord , Prec )
+import MixfixSyn ( ModIName , QMFWord )
 import Prim ( Literal, PrimInstr, PrimType )
-import QName ( fieldBit, labelBit, maxIName, maxModuleName, mkQName, modName, moduleBits, qName2Key, unQName, QName(..) )
+import QName
 import qualified BitSetMap as BSM ( BitSetMap )
 import qualified Data.IntMap.Strict as IM ( IntMap )
 import qualified Data.Map.Strict as M ( Map )
@@ -36,16 +36,13 @@ type CaseID = Int
 type BranchID = Int
 
 data VName
- = VArg     IName -- introduced by lambda abstractions
- | VQBind   QName -- qualified name (modulename << moduleBits | IName)
- | VExt     IName -- forward references, primitives, imported names (incl mixfixwords)
+ = VQBind   QName -- qualified name (modulename << moduleBits | IName)
+ | VLetBind QName
  | VForeign HName -- opaque name resolved at linktime
 
 data LamB = LamB Int {-BitSet-} Term
 data Lam  = Lam [(IName , Type)] BitSet Type -- arg inames, types, freevars, term, ty
-type ABS  = (Lam , Term)
 
--- for makeBaseFunctor to work we must make the fixpoints obvious: No mutual recursion
 data Term -- β-reducable (possibly to a type)
  = Var     !VName
  | Lit     !Literal
@@ -55,10 +52,9 @@ data Term -- β-reducable (possibly to a type)
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
- | Abs     ABS
  | VBruijn IName
  | BruijnAbs Int BitSet Term
- | BruijnAbsTyped Int BitSet Term [(Int , Type)] Type -- ints are there to recover arg metadata
+ | BruijnAbsTyped Int BitSet Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]    -- IName [Term]
 
  | Prod    (BSM.BitSetMap Term) -- (IM.IntMap Term)
@@ -66,14 +62,15 @@ data Term -- β-reducable (possibly to a type)
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Term] --[Expr]
- | Match   Term Type (BSM.BitSetMap ABS) (Maybe ABS)
  | CaseB   Term Type (BSM.BitSetMap Term) (Maybe Term)
+ | MatchB  Term (BSM.BitSetMap LamB) LamB -- Bruijn match (must have a default)
+
+ | LetBinds (V.Vector (LetMeta , Bind)) Term
+ | LetBlock (V.Vector (LetMeta , Bind)) -- Module
 
  -----------------------------------------------
  -- Extra info built for/by simplification --
  -----------------------------------------------
- | MatchB  Term (BSM.BitSetMap LamB) LamB -- Bruijn match (must have a default, even if Poison)
-
  | Case CaseID Term -- term is the scrutinee. This makes inlining very cheap
 
  | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
@@ -82,10 +79,10 @@ data Term -- β-reducable (possibly to a type)
  | RecApp   Term [Term] -- direct recursion
 
  -- Named Specialised recursive fns can (mutually) recurse with themselves
- | LetSpecs [Term{-.Abs-}] Term
+ | LetSpecs [Term] Term
  | Spec QName -- mod = bind it came from , unQ = spec number
 
- | PartialApp [Type] Term [Term] --Top level PAp ⇒ Abs (only parse generates fresh argnames)
+-- | PartialApp [Type] Term [Term] --Top level PAp ⇒ Abs (only parse generates fresh argnames)
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
 -- lensover needs idx for extracting field (??)
@@ -98,8 +95,7 @@ type GroundType = [THead Type]
 tyTop = TyGround []
 tyBot = TyGround []
 
--- Theoretically TVars have their own presence in the profinite distributive lattice of types
--- The point is to pre-partition tvars since they are usually handled separately
+-- the Theory requires TVars have their own presence in the profinite distributive lattice of types
 data Pi = Pi [(IName , Type)] Type deriving Eq -- pi binder Π (x : T) → F T
 data Type
  = TyGround GroundType
@@ -108,7 +104,7 @@ data Type
  | TyVar    Int -- generalizes to THBound if survives biunification and simplification
  | TyVars   BitSet GroundType
 
- -- vv Only occur in user type annotations
+ -- vv User type annotations
  | TyAlias  QName
  | TyTerm   Term Type       -- term should be lambda calculus or product/sum calculus
  | TyPi Pi                  -- dependent functions, implicit args (explicit as: Arg → T)
@@ -125,7 +121,7 @@ instance Eq Type where
   _           == _           = False
 
 data TyCon t -- Type constructors
- = THArrow    [TyMinus] t   -- degenerate case of THPi (bot → top is the largest)
+ = THArrow    [t] t   -- degenerate case of THPi (bot → top is the largest)
  | THTuple    (V.Vector t) -- ordered form of THproduct
  | THProduct  (BSM.BitSetMap t)
  | THSumTy    (BSM.BitSetMap t)
@@ -154,24 +150,21 @@ data THead ty
  deriving (Eq , Functor , Traversable , Foldable)
 
 data Expr
- = Core     Term Type
- | Ty       Type
- | Set      !Int Type
+ = Core Term Type
+ | Ty   Type
+ | Set  !Int Type
  | PoisonExpr
  | PoisonExprWhy Text
 
-data Bind -- elements of the bindmap
+data Bind
  = Queued
- | Guard  { mutuals ∷ BitSet , tvar ∷ IName } -- marker for stacking inference - if met again, its recursive/mutual
- -- | Marker for an inferred type waiting for generalisation (waiting for all mutual binds to be inferred)
+ | WIP
+ | Guard  { mutuals ∷ BitSet , tvar ∷ IName } -- if met again, its recursive/mutual
+ -- | Marker for an inferred type waiting for generalisation when all mutuals inferred
  | Mutual { naiveExpr ∷ Expr , freeVs ∷ BitSet , recursive ∷ Bool , tvar ∷ IName , tyAnn ∷ Maybe Type }
 
--- | Function already partially generalised, must be re-generalised once all free-vars are resolved
--- | LetBound { recursive ∷ Bool , naiveExpr ∷ Expr }
  | BindKO -- failed type inference
- | BindOK { optLevel ∷ Int , letBound ∷ Bool , recursive ∷ Bool , naiveExpr ∷ Expr } -- isRec
- | LetBound
-
+ | BindOK { optLevel ∷ Int , letBound ∷ Bool , recursive ∷ Bool , naiveExpr ∷ Expr }
 -- | BindMutuals (V.Vector Expr)
 
  | BindOpt Complexity Specs Expr
@@ -191,7 +184,7 @@ data ExternVar
  | MixfixyVar Mixfixy           -- temp data fed to solvemixfixes
 
 data Mixfixy = Mixfixy
- { ambigBind   ∷ Maybe QName -- mixfixwords can also be standalone bindings, eg. `if_then_else_` and `then`
+ { ambigBind   ∷ Maybe QName -- mixfixword also bind, eg. `if_then_else_` and `then`
  , ambigMFWord ∷ [QMFWord]
  }
 
@@ -200,7 +193,7 @@ type ASMIdx = IName -- Field|Label→ Idx in sorted list (the actual index used 
 data BiCast
  = BiEQ
  | CastInstr PrimInstr
- | CastProduct Int [(ASMIdx , BiCast)] -- number of drops, and indexes into the parent struct
+ | CastProduct Int [(ASMIdx , BiCast)] -- number of drops, and indexes into parent struct
  | CastLeaf    ASMIdx BiCast -- Lens
  | CastLeaves  [BiCast]
 
@@ -209,10 +202,7 @@ data BiCast
  | BiInst  [BiSub] BiCast -- instantiate polytypes
  | CastOver ASMIdx BiCast Expr Type
 
-data BiSub = BiSub {
-   _pSub ∷ Type
- , _mSub ∷ Type
-}; makeLenses ''BiSub
+data BiSub = BiSub { _pSub :: Type , _mSub :: Type }; makeLenses ''BiSub
 
 -- label for the different head constructors.
 data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
@@ -220,18 +210,19 @@ data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTup
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 data JudgedModule = JudgedModule {
-   modIName    ∷ IName
- , modHName    ∷ HName
- , nArgs       ∷ Int
- , bindNames   ∷ V.Vector HName
- , fieldNames  ∷ M.Map HName IName -- can we use Vector instead of Map?
- , labelNames  ∷ M.Map HName IName
- , judgedBinds ∷ V.Vector Bind
- , specs       ∷ Maybe Specialisations
+   modIName   :: IName
+ , modHName   :: HName
+ , bindNames  :: V.Vector HName
+ , fieldNames :: M.Map HName IName -- can we use Vector instead of Map?
+ , labelNames :: M.Map HName IName
+ , moduleTT   :: Expr -- judgedBinds ∷ V.Vector Bind
+ , specs      :: Maybe Specialisations -- TODO can let(spec)-bind these
 }
 
 type FnSize = Bool -- <=? 1 App
-data Specialisations = Specialisations { specBinds ∷ V.Vector (FnSize , Term) , specsCache ∷ V.Vector (M.Map [ArgShape] IName) }
+data Specialisations = Specialisations
+  { specBinds ∷ V.Vector (FnSize , Term)
+  , specsCache ∷ V.Vector (M.Map [ArgShape] IName) }
 
 data ArgShape
  = ShapeNone
@@ -239,23 +230,23 @@ data ArgShape
  | ShapeQBind QName
  deriving (Ord , Eq , Show , Generic)
 
---emptyJudgedModule iNm hNm = JudgedModule iNm hNm 0 mempty mempty mempty mempty
-
 data OldCachedModule = OldCachedModule {
    oldModuleIName ∷ ModuleIName
+   -- TODO preseed parse env with oldbindnames
  , oldBindNames   ∷ V.Vector HName -- to check if ambiguous names were deleted
 } deriving Show
 
 -- only used by prettyCore functions and the error formatter
 data BindSource = BindSource {
-   srcArgNames     ∷ V.Vector HName
- , srcBindNames    ∷ V.Vector HName
- , srcExtNames     ∷ V.Vector HName
- , srcLabelNames   ∷ V.Vector (V.Vector HName)
- , srcFieldNames   ∷ V.Vector (V.Vector HName)
- , allNames        ∷ V.Vector (V.Vector (HName , Expr))
+   srcArgNames   :: V.Vector HName
+ , srcBindNames  :: V.Vector HName
+ , srcExtNames   :: V.Vector HName
+ , srcLabelNames :: V.Vector (V.Vector HName)
+ , srcFieldNames :: V.Vector (V.Vector HName)
+ , allNames      :: V.Vector (V.Vector (HName , Expr))
 }
 
 makeBaseFunctor ''Expr
 makeBaseFunctor ''Term
 makeBaseFunctor ''Type
+makeLenses ''Type

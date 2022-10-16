@@ -36,8 +36,8 @@ executable irie-exe
     , base hiding (Prelude)
   main-is: Main.hs
   other-modules:
+      CH
       Scope
-      AdjointFolds
       MUnrolls
       BitSetMap
       CmdLine
@@ -93,6 +93,7 @@ executable irie-exe
       ScopedTypeVariables
       RankNTypes
       FlexibleContexts
+      FlexibleInstances
       TupleSections
       ConstraintKinds
       RecursiveDo
@@ -104,12 +105,14 @@ executable irie-exe
       DeriveFunctor
       DeriveTraversable
       DeriveFoldable
+      DerivingVia
       TypeApplications
       StandaloneKindSignatures
       TypeOperators
---    TypeFamilies
+      TypeFamilies
   build-depends:
       base
+    , ghc-prim
     , blaze-builder
     , bytestring
     , containers
@@ -136,9 +139,6 @@ executable irie-exe
     , binary
     , vector
     , vector-binary-instances
-    , tasty
-    , tasty-hunit
---  , tasty-quickcheck
     , raw-strings-qq
     , sydtest
     , temporary
@@ -150,6 +150,13 @@ executable irie-exe
     , distributive
     , adjunctions
     , kan-extensions
+    , profunctors
+--  , lawz
+--  , rings
+--  , magmas
+--  , coapplicative
+--  , connections
+--  , profunctor-optics
   default-language: Haskell2010
 
 --test-suite irie-test

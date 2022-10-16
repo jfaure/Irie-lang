@@ -28,6 +28,7 @@ deriving instance Generic Prec
 deriving instance Generic Assoc
 deriving instance Generic Lam
 deriving instance Generic LamB
+deriving instance Generic LetMeta
 
 -- Prim
 deriving instance Generic Literal
@@ -70,6 +71,7 @@ instance Binary MixfixDef
 instance Binary Assoc
 instance Binary ArgShape
 instance Binary Specialisations
+instance Binary LetMeta
 
 -- primitives
 instance Binary Literal

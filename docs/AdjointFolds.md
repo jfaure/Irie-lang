@@ -39,13 +39,25 @@ underlying adjunction is pre-composition PreMaybe ⊣ RanMaybe
 
 µF and νF are not compatible ⇒ we cannot combine folds - can work in category where they coincide or restrict unfolds to coalgebras that produce values in µf. An attractive way to achieve the latter is using hylomorphisms based on recursive coalgebras as a structured recursion scheme.
 
+# Conjugate hylos
+# Rolling rule: base functor shaping recursion is composed from 2 other functors & allows swapping
 
------------------------------
--- Conjugate Hylomorphisms --
------------------------------
+# Conjugate rule: shunt functors between producer and consumer parts of the hylo
+exists bijection between sets of conjugate hylomorphisms
+that is natural in (C,c) : G-Coalg(D) and (a,A) : F-Alg(C)
+`Lσ (C,c) >-> (a,A) ∼= (C,c) >-> Rτ (a,A)`               (3.4b)
+`x = a · F x · Lσ c <=> la x = R τ a · G (la x) . c`     (3.4c)
 
-Rolling rule: base functor shaping recursion is composed from 2 other functors & allows swapping
-Conjugate rule: shunt functors between producer and consumer parts of the hylo
+`x = a · F x . Lσ c`         (3.8)
+`x = a · L (D (la x) . c)`   (3.9)
+unique solutions if c is recursive
+
+varying params: (3.9) specialises to accu-hylo
+`x = a · ((D (Λ x) · c) × P) : A <- C × P`
+constant params: use strength of a functor
+`σ : (×P) ◦D ->˙ D◦ (×P) -| τ : D◦ (−)P ->˙ (−)P ◦D `
+The strength σ A : D A×P → D (A×P) broadcasts value accorss a structure
+every endofunctor on set has a canonical strength
 
 apomorphism allows coalgebra to stop the recursion early
 

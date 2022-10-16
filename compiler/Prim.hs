@@ -183,6 +183,7 @@ prettyPrimType = toS . \case
   PrimExtern   tys → "%extern(" <> show tys <> ")"
   PrimExternVA tys → "%externVA(" <> show tys <> ")"
   POSIXTy t → case t of { DirP → "%DIR*" ; DirentP → "%dirent*" }
+  x -> error $ show x
 
 primSubtypeOf ∷ PrimType → PrimType → Bool
 PrimInt a `primSubtypeOf` PrimInt b = a <= b

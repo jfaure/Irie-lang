@@ -4,28 +4,26 @@
   * https://documentation.divio.com/
   * move to f2fs
 # recent
-  * make case apps always labels ?
-  * @ patterns in TT ?
-  * Fusion: lambda lifting (if subterms of App (or Match) all contain lambdas, share them)
-  * exceptT compiler pipeline
-  * binds aren't removed from current module when deleted
+  * records as let-blocks
+  * cross-module LetBlock lens resolution (also for errors); atm. Externs assumes module = [(HName , Expr)]
+  * resolve let-bound mixfixes to VLetBind qname
+  * compiler pipeline
+## Top Priority
+  * @ patterns; make case apps always labels
+  * expand lambda-mixfixes with explicit holes
+  * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
+  * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
+  * fix cache
+  * cata defined with let doesn't generalise (is recursive let-bound problematic?)
 ## ?
-  * freevar types must be explicit type of let-binds
-  * type application, esp. perfect tree
+  * freevar types added to type of let-binds
+  * type application (eg. perfect tree)
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
   * audit oldcachedmodule , seems slightly broken (probably BindOpt)
   * trim bisubs
-  * rewrite rollµ as a catamorphism
-## Top Priority
-  * μ: bubble up rec type joins
-  * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
-  * expand lambda-mixfixes with explicit holes
-  * cata defined with let doesn't generalise (is recursive let-bound problematic?)
-  * mutuals ⇒ recurse over product category
-  * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
-  * improve Main: explicit pipeline
 ## Parse
+  * typed lambda case: \case : scrut -> ret
   * allow tabs instead of spaces
   * Pattern guards
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
@@ -39,22 +37,20 @@
   * Linear types; dependent types required to quantify relative linearity `Lin t ≥ Lin f => t → u`
   * splitAt with Nils should also simplify
 ## Functor modules and records (infer a module as a TT (Abs | Record) + ImportList , HNames , MixfixNames , LinSubs)
-  * file = implicit `filename = module` if not given
-  * pattern assignments `(a , b) = (1 , 3)`
-  * file = let-block = opened record (allow use/open/mutual statements)
-  * BindName LName FName MFName overlap
-  * use | open | mutual allowed in let-blocks / opened record
-  * scoped HNames = path <.> field
-  * Linear variables (vbruijn | sourceArg | binding | literal | Extern [ | Field | Label ]) + occurs + src Info (β-subbable with Term)
-  ? scope | dependency graph: imports / records / let-bindings / labelNames(!)
-  ? imported names as inputs to the module?
-  ? file | module (inter-)dependencies
-  ? not evaluated args eg. `if_then_else_` dependently evaluates/needs each arg
+  * record = mutu? * rec? * open?
+  * file = open mutu ; implicit `filename = module`
+  * Let  = open mutual record .. in
+  * qualified names => [Int]
+  * dependency graph => use bruijn lin info
+  ! Need Vector + FNames in scope for mutual inference + subsequent dependents
+  ! record tree ? scopes at leaves (field assignments depending on free variables | fields)
+  ? file | module inter-dependencies
 ## Beta-optimality:
-  * λ Minimise normal forms on composition: Lambda encoding + lifting + sharing
-  * case-splits as data
+  * λ Minimise normal forms: λ-encoding + lifting + sharing (if subterms of App or Match contain λ, lift them)
+  * case-splitters as data for runtime optimisation
   * Partial applications extracted and specialised for beta optimality
   * Fns passed as args must have interpretable format
+  * fns that do case-splits lazy in arguments they may not need
 ## SSA
   * local/extern names in ssa form
   * normalize order of fields/labels for codegen (sort on size then textual name)
@@ -100,3 +96,4 @@
   * Function = Constructor + rewrite rules ?
   * replace fnSig with typedTT
   * `typeOf : (t : Type) -> Type` shortcut to access (and alias) an inferred type
+  * treat module QNames as bruijn args and β-reduce them optimally?

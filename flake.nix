@@ -1,38 +1,58 @@
 {
-  description = "irie";
+  description = "testprofunctors";
   inputs = {
+    nixpkgs-upstream.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     haskell-nix.url = "github:input-output-hk/haskell.nix";
     nixpkgs.follows = "haskell-nix/nixpkgs-unstable";
-    haskell-nix.inputs.nixpkgs.follows = "haskell-nix/nixpkgs-unstable";
-    flake-compat-ci.url = "github:hercules-ci/flake-compat-ci";
-    flake-compat.url = "github:edolstra/flake-compat";
-    flake-compat.flake = false;
-    flake-utils.url = "github:numtide/flake-utils";
+    haskell-nix-extra-hackage = {
+      url = "github:mlabs-haskell/haskell-nix-extra-hackage";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.haskell-nix.follows = "haskell-nix";
+    };
+    connections   = { url = "github:cmk/connections"; flake = false; };
+    coapplicative = { url = "github:cmk/coapplicative"; flake = false; };
   };
-  outputs = { self, nixpkgs, haskell-nix, flake-compat, flake-compat-ci, flake-utils }:
+  outputs = inputs@{ self, nixpkgs, nixpkgs-upstream, haskell-nix, haskell-nix-extra-hackage, ... }:
   let
-  supportedSystems = [ "x86_64-linux" ];
+  plainNixpkgsFor = system: import nixpkgs-upstream { inherit system; };
   compiler-nix-name = "ghc924";
-  perSystem = nixpkgs.lib.genAttrs supportedSystems;
+  hackagesFor = system: haskell-nix-extra-hackage.mkHackagesFor system compiler-nix-name
+    [ "${inputs.connections}"
+      "${inputs.coapplicative}"
+    ];
+  supportedSystems = [ "x86_64-linux" ];
+# perSystem = nixpkgs.lib.genAttrs supportedSystems;
+  perSystem = nixpkgs-upstream.lib.genAttrs supportedSystems;
   nixpkgsFor = system: import nixpkgs {
     inherit system;
     inherit (haskell-nix) config;
     overlays = [ haskell-nix.overlay ];
     };
+  cabalProjectLocal = ''
+  allow-newer: profunctor-optics:connections
+  allow-newer: *:connections
+  allow-newer: *:newtype-generics
+  constraints: connections >= 0.3.2
+  '';
+# allow-newer: newtype-generics:base
   nixpkgsFor' = system: import nixpkgs { inherit system; };
   projectFor = system: let
-    deferPluginErrors = true;
+    hackages = hackagesFor system;
     pkgs = nixpkgsFor system;
-    fakeSrc = pkgs.runCommand "real-source" { } ''
-      cp -rT ${self} $out
-      chmod u+w $out/cabal.project
-    '';
+    plainPkgs = plainNixpkgsFor system;
     in (nixpkgsFor system).haskell-nix.cabalProject' {
-      inherit compiler-nix-name;
-      src = fakeSrc.outPath;
-#     cabalProject = "";
+      inherit compiler-nix-name cabalProjectLocal;
+      inherit (hackages) extra-hackages extra-hackage-tarballs;
+      src = ./.;
+      index-state = "2022-08-05T00:00:00Z";
       modules = [{ packages = { }; }];
-      shell.tools = { cabal = {}; };
+      shell = {
+#          inherit (preCommitCheckFor system) shellHook;
+        tools = { cabal = {}; };
+        withHoogle = false;
+        exactDeps  = true;
+        nativeBuildInputs = [];
+        };
       };
   formatCheckFor = system: let pkgs = nixpkgsFor system; in
     pkgs.runCommand "format-check" {
@@ -44,17 +64,10 @@
       mkdir $out
     '';
   in {
-  project = perSystem projectFor;
-  flake = perSystem (system: (projectFor system).flake {});
-
-  # this could be done automatically, but would reduce readabilit
+  inherit plainNixpkgsFor hackagesFor cabalProjectLocal;
+  project  = perSystem projectFor;
+  flake    = perSystem (system: (projectFor system).flake {});
   packages = perSystem (system: self.flake.${system}.packages);
-  checks = perSystem (system: self.flake.${system}.checks
-    // { formatCheck = formatCheckFor system; });
-  check = perSystem (system: (nixpkgsFor system).runCommand "combined-test"
-      { nativeBuildInputs = builtins.attrValues self.checks.${system}; } "touch $out");
-  apps = perSystem (system: self.flake.${system}.apps);
   devShell = perSystem (system: self.flake.${system}.devShell);
-  herculesCI.ciSystems = [ "x86_64-linux" ];
   };
 }

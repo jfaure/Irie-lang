@@ -15,6 +15,6 @@ import imports/prelude
 
 zero i m = i B& m =? 0
 lookup k = \case
-  Bin p m l r ⇒ if zero k m then lookup k l else lookup k r
-  Tip kx x    ⇒ if k =? kx then Just x else Nothing
-  None        ⇒ Nothing
+  @Bin p m l r => if zero k m then lookup k l else lookup k r
+  @Tip kx x    => if k =? kx then Just x else Nothing
+  @None        => Nothing

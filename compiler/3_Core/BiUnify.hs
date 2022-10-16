@@ -1,16 +1,19 @@
 -- See presentation/TypeTheory for commentary
-module BiUnify (bisub , instantiate) where
+module BiUnify (bisub , instantiate , instantiateF) where
 import Prim (PrimInstr(..) , PrimType(..))
 import CoreSyn as C
 import Errors ( BiFail(..), TmpBiSubError(TmpBiSubError) )
-import CoreUtils ( hasVar, mergeTVar, mergeTypes, partitionType, prependArrowArgsTy, tyExpr )
+import CoreUtils
 import TCState
 import PrettyCore (prettyTyRaw)
 import Externs (readPrimExtern)
+import Data.Distributive
 import qualified BitSetMap as BSM ( (!?), elems, mergeWithKey', singleton, toList, traverseWithKey )
 import qualified Data.Vector.Mutable as MV ( read, write )
 import qualified Data.Vector as V ( Vector, (!), (++), fromList, ifoldM, length, zipWithM )
+import Data.Functor.Foldable
 import Control.Lens ( use, (%=) )
+debug_biunify = global_debug
 
 -- First class polymorphism:
 -- \i ⇒ if (i i) true then true else true
@@ -27,7 +30,7 @@ import Control.Lens ( use, (%=) )
 failBiSub ∷ BiFail → Type → Type → TCEnv s BiCast
 failBiSub msg a b = BiEQ <$ (tmpFails %= (TmpBiSubError msg a b:))
 
-bisub a b = --when global_debug (traceM ("bisub: " <> prettyTyRaw a <> " ⇔ " <> prettyTyRaw b)) *>
+bisub a b = --when debug_biunify (traceM ("bisub: " <> prettyTyRaw a <> " ⇔ " <> prettyTyRaw b)) *>
   biSubType a b
 
 biSubTVars ∷ BitSet → BitSet → TCEnv s BiCast
@@ -35,7 +38,7 @@ biSubTVars p m = BiEQ <$ (bitSet2IntList p `forM` \v → biSubTVarTVar v `mapM` 
 
 biSubTVarTVar p m = use deadVars ≫= \dead → -- if testBit ls p || testBit ls m then pure BiEQ else
   use bis ≫= \v → MV.read v p ≫= \(BiSub p' m') → do
-    when global_debug (traceM ("bisubττ: " <> prettyTyRaw (TyVar p) <> " ⇔ " <> prettyTyRaw (TyVar m)))
+    when debug_biunify (traceM ("bisubττ: " <> prettyTyRaw (TyVar p) <> " ⇔ " <> prettyTyRaw (TyVar m)))
 --  MV.write v p (BiSub p' (mergeTVar m m'))
     MV.write v p (BiSub (mergeTVar m p') (mergeTVar m m')) -- TODO is ok? intended to fix recursive type unification
     unless (hasVar m' m || testBit dead p) $ void (biSubType p' (TyVar m))
@@ -44,25 +47,22 @@ biSubTVarTVar p m = use deadVars ≫= \dead → -- if testBit ls p || testBit ls
 biSubTVarP v m = use deadVars ≫= \dead → -- if testBit ls v then pure BiEQ else
   use bis ≫= \b → MV.read b v ≫= \(BiSub p' m') → do
     let mMerged = mergeTypes True m m'
-    when global_debug (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " ⇔ " <> prettyTyRaw m))
+    when debug_biunify (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " ⇔ " <> prettyTyRaw m))
     use escapedVars ≫= \es → when (testBit es v) $ leakedVars %= (.|. getTVarsType m)
     MV.write b v (BiSub p' mMerged)
     if mMerged == m' || testBit dead v then pure BiEQ -- if merging was noop, this would probably loop
     else biSubType p' m
 
 biSubTVarM p v = use deadVars ≫= \dead → -- if testBit ls v then pure BiEQ else
-  use bis ≫= \b → MV.read b v ≫= \(BiSub p' m') → do
+  use bis >>= \b → MV.read b v ≫= \(BiSub p' m') → do
     let pMerged = mergeTypes False p p'
-    when global_debug (traceM ("bisub: " <> prettyTyRaw p <> " ⇔ " <> prettyTyRaw (TyVar v)))
+    when debug_biunify (traceM ("bisub: " <> prettyTyRaw p <> " ⇔ " <> prettyTyRaw (TyVar v)))
     use escapedVars ≫= \es → when (testBit es v) $ leakedVars %= (.|. getTVarsType p)
     MV.write b v (BiSub pMerged m')
     if pMerged == p' || testBit dead v then pure BiEQ -- if merging was noop, this would probably loop
     else biSubType p m'
 
 biSubType ∷ Type → Type → TCEnv s BiCast
--- List a ⇒ TyIndexed
---biSubType tyP TyIndexed{} = d_ tyP $ pure BiEQ
---biSubType TyIndexed{} tyM = d_ tyM $ pure BiEQ
 biSubType tyP tyM = let
   (pVs , pTs) = partitionType tyP
   (mVs , mTs) = partitionType tyM
@@ -83,65 +83,52 @@ biSub a b = case (a , b) of
 -- Note. weird special case (A & {f : B}) typevars as produced by lens over
 --   The A serves to propagate the input record, minus the lens field
 --   what is meant is really set difference: A =: A // { f : B }
-instantiate pos nb x = if nb == 0 then doInstantiate pos mempty x else
-  freshBiSubs nb ≫= \tvars → doInstantiate pos (V.fromList tvars) x
+instantiate :: Bool -> Int -> Type -> TCEnv s Type
+instantiate pos nb ty = (if nb == 0 then pure mempty else freshBiSubs nb <&> V.fromList)
+  <&> \tvars -> snd $ cata (instantiateF tvars) ty pos
 
--- Replace THBound with fresh TVars
--- this mixes mu-bound vars xyz.. and generalised vars A..Z
-doInstantiate ∷ Bool → V.Vector Int → Type → TCEnv s Type
-doInstantiate pos tvars ty = let -- use deadVars <&> did_ ≫= \leaked → let
---clearLeaked = (complement leaked .&.)
-  thBound i   = (0 `setBit` (tvars V.! i)  , [])
-  mapFn = let r = doInstantiate pos tvars in \case
-    THBound i   → pure (thBound i)
-    THMuBound i → pure (thBound i)
-    THBi{}      → error $ "higher rank polymorphic instantiation"
-    THMu m t    → let mInst = tvars V.! m in -- µx.F(x) is to inference (x & F(x))
-      doInstantiate pos tvars t <&> \case
-        TyGround g → (0 `setBit` mInst , g)
-        TyVars vs g → (vs `setBit` mInst , g)
-        _ → _
-    THTyCon t → (\x → (0 , [THTyCon x])) <$> case t of
-      THArrow as ret → THArrow   <$> (r `mapM` as) <*> (r ret)
-      THProduct as   → THProduct <$> (r `mapM` as)
-      THTuple as     → THTuple   <$> (r `mapM` as)
-      THSumTy as     → THSumTy   <$> (r `mapM` as)
-      _ → _
-    t → pure (0 , [t])
-  instantiateGround g = mapFn `mapM` g <&> unzip <&> \(tvars , ty) → let
-    tvs = foldr (.|.) 0 tvars
-    groundTys = concat ty
-    in if tvs == 0 then TyGround groundTys else TyVars tvs groundTys
-  in case ty of
-  TyGround g → instantiateGround g
-  TyVars vs g → mergeTypes pos (TyVars vs []) <$> instantiateGround g -- TODO ! get the right polarity here
-  TyVar v → pure (TyVar v)
-  TyPi (Pi ars t)   → (doInstantiate pos tvars t) <&> (\t → TyPi (Pi ars t)  )
-  TySi (Pi ars t) e → (doInstantiate pos tvars t) <&> (\t → TySi (Pi ars t) e)
-  TyTerm{} → pure ty
-  x → error $ show x
+-- Replace THBound with new tvars and record the new recursive tvars spawned (for generalise)
+instantiateF :: V.Vector Int -> TypeF (Bool -> (BitSet , Type)) -> Bool -> (BitSet , Type)
+instantiateF tvars t pos = let
+  instGround :: THead (Bool -> (BitSet , Type)) -> (BitSet , Type)
+  instGround = let thBound i = (0 , TyVar (tvars V.! i)) in \case -- (0 `setBit` (tvars V.! i) , []) in \case
+    THMu m t    -> let mInst = tvars V.! m in -- µx.F(x) is to inference (x & F(x))
+      case t pos of
+        (rs , TyGround g ) -> (setBit rs m , TyVars (0 `setBit` mInst) g)
+        (rs , TyVars vs g) -> (setBit rs m , TyVars (vs `setBit` mInst) g)
+        _ -> _
+    THBound i   -> thBound i
+    THMuBound i -> thBound i
+    THBi{}      -> error $ "higher rank polymorphic instantiation"
+    t -> let x = distribute t pos in (getRecs x , TyGround [snd <$> x])
+  getRecs :: Foldable t => t (BitSet , a) -> BitSet
+  getRecs = foldr (\a b -> fst a .|. b) 0
+  in case t of
+  TyVarsF vs g -> let x = instGround <$> g in (getRecs x , mergeTypeList pos (TyVars vs [] : (snd <$> x)))
+  TyGroundF g  -> let x = instGround <$> g in (getRecs x , mergeTypeList pos (snd <$> x))
+  t -> distribute t pos & \x -> (getRecs x , embed (fmap snd x))
 
 atomicBiSub ∷ TyHead → TyHead → TCEnv s BiCast
 atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
- when global_debug (traceM ("⚛bisub: " <> prettyTyRaw tyP <> " ⇔ " <> prettyTyRaw tyM)) *>
+ when debug_biunify (traceM ("⚛bisub: " <> prettyTyRaw tyP <> " ⇔ " <> prettyTyRaw tyM)) *>
  case (p , m) of
   (_ , THTop) → pure (CastInstr MkTop)
   (THBot , _) → pure (CastInstr MkBot)
   (THPrim p1 , THPrim p2) → primBiSub p1 p2
   (THExt a , THExt b) | a == b → pure BiEQ
-  (_ , THExt i) → biSubType tyP     =≪ fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
-  (THExt i , _) → (`biSubType` tyM) =≪ fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
+  (_ , THExt i) → biSubType tyP     =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
+  (THExt i , _) → (`biSubType` tyM) =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
 
   -- Bound vars (removed at +THBi, so should never be encountered during biunification)
   (THBound i , _) → error $ "unexpected THBound: " <> show i
   (_ , THBound i) → error $ "unexpected THBound: " <> show i
   (_ , THBi{}   ) → error $ "unexpected THBi: "    <> show (p , m)
-  (t@THMu{} , y) → instantiate True 0 (TyGround [t]) ≫= \x → biSubType x (TyGround [y]) -- TODO not ideal
-  (x , t@THMu{}) → instantiate True 0 (TyGround [t]) ≫= \y → biSubType (TyGround [x]) y   -- printList Nil ⇒ [Nil] <:? µx.[Nil | Cons {%i32 , x}]
+  (t@THMu{} , y) → instantiate True 0 (TyGround [t]) >>= \x → biSubType x (TyGround [y]) -- TODO not ideal
+  (x , t@THMu{}) → instantiate True 0 (TyGround [t]) >>= \y → biSubType (TyGround [x]) y   -- printList Nil ⇒ [Nil] <:? µx.[Nil | Cons {%i32 , x}]
 --(x , THMuBound m) → use muUnrolls ≫= \m → _ -- printList (Cons 3 Nil) ⇒ [Nil] <:? x
 
   (THBi nb p , _) → do
-    instantiated ← instantiate True nb p -- TODO polarity?
+    instantiated ← instantiate True nb p -- TODO polarity ok?
     biSubType instantiated tyM
 
   (THTyCon t1 , THTyCon t2) → biSubTyCon p m (t1 , t2)
@@ -181,7 +168,6 @@ data KeySubtype
 -- This is complicated slightly by needing to recover the necessary subtyping casts
 biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
   (THArrow args1 ret1 , THArrow args2 ret2) → arrowBiSub (args1,args2) (ret1,ret2)
---(THArrow{} ,  THSumTy{}) → pure BiEQ -- ?!
   (THTuple x , THTuple y) → BiEQ <$ V.zipWithM biSubType x y
   (THProduct x , THProduct y) → let --use normFields ≫= \nf → let -- record: fields in the second must all be in the first
     merged     = BSM.mergeWithKey' (\_k a b → Just (Both a b)) (\_k v → LOnly v) (ROnly) x y

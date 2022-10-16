@@ -3,15 +3,16 @@ import imports/list
 -- Tricker to simplify than list.ii
 -- TODO this doesn't re-use the same Nil
 
----- unwords :: [[Char]] -> [Char]
+-- unwords :: [[Char]] -> [Char]
 unwords ws = let
   goUnwords x = case x of
-    Nil ⇒ Nil
-    Cons v vs ⇒ Cons ' ' (append v (goUnwords vs))
+    @Nil => @Nil
+    @Cons v vs => @Cons ' ' (append v (goUnwords vs))
   in case ws of
-    Nil ⇒ Nil
-    Cons w ws ⇒ append w (goUnwords ws)
+    @Nil => Nil
+    @Cons w ws => append w (goUnwords ws)
 
+{-
 -- Int -> [a] -> ([a] , [a])
 splitAt n xs = if n <=? 0 then { l = Nil , r = xs } else case xs of
   Cons x xs ⇒ let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
@@ -20,7 +21,8 @@ splitAt n xs = if n <=? 0 then { l = Nil , r = xs } else case xs of
 
 -- [a] -> [[a]]
 nonEmptySubSequences = \case
-  Nil       ⇒ Nil
-  Cons x xs ⇒ let
+  Nil       => Nil
+  Cons x xs => let
     f ys r = Cons ys (Cons (Cons x ys) r)
     in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+-}

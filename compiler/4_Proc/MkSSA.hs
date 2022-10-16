@@ -32,12 +32,13 @@ int_t = TPrim (PtrTo (PrimInt 32))
 
 setTop t = modify $ \x→x{top = t}
 
-mkSSAModule coreMod@(JudgedModule modIName modName nArgs bindNames pFields pLabels coreBinds specs) = let
+mkSSAModule coreMod@(JudgedModule modIName modName bindNames pFields pLabels _modTT specs) = let
   nArgs  = 100 -- TODO !
   nBinds = V.length coreBinds
   wip2Fn = \case
     WIPFn fn → fn
     x → error $ "binding did not codegen: " <> show x
+  coreBinds = mempty
   in runST $ do
     at ← MV.new nArgs
     v  ← V.unsafeThaw (WIPCore <$> V.zip bindNames coreBinds)
@@ -143,7 +144,7 @@ emitFunction nm i args t ty = gets wipBinds ≫= \wip →
 cgCore ∷ p → Int → Text → CoreSyn.Expr → CGEnv s CGWIP
 cgCore wip i nm b = let
   in setTop True *> case b of
-  Core (Abs ((Lam args free _ty) , t)) ty → emitFunction nm i args t ty
+--Core (Abs ((Lam args free _ty) , t)) ty → emitFunction nm i args t ty
   Core t ty  → emitFunction nm i [] t ty
   PoisonExpr → panic $ "attempted to codegen a poison expr: " <> nm
 
@@ -161,7 +162,7 @@ cgExpr t = let
     VQBind q → gets thisMod <&> \m → if modName q == m then ECallable (LocalFn (unQName q)) else error $ "extern" <> show q --Extern b
 --  VBind b  → pure (Extern b) -- fnDecl <$> cgBind b
 --  VBind b  → pure (ECallable (LocalFn b)) --cgBind b ≫= \case
-    VArg  i  → gets argTable ≫= \at → fst <$> MV.read at i
+--  VArg  i  → gets argTable ≫= \at → fst <$> MV.read at i
     x → error $ "cgName: " <> show x
   in case t of
   Var vNm → cgName vNm
@@ -225,6 +226,7 @@ doCast cast term = case cast of
   CastOver asmIdx preCast (Core fn _) retTy → case term of
     RawFields ty fields → _
 
+{-
 emitMatchApp ∷ Expr → BSM.BitSetMap ABS → w → CGEnv s Expr
 emitMatchApp (Arg i) alts d = do
   (arg , argT) ← gets argTable ≫= \at → MV.read at i
@@ -248,3 +250,4 @@ emitMatchApp (SumData sumTy tag val) alts d = let
   brs ← traverse (uncurry emitBranch) (BSM.toList alts)
   pure (Switch tag brs Void)
 emitMatchApp x alts d = error $ show x
+-}

@@ -1,6 +1,5 @@
 {-# Language FlexibleInstances #-}
 module ShowCore where
-
 import CoreSyn
 deriving instance Show VName
 deriving instance Show Term
@@ -20,3 +19,4 @@ deriving instance Show Mixfixy
 deriving instance Show Lam
 deriving instance Show LamB
 deriving instance Show Specialisations
+deriving instance Show LetMeta

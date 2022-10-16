@@ -7,7 +7,7 @@
 -- * imported label/field names should overwrite locals (they are supposed to be the same)
 --
 -- * The 0 module (compiler primitives) is used to mark tuple fields (forall n 0.n)
-module Externs (GlobalResolver(..) , ModDeps, ModDependencies(..), addModule2Resolver , addModName , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readQParseExtern , readLabel , readField , readPrimExtern , resolveImports , typeOfLit , addDependency)
+module Externs (GlobalResolver(..) , ModDeps, ModDependencies(..), addModuleToResolver , addModName , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readQParseExtern , readLabel , readField , readPrimExtern , resolveImports , typeOfLit , addDependency)
 where
 import Builtins ( primBinds , primMap , typeOfLit , primLabelHNames , primLabelMap , primFieldHNames , primFieldMap )
 import CoreSyn
@@ -18,7 +18,7 @@ import qualified BitSetMap as BSM ( singleton )
 import qualified Data.IntMap as IM ( IntMap, filterWithKey, singleton, toList, union )
 import qualified Data.Map.Strict as M ( Map, (!?), member, size, insert, singleton, traverseWithKey, unionWith, unionsWith, update )
 import qualified Data.Vector.Mutable as MV ( length, unsafeGrow, unsafeNew, write )
-import qualified Data.Vector as V ( Vector, (!), create, foldl, singleton, unsafeFreeze, unsafeThaw )
+import qualified Data.Vector as V--  ( Vector, (!), create, foldl, singleton, unsafeFreeze, unsafeThaw )
 
 -----------------
 -- Import Tree --
@@ -74,7 +74,7 @@ data Externs = Externs {
  , eModNamesV    ∷ V.Vector HName
 } deriving Show
 
-readPrimExtern e i   = snd ((extBinds e V.! 0) V.! i)
+readPrimExtern e i   = snd (extBinds e V.! 0 V.! i)
 
 readLabel , readField ∷ Externs → IName → QName
 readLabel exts l = if l < 0 then mkQName 0 (-1 - l) else exts.importLabels V.! l
@@ -83,20 +83,20 @@ readField exts f = if f < 0 then mkQName 0 (-1 - f) else exts.importFields V.! f
 -- exported functions to resolve ParseSyn.VExterns
 readQParseExtern ∷ BitSet → Int → Externs → Int → IName → CoreSyn.ExternVar
 readQParseExtern openMods thisModIName (exts ∷ Externs) modNm iNm = if
-  | modNm == thisModIName    → ForwardRef iNm -- ie. not actually an extern
-  | openMods `testBit` modNm → Imported $ case snd ((exts.extBinds V.! modNm) V.! iNm) of
-    e@(Core f t) → case f of -- inline trivial things
-      Lit{}   → e
-      Instr{} → e
-      Var{}   → e -- var indirection
-      _ → Core (Var $ VQBind (mkQName modNm iNm)) t
+  | modNm == thisModIName    -> ForwardRef iNm -- solveScopes can handle this
+  | openMods `testBit` modNm -> Imported $ case snd ((exts.extBinds V.! modNm) V.! iNm) of
+    e@(Core f t) -> case f of -- inline trivial things
+      Lit{}   -> e
+      Instr{} -> e
+      Var{}   -> e -- var indirection
+      _ -> Core (Var $ VQBind (mkQName modNm iNm)) t
     PoisonExpr → PoisonExpr
-    x → x -- types and sets
-  | otherwise → NotOpened (exts.eModNamesV V.! modNm) (fst ((exts.extBinds V.! modNm) V.! iNm))
+    x -> x -- types and sets
+  | otherwise → NotOpened (exts.eModNamesV V.! modNm) (fst (exts.extBinds V.! modNm V.! iNm))
 
 readParseExtern openMods thisModIName exts i = case exts.extNames V.! i of
-  Importable modNm iNm → readQParseExtern openMods thisModIName exts modNm iNm
-  x → x
+  Importable modNm iNm -> readQParseExtern openMods thisModIName exts modNm iNm
+  x -> x
 
 -- First resolve names for a module, then that module can be added to the resolver
 -- We need to resolve INames accross module boundaries.
@@ -116,8 +116,8 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
   resolver = let
     -- temporarily mark field/label names (use 2 bits from the iname, not the module name which tracks their origin)
     -- instead resolveName could use 3 maps, but would be slow since frequently entire maps would come back negative
-    labels = IM.singleton modIName . (\i → i `setBit` labelBit) <$> labelMap
-    fields = IM.singleton modIName . (\i → i `setBit` fieldBit) <$> fieldMap
+    labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
+    fields = IM.singleton modIName . (`setBit` fieldBit) <$> fieldMap
     -- Deleted names from the old module won't be overwritten so must be explicitly removed
     rmStaleNames nameMap = let
       collect = V.foldl (\stale nm → if M.member nm localNames then stale else nm : stale) []
@@ -138,20 +138,20 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     mfWords = IM.toList <$> (mfResolver M.!? hNm)
     flattenMFMap = concatMap snd
     in case (binds , mfWords) of
-    (Just [] , _)  → NotInScope hNm -- this name was deleted from (all) modules
+    (Just [] , _)  -> NotInScope hNm -- this name was deleted from (all) modules
     -- inline compiler primitives
-    (Just [(0     , iNm)] , Nothing) → Imported $ snd ((prevBinds V.! 0) V.! iNm)
+    (Just [(0     , iNm)] , Nothing) -> Imported $ snd ((prevBinds V.! 0) V.! iNm)
     (Just [(modNm , iNm)] , Nothing)
 --    label applications look like normal bindings `n = Nil`
-      | True ← testBit iNm labelBit → let q = mkQName modNm (clearBit iNm labelBit)
+      | True <- testBit iNm labelBit -> let q = mkQName modNm (clearBit iNm labelBit)
         in Imported (Core (Label q []) (TyGround [THTyCon $ THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))]))
-      | True ← testBit iNm fieldBit → NotInScope hNm
-      | True → Importable modNm iNm
+      | True <- testBit iNm fieldBit -> NotInScope hNm
+      | True -> Importable modNm iNm
     (b , Just mfWords)
-      | Nothing      ← b → MixfixyVar $ Mixfixy Nothing              (flattenMFMap mfWords)
-      | Just [(m,i)] ← b → MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
-    (Nothing      , Nothing) → NotInScope hNm
-    (Just many , _)          → AmbiguousBinding hNm many
+      | Nothing      <- b -> MixfixyVar $ Mixfixy Nothing              (flattenMFMap mfWords)
+      | Just [(m,i)] <- b -> MixfixyVar $ Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
+    (Nothing      , Nothing) -> NotInScope hNm
+    (Just many , _)          -> AmbiguousBinding hNm many
 
   -- convert noScopeNames map to a vector (Map HName IName → Vector HName)
   names ∷ Map HName Int → V.Vector ExternVar
@@ -203,12 +203,15 @@ addDependency _imported _moduleIName r = r
 --   in updateVecIdx (ModDependencies 0 0) (dependencies r) moduleIName (ModDependencies (deps `setBit` imported) dependents)
 -- }
 
-addModule2Resolver (GlobalResolver modCount modNames nameMaps l f modNamesV binds lh fh deps mfResolver)
-  modIName newBinds lHNames fHNames labelNames fieldNames _modDeps
-  = let binds'     = updateVecIdx (V.singleton ("(Uninitialized)" , PoisonExpr)) binds modIName newBinds
-        lh'        = updateVecIdx (V.singleton "(Uninitialized)") lh    modIName lHNames
-        fh'        = updateVecIdx (V.singleton "(Uninitialized)") fh    modIName fHNames
---      deps'      = updateVecIdx (ModDependencies 0 0) deps modIName modDeps
-        l' = alignWith (\case { This new → mkQName modIName new ; That old → old ; These _new old → old }) labelNames l
-        f' = alignWith (\case { This new → mkQName modIName new ; That old → old ; These _new old → old }) fieldNames f
+addModuleToResolver :: Externs.GlobalResolver -> Int -> V.Vector (HName, CoreSyn.Expr)
+  -> V.Vector HName -> V.Vector HName -> Map HName Int -> Map HName Int
+  -> p -> Externs.GlobalResolver
+addModuleToResolver (GlobalResolver modCount modNames nameMaps l f modNamesV binds lh fh deps mfResolver)
+  modIName newBinds lHNames fHNames labelNames fieldNames _modDeps = let
+    binds' = updateVecIdx (V.singleton ("(Uninitialized)" , PoisonExpr)) binds modIName newBinds
+    lh'    = updateVecIdx (V.singleton "(Uninitialized)") lh    modIName lHNames
+    fh'    = updateVecIdx (V.singleton "(Uninitialized)") fh    modIName fHNames
+--  deps'  = updateVecIdx (ModDependencies 0 0) deps modIName modDeps
+    l' = alignWith (\case { This new → mkQName modIName new ; That old → old ; These _new old → old }) labelNames l
+    f' = alignWith (\case { This new → mkQName modIName new ; That old → old ; These _new old → old }) fieldNames f
     in GlobalResolver modCount modNames nameMaps l' f' modNamesV binds' lh' fh' deps mfResolver

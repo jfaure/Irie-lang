@@ -19,14 +19,14 @@ tr t x = trace (prettyTyRaw t) x
 -- <a href="#Marker></a>
 -- <h1 id="Marker">There's a link to here!</h1>
 data Annotation
- = ANone | AArg IName | ABindName IName | AQBindName QName | AQSpecName QName| AQLabelName QName | AQFieldName QName -- Names
+ = ANone | AArg IName | ABindName IName | ARhs | AQBindName QName | AQSpecName QName| AQLabelName QName | AQFieldName QName -- Names
  | AInstr | ALiteral | AType  | AAbs | AKeyWord | AExternType
 -- | ASrcLoc -- for clickable html
 
 data RenderOptions = RenderOptions
-  { ansiColor  ∷ Bool
-  , rawQNames  ∷ Bool
-  , bindSource ∷ Maybe BindSource
+  { ansiColor  :: Bool
+  , rawQNames  :: Bool
+  , bindSource :: Maybe BindSource
   }
 ansiRender = RenderOptions {
    ansiColor  = True
@@ -38,11 +38,16 @@ prettyTyRaw ∷ Type → T.Text = toS . prettyTy ansiRender
 prettyTermRaw ∷ Term → T.Text = toS . prettyTerm ansiRender
 
 prettyTy   flags      = render flags . layoutPretty defaultLayoutOptions . pTy True
-prettyTerm flags      = render flags . layoutPretty defaultLayoutOptions . pTerm
-prettyExpr flags      = render flags . layoutPretty defaultLayoutOptions . pExpr
+prettyTerm flags      = render flags . layoutPretty defaultLayoutOptions . pTerm True
+prettyExpr flags      = render flags . layoutPretty defaultLayoutOptions . pExpr True
 
 prettyBind ∷ RenderOptions → Bool → T.Text → Bind → TL.Text
 prettyBind flags showTerm nm b = render flags . layoutPretty defaultLayoutOptions $ pBind nm showTerm b <> hardline
+
+prettyJudgedModule :: Bool -> RenderOptions -> JudgedModule -> TL.Text
+prettyJudgedModule showRhs flags j = render flags . layoutPretty defaultLayoutOptions $ pJM showRhs j
+
+pJM showRhs (JudgedModule mI mH _bindNms _fNms _lNms modTT specs) = pExpr showRhs $ modTT
 
 showRawQName q = show (modName q) <> "." <> show (unQName q)
 --------------
@@ -71,23 +76,24 @@ render flags = let
   doAnn prev a b = let
     addColor cl b = if ansiColor flags then cl <> b <> getColor prev else b
     getColor = \case { ANone → ansiCLNormal ; AArg{} → ansiCLBlue ; AQBindName{} → ansiCLYellow
-      ; ALiteral → ansiCLMagenta ; AInstr → ansiCLMagenta ; AAbs → ansiCLCyan ; AType → ansiCLGreen
-      ; AKeyWord → ansiCLMagenta ; _ → ansiCLNormal }
+      ; ALiteral -> ansiCLMagenta ; AInstr → ansiCLMagenta ; AAbs → ansiCLCyan ; AType → ansiCLGreen
+      ; AKeyWord -> ansiCLMagenta ; _ → ansiCLNormal }
     in case a of
-    ANone         → addColor (getColor a) b
-    AArg i        → addColor (getColor a)  ("λ" <> fromString (show i) <> b)
-    AQSpecName  q → addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
-    AQBindName  q → addColor (getColor a) $ case allNames <$> bindSource flags of
-      Nothing  → "π(" <> (fromText (showRawQName q)) <> ")"
-      Just nms → fromText $ fst (nms V.! modName q V.! unQName q)
-    AQLabelName q → {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcLabelNames <$> bindSource flags) q)
-    AQFieldName q → {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
-    ALiteral      → addColor (getColor a) b
-    AInstr        → addColor (getColor a) b
-    AAbs          → addColor (getColor a) b
-    AType         → addColor (getColor a) b
---  AExternType i → allNames <$>
-    AKeyWord      → addColor (getColor a) b
+    ANone         -> addColor (getColor a) b
+    ARhs          -> b -- if showBind flags then _pTerm t else "" -- probably hack
+    AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
+    AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
+    AQBindName  q -> addColor (getColor a) $ case allNames <$> bindSource flags of
+      Nothing  -> "π(" <> (fromText (showRawQName q)) <> ")"
+      Just nms -> fromText (fst (nms V.! modName q V.! unQName q))
+    AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcLabelNames <$> bindSource flags) q)
+    AQFieldName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
+    ALiteral      -> addColor (getColor a) b
+    AInstr        -> addColor (getColor a) b
+    AAbs          -> addColor (getColor a) b
+    AType         -> addColor (getColor a) b
+--  AExternType i -> allNames <$>
+    AKeyWord      -> addColor (getColor a) b
   in TLB.toLazyText . renderTree ANone . treeForm
 
 addAnsiColor cl x = cl <> x <> ansiCLNormal
@@ -130,8 +136,8 @@ pTy pos = let
   TyVars i [] → "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
   TyVars i g  → "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> latChar <+> parens (pTyUnion g)
   TyGround u  → pTyUnion u
-  TyIndexed t ars → pTy' t <+> (hsep $ parens . pExpr <$> ars)
-  TyTerm term ty → parens $ pTerm term <+> ":" <+> pTy' ty
+  TyIndexed t ars → pTy' t <+> (hsep $ parens . pExpr False <$> ars)
+  TyTerm term ty → parens $ pTerm True term <+> ":" <+> pTy' ty
   TyPi (Pi args ty) → "Π" <> parens (hsep $ pPiArg <$> args) <+> pTy' ty
   TySi (Pi args ty) tyIndexes → _
 
@@ -186,40 +192,42 @@ pTyHead pos = let
   THSet   uni → "Set" <> pretty uni
   x → viaShow x
 
-pBind nm showTerm bind = pretty nm <> " = " <> case bind of
+pBind :: HName -> _ -> Bind -> _
+pBind nm showRhs bind = pretty nm <> " = " <> case bind of
   Guard m tvar      → "GUARD : "   <> viaShow m <> viaShow tvar
   Mutual m free isRec tvar tyAnn → "MUTUAL: " <> viaShow m <> viaShow isRec <> viaShow tvar <> viaShow tyAnn
-  Queued → "Queued"
-  LetBound -> "Letbound"
-  BindOK n lbound isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
-    in (if lbound then "let " else "") <> if showTerm then {-viaShow n <+>-} recKW <> pExpr expr else pExprType expr
---LetBound isRec expr → let recKW = if isRec && case expr of {Core{}→True;_→False} then annotate AKeyWord "rec " else ""
---  in annotate AKeyWord "let " <> if showTerm then recKW <> pExpr expr else pExprType expr
+  Queued{} -> "Queued"
+  BindOK n lbound isRec expr → let
+    recKW = if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
+    in (if lbound then "let " else "") <> {-viaShow n <+> -} recKW <> pExpr showRhs expr
   BindOpt complex specs expr → let
     showSpecs = if specs == 0 then "" else space <> parens "specs: " <> viaShow (bitSet2IntList specs)
-    in parens ("nApps: " <> viaShow complex) <> showSpecs <+> pExpr expr
+    in parens ("nApps: " <> viaShow complex) <> showSpecs <+> pExpr showRhs expr
 
-pExprType = let pos = True in \case
-  Core term ty → annotate AType (pTy pos ty)
-  Ty t         → " type " <> annotate AType (pTy pos t)
-  e → viaShow e
+--pExprType = let pos = True in \case
+--  Core term ty → annotate AType (pTy pos ty)
+--  Ty t         → " type " <> annotate AType (pTy pos t)
+--  e → viaShow e
 
-pExpr = let pos = True in \case
-  Core term ty → pTerm term <> softline <> " : " <> annotate AType (pTy pos ty)
+pExpr :: Bool -> Expr -> Doc Annotation
+pExpr showRhs = let pos = True in \case
+  Core term@LetBlock{} ty → pTerm showRhs term -- always print letbounds
+  Core term ty → (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy pos ty)
   Ty t         → "type" <+> annotate AType (pTy pos t)
   e → viaShow e
 
-pTerm = let
+pTerm :: Bool -> Term -> Doc Annotation
+pTerm showRhs = let
   pVName = \case
-    VArg i     → annotate (AArg i)       ""
+--  VArg i     → annotate (AArg i)       ""
     VQBind q   → annotate (AQBindName q) ""
-    VExt i     → "E" <> viaShow i -- <> dquotes (toS $ (srcExtNames bindSrc) V.! i)
     VForeign i → "foreign " <> viaShow i
+    VLetBind q -> "letBound: " <> viaShow q
   prettyLam (Lam ars free ty , term) = let
     prettyArg (i , ty) = viaShow i
     in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " ⇒ " <> term
   prettyBruijn (LamB i term) =
-    (annotate AAbs $ "λB " <> viaShow i) <> {-prettyFreeArgs free <>-} " ⇒ " <> pTerm term -- todo no cata here
+    (annotate AAbs $ "λB " <> viaShow i) <> {-prettyFreeArgs free <>-} " ⇒ " <> pTerm showRhs term -- todo no cata here
   prettyFreeArgs x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
@@ -235,7 +243,7 @@ pTerm = let
     VarF     v → pVName v
     VBruijnF b → "B" <> viaShow b
     LitF     l → annotate ALiteral $ parens (viaShow l)
-    AbsF l     → prettyLam l
+--  AbsF l     → prettyLam l
     BruijnAbsF n free body → parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
     BruijnAbsTypedF n free body argMetas retTy → parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
     RecAppF f args → parens (annotate AKeyWord "recApp" <+> f <+> sep args)
@@ -243,7 +251,7 @@ pTerm = let
     MatchBF arg ts d → arg <+> " > " <+> prettyMatch prettyBruijn Nothing ts (Just d)
     CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing ts d
     AppF f args    → parens (f <+> nest 2 (sep args))
-    PartialAppF extraTs fn args → "PartialApp " <> viaShow extraTs <> parens (fn <> fillSep args)
+--  PartialAppF extraTs fn args → "PartialApp " <> viaShow extraTs <> parens (fn <> fillSep args)
     InstrF   p → annotate AInstr (prettyInstr p)
     CastF  i t → parens (viaShow i) <> enclose "<" ">" (viaShow t)
     ProdF    ts → let
@@ -256,8 +264,8 @@ pTerm = let
     TTLensF r target ammo → let
       pLens = \case
         LensGet          → " . get "
-        LensSet  tt      → " . set "  <> parens (pExpr tt)
-        LensOver cast tt → " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr tt)
+        LensSet  tt      → " . set "  <> parens (pExpr showRhs tt)
+        LensOver cast tt → " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr showRhs tt)
       in r <> " . " <> hsep (punctuate "." $ prettyField <$> target) <> pLens ammo
     SpecF q      -> "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
@@ -265,11 +273,13 @@ pTerm = let
     LinF      {} -> error "lin"
     LinAbsF   {} -> error "linabs"
     LetSpecsF {} -> error "letspecs"
+    LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)) <> hardline <> "in" <+> t
+    LetBlockF bs   -> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  x → _
   parensApp f args = parens $ parens f <+> nest 2 (sep args)
   in para $ \case
     -- parens if necessary
-    AppF f args | Abs{} ← fst f → parensApp (snd f) (snd <$> args)
+    AppF f args | BruijnAbs{} ← fst f → parensApp (snd f) (snd <$> args)
     x → ppTermF (snd <$> x)
 
 prettyInstr = \case

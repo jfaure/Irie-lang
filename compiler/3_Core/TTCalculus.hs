@@ -74,12 +74,12 @@ normaliseType args ty = let
   -- If the term isn't a type index, it must be lambda calculus or product/sumtype operations
 --term2Type ∷ IM.IntMap Expr → Term → _ Type
   term2Type piArgs = \case
-    Var (VArg i)   → pure $ case piArgs IM.!? i of
-      Just (Ty t) → t
-      _ → (TyGround [THPoison])
-    RecApp _f args → let recArgs = (\case { Var (VArg i) → i ; _ → (-1) }) <$> args
-      in pure $ if all (`IM.member` piArgs) recArgs then (TyGround [THMuBound 0])
-        else _
+--  Var (VArg i)   → pure $ case piArgs IM.!? i of
+--    Just (Ty t) → t
+--    _ → (TyGround [THPoison])
+--  RecApp _f args → let recArgs = (\case { Var (VArg i) → i ; _ → (-1) }) <$> args
+--    in pure $ if all (`IM.member` piArgs) recArgs then (TyGround [THMuBound 0])
+--      else _
 --  Var (VQBind q) → _
 --  App f args     → _
     x → error $ show x

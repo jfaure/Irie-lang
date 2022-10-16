@@ -1,4 +1,2 @@
-zero = %i32 → %i32 → %i1
-
+zero = %i32 → %i32 → [!False | !True]
 lookup = ∏ A B → %i32 → µa.[Bin {⊤ , %i32 , a , a} | Tip {%i32 , B} | None] → [Nothing | Just {B}]
-

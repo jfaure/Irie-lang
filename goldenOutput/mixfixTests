@@ -1,33 +1,16 @@
-<_> = λ 0 ⇒ λ0  : ∏ A → A → A
-
-plus = _+_  : %i32 → %i32 → %i32
-
-zero = (_+_ (Int 0) (Int 0))  : %i32
-
-one = (_+_ (Int 0) (_+_ (Int 1) (Int 2)))  : %i32
-
-prec1 = (_+_ (Int 0) (_*_ (Int 1) (Int 2)))  : %i32
-
-prec2 = (_+_ (_*_ (Int 0) (Int 1)) (Int 2))  : %i32
-
-prec3 = (_+_ (_*_ (Int 0) (_+_ (Int 1) (Int 2))) (Int 3))  : %i32
-
-lassoc = (_+_ (_+_ (Int 0) (Int 1)) (Int 2))  : %i32
-
+plus = _+_ : %i32 → %i32 → %i32
+zero = (_+_ (Int 0) (Int 0)) : %i32
+one = (_+_ (Int 0) (_+_ (Int 1) (Int 2))) : %i32
+prec1 = (_+_ (Int 0) (_*_ (Int 1) (Int 2))) : %i32
+prec2 = (_+_ (_*_ (Int 0) (Int 1)) (Int 2)) : %i32
+prec3 = (_+_ (_*_ (Int 0) (_+_ (Int 1) (Int 2))) (Int 3)) : %i32
+lassoc = (_+_ (_+_ (Int 0) (Int 1)) (Int 2)) : %i32
 rassoc = type %i32 → %fDoubleTy → %i1
-
-brac = (<_> (Int 3))  : %i32
-
-if1 = (ifThenElse @!False (Int 3) (Int 4))  : %i32
-
-if2 = (ifThenElse @!False (Int 1) (ifThenElse @!True (Int 3) (Int 4)))  : (%i1 ⊔ %i32)
-
-if3 = (ifThenElse @!True (Int 5) (_*_ (_*_ (Int 0) (Int 2)) (Int 9)))  : %i32
-
+if1 = (ifThenElse @!False (Int 3) (Int 4)) : %i32
+if2 = (ifThenElse @!False (Int 1) (ifThenElse @!True (Int 3) (Int 4))) : (%i1 ⊔ %i32)
+if3 = (ifThenElse @!True (Int 5) (_*_ (_*_ (Int 0) (Int 2)) (Int 9))) : %i32
 if4 = (ifThenElse (PredInstr AND @!True @!False)
   (_+_ (Int 5) (Int 1))
-  (_*_ (_*_ (Int 0) (Int 7)) (Int 9)))  : %i32
-
-math1 = (IntInstr Sub (_*_ (_*_ (Int 1) (Int 9)) (Int 6)) (Int 2))  : %i32
-
-math2 = (_+_ (_+_ (Int 1) (_*_ (Int 2) (Int 3))) (Int 4))  : %i32
+  (_*_ (_*_ (Int 0) (Int 7)) (Int 9))) : %i32
+math1 = (IntInstr Sub (_*_ (_*_ (Int 1) (Int 9)) (Int 6)) (Int 2)) : %i32
+math2 = (_+_ (_+_ (Int 1) (_*_ (Int 2) (Int 3))) (Int 4)) : %i32

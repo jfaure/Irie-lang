@@ -1,65 +1,58 @@
 {-# LANGUAGE TemplateHaskell , TypeFamilies #-}
-{-# OPTIONS  -funbox-strict-fields #-}
+{-# OPTIONS -funbox-strict-fields #-}
 module ParseSyntax where
 import Prim ( Literal )
 import QName ( QName )
-import MixfixSyn ( MFWord, MixfixDef, ModIName )
-import Control.Lens ( (^.), makeLenses )
-import Text.Megaparsec.Pos ( Pos )
-import qualified Data.Map.Strict as M ( Map )
-import qualified BitSetMap as BSM
-import Data.Functor.Foldable.TH (makeBaseFunctor)
-import Data.Void
+import MixfixSyn ( MFWord, MixfixDef, ModIName, Prec )
 import Errors (ScopeError)
+import Text.Megaparsec.Pos ( Pos , mkPos )
+import Control.Lens ( (^.), makeLenses )
+import Data.Functor.Foldable.TH (makeBaseFunctor)
+import qualified BitSetMap as BSM
+import qualified Data.Map.Strict as M ( Map )
 import qualified CoreSyn (Expr , Mixfixy)
-import MixfixSyn
+import qualified Data.Vector as V
 
 type FName        = IName -- record  fields
 type LName        = IName -- sumtype labels
-type FreeVar      = IName -- non-local argument
-type FreeVars     = BitSet
 type NameMap      = M.Map HName IName
 type SourceOffset = Int
 
 data Module = Module { -- Contents of a File (Module = Function : _ → Record | Record)
-   _moduleName   ∷ HName -- fileName
--- , _modFunctor   ∷ [Pattern]
--- , _modSig       ∷ Maybe TT
- , _imports      ∷ [HName] -- all imports used at any scope
- , _bindings     ∷ [FnDef] -- hNameBinds (! these are listed in reverse)
-
- , _parseDetails ∷ ParseDetails
+   _moduleName   :: HName   -- fileName
+ , _imports      :: [HName] -- all imports used at any scope
+ , _bindings     :: TT
+ , _parseDetails :: ParseDetails
 }
 -- To allow the repl to continue
-emptyParsedModule h = Module h [] [] (ParseDetails (0 , mempty) mempty mempty mempty mempty [])
-
--- args and signature for the module (return type must be a record)
--- data FunctorModule = FunctorModule [Pattern] (Maybe TT) SourceOffset
+emptyParsedModule h = Module h [] Question (ParseDetails (0 , mempty) mempty mempty mempty mempty [])
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
-   _hNameMFWords   ∷ (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
- , _hNameBinds     :: M.Map HName IName -- top-level and let-bound assignments
- , _hNamesNoScope  ∷ NameMap
- , _fields         ∷ NameMap
- , _labels         ∷ NameMap
- , _newLines       ∷ [Int]
+   _hNameMFWords  :: (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
+ , _hNameBinds    :: M.Map HName IName -- top-level and let-bound assignments TODO list is sufficient here
+ , _hNamesNoScope :: NameMap
+ , _fields        :: NameMap
+ , _labels        :: NameMap
+ , _newLines      :: [Int]
 }
 data FnDef = FnDef {
-   fnNm         ∷ HName
- , fnRecType    ∷ !LetRecT        -- or mutual
- , fnMixfixName ∷ Maybe MixfixDef -- rm (mixfixes are aliases)
- , fnMatches    ∷ TT -- BruijnAbs -- NonEmpty FnMatch
- , fnSig        ∷ Maybe TT
+   _fnNm         :: HName
+ , _fnIName      :: IName
+ , _fnRecType    :: !LetRecT
+ , _fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
+ , _fnRhs        :: TT
+ , _fnSig        :: Maybe TT
 }
 
-data FnMatch = FnMatch [TT] TT
-data LetRecT = Let | Rec | LetOrRec deriving Eq
+data FnMatch = FnMatch [TT] TT -- TODO rm
+data LetRecT = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show) -- scope of opened records (blocks)
 
 data TTName
- = VBruijn IName
- | VExtern IName
- | VQBind  QName -- not ideal here
+ = VBruijn  IName
+ | VExtern  IName
+ | VQBind   QName
+ | VLetBind QName -- let-block nesting depth and IName
 
 data LensOp a = LensGet | LensSet a | LensOver a deriving (Show , Functor , Foldable , Traversable)
 data DoStmt  = Sequence TT | Bind IName TT -- | Let
@@ -72,14 +65,14 @@ data BruijnAbsF tt = BruijnAbsF
 type BruijnAbs = BruijnAbsF TT
 type BruijnSubs = [(IName , Int)] -- Extern -> VBruijn -- TODO can just be a straight list to imap
 data CaseSplits = CaseSplits TT [(TT , TT)] -- deliberately wrapped so unaffected by solveScopes initial cata
+data Block      = Block { open :: Bool , letType :: LetRecT , binds :: V.Vector FnDef }
 data TT -- Type | Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
  | Lin QName -- modName used to differentiate dups
 
  | WildCard           -- "_" implicit lambda argument
  | Question           -- "?" ask to infer
- | Foreign   HName TT -- no definition, and we have to trust the user given type
- | ForeignVA HName TT -- var-args for C externs
+ | Foreign   Bool HName TT -- no definition, and we have to trust the user given type. bool is var-args
 
  -- lambda-calculus
  | BruijnLam BruijnAbs
@@ -94,13 +87,12 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
 
- | PatternGuards [TT] -- Only parsed in pattern position
+ | PatternGuards [TT]
  | CasePat CaseSplits -- unsolved patterns
- | MatchB TT (BSM.BitSetMap TT) (Maybe TT)
+ | MatchB TT (BSM.BitSetMap TT) (Maybe TT) -- solved patterns UnPattern.patternsToCase
 
  | List   [TT]
--- | LetBinds [(IName , BruijnAbs)] TT -- marker for let-block / opened Module
- | LetBinds [(IName , TT)] TT -- marker for let-block / opened Module
+ | LetIn Block (Maybe TT)
 
  -- term primitives
  | Lit      Literal
@@ -131,14 +123,16 @@ type Pattern = TT
 
 data IndentType = IndentTab | IndentSpace | IndentEither -- files must commit to an indent style
 data ParseState = ParseState {
-   _indent      ∷ Pos    -- start of line indentation (need to save it for subparsers)
- , _indentType  ∷ IndentType
-
+   _indent      ∷ Pos        -- start of line indentation (need to save it for subparsers)
+ , _indentType  ∷ IndentType -- tab or space indent style must be consistent
  , _moduleWIP   ∷ Module -- result
 }
+emptyParseState nm = ParseState (mkPos 1) IndentEither (emptyParsedModule nm)
+
 makeLenses ''ParseState
 makeLenses ''ParseDetails
 makeLenses ''Module
+makeLenses ''FnDef
 makeBaseFunctor ''TT
 
 mkBruijnLam (BruijnAbsF 0 _       _    rhs) = rhs
@@ -147,7 +141,7 @@ mkBruijnLam (BruijnAbsF n argSubs nest rhs) = BruijnLam (BruijnAbsF n argSubs ne
 showL ind = Prelude.concatMap $ (('\n' : ind) <>) . show
 prettyModule m = show (m^.moduleName) <> " {\n"
     <> "imports: " <> showL "  " (m^.imports)  <> "\n"
-    <> "binds:   " <> showL "  " (m^.bindings) <> "\n"
+    <> "binds:   " <> show (m^.bindings) <> "\n"
     <> show (m^.parseDetails) <> "\n}"
 prettyParseDetails p = Prelude.concatMap ("\n  " <>)
     [ "names:  "   <> show (p^.hNamesNoScope)
@@ -159,8 +153,7 @@ prettyParseDetails p = Prelude.concatMap ("\n  " <>)
 deriving instance Show ParseDetails
 deriving instance Show FnDef
 deriving instance Show TTName
-deriving instance Show FnMatch
+deriving instance Show Block
 deriving instance Show TT
 deriving instance Show CaseSplits
 deriving instance Show DoStmt
-deriving instance Show LetRecT

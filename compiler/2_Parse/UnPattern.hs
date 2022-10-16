@@ -64,14 +64,14 @@ buildCase = let
     QuestionF           -> noSubs ok -- unconditional match
     PatternGuardsF pats -> mkSubCases pats ok ko
     ArgProdF cc      -> mkSubCases cc ok ko & \(rhs , bruijnSubs) ->
-      (BruijnLam (BruijnAbsF (length cc) bruijnSubs 0 rhs) , [])
-    TupleF cc -> d_ "tuple" $ error "tuple"
+      (mkBruijnLam (BruijnAbsF (length cc) bruijnSubs 0 rhs) , [])
+    TupleF cc -> (DesugarPoison "Unprepared for tuple" , [])
     ProdF c   -> let
       n = length c
       (keys , subPats) = unzip c
       unConsArgs = keys <&> \k -> TTLens (-1) scrut [k] LensGet
       (body , argSubs) = mkSubCases subPats ok ko
-      in (App (BruijnLam (BruijnAbsF n [] 0 body)) unConsArgs , argSubs)
+      in (App (mkBruijnLam (BruijnAbsF n [] 0 body)) unConsArgs , argSubs)
     LitF l          -> noSubs $ let
       alts = (qName2Key builtinTrue , BruijnLam $ BruijnAbsF 1 [] 0 ok)
         : maybe [] (\falseBranch -> [(qName2Key builtinFalse , falseBranch)]) ko
