@@ -13,9 +13,7 @@ import Control.Lens
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S ( fromList, member )
 import qualified Data.Text as T ( all, any, append, concat, null, snoc, empty )
-import MUnrolls
 import Data.Functor.Foldable
-import Control.Arrow
 --import qualified Text.Megaparsec.Debug as DBG
 
 -- The initial parse is context-insensitive: forward | mutual definitions and mixfixes are resolved later
@@ -23,7 +21,7 @@ import Control.Arrow
 
 -- debug fns
 -- dbg i = DBG.dbg i
--- showN n = try ((takeP Nothing n >>= traceShowM) *> fail "debug parser") <|> pure () :: Parser ()
+--showN n = try ((takeP Nothing n >>= traceShowM) *> fail "debug parser") <|> pure () :: Parser ()
 
 type Parser = ParsecT Void Text (Prelude.State ParseState)
 
@@ -44,7 +42,8 @@ insertOrRetrieve h mp = let sz = M.size mp in case M.insertLookupWithKey (\_k _n
 
 addBindName h    = (identity ||| identity) <$> (moduleWIP . parseDetails . hNameBinds %%= insertOrRetrieve h)
 addUnknownName h = (identity ||| identity) <$> (moduleWIP . parseDetails . hNamesNoScope %%= insertOrRetrieve h)
-newFLabel h      = (identity ||| identity) <$> (moduleWIP . parseDetails . fields %%= insertOrRetrieve h)
+--newFLabel h      = (identity ||| identity) <$> (moduleWIP . parseDetails . fields %%= insertOrRetrieve h)
+newFLabel h      = addUnknownName h
 newSLabel h      = (identity ||| identity) <$> (moduleWIP . parseDetails . labels %%= insertOrRetrieve h)
 
 lookupSLabel h   = (M.!? h) <$> use (moduleWIP . parseDetails . labels)
@@ -53,7 +52,7 @@ lookupBindName h = Var . VExtern <$> addUnknownName h
 -----------
 -- Lexer --
 -----------
--- A key convention: tokens consume trailing whitespace (using `symbol` or `lexeme`)
+-- A key convention: consume trailing whitespace (use `symbol` or `lexeme`)
 -- so parsers can assume they start on a non-blank.
 -- Space consumers: scn eats newlines, sc does not.
 -- Save newline offsets so we can track source locations using a single Int
@@ -102,6 +101,13 @@ indentedItems prev p finished = let
     | otherwise   -> fail ("incorrect indentation, got " <> show pos <> ", expected " <> show lvl <> " (<= " <> show prev <>")")
  in L.indentLevel >>= go
 
+checkIndent :: Pos -> Pos -> Parser ()
+checkIndent prev lvl = L.indentLevel >>= \pos -> {-d_ (pos , prev , lvl) $-} if
+ | pos == lvl  -> pure ()
+ | pos <= prev -> fail ("end of indent: " <> show pos <> " <= " <> show prev)
+-- | pos == lvl  -> ok -- p >>= \ok -> option [ok] ((ok :) <$> try (go lvl))
+ | otherwise   -> fail ("incorrect indentation, got " <> show pos <> ", expected " <> show lvl <> " (<= " <> show prev <>")")
+
 indentn = use indentType >>= \case
   IndentTab    -> scnTabs
   IndentSpace  -> scn
@@ -124,7 +130,6 @@ reservedNames = S.fromList $ words "let rec in \\case λcase case as over foreig
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c = if T.any (==c) reservedChars then lexeme (char c) else lexeme (char c <* notFollowedBy idenChars)
-reservedOp = reservedName
 reserved = reservedName
 isIdenChar x = not (isSpace x || T.any (==x) reservedChars)
 idenChars = takeWhile1P Nothing isIdenChar
@@ -153,8 +158,7 @@ parseMixFixDef :: Text -> Either (ParseErrorBundle Text Void) [Maybe Text]
 ------------
 parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
 parseModule nm txt = let
---parseModule = scn *> (parseDecls (mkPos 1) >>= (moduleWIP . bindings .=)) *> eof *> use moduleWIP
-  parseModule = scn *> (((\binds -> LetIn binds Nothing) <$> pBlock Let)
+  parseModule = scn *> (((\binds -> LetIn binds Nothing) <$> pBlock True Let)
     >>= (moduleWIP . bindings .=)) *> eof *> use moduleWIP
   in runParserT parseModule nm txt `evalState` emptyParseState (toS (dropExtension (takeFileName nm)))
 
@@ -181,12 +185,17 @@ pImport = choice
  , reserved "use"    *> (iden >>= addImport)
  ]
 
+pBlock :: Bool -> LetRecT -> Parser Block
+pBlock isOpen letTy = scn *> use indent >>= \prev -> L.indentLevel >>= \lvl -> Block isOpen letTy <$>
+  parseDecls (eof <|> void (try $ endLine *> scn *> checkIndent prev lvl))
+
 newtype SubParser = SubParser { unSubParser :: Parser (Maybe (FnDef , SubParser)) }
-parseDecls :: Pos -> Parser (V.Vector FnDef)
-parseDecls indent = V.unfoldrM unSubParser (pDecl indent)
-pDecl :: Pos -> SubParser
-pDecl indent = SubParser $ (<* (optional endLine <* scn)) $ (many (lexemen pImport) *> svIndent) *> let
-  -- parse a name but consume all idenChars; ie. if expecting "take", don't parse "takeWhile" 
+parseDecls :: Parser () -> Parser (V.Vector FnDef)
+parseDecls sep = V.unfoldrM unSubParser (pDecl sep)
+pDecl :: Parser () -> SubParser
+pDecl sep = SubParser $ option Nothing $ (many (lexemen pImport) *> svIndent) *> let
+  subParse = SubParser (option Nothing $ sep *> unSubParser (pDecl sep))
+  -- parse a name and consume all idenChars; ie. if expecting "take", don't parse "takeWhile"
   pName nm = symbol nm *> lookAhead (satisfy (not . isIdenChar))
   pEqns :: Parser [TT] -> Parser [TT] -> Parser [(TT , TT)]
   pEqns pArgs pMFArgs = let -- first parse is possibly different
@@ -196,12 +205,12 @@ pDecl indent = SubParser $ (<* (optional endLine <* scn)) $ (many (lexemen pImpo
       (:) <$> fnMatch pArgs (reserved "=")
           <*> many (try $ endLine *> scn *> svIndent *> fnMatch pMFArgs (reserved "="))
       <|> some (try (endLine *> fnMatch pMFArgs (reserved "=")))
-  in option Nothing $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
+  in optional (reserved "rec") *> lexeme pMixfixWords >>= \case
     [Just nm] -> let pArgs = many (lexeme singlePattern) in do
       iNm  <- addUnknownName nm <* addBindName nm
       eqns <- pEqns pArgs (pName nm *> pArgs)
       let rhs = CasePat $ CaseSplits (Var (VBruijn 0)) eqns
-      pure $ Just (FnDef nm iNm Let Nothing rhs Nothing , pDecl indent)
+      pure $ Just (FnDef nm iNm Let Nothing rhs Nothing , subParse)
     mfDefHNames   -> let
       pMixFixArgs = cata $ \case
         Nil      -> pure []
@@ -213,14 +222,14 @@ pDecl indent = SubParser $ (<* (optional endLine <* scn)) $ (many (lexemen pImpo
       prec <- fromMaybe defaultPrec <$> optional (braces parsePrec)
       mfDefINames <- addMixfixWords mfDefHNames mfDef
       rhs <- CasePat . CaseSplits (Var (VBruijn 0)) <$> pEqns (pure []) (pMixFixArgs mfDefHNames)
-      pure $ Just (FnDef nm iNm Let (Just mfDef) rhs Nothing , pDecl indent)
+      pure $ Just (FnDef nm iNm Let (Just mfDef) rhs Nothing , subParse)
 
 lambda = matchesToTT <$> (:|[]) <$> fnMatch (many singlePattern) (reserved "=>" <|> reserved "⇒" <|> reserved "=")
-tyAnn = reservedChar ':' *> tt 
+tyAnn = reservedChar ':' *> tt
 
 fnMatch pMFArgs sep = FnMatch <$> pMFArgs <* lexemen sep <*> tt
 
--- make a lambda around any '_' found within the tt eg. `(_ + 1)` ⇒ `\x ⇒ x + 1`
+-- make a lambda around any '_' found within the tt eg. `(_ + 1)` => `\x => x + 1`
 catchUnderscoreAbs = pure
 
 singlePattern = ttArg -- pattern TTs are inversed later
@@ -253,7 +262,7 @@ tt :: Parser TT
    , (reservedChar '\\' <|> reservedChar 'λ') *> lambda
 -- , reserved "do" *> doExpr
    , reserved "case"   *> casePat
-   , reserved "record" *> tyRecord  -- multiline record decl
+-- , reserved "record" *> tyRecord  -- multiline record decl
    , reserved "data"   *> tySumData -- multiline sumdata decl
    , con
    , Lit <$> lexeme (try (literalP <* notFollowedBy iden)) -- must be before Iden parsers
@@ -268,7 +277,7 @@ tt :: Parser TT
 --piBinder = reserved "Π" *> (many (iden >>= addArgName) >>= \pis -> addPiBound (PiBound pis WildCard))
   -- Catch potential implicit abstractions at each parens
 --parensExpr = parens (choice [{-try piBound ,-} (tt >>= \t -> tuple t <|> typedTT t) , scn $> Prod []] >>= implicitPiBound) >>= catchUnderscoreAbs
-  parensExpr = parens ((tt >>= \t -> tuple t <|> typedTT t) <|> scn $> Prod [])
+  parensExpr = parens ((tt >>= \t -> tuple t <|> typedTT t) <|> scn $> Tuple [])
     >>= catchUnderscoreAbs
   tuple t = (\ts -> Tuple (t:ts)) <$> some (reservedChar ',' *> arg)
   label i = lookupSLabel i >>= \case
@@ -280,18 +289,15 @@ tt :: Parser TT
     ref <- scn *> use indent <* svIndent
     indentedItems ref labelDecl (fail "")
 
-  tyRecord = Prod <$> let fieldDecl = (,) <$> (iden >>= newFLabel) <*> tyAnn <?> "Field declaration" in do
-    ref <- scn *> use indent <* svIndent
-    indentedItems ref fieldDecl (fail "")
+--tyRecord = Prod <$> let fieldDecl = (,) <$> (iden >>= newFLabel) <*> tyAnn <?> "Field declaration" in do
+--  ref <- scn *> use indent <* svIndent
+--  indentedItems ref fieldDecl (fail "")
 
   con = let
-    fieldAssign = (,) <$> (iden >>= newFLabel) <* reservedOp "=" <*> tt
-    multilineAssign = do
-      reserved "record"
-      ref <- scn *> use indent <* svIndent
-      indentedItems ref fieldAssign (fail "")
-    conBraces = braces (fieldAssign `sepBy` reservedChar ',')
-    in Prod <$> (multilineAssign <|> conBraces)
+    multilineAssign = reserved "record" *> pBlock False Let
+    conBraces = braces (parseDecls (void $ reservedChar ','))
+    ln b = LetIn b Nothing
+    in ln <$> multilineAssign <|> (\fields -> ln (Block False Let fields)) <$> conBraces
 
   branchArrow = reserved "=>" <|> reserved "⇒"
   caseSplits :: Parser [(TT , TT)]
@@ -299,17 +305,14 @@ tt :: Parser TT
     in braces (split `sepBy` reservedChar ';') <|> let
      finishEarly = (void $ char ')' <|> lookAhead (reservedChar '_'))
      in (use indent <* scn) >>= \ref -> indentedItems ref split finishEarly
-  lambdaCase = BruijnLam . BruijnAbsF 1 [] 0 . CasePat . CaseSplits (Var (VBruijn 0)) <$> caseSplits 
+  lambdaCase = BruijnLam . BruijnAbsF 1 [] 0 . CasePat . CaseSplits (Var (VBruijn 0)) <$> caseSplits
   casePat = (\tt splits -> CasePat (CaseSplits tt splits)) <$> tt <* reserved "of" <*> caseSplits
 
   letIn = let -- svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
     pLetQual = choice ((\(txt , l) -> reserved txt $> l) <$> [("let" , Let) , ("rec" , Rec) , ("mut" , Mut)])
-    in pLetQual >>= pBlock >>= \block -> LetIn block <$> (reserved "in" *> (Just <$> tt))
+    in pLetQual >>= pBlock True >>= \block -> LetIn block <$> (reserved "in" *> (Just <$> tt))
 
   typedTT = pure
-
-pBlock :: LetRecT -> Parser Block
-pBlock letTy = scn *> use indent >>= \ref -> Block True letTy <$> parseDecls ref
 
 ---------------------
 -- literal parsers --

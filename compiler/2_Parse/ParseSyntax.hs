@@ -3,7 +3,7 @@
 module ParseSyntax where
 import Prim ( Literal )
 import QName ( QName )
-import MixfixSyn ( MFWord, MixfixDef, ModIName, Prec )
+import MixfixSyn ( MFWord, MixfixDef, Prec )
 import Errors (ScopeError)
 import Text.Megaparsec.Pos ( Pos , mkPos )
 import Control.Lens ( (^.), makeLenses )
@@ -81,9 +81,9 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | PiBound [TT] TT -- (a b c : T) introduces pi-bound arguments of type T
 
  -- tt primitives (sum , product , list)
- | Prod   [(FName , TT)] -- can be used to type itself
+-- | Prod   [(FName , TT)] -- can be used to type itself
+ | Tuple   [TT] -- Cartesian product
  | ArgProd [TT] -- packed arguments; used only by UnPattern within case expressions
- | Tuple   [TT]
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
 
@@ -103,7 +103,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | TyListOf TT
  | Gadt [(LName , [TT] , Maybe TT)] -- Parameters and constructor signature (return type may be a subtype of the Gadt)
 
- | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat ← x' stands for '≫= \pat ⇒'
+ | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat =>'
 
  -- desugaring
  | DesugarPoison Text  -- UnPattern errors
@@ -147,7 +147,7 @@ prettyParseDetails p = Prelude.concatMap ("\n  " <>)
     [ "names:  "   <> show (p^.hNamesNoScope)
     , "fields: "   <> show (p^.fields)
     , "labels: "   <> show (p^.labels)
-    , "newlines: " <> show (p^.newLines)
+--  , "newlines: " <> show (p^.newLines)
     ]
 
 deriving instance Show ParseDetails

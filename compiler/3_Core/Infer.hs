@@ -4,13 +4,13 @@ import Prim ( PrimInstr(MkPAp) )
 import BiUnify ( bisub )
 import qualified ParseSyntax as P
 import CoreSyn as C
-import CoreUtils ( isPoisonExpr, mergeTVar, mergeTypeList, mergeTypes, mkTyArrow, prependArrowArgsTy, tyExpr, tyOfExpr )
+import CoreUtils
 import TTCalculus ( ttApp )
 import Scope
 import Errors
 import TypeCheck ( check )
 import TCState
-import Externs ( typeOfLit, readField, readLabel, readQParseExtern , Externs )
+import Externs ( typeOfLit, readLabel, readQParseExtern , Externs )
 import Generalise ( generalise )
 
 import Control.Lens
@@ -93,7 +93,8 @@ judgeBind wip' bindINm = use thisMod >>= \modINm -> (wip' `MV.read` bindINm) >>=
         MV.modify wip' mF this where
           mF = \case
             Right (Guard ms tv) -> Right $ Guard (ms `setBit` bindINm) tv
-            x -> abort (show x)
+--          Right b@(BindOK{})  -> Right (did_ b)
+            x -> error (show x)
     b -> error (show b)
 
 -- Converting user types to Types = Generalise to simplify and normalise the type
@@ -139,7 +140,7 @@ generaliseBinds wip' svEscapes svLeaked ms = ms `forM` \m -> MV.read wip' m >>= 
         g       <- generalise escaped (Left recTVar)
 --      when global_debug $ use bis >>= \b -> use blen >>= \bl ->
 --        [0 .. bl -1] `forM_` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
-        when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars 
+        when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
         pure (intList2BitSet (fst <$> args) , g)
       Ty t -> pure $ (emptyBitSet,) $ Ty $ if not isRec then t else case t of
         -- v should µbinder be inside the pi type ?
@@ -171,16 +172,11 @@ checkAnnotation annTy inferredTy = do
   check exts inferredTy annTy >>= \ok -> if ok
   then pure annTy
   else inferredTy <$ (errors . checkFails %= (CheckError inferredTy annTy:))
- 
+
 infer :: Externs -> ModuleIName -> Scope.OpenModules -> Scope.RequiredModules -> P.TT -> TCEnv s Expr
 infer e modINm open required tt = let
   scopeparams = initParams open required
-  in cata inferF (cata (solveScopesF e modINm) tt scopeparams) -- TODO master recursive composition
---in h tt scopeparams where
---  h = g . (solveScopesF e modINm) . fmap h . project
---  g = inferF . fmap g . project
---  h :: P.TT -> Params -> P.TTF (TCEnv s Expr) -> TCEnv s Expr
---  h = inferF . project . fmap (solveScopesF e modINm) . fmap h . project
+  in cata inferF $ cata (solveScopesF e modINm) tt scopeparams
 
 inferF :: P.TTF (TCEnv s Expr) -> TCEnv s Expr
 inferF = let
@@ -218,14 +214,10 @@ inferF = let
      BiEQ -> args'
      _    -> _
 
--- checkRec e@(Core (App (Var (VQBind q)) args) t) = use thisMod >>= \mod -> use bindWIP <&> \b ->
---   if modName q == mod && unQName q == fst b && snd b then Core (RecApp (Var (VQBind q)) args) t else e
-   checkRec e = pure e
-
    in if any isPoisonExpr (f : args) then pure PoisonExpr else do
      (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
      use tmpFails >>= \case
-       [] -> castRet biret castArgs <$> (ttApp retTy (\i -> judgeBind _wip' i) f args >>= checkRec)
+       [] -> castRet biret castArgs <$> ttApp retTy (\i -> judgeBind _wip' i) f args -- >>= checkRecApp
        x  -> PoisonExpr <$ -- trace ("problem fn: " <> show f ∷ Text)
          ((tmpFails .= []) *> (errors . biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
 
@@ -241,7 +233,7 @@ inferF = let
    then use letBinds >>= \lvl -> MV.read lvl 0 >>= \bs -> -- binds at this module are at let-nest 0
      judgeBind bs (unQName q) <&> \case
        Core _t ty -> Core (Var $ VLetBind q) ty -- don't inline at this stage
-       x         -> did_ x
+       x          -> x -- did_ x
    else use openModules >>= \openMods -> use externs >>= \exts ->
      case readQParseExtern openMods m exts (modName q) (unQName q) of
        Imported e -> pure e
@@ -250,23 +242,34 @@ inferF = let
  inferBlock :: P.Block -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
  inferBlock (P.Block _open _letType letBindings) go = do
    nest <- letNest <<%= (1+)
+   s <- use blen >>= \bl -> escapedVars <<%= (.|. setNBits bl)
    block <- use letBinds >>= \lvl -> V.thaw (Left <$> letBindings) >>= \block -> block <$ MV.write lvl nest block
--- judgeBind block `mapM_` [0 .. V.length letBindings - 1]
--- r <- fromMaybe (pure PoisonExpr) go
-   -- ! This won't typecheck unused let-binds in the let-in
-   r <- maybe (PoisonExpr <$ judgeBind block `mapM_` [0 .. V.length letBindings - 1]) identity go
+   -- ! v This won't typecheck unused let-binds in the let-in
+-- r <- maybe (PoisonExpr <$ judgeBind block `mapM_` [0 .. V.length letBindings - 1]) identity go
+   judgeBind block `mapM_` [0 .. V.length letBindings - 1]
+   escapedVars .= s
+   r <- maybe (pure PoisonExpr) identity go
 
 -- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
 
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= {-fmap did_ .-} V.unsafeFreeze
      <&> map ((\unused -> BindOK 0 True False $ PoisonExprWhy ("unused let-bound: " <> show unused)) ||| identity)
    letNest %= (\x -> x -1)
-   pure (r , V.zipWith (\fn e -> (LetMeta (fn ^. P.fnNm) (-1) , e)) letBindings lets)
+   pure (r , V.zipWith (\fn e -> (LetMeta (fn ^. P.fnIName) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
 
  in \case
   P.QuestionF -> pure $ Core Question tyBot
   P.WildCardF -> pure $ Core Question tyBot
-  P.LetInF b Nothing -> inferBlock b Nothing <&> \(_ , lets) -> Core (LetBlock lets) tyBot
+  -- letin Nothing = module / record, need to type it
+  -- ? How to name fields here
+  -- need unique Name for every bind, even if same IName
+  P.LetInF b Nothing -> use letNest >>= \ln -> inferBlock b Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
+    mkFieldCol = \a b -> TyGround [THFieldCollision a b]
+    nms = lets <&> iName . fst -- [qName2Key (mkQName (ln + 1) i) | i <- [0..]]
+    tys = lets <&> tyOfExpr . bind2Expr . snd
+    -- letnames = qualified on let-nests + 
+    blockTy = THProduct (BSM.fromListWith mkFieldCol $ V.toList $ V.zip nms tys) -- TODO get the correct INames
+    in Core (LetBlock lets) (TyGround [THTyCon blockTy])
   P.LetInF b pInTT -> inferBlock b pInTT <&> \(inTT , lets) -> case inTT of
     Core t ty -> Core (LetBinds lets t) ty -- <* (fst <$> ls) `forM_` regeneralise True
     x -> x
@@ -277,7 +280,7 @@ inferF = let
     P.VLetBind q -> use letBinds >>= \lvl -> MV.read lvl (modName q) >>= \bs ->
       judgeBind bs (unQName q) <&> \case
         Core _t ty -> Core (Var $ VLetBind q) ty
-        x          -> did_ x
+        x          -> x
 
   P.ForeignF _isVA i tt -> tt <&> \tExpr ->
     maybe (PoisonExprWhy ("not a type: " <> show tExpr)) (Core (Var (VForeign i))) (tyExpr tExpr)
@@ -302,22 +305,12 @@ inferF = let
 --VoidExpr (QVar QName) (PExprApp p q tts) (MFExpr Mixfixy)
 
   P.TupleF _ts -> d_ "inference of tuple" (pure PoisonExpr)
-  P.ProdF construct -> use externs >>= \ext -> do
-    let (fieldsLocal , rawTTs) = unzip construct
-        fields = qName2Key . readField ext <$> fieldsLocal
-    exprs <- sequence rawTTs
-    let (tts , tys) = unzip $ (\case { Core t ty -> (t , ty) ; x -> error $ show x }) <$> exprs
-        mkFieldCol = \a b -> TyGround [THFieldCollision a b]
-        retTycon = THProduct (BSM.fromListWith mkFieldCol $ zip fields tys)
-    pure $ if isPoisonExpr `any` exprs
-      then PoisonExpr
-      else Core (Prod (BSM.fromList $ zip fields tts)) (TyGround [THTyCon retTycon])
 
   P.TTLensF o tt fieldsLocal maybeSet -> use externs >>= \ext -> tt >>= \record -> let
-      fields = readField ext <$> fieldsLocal
-      recordTy = tyOfExpr record
-      mkExpected ∷ Type -> Type
-      mkExpected dest = foldr (\fName ty -> TyGround [THTyCon $ THProduct (BSM.singleton (qName2Key fName) ty)]) dest fields
+    fields = fieldsLocal -- readField ext <$> fieldsLocal
+    recordTy = tyOfExpr record
+    mkExpected ∷ Type -> Type
+    mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton ({-qName2Key-} f) ty)]) dest fields
     in (>>= checkFails o) $ case record of
     (Core object objTy) -> case maybeSet of
       P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (TyVar i))
@@ -364,7 +357,7 @@ inferF = let
       pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
     pure $ Ty $ TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap]
 
-  P.MatchBF pscrut caseSplits catchAll -> use externs >>= \ext -> pscrut >>= \case 
+  P.MatchBF pscrut caseSplits catchAll -> use externs >>= \ext -> pscrut >>= \case
     PoisonExpr -> pure PoisonExpr
     Core scrut gotScrutTy -> do
       let convAbs :: Expr -> (Term , Type)

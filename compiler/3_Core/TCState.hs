@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 module TCState where
-import CoreSyn ( tyBot, tyTop, BiSub(BiSub), Bind, Type )
+import CoreSyn ( tyBot, tyTop, BiSub(BiSub), Bind )
 import Externs ( Externs )
 import Errors ( Errors, TmpBiSubError )
 import Control.Lens ( use, (.=), makeLenses )
@@ -35,6 +35,7 @@ data TCEnvState s = TCEnvState {
  , _escapedVars :: BitSet -- TVars of shallower let-nests
  , _leakedVars  :: BitSet -- TVars bisubbed with escapedVars
  , _deadVars    :: BitSet -- formerly leaked now fully captured
+
 }; makeLenses ''TCEnvState
 
 clearBiSubs :: Int → TCEnv s ()

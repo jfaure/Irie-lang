@@ -9,7 +9,6 @@ import ShowCore()
 import qualified Data.List as DL (last , init)
 import Data.Functor.Foldable
 import Control.Lens
-import Control.Arrow
 import MUnrolls (hypoM)
 
 type Expr = TT
@@ -63,6 +62,7 @@ parseExpr = SubParser $ let
         QStartPrefix (MixfixDef _mb mfws _fixityR) q
           → pure $ AppF (Left (QVar q)) (Right <$> mkMFSubParsers (modName q) (drop 1 mfws))
         m → throwE ("UnexpectedPreMF: " <> show m)
+      _ -> error "impossible: splitAt on MFExpr failed"
     larg → let
       parsePostfix = stream %%= splitAt 1 ≫= \case
         []  → pure (RawExprF (Left $ mkApp larg)) -- trivial no-mixfix case
@@ -71,4 +71,5 @@ parseExpr = SubParser $ let
             → pure $ PExprAppF fixityL qL (Left (mkApp larg) : (Right <$> mkMFSubParsers (modName qL) (drop 2 mfws)))
           QMFPart q → throwE ("Unexpected QMFPart: " <> show q) -- backtracks from here
           _ → pure (RawExprF (Left $ mkApp larg))
+        _ -> error "impossible: splitAt on MFExpr failed"
       in tryParse parsePostfix <|> pure (RawExprF (Left (mkApp larg)))

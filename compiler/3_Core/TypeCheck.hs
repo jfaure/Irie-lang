@@ -27,7 +27,7 @@ check' es (TyGround inferred) (TyGround gotTy) = let
   checkAtomic inferred gotTy = let
     check'' = check' es
     end x = pure $ if x then True else d_ (inferred , gotTy) False
-    in case (inferred , gotTy) of --trace (prettyTyRaw (TyGround [inferred]) <> " <?: " <> prettyTyRaw (TyGround [gotTy])) 
+    in case (inferred , gotTy) of --trace (prettyTyRaw (TyGround [inferred]) <> " <?: " <> prettyTyRaw (TyGround [gotTy]))
     (_ , THTop) → end True
     (THBot , _) → end True
     (THExt i , t)  → check'' (readExt i) (TyGround [t])
@@ -66,7 +66,7 @@ check' es (TyGround inferred) (TyGround gotTy) = let
   tys  → allM (\t → anyM (checkAtomic t) gotTy) $ tys
 
 check' _es _t1 (TyGround [THTop]) = pure True
-check' es t1@(TyIndexed{}) t2 = normaliseType mempty t1 ≫= \case
+check' es t1@(TyIndexed{}) t2 = normaliseType mempty t1 >>= \case
   loop@TyIndexed{} → error $ "cannot normalise TyIndexed: " <> show loop
   unaliased        → check' es unaliased t2
 --check' es t1 t2@(TyAlias{}) = normaliseType mempty t2 ≫= \unaliased →

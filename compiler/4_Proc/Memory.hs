@@ -37,7 +37,7 @@ memOp2SSA = \case
     Just sumOff → _
 --  _field      → field.fieldOffset + popCount (r.fieldTags .&. (1 `shiftL` i)) -- use polyargs to index correctly
   MSubRecord ty r drops → _ -- fieldTags r .&. not drops ; bitTags
-     
+
   MJoin r1 r2 →      _ -- write a new record , sort fields
   MModify ty r i v → _ -- if field becomes larger?
 

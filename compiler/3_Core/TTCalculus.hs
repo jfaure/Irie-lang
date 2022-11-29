@@ -2,12 +2,10 @@ module TTCalculus (ttApp , normaliseType) where
 import Prim
 import CoreSyn
 import Errors()
-import Externs
 import CoreUtils
 import TCState
 import Data.List(span)
 import qualified Data.IntMap as IM
-import Control.Lens
 
 -- Application of TTs (combinations of terms and types)
 -- TTs can be promoted to higher universes, but not demoted
@@ -20,7 +18,7 @@ ttApp retTy readBind fn args = let --trace (clYellow (show fn <> " $ " <> show a
 --getQBind q = use thisMod ≫= \modIName → use openModules ≫= \open → use externs ≫= \e →
 --  handleExtern (readQParseExtern open modIName e (modName q) (unQName q))
   ttApp' = ttApp retTy readBind
- 
+
   -- Term application
   doApp coreFn args = let
     (termArgs , otherArgs) = span (\case {Core{}→True ; _→False}) args
@@ -38,7 +36,7 @@ ttApp retTy readBind fn args = let --trace (clYellow (show fn <> " $ " <> show a
       THSumTy alts → THSumTy $ sT <$> alts
       THTuple alts → THTuple $ sT <$> alts
       x → error $ show x
-  
+
     -- Expr must be lambda calculus or product/sumtype operations
     TyTerm e t → case term2Type self piArgs e of
       (Just m , t) → TyGround [THMu 0 t]
@@ -52,7 +50,7 @@ ttApp retTy readBind fn args = let --trace (clYellow (show fn <> " $ " <> show a
 --  Var (VQBind q) → getQBind q ≫= \e → case e of
 --    Core (Var (VQBind j)) _ty | j == q → doApp cf args
 --    e → ttApp' e args
- 
+
 --  Special instructions (esp. type constructors)
     Instr (TyInstr Arrow)  → expr2Ty readBind `mapM` args <&> \case
       { [a , b] → Ty (TyGround (mkTyArrow [a] b)) ; x → error $ "wrong arity for TyArrow" <> show x }
@@ -73,7 +71,7 @@ normaliseType args ty = let
 
   -- If the term isn't a type index, it must be lambda calculus or product/sumtype operations
 --term2Type ∷ IM.IntMap Expr → Term → _ Type
-  term2Type piArgs = \case
+  term2Type _piArgs = \case
 --  Var (VArg i)   → pure $ case piArgs IM.!? i of
 --    Just (Ty t) → t
 --    _ → (TyGround [THPoison])
@@ -85,7 +83,7 @@ normaliseType args ty = let
     x → error $ show x
 
   normaliseTH args = \case
-    THTyCon t → THTyCon <$> case t of 
+    THTyCon t → THTyCon <$> case t of
       THArrow ars r → THArrow   <$> (normaliseType args `mapM` ars) <*> normaliseType args r
       THSumTy ars   → THSumTy   <$> (normaliseType args `mapM` ars)
       THTuple ars   → THTuple   <$> (normaliseType args `mapM` ars)

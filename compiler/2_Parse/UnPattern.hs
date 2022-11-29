@@ -5,7 +5,6 @@ import ParseSyntax
 import QName
 import Builtins (builtinTrue , builtinFalse)
 import qualified BitSetMap as BSM
-import Control.Arrow
 import qualified Data.List.NonEmpty as NE
 
 -- Invert a TT into a case-tree, so mixfixes and labels are handled uniformly
@@ -46,32 +45,32 @@ buildCase = let
         Cons caseAcc r -> let
           scrut = Var (VBruijn bruijnI)
           (nextMatch , argSubs , bruijnI) = r ok ko
-          (this , argSubs2)               = caseAcc scrut nextMatch ko 
+          (this , argSubs2)               = caseAcc scrut nextMatch ko
           in (this , argSubs2 ++ argSubs , bruijnI + 1)
-    in \subPats ok ko -> cata subCaseF subPats ok ko & \(a,b,c) -> (a,b)
+    in \subPats ok ko -> cata subCaseF subPats ok ko & \(a,b,_) -> (a,b)
 
   go ∷ TTF CaseAcc -> CaseAcc -- Pass down a scrut and a default branch
   go pat scrut ok ko = let noSubs = (,[]) in case pat of
     LabelF q subPats -> let
       (rhs , argSubs) = mkSubCases subPats ok ko
-      branch = mkBruijnLam (BruijnAbsF (length subPats) argSubs 0 rhs) -- (η a b) ⇒ (\a b ->)
+      branch = mkBruijnLam (BruijnAbsF (length subPats) argSubs 0 rhs) -- (η a b) => (\a b ->)
       in noSubs $ MatchB scrut (BSM.singleton q branch) ko
-    -- argument was named ⇒ need to sub it for its bruijn name !
+    -- argument was named => need to sub it for its bruijn name !
     VarF (VExtern i)    -> case scrut of
       Var (VBruijn b) -> (ok , [(i,b)])
-      x -> (DesugarPoison ("Unknown label: " <> show i) , [])
+      _ -> (DesugarPoison ("Unknown label: " <> show i) , [])
     VarF _              -> noSubs ok
     QuestionF           -> noSubs ok -- unconditional match
     PatternGuardsF pats -> mkSubCases pats ok ko
     ArgProdF cc      -> mkSubCases cc ok ko & \(rhs , bruijnSubs) ->
       (mkBruijnLam (BruijnAbsF (length cc) bruijnSubs 0 rhs) , [])
     TupleF cc -> (DesugarPoison "Unprepared for tuple" , [])
-    ProdF c   -> let
-      n = length c
-      (keys , subPats) = unzip c
-      unConsArgs = keys <&> \k -> TTLens (-1) scrut [k] LensGet
-      (body , argSubs) = mkSubCases subPats ok ko
-      in (App (mkBruijnLam (BruijnAbsF n [] 0 body)) unConsArgs , argSubs)
+--  ProdF c   -> let
+--    n = length c
+--    (keys , subPats) = unzip c
+--    unConsArgs = keys <&> \k -> TTLens (-1) scrut [k] LensGet
+--    (body , argSubs) = mkSubCases subPats ok ko
+--    in (App (mkBruijnLam (BruijnAbsF n [] 0 body)) unConsArgs , argSubs)
     LitF l          -> noSubs $ let
       alts = (qName2Key builtinTrue , BruijnLam $ BruijnAbsF 1 [] 0 ok)
         : maybe [] (\falseBranch -> [(qName2Key builtinFalse , falseBranch)]) ko
@@ -88,7 +87,7 @@ patternsToCase scrut patBranchPairs = let
   mergeCasesF (NonEmptyF r Nothing) = r
   mergeCasesF (NonEmptyF case1 (Just case2)) = case (case1 , case2) of
     (MatchB s1 b1 ko1 , MatchB s2 b2 ko2) {- | s1 == s2-}
-      -> let mergeBranches _ _ = DesugarPoison "redundant pattern match"
+      -> let mergeBranches a b = DesugarPoison $ "redundant pattern match: " <> show a <> show b
          in MatchB s1 (BSM.unionWith mergeBranches b1 b2) ko2 -- second one wins
     _ -> DesugarPoison $ "cannot merge cases " <> show scrut <> " of "<> show case1 <> " <=> " <> show case2
   in (, concat bruijnSubs) $ case matches of
@@ -98,7 +97,7 @@ patternsToCase scrut patBranchPairs = let
 matchesToTT ∷ NonEmpty FnMatch -> TT -- BruijnAbs
 matchesToTT ms = let
   argCount = NE.head ms & \(FnMatch pats _) -> length pats -- mergeCasesF will notice discrepancies in arg counts
-  (rhs , bruijnSubs@[]) = patternsToCase Question
+  (rhs , _bruijnSubs@[]) = patternsToCase Question
     $ toList (ms <&> \(FnMatch pats rhs) -> (ArgProd pats , rhs))
   in rhs -- BruijnAbsF 0 bruijnSubs 0 rhs -- TODO just rhs
 

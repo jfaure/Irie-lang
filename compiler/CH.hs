@@ -59,7 +59,7 @@ mkAdjUnit :: (Functor l , Functor r) =>
   (forall a b. a -> r (l a)) -> (forall a b. l (r a) -> a) -> Adjunction l r
 mkAdjUnit unit counit = Adjunction unit counit (\f->fmap f . unit) (\f->counit . fmap f)
 mkAdjlArA :: (Functor l , Functor r) =>
-  (forall a b. (l a -> b) -> a -> r b) -> (forall a b. (a -> r b) -> l a -> b) -> Adjunction l r 
+  (forall a b. (l a -> b) -> a -> r b) -> (forall a b. (a -> r b) -> l a -> b) -> Adjunction l r
 mkAdjlArA lA rA = Adjunction (lA identity) (rA identity) lA rA
 
 -- Adjoint functors give rise to a monad: unit = aunit ,  join = fmap counit and bind:
@@ -101,7 +101,7 @@ adjM1 a = mkAdjUnit (M1 . adjunctL a M1) (adjunctR a unM1 . unM1)
 
 -- adj fusion (due to naturality properties of the adjuncts) --
 -- R k · la f · h = la (k . f · L h)
--- k · ra g · L h = ra (R k · g · h) 
+-- k · ra g · L h = ra (R k · g · h)
 -- product fusion
 -- (k1 × k2) · (f1 M f2) · h = (k1 · f1 · h) M (k2 · f2 · h)
 pfLHS , pfRHS :: (x -> r) -> (y -> k) -> (b -> x) -> (b -> y) -> (a -> b) -> a -> (r , k)

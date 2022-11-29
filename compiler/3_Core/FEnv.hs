@@ -67,7 +67,7 @@ addSpec s bruijnN term = do
   specs ← (specBound <.=) =≪ if MV.length sb <= s
     then MV.grow sb 32 ≫= \v → v <$ ([s..s+31] `forM_` \i → MV.write v i Nothing)
     else pure sb
-  let etaReduced = if bruijnN == 0 then term else case term of 
+  let etaReduced = if bruijnN == 0 then term else case term of
         -- η-reduce bruijns: eg. \Bruijn 2 ⇒ f B0 B1 rewrites to f
         App f args | and $ Prelude.imap (\i arg → case arg of { (VBruijn x) → x == i ; _ → False }) args → f
 --      App (BruijnAbs 1 _free (Match (VBruijn 0) t branches d)) [scrut] → Match scrut t branches d
@@ -75,7 +75,7 @@ addSpec s bruijnN term = do
       -- check if fn is larger than 1 apps, otherwise can inline it for free - the State monad allows this to shortcut
       fnSize ∷ Int
       fnSize = cata go etaReduced `evalState` 0 where
-        go = \case 
+        go = \case
           AppF f ars → get ≫= \n → if n > 2 then pure n else modify (1+) *> ((\f ars → f + sum ars) <$> f <*> sequence ars)
           _ → pure 0
       smallFn = fnSize <= 1
@@ -130,7 +130,7 @@ inlineSpec q = let unQ = unQName q in use specStack ≫= \ss → if ss `testBit`
 
 inlineSpecApp specName args = inlineSpec specName ≫= \case
   f@BruijnAbs{} → simpleTerm (App f args) -- have to re-simplify the body with new args (β-optimality?)
-  f → simpleApp f args 
+  f → simpleApp f args
 
 -- Inline partially a binding if we believe something will fuse
 inlineMaybe ∷ QName → wrapCases → [Term] → SimplifierEnv s Term
@@ -231,7 +231,7 @@ simpleBind bindN = use cBinds ≫= \cb → MV.read cb bindN ≫= \b → do
   newB <$ MV.write cb bindN newB
 
 simpleExpr :: Expr -> SimplifierEnv s Expr
-simpleExpr (Core t ty) = simpleTerm t <&> \t' -> Core t ty
+simpleExpr (Core t ty) = simpleTerm t <&> \t' -> Core t' ty -- ?! how tf did this work when t was typoed instead of t'
 simpleExpr PoisonExpr = pure PoisonExpr
 
 -- newBinds must not re-use wip β-reduction env from a previous bind in the stack
@@ -329,7 +329,7 @@ fuseMatch retT scrut branches d = case scrut of
   -- case-of-case: push outer case into each branch,
   -- then the inner case fuses with outer case output labels
 --Match innerScrut ty2 innerBranches innerDefault → let
---  pushCase (Lam ars free ty , innerBody) = 
+--  pushCase (Lam ars free ty , innerBody) =
 --    (Lam ars free ty , fuseMatch ty innerBody branches d)
 --  optBranches = pushCase <$> innerBranches
 --  optD        = pushCase <$> innerDefault

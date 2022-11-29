@@ -7,7 +7,7 @@
 -- * imported label/field names should overwrite locals (they are supposed to be the same)
 --
 -- * The 0 module (compiler primitives) is used to mark tuple fields (forall n 0.n)
-module Externs (GlobalResolver(..) , ModDeps, ModDependencies(..), addModuleToResolver , addModName , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readQParseExtern , readLabel , readField , readPrimExtern , resolveImports , typeOfLit , addDependency)
+module Externs (GlobalResolver(..) , ModDeps, ModDependencies(..), addModuleToResolver , addModName , primResolver , primBinds , Import(..) , Externs(..) , readParseExtern , readQParseExtern , readLabel , readPrimExtern , resolveImports , typeOfLit , addDependency)
 where
 import Builtins ( primBinds , primMap , typeOfLit , primLabelHNames , primLabelMap , primFieldHNames , primFieldMap )
 import CoreSyn
@@ -18,15 +18,15 @@ import qualified BitSetMap as BSM ( singleton )
 import qualified Data.IntMap as IM ( IntMap, filterWithKey, singleton, toList, union )
 import qualified Data.Map.Strict as M ( Map, (!?), member, size, insert, singleton, traverseWithKey, unionWith, unionsWith, update )
 import qualified Data.Vector.Mutable as MV ( length, unsafeGrow, unsafeNew, write )
-import qualified Data.Vector as V--  ( Vector, (!), create, foldl, singleton, unsafeFreeze, unsafeThaw )
+import qualified Data.Vector as V
 
 -----------------
 -- Import Tree --
 -----------------
 -- Imports are typechecked binds + parsed nameMap
 data Import = Import {
-    importNames ∷ P.NameMap
-  , importBinds ∷ V.Vector (HName , Bind)
+    importNames :: P.NameMap
+  , importBinds :: V.Vector (HName , Bind)
 }
 
 -- only direct dependencies are saved; main tracks the work stack to detect cycles
@@ -34,16 +34,14 @@ type ModDeps = BitSet
 data ModDependencies = ModDependencies { deps ∷ Integer , dependents ∷ Integer } deriving Show
 
 data GlobalResolver = GlobalResolver {
-   modCount      ∷ Int
- , modNameMap    ∷ M.Map HName IName -- module HName → Iname
- , globalNameMap ∷ M.Map HName (IM.IntMap IName) -- HName → ModuleIName → IName
- , lnames        ∷ M.Map HName QName -- TODO rm
- , fnames        ∷ M.Map HName QName
- , modNamesV     ∷ V.Vector HName
- , allBinds      ∷ V.Vector (V.Vector (HName , Expr))
- , labelHNames   ∷ V.Vector (V.Vector HName)
- , fieldHNames   ∷ V.Vector (V.Vector HName)
- , dependencies  ∷ V.Vector ModDependencies
+   modCount      :: Int
+ , modNameMap    :: M.Map HName IName -- module HName → Iname
+ , globalNameMap :: M.Map HName (IM.IntMap IName) -- HName → ModuleIName → IName
+ , lnames        :: M.Map HName QName -- TODO rm
+ , modNamesV     :: V.Vector HName
+ , allBinds      :: V.Vector (V.Vector (HName , Expr)) -- Module -> IName -> (HName , Expr)
+ , labelHNames   :: V.Vector (V.Vector HName)
+ , dependencies  :: V.Vector ModDependencies
 
   -- HName → (MFIName → ModuleIName)
  , globalMixfixWords ∷ M.Map HName (IM.IntMap [QMFWord])
@@ -57,28 +55,27 @@ data GlobalResolver = GlobalResolver {
 primResolver ∷ GlobalResolver = let primModName = "(builtinPrimitives)" in
   GlobalResolver
   1 (M.singleton primModName 0) (IM.singleton 0 <$> primMap)
-  primLabelMap primFieldMap
+  primLabelMap -- primFieldMap
   (V.singleton primModName)
   (V.singleton primBinds) -- primitive bindings
-  (V.singleton primLabelHNames) (V.singleton primFieldHNames) (V.singleton (ModDependencies 0 0)) mempty
+  (V.singleton primLabelHNames) (V.singleton (ModDependencies 0 0)) mempty
 
 -------------
 -- Externs --
 -------------
 -- how to substitute P.VExtern during mixfix resolution
 data Externs = Externs {
-   extNames      ∷ V.Vector ExternVar
- , extBinds      ∷ V.Vector (V.Vector (HName , Expr)) -- all loaded bindings (same as in global resolver)
- , importLabels  ∷ V.Vector QName
- , importFields  ∷ V.Vector QName
- , eModNamesV    ∷ V.Vector HName
+   extNames      :: V.Vector ExternVar
+ , extBinds      :: V.Vector (V.Vector (HName , Expr)) -- all loaded bindings (same as in global resolver)
+ , importLabels  :: V.Vector QName
+ , eModNamesV    :: V.Vector HName
 } deriving Show
 
-readPrimExtern e i   = snd (extBinds e V.! 0 V.! i)
+readPrimExtern e i = snd (extBinds e V.! 0 V.! i)
 
-readLabel , readField ∷ Externs → IName → QName
+readLabel {-, readField-} :: Externs → IName → QName
 readLabel exts l = if l < 0 then mkQName 0 (-1 - l) else exts.importLabels V.! l
-readField exts f = if f < 0 then mkQName 0 (-1 - f) else exts.importFields V.! f
+--readField exts f = if f < 0 then mkQName 0 (-1 - f) else exts.importFields V.! f
 
 -- exported functions to resolve ParseSyn.VExterns
 readQParseExtern ∷ BitSet → Int → Externs → Int → IName → CoreSyn.ExternVar
@@ -103,12 +100,12 @@ readParseExtern openMods thisModIName exts i = case exts.extNames V.! i of
 -- Externs are a vector of CoreExprs, generated as: builtins ++ concat imports;
 -- which is indexed by the permuation described in the extNames vector.
 -- * primitives must always be present in GlobalResolver
-resolveImports ∷ GlobalResolver → IName → M.Map HName IName
-  → (M.Map HName IName , M.Map HName IName)
-  → M.Map HName [MFWord] → M.Map HName IName → Maybe OldCachedModule
-  → (GlobalResolver , Externs)
-resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevBinds lh fh deps curMFWords)
-  modIName localNames (labelMap , fieldMap) mixfixHNames unknownNames maybeOld = let
+resolveImports ∷ GlobalResolver -> IName -> M.Map HName IName
+  -> (M.Map HName IName)
+  -> M.Map HName [MFWord] -> M.Map HName IName -> Maybe OldCachedModule
+  -> (GlobalResolver , Externs)
+resolveImports (GlobalResolver modCount modNames curResolver l modNamesV prevBinds lh deps curMFWords)
+  modIName localNames labelMap mixfixHNames unknownNames maybeOld = let
 
   oldIName = oldModuleIName <$> maybeOld
 
@@ -117,16 +114,15 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     -- temporarily mark field/label names (use 2 bits from the iname, not the module name which tracks their origin)
     -- instead resolveName could use 3 maps, but would be slow since frequently entire maps would come back negative
     labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
-    fields = IM.singleton modIName . (`setBit` fieldBit) <$> fieldMap
     -- Deleted names from the old module won't be overwritten so must be explicitly removed
     rmStaleNames nameMap = let
       collect = V.foldl (\stale nm → if M.member nm localNames then stale else nm : stale) []
-      staleNames = fromMaybe [] ((collect . oldBindNames) <$> maybeOld) ∷ [HName]
+      staleNames = fromMaybe [] ((collect . oldBindNames) <$> maybeOld) :: [HName]
       in case oldIName of
-        Just oldMod → foldr (\staleName m → M.update (Just . IM.filterWithKey (\k _v → k /= oldMod)) staleName m) nameMap staleNames
-        Nothing → nameMap
+        Just oldMod -> foldr (\staleName m → M.update (Just . IM.filterWithKey (\k _v → k /= oldMod)) staleName m) nameMap staleNames
+        Nothing -> nameMap
     in rmStaleNames $ M.unionsWith IM.union
-      [((\iNms → IM.singleton modIName iNms) <$> localNames) , curResolver , labels , fields]
+      [((\iNms -> IM.singleton modIName iNms) <$> localNames) , curResolver , labels]
 
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map → IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
@@ -168,11 +164,10 @@ resolveImports (GlobalResolver modCount modNames curResolver l f modNamesV prevB
     v <$ (\hNm localName → MV.write v localName (getQName hNm localName))
          `M.traverseWithKey` localMap
 
-  in ( GlobalResolver modCount modNames resolver l f modNamesV prevBinds lh fh deps mfResolver
+  in ( GlobalResolver modCount modNames resolver l modNamesV prevBinds lh deps mfResolver
      , Externs { extNames = names unknownNames
                , extBinds = prevBinds
                , importLabels = mkTable l labelMap
-               , importFields = mkTable f fieldMap
                , eModNamesV   = modNamesV
                })
 
@@ -206,12 +201,12 @@ addDependency _imported _moduleIName r = r
 addModuleToResolver :: Externs.GlobalResolver -> Int -> V.Vector (HName, CoreSyn.Expr)
   -> V.Vector HName -> V.Vector HName -> Map HName Int -> Map HName Int
   -> p -> Externs.GlobalResolver
-addModuleToResolver (GlobalResolver modCount modNames nameMaps l f modNamesV binds lh fh deps mfResolver)
+addModuleToResolver (GlobalResolver modCount modNames nameMaps l modNamesV binds lh deps mfResolver)
   modIName newBinds lHNames fHNames labelNames fieldNames _modDeps = let
     binds' = updateVecIdx (V.singleton ("(Uninitialized)" , PoisonExpr)) binds modIName newBinds
     lh'    = updateVecIdx (V.singleton "(Uninitialized)") lh    modIName lHNames
-    fh'    = updateVecIdx (V.singleton "(Uninitialized)") fh    modIName fHNames
+--  fh'    = updateVecIdx (V.singleton "(Uninitialized)") fh    modIName fHNames
 --  deps'  = updateVecIdx (ModDependencies 0 0) deps modIName modDeps
     l' = alignWith (\case { This new → mkQName modIName new ; That old → old ; These _new old → old }) labelNames l
-    f' = alignWith (\case { This new → mkQName modIName new ; That old → old ; These _new old → old }) fieldNames f
-    in GlobalResolver modCount modNames nameMaps l' f' modNamesV binds' lh' fh' deps mfResolver
+--  f' = alignWith (\case { This new → mkQName modIName new ; That old → old ; These _new old → old }) fieldNames f
+    in GlobalResolver modCount modNames nameMaps l' modNamesV binds' lh' deps mfResolver

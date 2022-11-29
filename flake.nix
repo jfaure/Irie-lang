@@ -69,5 +69,6 @@
   flake    = perSystem (system: (projectFor system).flake {});
   packages = perSystem (system: self.flake.${system}.packages);
   devShell = perSystem (system: self.flake.${system}.devShell);
+  apps = perSystem (system: self.flake.${system}.apps // {default = self.flake.${system}.apps."irie:exe:irie-exe";});
   };
 }

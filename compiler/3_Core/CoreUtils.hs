@@ -7,14 +7,12 @@ import CoreSyn
 import ShowCore()
 import PrettyCore
 import Prim
-import Data.List (partition)
 import qualified BitSetMap as BSM
-import qualified Data.Vector as V
 
 mkLiteralEquality ∷ Literal → Term → Term
 mkLiteralEquality l x = case l of
-  Char c → App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
-  I32  i → App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
+  Char _ → App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
+  I32  _ → App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
   l → Poison $ "todo literal equality on " <> show l
 
 getArgShape ∷ Term → ArgShape
@@ -56,9 +54,9 @@ tyLatticeEmpty pos = \case
   t  → t
 
 hasVar t v = case t of
-  TyGround{}  → False
-  TyVar w     → v == w
-  TyVars vs _ → testBit vs v
+  TyVar w     -> v == w
+  TyVars vs _ -> testBit vs v
+  _ -> False
 
 --mkTHArrow ∷ [[TyHead]] → [TyHead] → Type
 mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
@@ -106,6 +104,7 @@ tyOfExpr = \case
   Core _x ty → ty
   Ty t       → tyOfTy t
   PoisonExpr → TyGround []
+  _ -> _
 
 -- expr2Ty ∷ _ → Expr → TCEnv s Type
 -- Expression is a type (eg. untyped lambda calculus is both a valid term and type)
@@ -205,9 +204,9 @@ rmMuBound m = let goGround = filter (\case { THMuBound x → x /= m ; _ → True
   t → t
 
 rmTVar v = \case
-  TyVar w     → if w == v then TyGround [] else TyVar w
-  TyVars ws g → TyVars (ws `clearBit` v) g
-  TyGround g  → TyGround g
+  TyVar w     -> if w == v then TyGround [] else TyVar w
+  TyVars ws g -> TyVars (ws `clearBit` v) g
+  t -> t
 
 mergeTVars vs = \case
   TyVar w     → TyVars (vs `setBit` w) []

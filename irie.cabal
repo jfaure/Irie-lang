@@ -22,7 +22,7 @@ source-repository head
 
 executable irie-exe
   ghc-options: -threaded -O3 -Wno-deprecations -fdefer-typed-holes -Wno-typed-holes -fdefer-typed-holes -Wno-typed-holes
-    -Wunused-imports 
+    -Wunused-imports
     -Wincomplete-patterns
     -Wincomplete-record-updates
     -Wtabs
@@ -31,7 +31,7 @@ executable irie-exe
     -Wunused-do-bind
     -Wwrong-do-bind
     -Wname-shadowing:
-  mixins: 
+  mixins:
       base (Prelude as BasePrelude)
     , base hiding (Prelude)
   main-is: Main.hs

@@ -17,7 +17,7 @@ global_debug = False
 type ExtIName  = Int -- VExterns
 type BiSubName = Int -- index into bisubs
 type SrcOff    = Int -- offset into the source file
-type IField    = QName
+type IField    = Int -- QName
 type ILabel    = QName
 type TVarSet   = BitSet
 
@@ -43,6 +43,7 @@ data VName
 data LamB = LamB Int {-BitSet-} Term
 data Lam  = Lam [(IName , Type)] BitSet Type -- arg inames, types, freevars, term, ty
 
+-- TODO split off the functor part so types can share constructions
 data Term -- β-reducable (possibly to a type)
  = Var     !VName
  | Lit     !Literal
@@ -57,8 +58,7 @@ data Term -- β-reducable (possibly to a type)
  | BruijnAbsTyped Int BitSet Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]    -- IName [Term]
 
- | Prod    (BSM.BitSetMap Term) -- (IM.IntMap Term)
- | Tuple   (V.Vector Term)      -- Alternate version of Cons where indexes are sequential
+ | Tuple   (V.Vector Term)      -- Cartesian product
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Term] --[Expr]
@@ -66,7 +66,7 @@ data Term -- β-reducable (possibly to a type)
  | MatchB  Term (BSM.BitSetMap LamB) LamB -- Bruijn match (must have a default)
 
  | LetBinds (V.Vector (LetMeta , Bind)) Term
- | LetBlock (V.Vector (LetMeta , Bind)) -- Module
+ | LetBlock (V.Vector (LetMeta , Bind)) -- Module | record
 
  -----------------------------------------------
  -- Extra info built for/by simplification --
@@ -161,6 +161,7 @@ data Bind
  | WIP
  | Guard  { mutuals ∷ BitSet , tvar ∷ IName } -- if met again, its recursive/mutual
  -- | Marker for an inferred type waiting for generalisation when all mutuals inferred
+ -- TODO freeVs not too relevant here
  | Mutual { naiveExpr ∷ Expr , freeVs ∷ BitSet , recursive ∷ Bool , tvar ∷ IName , tyAnn ∷ Maybe Type }
 
  | BindKO -- failed type inference
@@ -242,7 +243,6 @@ data BindSource = BindSource {
  , srcBindNames  :: V.Vector HName
  , srcExtNames   :: V.Vector HName
  , srcLabelNames :: V.Vector (V.Vector HName)
- , srcFieldNames :: V.Vector (V.Vector HName)
  , allNames      :: V.Vector (V.Vector (HName , Expr))
 }
 

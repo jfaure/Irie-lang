@@ -1,27 +1,30 @@
 ## meta
-  * discord: use it in the browser with xdg-desktop-portal-wlr 
+  * discord: use it in the browser with xdg-desktop-portal-wlr
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
   * move to f2fs
-# recent
-  * records as let-blocks
-  * cross-module LetBlock lens resolution (also for errors); atm. Externs assumes module = [(HName , Expr)]
-  * resolve let-bound mixfixes to VLetBind qname
-  * compiler pipeline
 ## Top Priority
-  * @ patterns; make case apps always labels
+  * compiler pipeline
+  * @ patterns; make case apps always labels (but fn Eqns always args)
   * expand lambda-mixfixes with explicit holes
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
   * fix cache
-  * cata defined with let doesn't generalise (is recursive let-bound problematic?)
+  * resolve let-bound mixfixes to VLetBind qname
+## Names
+  * atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
+  * FieldName = File local IName
+  * global resolver INames each module, then handles IName scope => resolve INames to global INames ?
+  ? LetBlock lens resolution: for errors + types (IName vs VLetBind)
+  ? dependency graph | linearity (of β-args)
 ## ?
-  * freevar types added to type of let-binds
+  * freevar types added to type of let-binds; need to extract all let-blocks to regeneralise?
   * type application (eg. perfect tree)
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
   * audit oldcachedmodule , seems slightly broken (probably BindOpt)
   * trim bisubs
+  * make solveScopes an anamorphism
 ## Parse
   * typed lambda case: \case : scrut -> ret
   * allow tabs instead of spaces
@@ -34,26 +37,14 @@
   * THFieldCollision
   * Dependent normalisation
   * first class polymorphism
-  * Linear types; dependent types required to quantify relative linearity `Lin t ≥ Lin f => t → u`
+  * Linear types; dependent types required to quantify relative linearity `Lin t >= Lin f => t → u`
   * splitAt with Nils should also simplify
-## Functor modules and records (infer a module as a TT (Abs | Record) + ImportList , HNames , MixfixNames , LinSubs)
-  * record = mutu? * rec? * open?
-  * file = open mutu ; implicit `filename = module`
-  * Let  = open mutual record .. in
-  * qualified names => [Int]
-  * dependency graph => use bruijn lin info
-  ! Need Vector + FNames in scope for mutual inference + subsequent dependents
-  ! record tree ? scopes at leaves (field assignments depending on free variables | fields)
-  ? file | module inter-dependencies
 ## Beta-optimality:
   * λ Minimise normal forms: λ-encoding + lifting + sharing (if subterms of App or Match contain λ, lift them)
   * case-splitters as data for runtime optimisation
   * Partial applications extracted and specialised for beta optimality
   * Fns passed as args must have interpretable format
   * fns that do case-splits lazy in arguments they may not need
-## SSA
-  * local/extern names in ssa form
-  * normalize order of fields/labels for codegen (sort on size then textual name)
 ## Error messages
   * qualified bindings
   * Warn nonsense type joins | infer a dependent type
@@ -61,39 +52,33 @@
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
-  * merge case-branches that re-case the same thing
   * strictly positive recursion
   * underdetermined recursion: https://counterexamples.org/underdetermined-recursion.html
     equirecursive ⇒ A = F[A] ; B = F[B] ⇒ A = B (unsound for arbitrary type-level functions F!)
     if multiple solutions for X = F X; eg. F X = X ; A = Int ; B = String
   * the avoidance problem (types about to go out of scope)
   * don't assume injectivity!
-  * Need totality checker, else a Refl type may not terminate and thus not prove EQ
+  * Need totality checker, else a Refl type may not terminate and thus proves nothing
   * Advanced recursive types µ insufficient `PTree a = Leaves a | Cons (PTree (a , a))`
   * equality constraints are central to GADTs `Gabriel Scherer and Didier Rémy. GADTs meet subtyping.` `https://okmij.org/ftp/ML/first-class-modules/#GADT`
-  * upgrade mu-merge to modify varsubs table
   * switch to codeberg
   * List comprehensions
   * cache version
   * Allow inspection of papped args
-  * BitSetMap upgrades for [0..64] and sequential names [n..m]: rm Tuple
   * Pattern PTT: custom unPat function to support any patterns eg. `fact (<? 2) = 1`
   * avoid generalising type annotations; directly make a THBi rather than tvars
   * tycon let-bindings addresses (f = let l = .. in .. => `f.l`)
   * error messages via prettyprinter Doc
-  * mergeTypes indicate whether merge was noop
   * check let-rec / mutual keyword (emit warning if not present)
-  * make work module import loops
+  * make work module import loops => read the files simultaneously
   * language server
   * optimize cached modules
   * sh syntax `ls -lr +x` => `ls { l=False , r=False , x=True }` (Str2Label primitives?)
   * engineer GlobalResolver to work concurrently
-  * mergetyhead could indicate if merge was a noop (so bisub knows it has already seen that input)
+  * mergetyhead indicates if merge was a noop (so bisub knows it has already seen that input)
   * Completion based on types (Type -> Bind)
   * after function with no free-vars generalised, can trim but not fully clear bisubs!
   * optimise co-occurences by merging instantly
-  * 'StrIntName' new datatype, during parsing link growable vector + hashmap
   * Function = Constructor + rewrite rules ?
-  * replace fnSig with typedTT
   * `typeOf : (t : Type) -> Type` shortcut to access (and alias) an inferred type
   * treat module QNames as bruijn args and β-reduce them optimally?

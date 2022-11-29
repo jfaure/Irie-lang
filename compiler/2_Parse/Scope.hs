@@ -4,11 +4,10 @@ import ParseSyntax
 import QName
 import CoreSyn (ExternVar(..)) -- TODO rm
 import Mixfix (solveMixfixes)
-import Externs ( readField, readLabel, readParseExtern, readQParseExtern , Externs )
+import Externs ( readParseExtern, Externs )
 import Errors
 import Data.Distributive
 import Data.Functor.Foldable
-import Control.Arrow
 import Control.Lens
 import PrettyCore
 import qualified Data.Vector as V
@@ -76,14 +75,18 @@ solveScopesF exts thisMod this params = let
   -- * insert a pretraversal of *only* patterns under this scope context, then patternsToCase then resume solveScopes
   CasePatF (CaseSplits scrut patBranchPairs) -> let
     solvedBranches :: [(TT , TT)]
-    solvedBranches = patBranchPairs <&> \(pat , br) -> let
+    solvedBranches = patBranchPairs <&> \(pat' , br) -> let
+      pat = case pat' of -- convert lone VExterns here to a Label (ie. assume label not new arg name)
+--      Var (VExtern e) -> Label 0 [] -- TODO need to spawn a label name + meta etc..?!
+        _ -> pat'
+      -- Special treatment for Terms in pattern position: we need to find and resolve mixfix labels immediately
       clearExtsF = \case
         VarF (VExtern i)
           | params._lets `testBit` i -> Var $ VLetBind (mkQName thisMod i) -- ?! i
           -- Only inline mixfixes, nothing else, (? mutually bound mixfixes used in pattern)
           | MixfixyVar m <- readParseExtern params._open thisMod exts i -> MFExpr m -- Only inline possible mixfixes
           | otherwise -> Var (VExtern i)
-        JuxtF o args -> solveMixfixes args
+        JuxtF _o args -> solveMixfixes args
         tt -> embed tt
       in (cata clearExtsF pat , br)
     (this , bruijnSubs) = patternsToCase scrut solvedBranches
@@ -91,7 +94,7 @@ solveScopesF exts thisMod this params = let
       [] -> cata (solveScopesF exts thisMod) this params -- proceed with solvescopes using current context
       x  -> error ("non-empty bruijnSubs after case-solve: " <> show x)
 
-  JuxtF o args -> solveMixfixes (distribute args params)
+  JuxtF _o args -> solveMixfixes (distribute args params)
   tt -> embed (distribute tt params)
 
 -- TODO don't allow `bind = lonemixfixword`

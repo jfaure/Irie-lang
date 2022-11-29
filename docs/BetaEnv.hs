@@ -93,7 +93,7 @@ RetPtr: arena pre-allocated (or stack memory); Prepared by a Cons containing sub
   * tupled with size_t indicating passdown required
   * small structs in registers , large structs in retPtr (if sumtype > 1 alt also BitTag)
   * passdown mem for all flattened records (calculated from polysize args) + BitTag (if sumtypes | poly) + FieldMarks
-@ Cons  : retptr => merge arg runs (HeteroList + Runs + record of sizes (run lookup table) 
+@ Cons  : retptr => merge arg runs (HeteroList + Runs + record of sizes (run lookup table)
   * Wrap-rec
   * In-rec
 @ UnCons: read , erase unused parts , free node
@@ -113,7 +113,7 @@ Record = record
   userdata
 
 -- * Embed (subtype into larger sumdata) = copy bittags into larger header (run-length encoded ?)
-SumData = data 
+SumData = data
   | Single         -- parameterised by sizes of poly / recursive holes (No need to label until subtype embeds it)
                    -- >0 , start-run = run-size , end has new tag + explicit pointer
                    -- <0 , custom labels

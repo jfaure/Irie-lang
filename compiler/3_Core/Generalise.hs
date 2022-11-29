@@ -11,8 +11,11 @@ import qualified Data.Text as T -- ( intercalate )
 import qualified Data.Vector as V
 import qualified Data.List
 import Data.Functor.Foldable
-import BiUnify (instantiateF)
 debug_gen = False || global_debug
+
+-- TODO audit whether the ad-hoc handling of THBI instantiations works:
+-- * if type-merges of THBound involved
+-- * higher rank polymorphism (stacked THBi)
 
 indexed :: Traversable f => f a -> f (Int , a)
 indexed f = traverse (\t -> get >>= \i -> modify (1+) $> (i , t)) f `evalState` 0
@@ -63,31 +66,32 @@ type GEnv s = StateT (GState s) (ST s)
 generalise ∷ BitSet -> Either IName Type -> TCEnv s Type
 generalise escapees rawType = do
   when debug_gen (traceM $ "Gen: " <> show rawType)
-  coocLen <- use bis <&> (900+) . MV.length -- TODO + space for spawning let-bound instantiatables
+  coocLen <- use bis <&> MV.length
   bis' <- use bis
+  bl   <- use blen
   (analysedType , recursives , occurs) <- lift $ do -- re-use same ST state thread to avoid copying bisubs
     coocVStart <- MV.replicate coocLen ([],[])
-    (ty , (AnalyseState _ recs _ coocV)) <-
+    (ty , (AnalyseState _bis recs _instVs coocV)) <-
       -- merge with recTVar in case of direct recursion `r = { next = r } : µx.{next : x}`
-      runStateT (analyseType ((TyVar ||| identity) rawType) True 0 0) (AnalyseState bis' 0 (MV.length bis') coocVStart)
+      runStateT (analyseType ((TyVar ||| identity) rawType) True 0 0) (AnalyseState bis' 0 bl coocVStart)
     occurs <- V.unsafeFreeze coocV
     pure (ty , recs , occurs)
   nVars  <- use blen
   leaks  <- use leakedVars
   let tvarSubs = judgeVars nVars escapees leaks recursives occurs
       done     = forgetRoll . cata rollType $ runST $ do
-        genMap <- MV.replicate 100 (complement 0) -- TODO
-        (t , s) <- runStateT (cata (doGen tvarSubs) analysedType True) (GState 0 genMap)
+        genMap  <- MV.replicate 100 (complement 0) -- TODO
+        (t , s) <- runStateT (cata (doGen tvarSubs recursives) analysedType True) (GState 0 genMap)
         pure $ if s._quants == 0 then t else TyGround [THBi s._quants t]
 
   (done <$) $ when debug_gen $ do
     let showTys t        = T.intercalate " ; " (prettyTyRaw <$> t)
-     in V.take nVars occurs `iforM_` \i (p,m) -> traceM (show i <> ": +[" <> showTys p <> " ]; -[" <> showTys m <> "]")
+     in V.take nVars occurs `iforM_` \i (p,m) -> traceM (show i <> ": +[" <> showTys p <> "] -[" <> showTys m <> "]")
     traceM $ "analysed: " <> prettyTyRaw analysedType
     traceM $ "escapees: " <> show (bitSet2IntList escapees)
     traceM $ "leaked:   " <> show (bitSet2IntList leaks)
     traceM $ "recVars:  " <> show (bitSet2IntList recursives)
-    traceM   "tvarSubs: " *> V.imapM_ (\i f -> traceM $ show i <> " ⇒ " <> show f) tvarSubs
+    traceM   "tvarSubs: " *> V.imapM_ (\i f -> traceM $ show i <> " => " <> show f) tvarSubs
     traceM $ "done: "     <> prettyTyRaw done
 
 -- co-occurence with v in TList1 TList2: find a tvar or a type that always cooccurs with v
@@ -95,7 +99,7 @@ generalise escapees rawType = do
 -- opposite co-occurence: v + T always occur together at +v,-v ⇒ drop v (unify with T)
 -- polar co-occurence:    v + w always occur together at +v,+w or at -v,-w ⇒ unify v with w
 -- ? unifying recursive and non-recursive vars (does the non-rec var need to be covariant ?)
-judgeVars ∷ Int -> BitSet -> BitSet -> BitSet -> V.Vector ([Type] , [Type]) -> V.Vector VarSub
+judgeVars :: Int -> BitSet -> BitSet -> BitSet -> V.Vector ([Type] , [Type]) -> V.Vector VarSub
 judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs -> let
   collectCoocVs = \case { [] -> 0 ; x : xs -> foldr (.&.) x xs }
   v = V.length prevSubs -- next var to analyse
@@ -106,10 +110,10 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
   subPrevVars pos ty = let
     (tvars , rest) = partitionType ty
     subVar w = let self = TyVars (setBit 0 w) [] in if w >= v then self else case prevSubs V.! w of
-      Remove     -> TyGround []
-      SubTy t    -> t
-      SubVar x   -> subVar x
-      _          -> self -- Escaped Leaked Recursive Generalise
+      Remove   -> TyGround []
+      SubTy t  -> t
+      SubVar x -> subVar x
+      _        -> self -- Escaped Leaked Recursive Generalise
     in mergeTypeList pos $ [TyVars (complement prevTVs .&. tvars) [] , TyGround rest]
                     ++ (subVar <$> bitSet2IntList (prevTVs .&. tvars))
   ((pVars , pTs) , (mVars , mTs)) = ( unzip $ partitionType . subPrevVars True  <$> pOccs
@@ -118,6 +122,7 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
   generalise = if leaks `testBit` v then Leaked else if vIsRec then Recursive else Generalise
 
   in if -- Simplify: Try to justify Remove next Sub else fallback to Generalise
+-- | v >= tVars -> did_ $ if recursives `testBit` v then Recursive else Generalise -- Instantiated vars
   | escapees `testBit` v -> Escaped -- belongs to a parent of this let-binding
   | not vIsRec && (null pOccs || null mOccs) -> if leaks `testBit` v then Escaped else Remove --'polar' var
   | otherwise -> let
@@ -162,6 +167,7 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
     in foldl' bestSub (vPvM `bestSub` vPvMRec) (vPwP ++ vMwM) `bestSub` vTs
 
 -- tighten μ-types
+-- This may need to know the polarity, for top/bot and to rm negative recursion
 type Roller = [THead (Maybe Type)] -- x to μx. binder [TypeF] typeconstructor wrappers
 data TypeRoll
  = NoRoll { forgetRoll :: Type }
@@ -192,18 +198,20 @@ rollType this = let
           layer = (\(j,t) -> if i == j then Nothing else Just (forgetRoll t)) <$> ith
           in if {-d_ (layer , r) $-} layer /= r then NoRoll this else Rolling ty m reset (nextRolls <|> reset)
         _Nothing -> noop
+  aggregateBranches vs ([], xs) = NoRoll $ mkTy vs (fmap forgetRoll <$> xs)
   aggregateBranches vs (m , []) = case m of
-    [m] -> BuildRoll (TyGround [THMuBound m]) m []
-    _   -> NoRoll $ if vs == 0 then TyGround [THTop] else TyVars vs []
-  aggregateBranches _ ([], xs) = NoRoll $ TyGround (fmap forgetRoll <$> xs)
+    [m] -> BuildRoll (mkTy vs [THMuBound m]) m []
+    _   -> NoRoll $ mkTy vs []
   aggregateBranches v (m , xs) = trace ("μ-type merge: " <> show m <> " : " <> show xs :: Text)
     (aggregateBranches v ([] , xs))
+  mkTy vs t = if vs == 0 then TyGround t else TyVars vs t
   partitionMus g = let (ms , gs) = Data.List.partition (\case {THMuBound{} -> True ; _ -> False}) g
     in (ms <&> (\(THMuBound m) -> m) , gs)
   in case this of
   TyVarsF vs g -> aggregateBranches vs (partitionMus g)
   TyGroundF g  -> aggregateBranches 0 (partitionMus g)
-  t -> NoRoll (embed $ fmap forgetRoll this)
+  TyVarF    v  -> NoRoll $ TyVar v
+  _ -> NoRoll (embed $ fmap forgetRoll this)
 
 deriving instance Show (THead (Maybe Type))
 deriving instance Show (TyCon TypeRoll)
@@ -211,9 +219,8 @@ deriving instance Show (TyCon (Maybe Type))
 deriving instance Show (THead TypeRoll)
 
 -- Simplify + generalise TVars and add pi-binders
-doGen :: V.Vector VarSub -> TypeF (Bool -> GEnv s Type) -> Bool -> GEnv s Type
-doGen tvarSubs rawType pos = let
-  generaliseRecVar = generaliseVar
+doGen :: V.Vector VarSub -> BitSet -> TypeF (Bool -> GEnv s Type) -> Bool -> GEnv s Type
+doGen tvarSubs recs rawType pos = let
   generaliseVar :: Int -> GEnv s Int
   generaliseVar v = use genMap >>= \mp -> MV.read mp v >>= \perm ->
     if perm /= complement 0 then pure perm else do -- A..Z names for generalised typevars
@@ -222,14 +229,16 @@ doGen tvarSubs rawType pos = let
       q <$ MV.write mp v q
 
   genVar :: Int -> GEnv s Type
-  genVar v = if v >= V.length tvarSubs then generaliseVar v <&> \q -> TyGround [THBound q] else case tvarSubs V.! v of
+  genVar v = if v >= V.length tvarSubs
+    then generaliseVar v <&> \q -> TyGround [if testBit recs v then THMuBound q else THBound q] 
+    else case tvarSubs V.! v of
     Escaped    -> pure (TyVar v)
     Remove     -> pure (TyGround []) -- pure $ if leaks `testBit` v then TyVar v else TyGround []
     Leaked     -> generaliseVar v <&> \q -> TyVars (setBit 0 v) [THBound q]
-    Recursive  -> generaliseRecVar v <&> \q -> TyGround [THMuBound q]
+    Recursive  -> generaliseVar v <&> \q -> TyGround [THMuBound q]
     Generalise -> generaliseVar v <&> \q -> TyGround [THBound q]
     SubVar i   -> genVar i
-    SubTy t    -> cata (doGen tvarSubs) t pos -- TODO can contain rec vars accross type substitutions?
+    SubTy t    -> cata (doGen tvarSubs recs) t pos -- TODO can contain rec vars accross type substitutions?
 
   go :: BitSet -> [THead (Bool -> GEnv s Type)] -> GEnv s Type
   go vars g = let
@@ -247,6 +256,9 @@ doGen tvarSubs rawType pos = let
     TyVarsF vs gs -> go vs gs
     x             -> embed <$> traverse (\f -> f pos) x
 
+--------------------
+-- Analysis Phase --
+--------------------
 -- TODO THBound -> new THBound map (or do we never merge THBounds ?)
 -- Subs in tyvar with bisub results and builds cooc vector
 type Acc s = Bool -> BitSet -> BitSet -> AnaEnv s Type
@@ -260,12 +272,13 @@ analyseType = let
   subVar pos loops guarded v = if
     | testBit loops v   -> pure (TyVars loops []) -- unguarded var loop
     | testBit guarded v -> TyVars (0 `setBit` v) [] <$ (recs %= (`setBit` v))
-    | otherwise -> use anaBis >>= \b -> MV.read b v >>= \(BiSub pty mty) -> let -- not atm a TVar cycle
+    | otherwise -> use anaBis >>= \b -> use instVars >>= \iv -> if v >= iv then pure $ TyVar v -- THBound vars spawned in later
+      else MV.read b v >>= \(BiSub pty mty) -> let -- not atm a TVar cycle
       loops' = setBit loops v
       ty = if pos then pty else mty
       in if nullType ty then pure (TyVars loops' []) else mergeTVar v <$> analyseType ty pos loops' guarded
 
-  go :: [THead (Acc s)] -> BitSet -> Acc s -- Bool -> BitSet -> BitSet -> BitSet -> AnaEnv s Type
+  go :: [THead (Acc s)] -> BitSet -> Acc s
   go g vars pos loops guarded = let
     varSubs = bitSet2IntList vars `forM` subVar pos loops guarded
     mkT t = TyGround [t]
@@ -276,11 +289,13 @@ analyseType = let
         THArrow ars r -> fmap THTyCon $ THArrow
           <$> traverse (\arg -> registerOccurs (not pos) =<< arg (not pos) loops' guarded') ars <*> (registerOccurs pos =<< r pos loops' guarded')
         _ -> traverse (\x -> registerOccurs pos =<< x pos loops' guarded') tycon
+
       -- THBounds cannot occur together with tvars, else would have been instantiated already
-      -- this unTHBis let x = _ in x though; avoid generalising lone qnames?
-      THBi b ty -> ty pos loops guarded
-        >>= \ty -> (instVars <<%= (b+)) >>= \tvars -> cata (instantiateF (V.generate b (+tvars))) ty pos
-          & \(instRecVars , t) -> t <$ (recs %= (.|. instRecVars))
+      THBound b   -> use instVars >>= \vn -> {-checkRec guarded (vn + b) *>-}subVar pos loops guarded (vn + b)
+      THMuBound m -> use instVars >>= \vn -> {-(recs %= (`setBit` (vn + m))) *>-} subVar pos loops guarded (vn + m)
+      THBi _b ty  -> {-(instVars <<%= (b+)) *>-} ty pos loops guarded -- TODO stacked THBis?
+      THMu m ty -> use instVars >>= \vn ->
+        (recs %= (`setBit` (vn + m))) *> ty pos loops guarded <&> mergeTVar (vn + m)
       x -> mkT <$> traverse (\x -> x pos loops guarded) x
     in (\grounds vs -> mergeTypeList pos (grounds ++ vs)) <$> grounds g <*> varSubs
 
@@ -288,4 +303,4 @@ analyseType = let
     TyGroundF g  -> go g 0  pos loops guarded
     TyVarsF vs g -> go g vs pos loops guarded
     TyVarF v     -> subVar pos loops guarded v
-    x -> (embed <$> traverse (\x -> x pos loops guarded) x)
+    x -> embed <$> traverse (\x -> x pos loops guarded) x

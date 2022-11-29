@@ -139,7 +139,7 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
   -- Just moduleIName indicates this module was already cached, so don't allocate a new module iname for it
   let modIName = maybe (modCount resolver') oldModuleIName maybeOldModule
       resolver = if isJust maybeOldModule then resolver' else addModName modIName (T.pack fName) resolver'
-  when ("source" `elem` printPass flags) (putStr =≪ readFile fName)
+  when ("source" `elem` printPass flags) (putStr =<< readFile fName)
   parsed <- case parseModule fName progText of
     Left e  -> putStrLn (errorBundlePretty e) $> P.emptyParsedModule (toS fName) -- TODO add to parse fails
     Right r -> pure r
@@ -158,15 +158,16 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
     x -> abort (show x)
   labelMap   = parsed ^. P.parseDetails . P.labels
   fieldMap   = parsed ^. P.parseDetails . P.fields
+  iNames     = parsed ^. P.parseDetails . P.hNamesNoScope
   labelNames = iMap2Vector labelMap
   srcInfo    = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
 
   (tmpResolver  , exts) = resolveImports
     modResolver modIName
     (parsed ^. P.parseDetails . P.hNameBinds)        -- module bindings incl. lets
-    (labelMap , fieldMap)                            -- HName -> label and field names maps
+    labelMap                                         -- HName -> label and field names maps
     (parsed ^. P.parseDetails . P.hNameMFWords . _2) -- mixfix names
-    (parsed ^. P.parseDetails . P.hNamesNoScope)     -- unknownNames not in local scope
+    iNames
     maybeOldModule
   (judgedModule , errors) = judgeModule parsed (deps modDeps) modIName 0 hNames exts srcInfo
 
@@ -180,7 +181,7 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
   in (flags , fName , judgedModule , newResolver , exts , errors , srcInfo)
 
 -- TODO half-compiled modules `not coreOK` should also be cached (since their names were pre-added to the resolver)
-simplifyModule ∷ (CmdLine, f, JudgedModule, GlobalResolver, e1, Errors, e2)
+simplifyModule ∷ (CmdLine, f, JudgedModule, GlobalResolver, e, Errors, e2)
   -> ( CmdLine, Bool, Errors, e2, f, GlobalResolver , JudgedModule)
 simplifyModule (flags , fName , judgedModule , newResolver , _exts , errors , srcInfo) = let
   JudgedModule modI modNm bindNames a b judgedModTT _specs = judgedModule
@@ -191,7 +192,7 @@ simplifyModule (flags , fName , judgedModule , newResolver , _exts , errors , sr
       -> JudgedModule modI modNm bindNames a b modTTSimple specs
   in (flags , coreOK , errors , srcInfo , fName , newResolver , judgedSimple)
 
-putResults :: (CmdLine, Bool, Errors, Maybe SrcInfo, FilePath, GlobalResolver, JudgedModule)
+putResults :: (CmdLine, Bool, Errors, Maybe SrcInfo, FilePath, GlobalResolver , JudgedModule)
   -> IO (GlobalResolver, JudgedModule)
 putResults (flags , coreOK , errors , srcInfo , fName , r , j) = let
 --testPass p = coreOK && p `elem` printPass flags && not (quiet flags)
@@ -202,7 +203,7 @@ putResults (flags , coreOK , errors , srcInfo , fName , r , j) = let
     TL.IO.hPutStr h $ TL.concat $ (<> "\n\n") . formatTypeAppError          <$> (errors ^. typeAppFails)
 
   bindNames = mempty -- V.zip bindNames judgedBinds
-  bindSrc = BindSource mempty bindNames mempty (labelHNames r) (fieldHNames r) (allBinds r)
+  bindSrc = BindSource mempty bindNames mempty (labelHNames r) (allBinds r)
   in do
   -- write to stdout unless an outfile was specified -- TODO write errors there also ?!
   outHandle <- case flags.outFile of

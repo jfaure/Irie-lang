@@ -52,7 +52,7 @@ formatError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = l
     TyConMismatch → "Type constructor mismatch" <> case (got , exp) of
       (_ , TyGround [THTyCon THArrow{}]) → " (excess arguments)"
       _ → ""
-    AbsentField q → "Absent field '" <> getName (srcFieldNames srcNames) q <> "'"
+    AbsentField q → "Absent field '" <> show q <> "'"
     AbsentLabel q → "Absent label '" <> getName (srcLabelNames srcNames) q <> "'"
 
   srcLoc = case srcInfo of

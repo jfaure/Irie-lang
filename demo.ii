@@ -20,21 +20,37 @@
 --poly1 = let _<l_ = \f a => f a in (\y => y.t) <l { t = 1 }  -- %i1
 
 -- Simplify A & i32 -> A | i32 to i32
--- enumFromTo a b = if a >? b then @Nil else @Cons a (enumFromTo (1 + a) b)
+--enumFromTo a b = if a >? b then @Nil else @Cons a (enumFromTo (1 + a) b)
+
+-- TODO assume label not new arg
+--f = \case
+--  x => x
 
 -- unprepared for Tuple
 --f = \(a , b) => a + a
 
 -- Re-generalise let-binds
--- type polarity for self-app + top | bot
 
--- fails to merge typevars
+-- roll μ correctly
+--rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
--- doesn't notice recursive type after let-gen
-repeat x = let xs = @Cons x xs in xs
-
--- Ambiguous binding (prelude + demo.ii.True)
+-- Label namespaces: Ambiguous binding (prelude + demo.ii.True)
 -- x = True -- @True is OK
+
+-- FNames in types
+--recc = { f = 42 }
+--rec3 = { f = 42 } . f
+--records4 = (\x => x.f) { f = 42 }      -- %i32
+
+--f = let x = 3 in x -- QName 1 (ie. 1.0)
+--r = { next = r }
+Selfapp5 x = {l = x x , r = x }
+
+-- something wrong with name resolution up a nesting level:
+-- s x = x x
+-- r = { next = r }
+-- Same problem
+--rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
 {-
 fmap f = \case

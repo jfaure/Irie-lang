@@ -36,12 +36,20 @@ records7 = ifThenElseInt1 1 { a = 1 , b = 1 } { b = 0 , c = 42 } -- {b : %i1}
 -- v =? (∏ A → A → A) → %i1
 self i = ifThenElseInt1 ((i i) 1) 1 1 -- ∏ A → ((A → %i1 → %i1) ⊓ A) → %i1
 
-Selfapp0 x = x x      -- ∏ A B → ((A → B) ⊓ A) → B
-Selfapp1 x = x x x    -- ∏ A B → ((A → A → B) ⊓ A) → B
-Selfapp2 x y = x y x  -- ∏ A B C → ((A → B → C) ⊓ B) → A → C
-Selfapp3 x y = x x y  -- ∏ A B C → ((A → B → C) ⊓ A) → B → C
+--Selfapp0 x = x x      -- ∏ A B → ((A → B) ⊓ A) → B
+--Selfapp1 x = x x x    -- ∏ A B → ((A → A → B) ⊓ A) → B
+--Selfapp2 x y = x y x  -- ∏ A B C → ((A → B → C) ⊓ B) → A → C
+--Selfapp3 x y = x x y  -- ∏ A B C → ((A → B → C) ⊓ A) → B → C
+--Selfapp4 = (\x => x x) (\x => x x) -- ⊥
+--Selfapp5 x = {l = x x , r = x }    -- ∏ A B → ((A → B) ⊓ A) → {l : B , r : A}
+
+Selfapp0 x = x x      -- ∏ A B → μa.(a → B)
+Selfapp1 x = x x x    -- ∏ A B → μa.(a → a → B) → B
+Selfapp2 x y = x y x  -- ∏ A B C → μb.(A → b → C) → A → C
+Selfapp3 x y = x x y  -- ∏ A B C → μa.(a → B → C) → B → C
 Selfapp4 = (\x => x x) (\x => x x) -- ⊥
-Selfapp5 x = {l = x x , r = x }    -- ∏ A B → ((A → B) ⊓ A) → {l : B , r : A}
+Selfapp5 x = {l = x x , r = x }    -- ∏ A B → μa.(a → B) → {l : B , r : a}
+
 
 YComb f = (\x => f (x x)) (\x => f (x x)) -- ∏ A → (A → A) → A
 ZComb f = (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v)) -- ∏ A B C → ((A → B) → ((A → B) ⊓ C)) → C

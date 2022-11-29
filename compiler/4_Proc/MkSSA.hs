@@ -190,8 +190,6 @@ cgExpr t = let
 --    TPoly → ToPoly exp ret
 --    _     → BitCast exp ret
   Label i tts            → _
---Match ty labels d      → _
-  Prod  fields           → _
   TTLens tt _fields lens → cgExpr tt
   x → error $ "MkSSA: not ready for term: " <> show x
 

@@ -1,5 +1,5 @@
 # Irie
-Subtyping calculus of inductive constructions for high-performance (and eventually distributed) systems.
+Fused subtyping calculus of constructions
 
 ![logo](https://cdn.discordapp.com/attachments/631043990879338496/756673093497520138/logo.png)
 ## [FAQ](FAQ.md)

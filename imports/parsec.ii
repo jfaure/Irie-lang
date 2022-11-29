@@ -40,7 +40,7 @@ pTakeP n = @Parser \s cok _ _ eko ⇒ let
 pTakeWhileP f = @Parser \s cok _ eok _ ⇒ let
   spli = span f s.input
   in if null spli.l
-    then eok spli.l s 
+    then eok spli.l s
       else cok spli.l (s.input.set spli.r)
 
 pEof = @Parser \s _ _ eok eko ⇒ if null s.input

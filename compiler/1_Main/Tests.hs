@@ -22,7 +22,7 @@ import qualified GHC.Show
 inferTypes s = let
   cmdLine = defaultCmdLine {noColor = True , printPass = ["types"] , noCache = True}
   getResult (_flags , _coreOK , _errors , _srcInfo , _fName , r , j) =
-    let bindSrc = BindSource mempty mempty mempty (labelHNames r) (fieldHNames r) (allBinds r)
+    let bindSrc = BindSource mempty mempty mempty (labelHNames r) (allBinds r)
     in prettyJudgedModule False ansiRender {bindSource = Just bindSrc , ansiColor = False} j
   in unsafePerformIO $ getResult . Main.simplifyModule <$> text2Core cmdLine Nothing primResolver 0 "testExpr" s
 
@@ -35,7 +35,7 @@ instance Show UniText where show (UniText l) = toS l
 
 fTests = readTestsFromfile "imports/simpleTests.ii"
 recTests = readTestsFromfile "imports/recTests.ii"
- 
+
 readTestsFromfile fName = let
   ls = filter (/= "") (T.lines (unsafePerformIO (T.IO.readFile fName)))
     <&> ((\(e,eT) → (e , T.dropAround (== ' ') (T.drop 2 eT))) . T.breakOn "--")
@@ -144,7 +144,7 @@ s = S.sydTest $ do
   sequence_ fTests
   --sequence_ recTests
   caseTests
-  list1 
+  list1
   list2
   mutual
   tree
