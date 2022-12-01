@@ -21,8 +21,8 @@ import qualified GHC.Show
 
 inferTypes s = let
   cmdLine = defaultCmdLine {noColor = True , printPass = ["types"] , noCache = True}
-  getResult (_flags , _coreOK , _errors , _srcInfo , _fName , r , j) =
-    let bindSrc = BindSource mempty mempty mempty (labelHNames r) (allBinds r)
+  getResult (_flags , _coreOK , _errors , _srcInfo , _fName , iNames , r , j) =
+    let bindSrc = BindSource mempty mempty iNames (labelHNames r) (allBinds r)
     in prettyJudgedModule False ansiRender {bindSource = Just bindSrc , ansiColor = False} j
   in unsafePerformIO $ getResult . Main.simplifyModule <$> text2Core cmdLine Nothing primResolver 0 "testExpr" s
 
@@ -34,6 +34,7 @@ newtype UniText = UniText L.Text deriving Eq
 instance Show UniText where show (UniText l) = toS l
 
 fTests = readTestsFromfile "imports/simpleTests.ii"
+selfAppTests = readTestsFromfile "imports/selfAppTests.ii"
 recTests = readTestsFromfile "imports/recTests.ii"
 
 readTestsFromfile fName = let
@@ -142,6 +143,7 @@ specTests = S.sydTest $ do
 
 s = S.sydTest $ do
   sequence_ fTests
+  sequence_ selfAppTests
   --sequence_ recTests
   caseTests
   list1

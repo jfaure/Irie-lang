@@ -16,15 +16,16 @@
 -- eq1 (@x) b = 2
 -- eq1 a b = 3
 
---let-bound mixfix => make VLetBind
---poly1 = let _<l_ = \f a => f a in (\y => y.t) <l { t = 1 }  -- %i1
+--let-bound mixfix => make VLetBind instead of QName
+--also phase out QName
+--poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
 
 -- Simplify A & i32 -> A | i32 to i32
 --enumFromTo a b = if a >? b then @Nil else @Cons a (enumFromTo (1 + a) b)
 
--- TODO assume label not new arg
---f = \case
---  x => x
+-- assume label not new arg
+-- f = \case
+--   x => x
 
 -- unprepared for Tuple
 --f = \(a , b) => a + a
@@ -37,20 +38,24 @@
 -- Label namespaces: Ambiguous binding (prelude + demo.ii.True)
 -- x = True -- @True is OK
 
--- FNames in types
---recc = { f = 42 }
---rec3 = { f = 42 } . f
---records4 = (\x => x.f) { f = 42 }      -- %i32
-
+-- somehow broken if run together
 --f = let x = 3 in x -- QName 1 (ie. 1.0)
 --r = { next = r }
-Selfapp5 x = {l = x x , r = x }
 
 -- something wrong with name resolution up a nesting level:
--- s x = x x
--- r = { next = r }
--- Same problem
---rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
+-- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
+
+-- Illegal pattern
+--flattenTree t = let
+--  squish (Node x ts) xs = Cons x (foldr squish xs ts)
+--  in squish t @Nil
+
+-- ! mutual recursion at different depths must use the right wip' bind mvector
+-- r = let x = { a = 3 , b = x} in 5
+
+-- lvl of leaked vars: (escaped = lvl 0)
+-- need to track level of leaked vars: here tvar for (f x) is leaked then reset then lost
+--l f x = let r = { a = f x } in r  -- (a -> b) -> a -> {a : b}
 
 {-
 fmap f = \case

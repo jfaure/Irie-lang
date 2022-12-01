@@ -4,14 +4,8 @@
 -- fromList O(n)
 -- (!?) O(1)
 -- union , intersection , mergeWithKey O(n)
-module BitSetMap (BitSetMap , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , singleton , (!?) , BitSetMap.elems
+module BitSetMap (BitSetMap , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , singleton , (!?) , BitSetMap.elems , BitSetMap.keys
   , unionWith , intersectionWith , traverseWithKey , mergeWithKey' , mergeWithKey , mapAccum , mapWithKey) where
---import Data.IntMap
---import qualified Data.Vector as V
---type BitSetMap = IntMap
---toList = Data.IntMap.toList
---mergeWithKey' = _
---elems = V.fromList . Data.IntMap.elems
 
 -- For oneshot built ordered lists, dichotomy lookup on a (Vector (Int , a)) is a clear improvement vs Data.IntMap
 import Data.Binary ( Binary )
@@ -56,6 +50,7 @@ binarySearch = \v e → let
   in loop
 
 elems = fmap snd . unBSM
+keys  = fmap fst . unBSM
 
 mapAccum ∷ (a → b → (a, c)) → a → BitSetMap b → (a, BitSetMap c)
 mapAccum f seed bsm = let

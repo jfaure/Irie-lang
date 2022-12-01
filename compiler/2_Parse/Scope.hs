@@ -14,7 +14,14 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import UnPattern
 
--- equivalent HNames map to the same IName, now we eliminate them completely in favor of VBruijn and QNames
+-- * within a module, equivalent HNames map to the same IName
+-- * inference of terms needs quick and modular indexing + access to metadata
+-- * THProduct uses raw INames (no metadata). machine code fields are sorted on HNames
+-- * So Types use a module-global set of INames
+-- Letblocks and binds = QName { let number ; bind number }
+-- types only need the HNames for pretty printing + don't want to rebind metas etc...
+
+-- replace term (not type) INames with VBruijn and QNames
 type OpenModules = BitSet
 type RequiredModules = BitSet
 type ScopeAcc = Params -> TT

@@ -92,10 +92,12 @@ render flags = let
       Nothing  -> "π(" <> (fromText (showRawQName q)) <> ")"
       Just nms -> fromText (fst (nms V.! modName q V.! unQName q))
     AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcLabelNames <$> bindSource flags) q)
-    AQFieldName q -> fromText (showRawQName q)
+--  AQFieldName q -> fromText (showRawQName q)
+--  AQFieldName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
+    AQFieldName q -> let getHName = (V.! qName2Key q) . srcExtNames <$> bindSource flags
+      in {-addColor ansiCLYellow $-} b <> fromText (fromMaybe (showRawQName q) getHName)
     ARawFieldName q -> fromText q
     ARawLabelName q -> fromText q
---  AQFieldName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
     ALiteral      -> addColor (getColor a) b
     AInstr        -> addColor (getColor a) b
     AAbs          -> addColor (getColor a) b
@@ -118,12 +120,7 @@ number2xyz = TL.toLower . number2CapLetter
 --  overflow = i `div` 3
 --  in if overflow > 0 then (letter `TL.cons` show overflow) else TL.singleton letter
 
-data PrettyParams = PrettyParams {
-    pPolar :: Bool
-  , pNames :: [LetMeta]
-}
-
-pTy ∷ Bool -> [V.Vector LetMeta] -> Type -> Doc Annotation
+pTy ∷ Bool -> [V.Vector HName] -> Type -> Doc Annotation
 pTy pos metas = let
   pTy' = pTy pos metas
   latChar = if pos then "⊔" else "⊓"
@@ -147,7 +144,7 @@ pTyHeadParens pos metas t = case t of
   THTyCon THArrow{} -> parens (pTyHead pos metas t)
   _ -> pTyHead pos metas t
 
-pTyHead ∷ Bool -> [V.Vector LetMeta] -> TyHead -> Doc Annotation
+pTyHead ∷ Bool -> [V.Vector HName] -> TyHead -> Doc Annotation
 pTyHead pos metas = let
   pTy' = pTy pos metas
   parensIfArrow pos' t = case t of -- only add parens if necessary
@@ -178,9 +175,11 @@ pTyHead pos metas = let
       in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)) <> viaShow d)
     THProduct l → let
       -- ! HACK since top level module is handled weirdly
-      getFName f = hName $ (d_ (metas , modName f) $  metas DL.!! (modName f)) V.! unQName f
-      prettyField (f,ty) = annotate (AQRawName (QName f)) "" <> " : " <> pTy' ty
---    prettyField (f,ty) = annotate (ARawFieldName (getFName (QName f))) "" <> " : " <> pTy' ty
+--    newMetas = metas -- ?! ++ [BSM.keys l]
+--    getFName f = (d_ (metas , modName f) $ metas DL.!! (modName f)) V.! unQName f
+--    prettyField (f,ty) = annotate (ARawFieldName (getFName (QName f))) "" <> " : " <> pTy pos newMetas ty
+--    prettyField (f,ty) = annotate (AQRawName (QName f)) "" <> " : " <> pTy' ty
+      prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy' ty
       in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> BSM.toList l))
     THTuple  l  → enclose "{" "}" (hsep $ punctuate " ," (pTy' <$> V.toList l))
 --  THArray    t → "Array " <> viaShow t
@@ -197,7 +196,7 @@ pTyHead pos metas = let
   THSet   uni → "Set" <> pretty uni
   x -> viaShow x
 
-pBind :: HName -> Bool -> [V.Vector LetMeta] -> Bind -> Doc Annotation
+pBind :: HName -> Bool -> [V.Vector HName] -> Bind -> Doc Annotation
 pBind nm showRhs metas bind = pretty nm <> " = " <> case bind of
   Guard m tvar      -> "GUARD : "   <> viaShow m <> viaShow tvar
   Mutual m _free isRec tvar tyAnn → "MUTUAL: " <> viaShow m <> viaShow isRec <> viaShow tvar <> viaShow tyAnn
@@ -216,16 +215,16 @@ pTopExpr showRhs = \case
 --  <+> ":" <+> annotate AType (pTy True ty)
   e -> pExpr showRhs [] e
 
-pExpr :: Bool -> [V.Vector LetMeta] -> Expr -> Doc Annotation
+pExpr :: Bool -> [V.Vector HName] -> Expr -> Doc Annotation
 pExpr showRhs metas = let pos = True in \case
-  Core term@(LetBlock bs) ty -> let newMetas = metas --  ++ [fst <$> bs]
+  Core term@(LetBlock bs) ty -> let newMetas = metas -- ++ [hName . fst <$> bs]
     in (if showRhs then pTerm showRhs newMetas term <+> ": " else "") <> annotate AType (pTy True newMetas ty)
 --  -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
   Core term ty -> (if showRhs then pTerm showRhs metas term <+> ": " else "") <> annotate AType (pTy pos metas ty)
   Ty t         -> "type" <+> annotate AType (pTy pos metas t)
   e -> viaShow e
 
-pTerm :: Bool -> [V.Vector LetMeta] -> Term -> Doc Annotation
+pTerm :: Bool -> [V.Vector HName] -> Term -> Doc Annotation
 pTerm showRhs metas = let
   pVName = \case
 --  VArg i     -> annotate (AArg i)       ""
@@ -278,10 +277,10 @@ pTerm showRhs metas = let
     LinF      {} -> error "lin"
     LinAbsF   {} -> error "linabs"
     LetSpecsF {} -> error "letspecs"
-    LetBindsF bs t -> let newMetas = metas -- ++ [fst <$> bs] -- HACK
+    LetBindsF bs t -> let newMetas = metas -- ++ [hName . fst <$> bs] -- HACK
       in "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs newMetas b) <$> toList bs))
       <> hardline <> "in" <+> t
-    LetBlockF bs   -> let newMetas = metas -- ++ [fst <$> bs] -- HACK
+    LetBlockF bs   -> let newMetas = metas -- ++ [hName . fst <$> bs] -- HACK
       in enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs newMetas b) <$> toList bs)
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 

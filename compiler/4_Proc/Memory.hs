@@ -4,6 +4,24 @@ import qualified CoreSyn as TT
 import qualified BitSetMap as BSM
 import qualified Data.Vector as V
 
+-------------
+-- Sumdata --
+-------------
+-- Flat tree
+--  = balanced     +O1 lookup -adjacent nodes spread out far
+--  | depth-first  -hard to get O1 lookup
+--  | Sum-data nodes
+
+-- Meta-tree => structure of sumdata
+-- ** Need fast indexing , filtering , searching , subtyping
+-- ! index into alt arrays
+data MetaTree = MetaTree {
+--tagCount :: Int -- bitwidth of tags
+}
+
+-------------
+-- fields  --
+-------------
 data FieldTags = FTLarge Word64 | FTSmall Word64
 newtype Tag = Tag Int -- how many bits needed
 

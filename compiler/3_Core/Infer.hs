@@ -21,37 +21,36 @@ import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
 import Data.Functor.Foldable
 
 judgeModule ∷ P.Module -> BitSet -> ModuleIName -> p -> V.Vector HName -> Externs.Externs -> p1 -> (JudgedModule , Errors)
-judgeModule pm importedModules modIName _nArgs hNames exts _source = let
-  modName   = pm ^. P.moduleName
-  in runST $ do
-    wip'      <- MV.new 0 -- V.unsafeThaw (Left <$> pm ^. P.bindings)
-    letBinds' <- MV.new 10
-    bis'      <- MV.new 64
-    (modTT , st) <- runStateT (infer exts modIName importedModules emptyBitSet (pm ^. P.bindings)) TCEnvState
-      { _externs  = exts
-      , _thisMod  = modIName
+judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
+  wip'      <- MV.new 0
+  letBinds' <- MV.new 10
+  bis'      <- MV.new 64
+  (modTT , st) <- runStateT (infer exts modIName importedModules emptyBitSet (pm ^. P.bindings)) TCEnvState
+    { _externs  = exts
+    , _thisMod  = modIName
 
-      , _wip      = wip'
-      , _letBinds = letBinds'
-      , _letNest  = 0
-      , _errors   = emptyErrors
-      , _bruijnArgVars = mempty
+    , _wip      = wip'
+    , _letBinds = letBinds'
+    , _letNest  = 0
+    , _errors   = emptyErrors
+    , _bruijnArgVars = mempty
 
-      , _openModules = importedModules
-      , _bindWIP  = (0 , False)
-      , _tmpFails = []
-      , _blen     = 0
-      , _bis      = bis'
-      , _escapedVars  = emptyBitSet
-      , _leakedVars   = emptyBitSet
-      , _deadVars     = emptyBitSet
-      }
---  wip'' <- map ((\abs -> error "impossible") ||| identity) <$> V.unsafeFreeze (st ^. wip)
-    pure (JudgedModule modIName modName hNames (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels)
-      modTT Nothing , st ^. errors) --TCErrors (st ^. scopeFails) (st ^. biFails) (st ^. checkFails))
+    , _openModules = importedModules
+    , _bindWIP  = (0 , False)
+    , _tmpFails = []
+    , _blen     = 0
+    , _bis      = bis'
+    , _escapedVars  = emptyBitSet
+    , _leakedVars   = emptyBitSet
+    , _deadVars     = emptyBitSet
+    }
+--wip'' <- map ((\abs -> error "impossible") ||| identity) <$> V.unsafeFreeze (st ^. wip)
+  pure (JudgedModule modIName (pm ^. P.moduleName) hNames
+    (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) modTT Nothing , st ^. errors)
 
 -- infer >> generalise >> check annotation
--- This stacks inference of forward references + let-binds and handles mutuals (only generalise at end of mutual block)
+-- This stacks inference of forward references and let-binds
+-- Mutuals: wait for end of mutual block to generalise + careful of mutual recursion between nesting levels
 -- This includes noting leaked and escaped typevars
 judgeBind :: MV.MVector s (Either P.FnDef Bind) -> IName -> TCEnv s Expr
 judgeBind wip' bindINm = use thisMod >>= \modINm -> (wip' `MV.read` bindINm) >>= \case
@@ -79,18 +78,18 @@ judgeBind wip' bindINm = use thisMod >>= \modINm -> (wip' `MV.read` bindINm) >>=
 --  (bitSet2IntList letBinds) `forM_` \l -> regeneralise l
 
     if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
-      then pure jb
-      else fromJust . head <$> generaliseBinds wip' svEscapes svLeaked (bindINm : bitSet2IntList ms) -- <* clearBiSubs 0
+      then pure jb else fromJust . head <$> generaliseBinds wip' svEscapes svLeaked (bindINm : bitSet2IntList ms) -- <* clearBiSubs 0
 
   Right b -> case b of
     BindOK _ _ _isRec e  -> pure e
     Mutual _e _freeVs _isRec tvar _tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)) -- don't inline the expr
 
-    Guard mutuals tvar -> fst <$> use bindWIP >>= \this ->
-      ($> Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)) $
+    Guard mutuals tvar -> fst <$> use bindWIP >>= \this -> let nm = mkQName modINm bindINm in
+      ($> Core (Var (VQBind nm)) (TyVar tvar)) $
       when (this /= bindINm) $ do
         MV.write wip' bindINm (Right $ Guard (mutuals `setBit` this) tvar)
-        MV.modify wip' mF this where
+        -- TODO mutual recursion at different nest depths => use VLetBound instead of a bitset
+        MV.modify wip' mF this where -- ! wip' may be the wrong nest
           mF = \case
             Right (Guard ms tv) -> Right $ Guard (ms `setBit` bindINm) tv
 --          Right b@(BindOK{})  -> Right (did_ b)
@@ -263,7 +262,7 @@ inferF = let
   -- letin Nothing = module / record, need to type it
   -- ? How to name fields here
   -- need unique Name for every bind, even if same IName
-  P.LetInF b Nothing -> use letNest >>= \ln -> inferBlock b Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
+  P.LetInF b Nothing -> inferBlock b Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
     mkFieldCol = \a b -> TyGround [THFieldCollision a b]
     nms = lets <&> iName . fst -- [qName2Key (mkQName (ln + 1) i) | i <- [0..]]
     tys = lets <&> tyOfExpr . bind2Expr . snd
@@ -306,7 +305,8 @@ inferF = let
 
   P.TupleF _ts -> d_ "inference of tuple" (pure PoisonExpr)
 
-  P.TTLensF o tt fieldsLocal maybeSet -> use externs >>= \ext -> tt >>= \record -> let
+  -- ! Fields are let-bound on VLetNames for inference tables , but typed (and codegenned) on INames
+  P.TTLensF o tt fieldsLocal maybeSet -> tt >>= \record -> let
     fields = fieldsLocal -- readField ext <$> fieldsLocal
     recordTy = tyOfExpr record
     mkExpected ∷ Type -> Type

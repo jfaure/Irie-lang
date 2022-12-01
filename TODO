@@ -1,9 +1,8 @@
 ## meta
-  * discord: use it in the browser with xdg-desktop-portal-wlr
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
-  * move to f2fs
-## Top Priority
+## Top Priority (PathNames , tvar levels)
+  * Levels: escaped bitmask + levels vector
   * compiler pipeline
   * @ patterns; make case apps always labels (but fn Eqns always args)
   * expand lambda-mixfixes with explicit holes
@@ -11,13 +10,12 @@
   * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
   * fix cache
   * resolve let-bound mixfixes to VLetBind qname
-## Names
-  * atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
-  * FieldName = File local IName
-  * global resolver INames each module, then handles IName scope => resolve INames to global INames ?
-  ? LetBlock lens resolution: for errors + types (IName vs VLetBind)
-  ? dependency graph | linearity (of β-args)
+## Names + meta
+  * make global resolver more like a standard module
+    atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
+  ? dependency graph | arg,bind linearity
 ## ?
+  * derived functions: specs / β-rewritings as terms under main function
   * freevar types added to type of let-binds; need to extract all let-blocks to regeneralise?
   * type application (eg. perfect tree)
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
@@ -45,6 +43,13 @@
   * Partial applications extracted and specialised for beta optimality
   * Fns passed as args must have interpretable format
   * fns that do case-splits lazy in arguments they may not need
+## MachineCode
+  * eliminate polymorphism
+  * Identify recursive datas: then flatten and SOA form
+  * convert all aggregates to Tuples + eliminate bicasts
+  * Insert memory handling
+  * explicit free-vars + β-optimality
+  * SIMD
 ## Error messages
   * qualified bindings
   * Warn nonsense type joins | infer a dependent type

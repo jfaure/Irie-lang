@@ -134,7 +134,7 @@ evalImports flags moduleIName resolver depStack fileNames = do
 
 -- Parse , judge , simplify a module (depending on cmdline flags)
 text2Core :: CmdLine -> Maybe OldCachedModule -> GlobalResolver -> BitSet -> String -> Text
-  -> IO (CmdLine, FilePath, JudgedModule, GlobalResolver, Externs, Errors, Maybe SrcInfo)
+  -> IO (CmdLine, FilePath, JudgedModule, V.Vector HName , GlobalResolver, Externs, Errors, Maybe SrcInfo)
 text2Core flags maybeOldModule resolver' depStack fName progText = do
   -- Just moduleIName indicates this module was already cached, so don't allocate a new module iname for it
   let modIName = maybe (modCount resolver') oldModuleIName maybeOldModule
@@ -151,7 +151,7 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
 
 -- Judge the module and update the global resolver
 inferResolve ∷ CmdLine -> [Char] -> Int -> GlobalResolver -> ModDependencies -> P.Module -> Text -> Maybe OldCachedModule
-  -> (CmdLine , FilePath , JudgedModule , GlobalResolver , Externs , Errors , Maybe SrcInfo)
+  -> (CmdLine , FilePath , JudgedModule , V.Vector HName , GlobalResolver , Externs , Errors , Maybe SrcInfo)
 inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule = let
   hNames     = (parsed ^. P.bindings) & \case
     P.LetIn (P.Block _ _ binds) Nothing -> P._fnNm <$> binds
@@ -160,6 +160,7 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
   fieldMap   = parsed ^. P.parseDetails . P.fields
   iNames     = parsed ^. P.parseDetails . P.hNamesNoScope
   labelNames = iMap2Vector labelMap
+  iNamesV    = iMap2Vector iNames
   srcInfo    = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
 
   (tmpResolver  , exts) = resolveImports
@@ -178,23 +179,23 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
     x -> error (show x) -- V.zip bindNames (bind2Expr <$> judgedBinds)
   newResolver = addModuleToResolver tmpResolver modIName bindExprs labelNames
     (iMap2Vector fieldMap) labelMap fieldMap modDeps
-  in (flags , fName , judgedModule , newResolver , exts , errors , srcInfo)
+  in (flags , fName , judgedModule , iNamesV , newResolver , exts , errors , srcInfo)
 
 -- TODO half-compiled modules `not coreOK` should also be cached (since their names were pre-added to the resolver)
-simplifyModule ∷ (CmdLine, f, JudgedModule, GlobalResolver, e, Errors, e2)
-  -> ( CmdLine, Bool, Errors, e2, f, GlobalResolver , JudgedModule)
-simplifyModule (flags , fName , judgedModule , newResolver , _exts , errors , srcInfo) = let
+simplifyModule ∷ (CmdLine, f, JudgedModule, V.Vector HName , GlobalResolver, e, Errors, e2)
+  -> ( CmdLine, Bool, Errors, e2, f, V.Vector HName , GlobalResolver , JudgedModule)
+simplifyModule (flags , fName , judgedModule , iNames , newResolver , _exts , errors , srcInfo) = let
   JudgedModule modI modNm bindNames a b judgedModTT _specs = judgedModule
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
   judgedSimple = if noFuse flags || not coreOK then judgedModule else runST $
     FEnv.simplifyModule modI judgedModTT <&> \(modTTSimple , specs)
       -> JudgedModule modI modNm bindNames a b modTTSimple specs
-  in (flags , coreOK , errors , srcInfo , fName , newResolver , judgedSimple)
+  in (flags , coreOK , errors , srcInfo , fName , iNames , newResolver , judgedSimple)
 
-putResults :: (CmdLine, Bool, Errors, Maybe SrcInfo, FilePath, GlobalResolver , JudgedModule)
+putResults :: (CmdLine, Bool, Errors, Maybe SrcInfo , FilePath , V.Vector HName , GlobalResolver , JudgedModule)
   -> IO (GlobalResolver, JudgedModule)
-putResults (flags , coreOK , errors , srcInfo , fName , r , j) = let
+putResults (flags , coreOK , errors , srcInfo , fName , iNamesV , r , j) = let
 --testPass p = coreOK && p `elem` printPass flags && not (quiet flags)
   putErrors h = do
     T.IO.hPutStr  h $ T.concat  $ (<> "\n\n") . formatError bindSrc srcInfo <$> (errors ^. biFails)
@@ -203,7 +204,7 @@ putResults (flags , coreOK , errors , srcInfo , fName , r , j) = let
     TL.IO.hPutStr h $ TL.concat $ (<> "\n\n") . formatTypeAppError          <$> (errors ^. typeAppFails)
 
   bindNames = mempty -- V.zip bindNames judgedBinds
-  bindSrc = BindSource mempty bindNames mempty (labelHNames r) (allBinds r)
+  bindSrc = BindSource mempty bindNames iNamesV (labelHNames r) (allBinds r)
   in do
   -- write to stdout unless an outfile was specified -- TODO write errors there also ?!
   outHandle <- case flags.outFile of

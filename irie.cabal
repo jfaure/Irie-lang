@@ -36,6 +36,8 @@ executable irie-exe
     , base hiding (Prelude)
   main-is: Main.hs
   other-modules:
+      Name
+      MachineCode
       CH
       Scope
       MUnrolls
