@@ -22,14 +22,8 @@ indexed f = traverse (\t -> get >>= \i -> modify (1+) $> (i , t)) f `evalState` 
 
 -- Simplification removes (or unifies with another type) as many tvars as possible
 -- Generalisation allows polymorphic types to be instantiated with fresh tvars on each use: promote tvar to Π-bound
--- TVars and let-bindings:
--- 1. Escaped : tvars belong to outer let-nests, don't generalise (leave the raw tvar)
--- 2. Leaked  : local vars biunified with escaped vars (generalise and merge with raw tvar)
---   * necessary within let-binds to constrain free variables. considered dead outside the let-bind
--- 3. Dead    : formerly leaked vars once their scope expires.
---   * overconstrained since were biunified with instantiations of their let-binding
---   (while inferring their let-block, they leaked out by biunifying with an escaped var)
---
+-- Levels: lvlN bitmask = not generalisable at each lvl
+-- unify (v <=> a -> b) => export a and b to level of v => add a,b to all lvl bitsets below v
 -- Escaped vars examples:
 -- * f1 x = let y z = z in y   -- nothing can go wrong
 -- * f2 x = let y   = x in y   -- if x generalised at y => f2 : a -> b (Wrong)
@@ -54,7 +48,7 @@ indexed f = traverse (\t -> get >>= \i -> modify (1+) $> (i , t)) f `evalState` 
 --   * Co-occurence analysis: attempt to remove or unify tvars
 -- 2. Finalise: Remove, unify or generalise (with possible mu binder) TVars based on co-occurence analysis
 
-data VarSub = Remove | Escaped | Generalise | Recursive | Leaked | SubVar Int | SubTy Type deriving Show
+data VarSub = Remove | Escaped | Generalise | Recursive | SubVar Int | SubTy Type deriving Show
 
 type Cooc s = MV.MVector s ([Type] , [Type])
 data AnalyseState s = AnalyseState { _anaBis :: MV.MVector s BiSub , _recs :: BitSet , _instVars :: Int , _coocs :: Cooc s }; makeLenses ''AnalyseState
@@ -64,7 +58,7 @@ data GState s = GState { _quants :: Int , _genMap :: MV.MVector s Int }; makeLen
 type GEnv s = StateT (GState s) (ST s)
 
 generalise ∷ BitSet -> Either IName Type -> TCEnv s Type
-generalise escapees rawType = do
+generalise lvl0 rawType = do
   when debug_gen (traceM $ "Gen: " <> show rawType)
   coocLen <- use bis <&> MV.length
   bis' <- use bis
@@ -77,8 +71,7 @@ generalise escapees rawType = do
     occurs <- V.unsafeFreeze coocV
     pure (ty , recs , occurs)
   nVars  <- use blen
-  leaks  <- use leakedVars
-  let tvarSubs = judgeVars nVars escapees leaks recursives occurs
+  let tvarSubs = judgeVars nVars lvl0 recursives occurs
       done     = forgetRoll . cata rollType $ runST $ do
         genMap  <- MV.replicate 100 (complement 0) -- TODO
         (t , s) <- runStateT (cata (doGen tvarSubs recursives) analysedType True) (GState 0 genMap)
@@ -88,8 +81,7 @@ generalise escapees rawType = do
     let showTys t        = T.intercalate " ; " (prettyTyRaw <$> t)
      in V.take nVars occurs `iforM_` \i (p,m) -> traceM (show i <> ": +[" <> showTys p <> "] -[" <> showTys m <> "]")
     traceM $ "analysed: " <> prettyTyRaw analysedType
-    traceM $ "escapees: " <> show (bitSet2IntList escapees)
-    traceM $ "leaked:   " <> show (bitSet2IntList leaks)
+    traceM $ "lvl0: "     <> show (bitSet2IntList lvl0)
     traceM $ "recVars:  " <> show (bitSet2IntList recursives)
     traceM   "tvarSubs: " *> V.imapM_ (\i f -> traceM $ show i <> " => " <> show f) tvarSubs
     traceM $ "done: "     <> prettyTyRaw done
@@ -99,8 +91,8 @@ generalise escapees rawType = do
 -- opposite co-occurence: v + T always occur together at +v,-v ⇒ drop v (unify with T)
 -- polar co-occurence:    v + w always occur together at +v,+w or at -v,-w ⇒ unify v with w
 -- ? unifying recursive and non-recursive vars (does the non-rec var need to be covariant ?)
-judgeVars :: Int -> BitSet -> BitSet -> BitSet -> V.Vector ([Type] , [Type]) -> V.Vector VarSub
-judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs -> let
+judgeVars :: Int -> BitSet -> BitSet -> V.Vector ([Type] , [Type]) -> V.Vector VarSub
+judgeVars nVars lvl0 recursives coocs = V.constructN nVars $ \prevSubs -> let
   collectCoocVs = \case { [] -> 0 ; x : xs -> foldr (.&.) x xs }
   v = V.length prevSubs -- next var to analyse
   vIsRec = recursives `testBit` v
@@ -119,12 +111,12 @@ judgeVars nVars escapees leaks recursives coocs = V.constructN nVars $ \prevSubs
   ((pVars , pTs) , (mVars , mTs)) = ( unzip $ partitionType . subPrevVars True  <$> pOccs
                                     , unzip $ partitionType . subPrevVars False <$> mOccs)
   (coocPVs , coocMVs) = (collectCoocVs pVars , collectCoocVs mVars)
-  generalise = if leaks `testBit` v then Leaked else if vIsRec then Recursive else Generalise
+  generalise = {-if leaks `testBit` v then Leaked else-} if vIsRec then Recursive else Generalise
 
   in if -- Simplify: Try to justify Remove next Sub else fallback to Generalise
 -- | v >= tVars -> did_ $ if recursives `testBit` v then Recursive else Generalise -- Instantiated vars
-  | escapees `testBit` v -> Escaped -- belongs to a parent of this let-binding
-  | not vIsRec && (null pOccs || null mOccs) -> if leaks `testBit` v then Escaped else Remove --'polar' var
+  | lvl0 `testBit` v -> Escaped -- belongs to a parent of this let-binding
+  | not vIsRec && (null pOccs || null mOccs) -> {-if leaks `testBit` v then Escaped else-} Remove --'polar' var
   | otherwise -> let
     recMask = if vIsRec then recursives else complement recursives
     polarCooc ∷ Bool -> Int -> VarSub = \pos w -> let -- +: for ws in +v, look for coocs in +v,+w
@@ -234,7 +226,7 @@ doGen tvarSubs recs rawType pos = let
     else case tvarSubs V.! v of
     Escaped    -> pure (TyVar v)
     Remove     -> pure (TyGround []) -- pure $ if leaks `testBit` v then TyVar v else TyGround []
-    Leaked     -> generaliseVar v <&> \q -> TyVars (setBit 0 v) [THBound q]
+--  Leaked     -> generaliseVar v <&> \q -> TyVars (setBit 0 v) [THBound q]
     Recursive  -> generaliseVar v <&> \q -> TyGround [THMuBound q]
     Generalise -> generaliseVar v <&> \q -> TyGround [THBound q]
     SubVar i   -> genVar i

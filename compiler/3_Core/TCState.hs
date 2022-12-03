@@ -3,7 +3,7 @@ module TCState where
 import CoreSyn ( tyBot, tyTop, BiSub(BiSub), Bind )
 import Externs ( Externs )
 import Errors ( Errors, TmpBiSubError )
-import Control.Lens ( use, (.=), makeLenses )
+import Control.Lens ( use, (.=), makeLenses, (%=) )
 import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write )
 import qualified ParseSyntax as P ( FnDef )
 import qualified Data.Vector as V ( Vector )
@@ -32,17 +32,18 @@ data TCEnvState s = TCEnvState {
  , _bis           :: MV.MVector s BiSub -- typeVars
 
  -- tvar kinds (see Generalise.hs)
- , _escapedVars :: BitSet -- TVars of shallower let-nests
- , _leakedVars  :: BitSet -- TVars bisubbed with escapedVars
- , _deadVars    :: BitSet -- formerly leaked now fully captured
+ , _lvls        :: [BitSet]
+-- , _escapedVars :: BitSet -- TVars of shallower let-nests
+-- , _leakedVars  :: BitSet -- TVars bisubbed with escapedVars
+-- , _deadVars    :: BitSet -- formerly leaked now fully captured
 
 }; makeLenses ''TCEnvState
 
-clearBiSubs :: Int → TCEnv s ()
-clearBiSubs n = (blen .= n) *> (deadVars .= 0)
+clearBiSubs :: Int -> TCEnv s ()
+clearBiSubs n = blen .= n
 
 -- spawn new tvar slots in the bisubs vector
-freshBiSubs :: Int → TCEnv s [Int]
+freshBiSubs :: Int -> TCEnv s [Int]
 freshBiSubs n = do
   bisubs <- use bis
   biLen  <- use blen
@@ -50,5 +51,5 @@ freshBiSubs n = do
   blen .= (biLen + n)
   bisubs <- if MV.length bisubs < biLen + n then MV.grow bisubs n else pure bisubs
   bis .= bisubs
-  tyVars `forM_` \i → MV.write bisubs i (BiSub tyBot tyTop)
+  tyVars `forM_` \i -> MV.write bisubs i (BiSub tyBot tyTop)
   pure tyVars

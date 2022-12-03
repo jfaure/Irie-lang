@@ -40,9 +40,10 @@ judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
     , _tmpFails = []
     , _blen     = 0
     , _bis      = bis'
-    , _escapedVars  = emptyBitSet
-    , _leakedVars   = emptyBitSet
-    , _deadVars     = emptyBitSet
+    , _lvls     = [0] -- TODO start state?
+--  , _escapedVars  = emptyBitSet
+--  , _leakedVars   = emptyBitSet
+--  , _deadVars     = emptyBitSet
     }
 --wip'' <- map ((\abs -> error "impossible") ||| identity) <$> V.unsafeFreeze (st ^. wip)
   pure (JudgedModule modIName (pm ^. P.moduleName) hNames
@@ -57,8 +58,11 @@ judgeBind wip' bindINm = use thisMod >>= \modINm -> (wip' `MV.read` bindINm) >>=
   Left abs -> do
     freeTVars <- V.toList <$> use bruijnArgVars
     svwip     <- bindWIP <<.= (bindINm , False)
-    svEscapes <- escapedVars <<%= (.|. intList2BitSet freeTVars)
-    svLeaked  <- use leakedVars
+--  bl <- use blen
+--  lvls %= (intList2BitSet freeTVars :)
+--  lvls %= (setNBits bl : ) -- enter lvl; all prev-vars marked up a lvl
+    -- TODO don't remark already up-marked lvls
+    -- biunify searches for first match to find a tvars lvl so will trigger too quickly here
 
     (tvarIdx , jb , ms , isRec) <- freshBiSubs 1 >>= \[idx] -> do
       MV.write wip' bindINm (Right $ Guard emptyBitSet idx)
@@ -77,8 +81,9 @@ judgeBind wip' bindINm = use thisMod >>= \modINm -> (wip' `MV.read` bindINm) >>=
 --  letBinds <- (.&. complement svLets) <$> use letBounds
 --  (bitSet2IntList letBinds) `forM_` \l -> regeneralise l
 
+    lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
     if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
-      then pure jb else fromJust . head <$> generaliseBinds wip' svEscapes svLeaked (bindINm : bitSet2IntList ms) -- <* clearBiSubs 0
+      then pure jb else fromJust . head <$> generaliseBinds wip' lvl0 (bindINm : bitSet2IntList ms) -- <* clearBiSubs 0
 
   Right b -> case b of
     BindOK _ _ _isRec e  -> pure e
@@ -92,7 +97,7 @@ judgeBind wip' bindINm = use thisMod >>= \modINm -> (wip' `MV.read` bindINm) >>=
         MV.modify wip' mF this where -- ! wip' may be the wrong nest
           mF = \case
             Right (Guard ms tv) -> Right $ Guard (ms `setBit` bindINm) tv
---          Right b@(BindOK{})  -> Right (did_ b)
+            Right b@(BindOK{})  -> Right (did_ b) -- ?! not actually mutual
             x -> error (show x)
     b -> error (show b)
 
@@ -119,8 +124,8 @@ regeneralise wip' l = MV.read wip' l >>= \case
     (Core t <$> generalise 0 (Right ty)) >>= MV.write wip' l . (\r t -> Right $ BindOK o False r t) r
   _ -> pure () -- <* traceM ("attempt to regeneralise non-let-bound: " <> show l)
 
-generaliseBinds ∷ MV.MVector s (Either P.FnDef Bind) -> BitSet -> BitSet -> [Int] -> TCEnv s [Expr]
-generaliseBinds wip' svEscapes svLeaked ms = ms `forM` \m -> MV.read wip' m >>= \case
+generaliseBinds ∷ MV.MVector s (Either P.FnDef Bind) -> BitSet -> [Int] -> TCEnv s [Expr]
+generaliseBinds wip' lvl0 ms = ms `forM` \m -> MV.read wip' m >>= \case
  Left e -> error $ show e
  Right b -> case b of
   BindOK _ _ _r e -> pure e -- already handled mutual
@@ -135,8 +140,8 @@ generaliseBinds wip' svEscapes svLeaked ms = ms `forM` \m -> MV.read wip' m >>= 
         _cast <- use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
           TyGround [] -> BiEQ <$ MV.write v recTVar (BiSub ty (TyGround [])) -- not recursive / mutual
           _t          -> bisub ty (TyVar recTVar) -- ! recursive | mutual ⇒ bisub with -τ (itself)
-        escaped <- use escapedVars
-        g       <- generalise escaped (Left recTVar)
+--      escaped <- use escapedVars
+        g       <- generalise lvl0 {-escaped-} (Left recTVar)
 --      when global_debug $ use bis >>= \b -> use blen >>= \bl ->
 --        [0 .. bl -1] `forM_` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
         when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
@@ -148,9 +153,8 @@ generaliseBinds wip' svEscapes svLeaked ms = ms `forM` \m -> MV.read wip' m >>= 
         t -> TyGround [THMu 0 t]
       t -> pure (emptyBitSet , t)
 
-    l <- leakedVars  <<.= svLeaked
-    escapedVars .= svEscapes
-    deadVars %= (.|. (l .&. complement svEscapes))
+--  lvls %= drop 1 -- leave Lvl (TODO .|. head into next lvl?)
+    -- l <- leakedVars <<.= svLeaked ; escapedVars .= svEscapes ; deadVars %= (.|. (l .&. complement svEscapes))
 
     done <- case (annotation , inferred) of -- Only Core type annotations are worth replacing inferred ones
       (Just ann , Core e inferredTy) -> Core e <$> checkAnnotation ann inferredTy
@@ -241,19 +245,24 @@ inferF = let
  inferBlock :: P.Block -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
  inferBlock (P.Block _open _letType letBindings) go = do
    nest <- letNest <<%= (1+)
-   s <- use blen >>= \bl -> escapedVars <<%= (.|. setNBits bl)
+
+   bl <- use blen
+   lvls %= (setNBits bl :) -- enter lvl all prev vars are escaped => if biunified with new vars must export new vars
+-- use lvls >>= \ls -> traceM (" -> enter: " <> show (bitSet2IntList <$> ls))
+
    block <- use letBinds >>= \lvl -> V.thaw (Left <$> letBindings) >>= \block -> block <$ MV.write lvl nest block
-   -- ! v This won't typecheck unused let-binds in the let-in
--- r <- maybe (PoisonExpr <$ judgeBind block `mapM_` [0 .. V.length letBindings - 1]) identity go
    judgeBind block `mapM_` [0 .. V.length letBindings - 1]
-   escapedVars .= s
-   r <- maybe (pure PoisonExpr) identity go
+
+-- use lvls >>= \ls -> traceM (" <- leave: " <> show (bitSet2IntList <$> ls))
+   lvls %= drop 1 -- leave Lvl (TODO .|. head into next lvl?)
+
+   r <- maybe (pure PoisonExpr) identity go -- in expr
 
 -- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
 
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= {-fmap did_ .-} V.unsafeFreeze
      <&> map ((\unused -> BindOK 0 True False $ PoisonExprWhy ("unused let-bound: " <> show unused)) ||| identity)
-   letNest %= (\x -> x -1)
+   letNest %= (\x -> x - 1)
    pure (r , V.zipWith (\fn e -> (LetMeta (fn ^. P.fnIName) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
 
  in \case

@@ -2,14 +2,14 @@
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
 ## Top Priority (PathNames , tvar levels)
-  * Levels: escaped bitmask + levels vector
   * compiler pipeline
   * @ patterns; make case apps always labels (but fn Eqns always args)
   * expand lambda-mixfixes with explicit holes
+  * resolve let-bound mixfixes to VLetBind qname
   * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
   * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
   * fix cache
-  * resolve let-bound mixfixes to VLetBind qname
+  * rm meta from prettyCore
 ## Names + meta
   * make global resolver more like a standard module
     atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
@@ -57,6 +57,7 @@
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
+  * optimise tycons to avoid level retraversal
   * strictly positive recursion
   * underdetermined recursion: https://counterexamples.org/underdetermined-recursion.html
     equirecursive ⇒ A = F[A] ; B = F[B] ⇒ A = B (unsound for arbitrary type-level functions F!)

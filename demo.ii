@@ -38,24 +38,23 @@
 -- Label namespaces: Ambiguous binding (prelude + demo.ii.True)
 -- x = True -- @True is OK
 
--- somehow broken if run together
---f = let x = 3 in x -- QName 1 (ie. 1.0)
---r = { next = r }
-
+--broken if run together (probably wrong wip' bind so r reads f by mistake)
+f = 3 -- let x = 3 in x -- QName 1 (ie. 1.0)
+r = { next = r }
+-- ! mutual recursion at different depths must use the right wip' bind mvector
+-- r = let x = { a = 3 , b = x} in 5
 -- something wrong with name resolution up a nesting level:
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
 -- Illegal pattern
---flattenTree t = let
---  squish (Node x ts) xs = Cons x (foldr squish xs ts)
---  in squish t @Nil
+--f (x a) = a
 
--- ! mutual recursion at different depths must use the right wip' bind mvector
--- r = let x = { a = 3 , b = x} in 5
+-- lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}  -- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
 
--- lvl of leaked vars: (escaped = lvl 0)
--- need to track level of leaked vars: here tvar for (f x) is leaked then reset then lost
---l f x = let r = { a = f x } in r  -- (a -> b) -> a -> {a : b}
+--foldr1 f = \case
+--  @Cons x xs => case xs of
+--    @Nil => x
+--    @Cons y ys => f x (foldr1 f xs)
 
 {-
 fmap f = \case

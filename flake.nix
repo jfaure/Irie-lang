@@ -1,5 +1,5 @@
 {
-  description = "testprofunctors";
+  description = "irie";
   inputs = {
     nixpkgs-upstream.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     haskell-nix.url = "github:input-output-hk/haskell.nix";
@@ -15,7 +15,7 @@
   outputs = inputs@{ self, nixpkgs, nixpkgs-upstream, haskell-nix, haskell-nix-extra-hackage, ... }:
   let
   plainNixpkgsFor = system: import nixpkgs-upstream { inherit system; };
-  compiler-nix-name = "ghc924";
+  compiler-nix-name = "ghc925";
   hackagesFor = system: haskell-nix-extra-hackage.mkHackagesFor system compiler-nix-name
     [ "${inputs.connections}"
       "${inputs.coapplicative}"
