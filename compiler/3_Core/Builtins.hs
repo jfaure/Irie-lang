@@ -6,10 +6,11 @@ module Builtins (primBinds , primMap , typeOfLit , primLabelHNames , primLabelMa
 import Prim
 import CoreSyn
 import qualified Data.Map.Strict as M ( Map , (!?) , fromList )
-import qualified Data.Vector as V ( Vector, fromList )
+import qualified Data.Vector as V ( Vector, fromList , (!) , toList , length )
 import qualified BitSetMap as BSM
 
-mkExtTy x  = [THExt x]
+--mkExtTy x  = [THExt x]
+mkExtTy x  = [mkExt x]
 getPrimIdx = (primMap M.!?)
 
 getPrimTy ∷ HName → IName
@@ -23,7 +24,7 @@ primBinds ∷ V.Vector (HName , Expr) = V.fromList primTable
 primType2Type x = Ty (TyGround [THPrim x])
 primTable ∷ [(HName , Expr)]
 primTable = concat
-  [ (\(nm , x)         → (nm , primType2Type x)) <$> primTys
+  [ (\(nm , x)         → (nm , primType2Type x)) <$> V.toList primTys
   , boolLabel
   , let tys2TyHead  (args , t) = TyGround $ mkTyArrow (TyGround . mkExtTy <$> args) (TyGround $ mkExtTy t) in
     (\(nm , (i , tys)) → (nm , Core (Instr i) (tys2TyHead tys)))           <$> primInstrs
@@ -53,7 +54,9 @@ primLabelMap    = M.fromList [("True" , builtinTrue) , ("False" , builtinFalse)]
 primFieldHNames = mempty ∷ V.Vector HName
 primFieldMap    = mempty ∷ M.Map HName QName
 
-primTys ∷ [(HName , PrimType)] =
+-- ! Indexes here are of vital importance: THExts are assigned to these to speed up comparisons
+-- If anything here is changed, type of lit must also change
+primTys :: V.Vector (HName , PrimType) = V.fromList
   [ ("Bool"    , PrimInt 1)
   , ("Int"     , PrimInt 32)
   , ("Int64"   , PrimInt 64)
@@ -75,6 +78,10 @@ primTys ∷ [(HName , PrimType)] =
 
 --substPrimTy i = THPrim $ primTyBinds V.! i
 
+--mkExt = THExt -- dodgy optimisation
+mkExt i | i <= V.length primTys = THPrim $ snd (primTys V.! i)
+mkExt i = THExt i
+
 -- instrs are typed with indexes into the primty map
 tyFns = [
 --[ ("IntN" , (THPi [(0,(mkExtTy i))] [THInstr MkIntN [0]] M.empty))
@@ -83,38 +90,37 @@ tyFns = [
 --  , ("_→_", (ArrowTy , ([set] , set)))
   ]
 
--- tuples are THProducts with negative indices;
--- this makes typing tuple access far simpler than introducing a new subtyping relation on records
+-- tuples are THProducts in module 0 (builtin module)
 mkTHTuple vs = THTyCon $ THProduct $ BSM.fromList (zip (qName2Key . mkQName 0 <$> [0..]) vs)
 
 mkTyArrow args retTy = [THTyCon $ THArrow args retTy]
 mkTHArrow args retTy = let singleton x = [x] in mkTyArrow (TyGround . singleton <$> args) (TyGround $ [retTy])
 
-instrs ∷ [(HName , (PrimInstr , GroundType))] = [
---[ ("addOverflow"   , (AddOverflow , mkTHArrow [TyGround [THExt i] , TyGround []] (TyGround [])))
---, ("unlink"        , (Unlink , mkTyArrow [[THExt str] , mkTHArrow [THExt c,THExt str] (THExt str)] [THExt str]))
---, ("link"          , (Link , mkTHArrow [THExt c] (THExt str)))
-    ("strtol"        , (StrToL  , mkTHArrow [THExt str] (THExt i)))
+instrs :: [(HName , (PrimInstr , GroundType))] = [
+--[ ("addOverflow"   , (AddOverflow , mkTHArrow [TyGround [mkExt i] , TyGround []] (TyGround [])))
+--, ("unlink"        , (Unlink , mkTyArrow [[mkExt str] , mkTHArrow [mkExt c,mkExt str] (mkExt str)] [mkExt str]))
+--, ("link"          , (Link , mkTHArrow [mkExt c] (mkExt str)))
+    ("strtol"        , (StrToL  , mkTHArrow [mkExt str] (mkExt i)))
   , ("mkTuple"       , (MkTuple , [THTyCon $ THTuple mempty]))
-  , ("ifThenElseInt1", (IfThenE , [THBi 1 $ TyGround $ mkTHArrow [THExt b, THBound 0, THBound 0] (THBound 0) ]))
-  , ("getcwd"        , (GetCWD  , [THExt str]))
+  , ("ifThenElseInt1", (IfThenE , [THBi 1 $ TyGround $ mkTHArrow [mkExt b, THBound 0, THBound 0] (THBound 0) ]))
+  , ("getcwd"        , (GetCWD  , [mkExt str]))
 
   -- TODO fix type (set → set → A → B)
-  , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 $ TyGround $ mkTHArrow [THExt set , THExt set , THBound 0] (THBound 0) ]))
+  , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 $ TyGround $ mkTHArrow [mkExt set , mkExt set , THBound 0] (THBound 0) ]))
 
    -- (Seed → (Bool , A , Seed)) → Seed → %ptr(A)
-  , ("unfoldArray"   , (UnFoldArr , let unfoldRet = (\[x] → x) $ mkTHArrow [THBound 0] (mkTHTuple $ (\x → TyGround [x]) <$> [THExt b , THExt c , THBound 0])
-      in [THBi 1 $ TyGround $ mkTHArrow [THBound 0 , unfoldRet , THBound 0] (THExt str)]))
+  , ("unfoldArray"   , (UnFoldArr , let unfoldRet = (\[x] → x) $ mkTHArrow [THBound 0] (mkTHTuple $ (\x → TyGround [x]) <$> [mkExt b , mkExt c , THBound 0])
+      in [THBi 1 $ TyGround $ mkTHArrow [THBound 0 , unfoldRet , THBound 0] (mkExt str)]))
 
   -- %ptr(A) → (Bool , A , %ptr(A))    == str → (Bool , char , str)
-  , ("nextElem" , (NextElem , mkTHArrow [THExt str] (mkTHTuple $ TyGround <$> [[boolL] , [THExt c] , [THExt str]]) ))
-  , ("toCStruct"       , (ToCStruct       , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (THExt cstruct)] ))
-  , ("toCStructPacked" , (ToCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (THExt cstruct)] ))
-  , ("fromCStruct", (FromCStruct , [THBi 1 $ TyGround $ mkTHArrow [THExt cstruct] (THBound 0)] ))
-  , ("fromCStructPacked", (FromCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [THExt cstruct] (THBound 0)] ))
+  , ("nextElem" , (NextElem , mkTHArrow [mkExt str] (mkTHTuple $ TyGround <$> [[boolL] , [mkExt c] , [mkExt str]]) ))
+  , ("toCStruct"       , (ToCStruct       , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (mkExt cstruct)] ))
+  , ("toCStructPacked" , (ToCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (mkExt cstruct)] ))
+  , ("fromCStruct", (FromCStruct , [THBi 1 $ TyGround $ mkTHArrow [mkExt cstruct] (THBound 0)] ))
+  , ("fromCStructPacked", (FromCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [mkExt cstruct] (THBound 0)] ))
 
-  , ("readFile"  , (ReadFile  , mkTHArrow [THExt str] (THExt str)))
-  , ("writeFile" , (WriteFile , mkTHArrow [THExt str] (THExt str)))
+  , ("readFile"  , (ReadFile  , mkTHArrow [mkExt str] (mkExt str)))
+  , ("writeFile" , (WriteFile , mkTHArrow [mkExt str] (mkExt str)))
 
 --, ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , b) ))
   , ("le"      , (NumInstr (PredInstr LECmp ) , mkTHArrow [iTy , iTy]    boolL))
@@ -170,6 +176,11 @@ primInstrs ∷ [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("bitNOT", (NumInstr (BitInstr Not ) , ([i, i] , i) ))
   , ("bitSHL", (NumInstr (BitInstr ShL ) , ([i, i] , i) ))
   , ("bitSHR", (NumInstr (BitInstr ShR ) , ([i, i] , i) ))
+  , ("bitCLZ", (NumInstr (BitInstr CLZ ) , ([i] , i) ))
+  , ("bitCTZ", (NumInstr (BitInstr CTZ ) , ([i] , i) ))
+  , ("bitPopCount", (NumInstr (BitInstr PopCount ) , ([i] , i) ))
+  , ("bitPDEP", (NumInstr (BitInstr PDEP ) , ([i , i] , i) ))
+  , ("bitPEXT", (NumInstr (BitInstr PEXT ) , ([i , i] , i) ))
 
   , ("gmp-putNumber" , (GMPPutNbr , ([bi] , i)))
   , ("gmp-add"  , (GMPInstr (IntInstr Add) , ([bi, bi] , bi) ))
@@ -185,5 +196,5 @@ typeOfLit = \case
   Int 0     → THPrim (PrimInt 1)
   Int 1     → THPrim (PrimInt 1)
   Int{}     → THPrim (PrimInt 32)
-  Char{}    → THPrim (PrimInt 8) --THExt 3
+  Char{}    → THPrim (PrimInt 8) --mkExt 3
   x → error $ "don't know type of literal: " <> show x

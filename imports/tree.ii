@@ -2,13 +2,17 @@
 import imports/list
 
 --flatten :: Tree a -> [a]
-flattenTree t = let
-  squish (Node x ts) xs = Cons x (foldr squish xs ts)
-  in squish t @Nil
+flattenTree t = squish t @Nil
+squish n xs = case n of
+  @Node x ts => @Cons x (foldr squish xs ts)
 
+-- flattenTree : ∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → µd.[Nil | Cons {A , d}]
+-- 
+-- squish : let ∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → D → µd.[Cons {A , d}]
+--
 -- File CString ; Dir CString (List Dir)
 --printDirTree : Str -> Dir -> Str
 -- !??
 --printDirTree prefix = \case
---  File f  ⇒ prefix ++ f
---  Dir d r ⇒ prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r
+--  File f  => prefix ++ f
+--  Dir d r => prefix ++ d ++ concatMap (printDirTree (fromCString " |-- " ++ prefix)) r

@@ -35,9 +35,16 @@ singleton x = Cons x Nil
 
 repeat x = let xs = Cons x xs in xs
 
---span p = case xs of
---  Nil => { l = xs , r = xs }
---  Cons x xs2 => if p x then let s = span p xs2 in (Cons x s.l , s.r) else { l = Nil , r = xs }
+-- can produce different types depending on Nil case
+-- Int -> [a] -> ([a] , [a])
+splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
+  @Nil =>  { l = Nil , r = Nil } -- { l = xs , r = xs }
+  @Cons x xs => let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
+
+-- TODO let-scope depends on parsed mixfixes
+span p xs = case xs of
+  @Nil => { l = xs , r = xs }
+  @Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
 
 foldr f s l = case l of
   Cons x xs => f x (foldr f s xs)
@@ -92,11 +99,6 @@ scanl f q ls = (Cons q) case ls of
   @Cons x xs => scanl f (f q x) xs
 
 enumFromTo a b = if a >? b then @Nil else @Cons a (enumFromTo (1 + a) b)
-
-foldr1 f = \case
-  Cons x xs => case xs of
-    Nil => x
-    Cons y ys => f x (foldr1 f xs)
 
 --nubBy eq l = let
 --  nub l xs = case l of

@@ -16,18 +16,18 @@ import Control.Lens ( use, (%=) )
 debug_biunify = global_debug
 
 -- First class polymorphism:
--- \i ⇒ if (i i) true then true else true
+-- \i => if (i i) true then true else true
 -- i used as:
 -- i : (i1 -> i1) -> (i1 -> i1)
 -- i : i1 -> i1
--- ⇒ Need to consider i may be polymorphic
+-- => Need to consider i may be polymorphic
 -- i : a -> a
 
 -- inferred type: a & (a -> i1 -> i1) -> i1
 -- contravariant recursive type; this only makes sense if a is higher rank polymorphic:
--- a & (a -> i1 -> i1) ⇒ (Π B -> B -> B)
+-- a & (a -> i1 -> i1) => (Π B -> B -> B)
 
-failBiSub ∷ BiFail -> Type -> Type -> TCEnv s BiCast
+failBiSub :: BiFail -> Type -> Type -> TCEnv s BiCast
 failBiSub msg a b = BiEQ <$ (tmpFails %= (TmpBiSubError msg a b:))
 
 leakVars :: Int -> BitSet -> TCEnv s () -- v <=> a -> b => set a and b to lvl of v (they're exported outwards)
@@ -43,24 +43,27 @@ leakVars v export = let
 
 leakTyVars v t = -- traceM (show v <> " " <> prettyTyRaw t) *>
   leakVars v (getTVarsType t) -- TODO avoid type traversal?
+checkLvl v = use lvls <&> \(x : _) -> testBit x v
 
-bisub a b = --when debug_biunify (traceM ("bisub: " <> prettyTyRaw a <> " ⇔ " <> prettyTyRaw b)) *>
+bisub a b = --when debug_biunify (traceM ("bisub: " <> prettyTyRaw a <> " <=> " <> prettyTyRaw b)) *>
   biSubType a b
 
-biSubTVars ∷ BitSet -> BitSet -> TCEnv s BiCast
+biSubTVars :: BitSet -> BitSet -> TCEnv s BiCast
 biSubTVars p m = BiEQ <$ (bitSet2IntList p `forM` \v -> biSubTVarTVar v `mapM` bitSet2IntList m)
 
 biSubTVarTVar p m = use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
-  when debug_biunify (traceM ("bisubττ: " <> prettyTyRaw (TyVar p) <> " ⇔ " <> prettyTyRaw (TyVar m)))
+  when debug_biunify (traceM ("bisubττ: " <> prettyTyRaw (TyVar p) <> " <=> " <> prettyTyRaw (TyVar m)))
+  live <- checkLvl p
   leakVars p (0 `setBit` m)
   leakVars m (0 `setBit` p)
   MV.write v p (BiSub (mergeTVar m p') (mergeTVar m m')) -- TODO is ok? intended to fix recursive type unification
-  unless (hasVar m' m) $ void (biSubType p' (TyVar m)) -- Avoid loops
+  unless (hasVar m' m || live) $ void (biSubType p' (TyVar m)) -- Avoid loops
   pure BiEQ
 
 biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let mMerged = mergeTypes True m m'
-  when debug_biunify (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " ⇔ " <> prettyTyRaw m))
+  when debug_biunify (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " <=> " <> prettyTyRaw m))
+--live <- checkLvl v
   leakTyVars v m
   MV.write b v (BiSub p' mMerged)
   if mMerged == m' then pure BiEQ -- if merging was noop, this would probably loop
@@ -68,13 +71,14 @@ biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
 
 biSubTVarM p v = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let pMerged = mergeTypes False p p'
-  when debug_biunify (traceM ("bisub: " <> prettyTyRaw p <> " ⇔ " <> prettyTyRaw (TyVar v)))
+  when debug_biunify (traceM ("bisub: " <> prettyTyRaw p <> " <=> " <> prettyTyRaw (TyVar v)))
+--live <- checkLvl v
   leakTyVars v p
   MV.write b v (BiSub pMerged m')
   if pMerged == p' then pure BiEQ -- if merging was noop, this would probably loop
   else biSubType p m'
 
-biSubType ∷ Type -> Type -> TCEnv s BiCast
+biSubType :: Type -> Type -> TCEnv s BiCast
 biSubType tyP tyM = let
   (pVs , pTs) = partitionType tyP
   (mVs , mTs) = partitionType tyM
@@ -85,7 +89,7 @@ biSubType tyP tyM = let
   biSub pTs mTs
 
 -- bisub on ground types
-biSub ∷ [TyHead] -> [TyHead] -> TCEnv s BiCast
+biSub :: [TyHead] -> [TyHead] -> TCEnv s BiCast
 biSub a b = case (a , b) of
   ([] ,  _)  -> pure BiEQ
   (_  , [])  -> pure BiEQ
@@ -120,9 +124,9 @@ instantiateF tvars t pos = let
   TyGroundF g  -> let x = instGround <$> g in (getRecs x , mergeTypeList pos (snd <$> x))
   t -> distribute t pos & \x -> (getRecs x , embed (fmap snd x))
 
-atomicBiSub ∷ TyHead -> TyHead -> TCEnv s BiCast
+atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
 atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
- when debug_biunify (traceM ("⚛bisub: " <> prettyTyRaw tyP <> " ⇔ " <> prettyTyRaw tyM)) *>
+ when debug_biunify (traceM ("⚛bisub: " <> prettyTyRaw tyP <> " <=> " <> prettyTyRaw tyM)) *>
  case (p , m) of
   (_ , THTop) -> pure (CastInstr MkTop)
   (THBot , _) -> pure (CastInstr MkBot)
@@ -140,7 +144,7 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
 --(x , THMuBound m) -> use muUnrolls >>= \m -> _ -- printList (Cons 3 Nil) ⇒ [Nil] <:? x
 
   (THBi nb p , _) -> do
-    instantiated ← instantiate True nb p -- TODO polarity ok?
+    instantiated <- instantiate True nb p -- TODO polarity ok?
     biSubType instantiated tyM
 
   (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)
@@ -160,7 +164,7 @@ getTVarsType = \case
   TyVars vs g -> foldr (.|.) vs (getTVarsTyHead <$> g)
   TyGround  g -> foldr (.|.) 0 (getTVarsTyHead <$> g)
   _ -> error "panic: getTVars on non-trivial type"
-getTVarsTyHead ∷ TyHead -> BitSet
+getTVarsTyHead :: TyHead -> BitSet
 getTVarsTyHead = \case
   THTyCon t -> case t of
     THArrow ars r -> foldr (.|.) 0 (getTVarsType r : (getTVarsType <$> ars) )
@@ -218,6 +222,6 @@ arrowBiSub (argsp,argsm) (retp,retm) = let
   in (\(argCasts, pap, retCast) -> CastApp argCasts pap retCast) <$> bsArgs argsp argsm
 
 primBiSub p1 m1 = case (p1 , m1) of
-  (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (CastInstr Zext) else (BiEQ <$ failBiSub (TextMsg "Primitive Finite Int") (TyGround [THPrim p1]) (TyGround [THPrim m1]))
+  (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (CastInstr Zext) else BiEQ <$ failBiSub (TextMsg "Primitive Finite Int") (TyGround [THPrim p1]) (TyGround [THPrim m1])
   (PrimInt p , PrimBigInt) -> pure (CastInstr (GMPZext p))
-  (p , m) -> if (p /= m) then (failBiSub (TextMsg "primitive types") (TyGround [THPrim p1]) (TyGround [THPrim m1])) else pure BiEQ
+  (p , m) -> if p /= m then failBiSub (TextMsg "primitive types") (TyGround [THPrim p1]) (TyGround [THPrim m1]) else pure BiEQ

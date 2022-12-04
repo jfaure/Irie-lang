@@ -1,0 +1,3 @@
+foldr f s l = case l of
+  @Cons x xs => f x (foldr f s xs)
+  @Nil       => s

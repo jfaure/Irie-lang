@@ -25,14 +25,13 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
  , _parseDetails :: ParseDetails
 }
 -- To allow the repl to continue
-emptyParsedModule h = Module h [] Question (ParseDetails (0 , mempty) mempty mempty mempty mempty [])
+emptyParsedModule h = Module h [] Question (ParseDetails (0 , mempty) mempty mempty mempty [])
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
    _hNameMFWords  :: (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
  , _hNameBinds    :: M.Map HName IName -- top-level and let-bound assignments TODO list is sufficient here
- , _hNamesNoScope :: NameMap
- , _fields        :: NameMap
+ , _hNamesNoScope :: NameMap -- INames (module-local HName equivalents)
  , _labels        :: NameMap
  , _newLines      :: [Int]
 }
@@ -77,6 +76,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  -- lambda-calculus
  | BruijnLam BruijnAbs
  | App TT [TT] -- Used by unpattern and solveMixfixes once clear of precedence & mixfixes
+ | AppExt IName [TT] -- possibly a label application
  | Juxt SourceOffset [TT] -- may contain mixfixes to resolve
  | PiBound [TT] TT -- (a b c : T) introduces pi-bound arguments of type T
 
@@ -129,10 +129,7 @@ data ParseState = ParseState {
 }
 emptyParseState nm = ParseState (mkPos 1) IndentEither (emptyParsedModule nm)
 
-makeLenses ''ParseState
-makeLenses ''ParseDetails
-makeLenses ''Module
-makeLenses ''FnDef
+makeLenses ''ParseState ; makeLenses ''ParseDetails ; makeLenses ''Module ; makeLenses ''FnDef
 makeBaseFunctor ''TT
 
 mkBruijnLam (BruijnAbsF 0 _       _    rhs) = rhs
@@ -145,7 +142,6 @@ prettyModule m = show (m^.moduleName) <> " {\n"
     <> show (m^.parseDetails) <> "\n}"
 prettyParseDetails p = Prelude.concatMap ("\n  " <>)
     [ "names:  "   <> show (p^.hNamesNoScope)
-    , "fields: "   <> show (p^.fields)
     , "labels: "   <> show (p^.labels)
 --  , "newlines: " <> show (p^.newLines)
     ]

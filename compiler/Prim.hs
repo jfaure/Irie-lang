@@ -113,17 +113,17 @@ data TyInstrs
 data Predicates  = EQCmp | NEQCmp | GECmp | GTCmp | LECmp | LTCmp | AND | OR
 data IntInstrs   = Add | Sub | Mul | SDiv | SRem | Neg | AbsVal | IPow
 data NatInstrs   = UDiv | URem
-data BitInstrs   = And | Or | Not | Xor | ShL | ShR | BitRev | ByteSwap | CtPop | CtLZ | FShL | FShR | RotL | RotR
+data BitInstrs   = And | Or | Not | Xor | ShL | ShR | BitRev | ByteSwap | PopCount | CTZ | CLZ | FShL | FShR | RotL | RotR
                  {- BMI1 -} | ANDN | BEXTR | BLSI | BLSMSK | BLSR| CtTZ {- BMI2 -} | BZHI | MULX | PDEP | PEXT
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
 data ArrayInstrs = ExtractVal  -- | InsertVal | Gep
 
 primInstr2Nm = \case
-  NumInstr i → show i
-  GMPInstr i → "gmp-" <> show i
-  GMPOther i → "gmp-" <> show i
-  TyInstr  i → show i
-  i          → show i
+  NumInstr i -> show i
+  GMPInstr i -> "gmp-" <> show i
+  GMPOther i -> "gmp-" <> show i
+  TyInstr  i -> show i
+  i          -> show i
 -- MemInstr   !ArrayInstrs
 
 deriving instance Show Literal
@@ -171,21 +171,22 @@ deriving instance Eq NumInstrs
 deriving instance Eq GMPSpecial
 deriving instance Eq POSIXType
 
-prettyPrimType ∷ PrimType → Text
+prettyPrimType :: PrimType -> Text
 prettyPrimType = toS . \case
-  PrimInt x        → "%i" <> show x
-  PrimBigInt       → "%BigInt"
-  PrimNat x        → "%ui" <> show x
-  PrimFloat f      → "%f" <> show f
-  PrimArr prim     → "%@[" <> show prim <> "]"
-  PrimTuple prim   → "%tuple(" <> show prim <> ")"
-  PtrTo t          → "%ptr(" <> show t <> ")"
-  PrimExtern   tys → "%extern(" <> show tys <> ")"
-  PrimExternVA tys → "%externVA(" <> show tys <> ")"
-  POSIXTy t → case t of { DirP → "%DIR*" ; DirentP → "%dirent*" }
+  PrimInt x        -> "%i" <> show x
+  PrimBigInt       -> "%BigInt"
+  PrimNat x        -> "%ui" <> show x
+  PrimFloat f      -> "%f" <> show f
+  PrimArr prim     -> "%@[" <> show prim <> "]"
+  PrimTuple prim   -> "%tuple(" <> show prim <> ")"
+  PtrTo t          -> "%ptr(" <> show t <> ")"
+  PrimExtern   tys -> "%extern(" <> show tys <> ")"
+  PrimExternVA tys -> "%externVA(" <> show tys <> ")"
+  POSIXTy t -> case t of { DirP → "%DIR*" ; DirentP → "%dirent*" }
+  PrimCStruct -> "%CStruct" -- (" <> show x <> ")"
   x -> error $ show x
 
-primSubtypeOf ∷ PrimType → PrimType → Bool
+primSubtypeOf :: PrimType -> PrimType -> Bool
 PrimInt a `primSubtypeOf` PrimInt b = a <= b
 PrimNat a `primSubtypeOf` PrimNat b = a <= b
 x `primSubtypeOf` y = x == y

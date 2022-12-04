@@ -92,6 +92,15 @@ testParity n = let
       in S.describe "let-mutuals" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "testParity = %i32 → %i1"
 
+  let e ∷ Text = [r|
+foldr1 f = \case
+  @Cons x xs => case xs of
+    @Nil => x
+    @Cons y ys => f x (foldr1 f xs)
+|]
+      in S.describe "foldr1" $ S.it (toS e) $ UniText (inferType e)
+        `S.shouldBe` UniText "foldr1 = ∏ A B → (A → A → A) → µb.[Cons {A , b} | Nil] → A"
+
 testImports = do
   (fp1 , h1) ← SIO.openTempFile "/tmp/" "m1"
   hPutStr h1 $ ("f = 3" ∷ Text)
@@ -129,6 +138,7 @@ goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
   Main.sh (fName <> " -o" <> tmpFile <> " " <> opts)
   readFile tmpFile
 
+tuple    = S.it "tuple.ii"       (goldenInfer "-p types --no-fuse --no-color" "imports/tuple.ii"       "tuple")
 list1    = S.it "list.ii"        (goldenInfer "-p types --no-fuse --no-color" "imports/list.ii"        "list")
 list2    = S.it "list2.ii"       (goldenInfer "-p types --no-fuse --no-color" "imports/list2.ii"       "list2")
 mutual   = S.it "mutual.ii"      (goldenInfer "-p types --no-fuse --no-color" "imports/sumMul.ii"      "sumMul")
@@ -146,6 +156,7 @@ s = S.sydTest $ do
   sequence_ selfAppTests
   --sequence_ recTests
   caseTests
+  tuple
   list1
   list2
   mutual

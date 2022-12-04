@@ -2,10 +2,9 @@
 module Main where
 import CmdLine
 import qualified ParseSyntax as P
-import qualified Options.Applicative.Types
 import Parser (parseModule)
 import ModulePaths (findModule)
-import Externs
+import Externs (Externs(..) , GlobalResolver(..) , ModDependencies(..) , ModDeps , primResolver , addModuleToResolver , resolveImports , addModName , addDependency)
 import CoreSyn
 import CoreUtils (bind2Expr)
 import Errors
@@ -17,7 +16,7 @@ import qualified FEnv (simplifyModule)
 import MkSSA (mkSSAModule)
 import C (mkC)
 
-import Text.Megaparsec ( errorBundlePretty , ParseErrorBundle )
+import Text.Megaparsec ( errorBundlePretty )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy.IO as TL.IO
@@ -46,6 +45,7 @@ getCachePath fName = let
   in objDir <> map (\case { '/' -> '%' ; x -> x} ) (normalise fName)
 resolverCacheFName = getCachePath "resolver"
 doCacheCore  = False
+doFuse       = False
 cacheVersion = 0
 
 deriving instance Generic GlobalResolver
@@ -66,15 +66,13 @@ opt        = sh $ demoFile <> " -p simple"
 emitC      = sh $ demoFile <> " -p C"
 testRepl   = sh ""
 
-data Pipeline
-  = PCmdline    (Options.Applicative.Types.ParserResult CmdLine)
-  | PFileExists (Either FilePath FilePath)
-  | PParse      (Either (ParseErrorBundle Text Void) P.Module)
-  | PImports    (Either BitSet P.Module)
-  | PJudge      (Either Errors JudgedModule)
-  | PSimple     JudgedModule
--- | PSSA     SSAMod
-  -- optimise > mkssa > mkC cannot fail
+--data Pipeline
+--  = PCmdline    (Options.Applicative.Types.ParserResult CmdLine)
+--  | PFileExists (Either FilePath FilePath)
+--  | PParse      (Either (ParseErrorBundle Text Void) P.Module)
+--  | PImports    (Either BitSet P.Module)
+--  | PJudge      (Either Errors JudgedModule)
+--  | PSimple     JudgedModule
 
 main = getArgs >>= main'
 main' args = parseCmdLine args >>= \cmdLine -> do
@@ -82,18 +80,18 @@ main' args = parseCmdLine args >>= \cmdLine -> do
   when doCacheCore (createDirectoryIfMissing False objDir')
   resolverExists <- doesFileExist resolverCacheFName
   resolver       <- if doCacheCore && not (noCache cmdLine) && resolverExists
-    then DB.decodeFile resolverCacheFName ∷ IO GlobalResolver
+    then DB.decodeFile resolverCacheFName :: IO GlobalResolver
     else pure primResolver -- Strings cmdLine :: IO String programs
-  files cmdLine `forM_` doFileCached cmdLine True resolver 0
+  files cmdLine `forM` doFileCached cmdLine True resolver 0
   when (repl cmdLine || null (files cmdLine) && null (strings cmdLine)) $ let
     patchFlags = cmdLine{ printPass = "types" : printPass cmdLine , repl = True , noColor = False , noFuse = True }
     in replCore (if null (printPass cmdLine) then patchFlags else cmdLine)
 
-decodeCoreFile ∷ FilePath -> IO JudgedModule       = DB.decodeFile
-encodeCoreFile ∷ FilePath -> JudgedModule -> IO () = DB.encodeFile
+decodeCoreFile :: FilePath -> IO JudgedModule       = DB.decodeFile
+encodeCoreFile :: FilePath -> JudgedModule -> IO () = DB.encodeFile
 cacheFile fp jb = createDirectoryIfMissing False objDir *> encodeCoreFile (getCachePath fp) jb
 
-doFileCached ∷ CmdLine -> Bool -> GlobalResolver -> ModDeps -> FilePath -> IO (GlobalResolver , JudgedModule)
+doFileCached :: CmdLine -> Bool -> GlobalResolver -> ModDeps -> FilePath -> IO (GlobalResolver , JudgedModule)
 doFileCached flags isMain resolver depStack fName = let
   cached            = getCachePath fName
   isCachedFileFresh = (<) <$> getModificationTime fName <*> getModificationTime cached
@@ -113,16 +111,16 @@ doFileCached flags isMain resolver depStack fName = let
   _         | not doCacheCore -> go' resolver
   _ -> doesFileExist cached >>= \exists -> if not exists then go' resolver else do
     fresh  <- isCachedFileFresh
-    judged <- decodeCoreFile cached ∷ IO JudgedModule -- even stale cached modules need to be read
+    judged <- decodeCoreFile cached :: IO JudgedModule -- even stale cached modules need to be read
     if fresh && not (recompile flags) && not isMain then pure (resolver , judged)
       else let names = bindNames judged <> V.fromList (M.keys (labelNames judged))
         in go resolver (Just $ OldCachedModule (modIName judged) names)
       --else go (rmModule modINm (bindNames judged) resolver) (Just modINm)
 
-evalImports ∷ CmdLine -> ModIName -> GlobalResolver -> BitSet -> [Text] -> IO (Bool, GlobalResolver, ModDependencies)
+evalImports :: CmdLine -> ModIName -> GlobalResolver -> BitSet -> [Text] -> IO (Bool, GlobalResolver, ModDependencies)
 evalImports flags moduleIName resolver depStack fileNames = do
   (nopath , importPaths) <- partitionEithers <$> (findModule searchPath . toS) `mapM` fileNames
-  nopath `forM_` \f -> putStrLn $ ("couldn't find " <> show f <> " in search path\n" <> show searchPath ∷ Text)
+  nopath `forM_` \f -> putStrLn $ ("couldn't find " <> show f <> " in search path\n" <> show searchPath :: Text)
 
   -- TODO this foldM could be parallel
   (r , importINames) <- let
@@ -146,18 +144,17 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
   when ("parseTree" `elem` printPass flags) (putStrLn (P.prettyModule parsed))
 
   (importsok , modResolver , modDeps) <- evalImports flags modIName resolver (setBit depStack modIName) (parsed ^. P.imports)
-  unless importsok (putStrLn ("failed some imports" ∷ Text))
+  unless importsok (putStrLn ("failed some imports" :: Text))
   pure $ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule
 
 -- Judge the module and update the global resolver
-inferResolve ∷ CmdLine -> [Char] -> Int -> GlobalResolver -> ModDependencies -> P.Module -> Text -> Maybe OldCachedModule
+inferResolve :: CmdLine -> [Char] -> Int -> GlobalResolver -> ModDependencies -> P.Module -> Text -> Maybe OldCachedModule
   -> (CmdLine , FilePath , JudgedModule , V.Vector HName , GlobalResolver , Externs , Errors , Maybe SrcInfo)
 inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule = let
   hNames     = (parsed ^. P.bindings) & \case
     P.LetIn (P.Block _ _ binds) Nothing -> P._fnNm <$> binds
-    x -> abort (show x)
+    x -> error (show x)
   labelMap   = parsed ^. P.parseDetails . P.labels
-  fieldMap   = parsed ^. P.parseDetails . P.fields
   iNames     = parsed ^. P.parseDetails . P.hNamesNoScope
   labelNames = iMap2Vector labelMap
   iNamesV    = iMap2Vector iNames
@@ -178,19 +175,19 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
     Core (LetBlock binds) _ty -> binds <&> \(meta , e) -> (hName meta , bind2Expr e)
     x -> error (show x) -- V.zip bindNames (bind2Expr <$> judgedBinds)
   newResolver = addModuleToResolver tmpResolver modIName bindExprs labelNames
-    (iMap2Vector fieldMap) labelMap fieldMap modDeps
+    {-(iMap2Vector fieldMap)-} labelMap {-fieldMap-} modDeps
   in (flags , fName , judgedModule , iNamesV , newResolver , exts , errors , srcInfo)
 
 -- TODO half-compiled modules `not coreOK` should also be cached (since their names were pre-added to the resolver)
-simplifyModule ∷ (CmdLine, f, JudgedModule, V.Vector HName , GlobalResolver, e, Errors, e2)
+simplifyModule :: (CmdLine, f, JudgedModule, V.Vector HName , GlobalResolver, e, Errors, e2)
   -> ( CmdLine, Bool, Errors, e2, f, V.Vector HName , GlobalResolver , JudgedModule)
 simplifyModule (flags , fName , judgedModule , iNames , newResolver , _exts , errors , srcInfo) = let
-  JudgedModule modI modNm bindNames a b judgedModTT _specs = judgedModule
+  JudgedModule modI modNm bindNames lMap judgedModTT _specs = judgedModule
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
-  judgedSimple = if noFuse flags || not coreOK then judgedModule else runST $
+  judgedSimple = if not doFuse || noFuse flags || not coreOK then judgedModule else runST $
     FEnv.simplifyModule modI judgedModTT <&> \(modTTSimple , specs)
-      -> JudgedModule modI modNm bindNames a b modTTSimple specs
+      -> JudgedModule modI modNm bindNames lMap modTTSimple specs
   in (flags , coreOK , errors , srcInfo , fName , iNames , newResolver , judgedSimple)
 
 putResults :: (CmdLine, Bool, Errors, Maybe SrcInfo , FilePath , V.Vector HName , GlobalResolver , JudgedModule)
@@ -236,14 +233,14 @@ codegen flags input@(_resolver , jm) = let ssaMod = mkSSAModule jm in do
 ----------
 -- Repl --
 ----------
-replWith ∷ forall a. a -> (a -> Text -> IO a) -> IO a
+replWith :: forall a. a -> (a -> Text -> IO a) -> IO a
 replWith startState fn = let
   doLine state = getInputLine "$ " >>= \case
     Nothing -> pure state
     Just l  -> lift (fn state (toS l)) >>= doLine
   in runInputT defaultSettings $ doLine startState
 
-replCore ∷ CmdLine -> IO ()
+replCore :: CmdLine -> IO ()
 replCore cmdLine = let
   doLine l = text2Core cmdLine Nothing primResolver 0 "<stdin>" l
     >>= putResults . simplifyModule

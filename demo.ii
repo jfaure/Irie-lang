@@ -8,129 +8,97 @@
 --import imports/prelude
 --import imports/list
 --import imports/list2
---import imports/cata
+--import imports/cata -- Recursion schemes
 --import imports/question
 --import imports/ls
 
--- Cannot merge cases
--- eq1 (@x) b = 2
--- eq1 a b = 3
+-- Merge equations properly, this creates 2 bindings and bugs out inames
+--eq1 (@x) b = 2
+--eq1 a b = 3
 
---let-bound mixfix => make VLetBind instead of QName
---also phase out QName
---poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
+-- let-bound mixfix => make VLetBind instead of QName
+-- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
 
--- Simplify A & i32 -> A | i32 to i32
---enumFromTo a b = if a >? b then @Nil else @Cons a (enumFromTo (1 + a) b)
+-- Re-generalise let-binds + Add free-variables into type to codegen let-binds
 
--- assume label not new arg
--- f = \case
---   x => x
+-- Label namespaces + label application
+--f x = label x x -- check if label in scope as label ? or requrie @
+--f (x a) = a
+--g = \case
+--  x => x -- Always label
+-- v  (prelude + demo.ii.True)
+-- import imports/prelude
+-- x = True -- Ambiguous binding (@True OK)
 
--- unprepared for Tuple
---f = \(a , b) => a + a
+-- f (x a) = a -- x uses bind-name not label name
 
--- Re-generalise let-binds
+-- tvars must never refer to deeper let-nest tvars through their bounds
+-- need to save state tvars => only biunify with instantations not the escaped tvar
+-- lp17 f = let r x g = { a = g x , b = f x } in { u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
+-- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
 
--- roll μ correctly
+-- Need to accurately delegate generalisation to first mutual
+-- mutu-gen => mutual.ii
+
+-- lost some μ-bounds (? buildroll just before making μ binder)
+--import imports/foldr
+--nonEmptySubSequences = \case
+--  @Nil       => Nil
+--  @Cons x xs => let
+--    f ys r = Cons ys (Cons (Cons x ys) r)
+--    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+
+--import imports/list
+--unwords ws = let
+--  goUnwords x = case x of
+--    @Nil => @Nil
+--    @Cons v vs => @Cons ' ' (append v (goUnwords vs))
+--  in case ws of
+--    @Nil => Nil
+--    @Cons w ws => append w (goUnwords ws)
+
+-- multi-branch different μ merging =>
 --rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
--- Label namespaces: Ambiguous binding (prelude + demo.ii.True)
--- x = True -- @True is OK
+--import imports/mkParser
+import imports/intmap
 
---broken if run together (probably wrong wip' bind so r reads f by mistake)
-f = 3 -- let x = 3 in x -- QName 1 (ie. 1.0)
-r = { next = r }
--- ! mutual recursion at different depths must use the right wip' bind mvector
--- r = let x = { a = 3 , b = x} in 5
--- something wrong with name resolution up a nesting level:
--- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
+-- Wildcard
+--null = \case
+--  @None => @True
+--  ? => @False
+-- import imports/intmap
 
--- Illegal pattern
---f (x a) = a
-
--- lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}  -- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
-
---foldr1 f = \case
---  @Cons x xs => case xs of
---    @Nil => x
---    @Cons y ys => f x (foldr1 f xs)
+-- ? make dummy binding then rebind f and g to lenses
+-- (f , g) = (2 , 3)
 
 {-
-fmap f = \case
-  Done      => Done
---Skip r    => Skip r
-  Yield x r => Yield x (f r)
-
-rcata f = f << fmap (rcata f)
-rana g = fmap (rana g) << g
-rhylo f g = f << fmap (rhylo f g) << g
-
--- ∀s. stream (unstream s) => s
-Sfuse next (stream n0 s0) = stream (next << n0) s0
-Sana  (stream n s) = rana  n s
-Scata (stream n s) = rcata n s
-
-ana next seed = @stream next seed
-cata c (stream a seed) = rhylo c a seed
-
-map f = Sfuse \case
-  Done      => Done
-  Yield x r => Yield (f x) r
-
-enumFromTo lo hi = ana (\i => if i >? hi then Done else Yield i (i + 1)) lo
-
-sum = cata \case
-  Done      => 0
-  Yield x r => x + r
-
---l = sum (enumFromTo 5 10)
-r = sum (map (add 1) (enumFromTo 5 10))
--}
-
--- f n = sum [ k * m | k ← [1..n] , m ← [1..k] ]
--- T[E | ] = return E
--- T[E | B , Q] = guard B T[E | Q]
--- T[E | P ← L , Q] = let f P = True ; f _ = False
---                        g P = T[E | Q]
---                    in concatMap (\x => guard (f x) (g x)) L
--- T[E | let decls , Q] = let decls in T [E | Q]
-
---merge all co-occurs of recursive var into the μ-binder
---foldr1 f l = case l of
---  Cons x xs => case xs of
---    Nil => x
---    Cons y ys => f x (foldr1 f xs)
-
-{-
-ifThenElseL cond a b = case cond of
-  True  => a
-  False => b
-
--- sumAppend n = sum [m * m | m ← [1..n]]
+import imports/prelude
+-- Fusion
+-- sumAppend n = sum [m * m | m <- [1..n]]
 -- = foldl _+_ 0 (concatMap (\m => pure (m * m)) (enum 1 n)
 nextEnum n = case n >=? 10 of
-  True  => @Done
-  False => @Yield n (1 + n)
+  @True  => @Done
+  @False => @Yield n (1 + n)
 
 nextConcatMap i nest = case nest of
-  J (Stream next s0) => case next s0 of
-    Done      => @Skip i @N
-    Skip s    => @Skip i (J (Stream next s))
-    Yield y s => @Yield y i (J (Stream next s))
-  N => case nextEnum i of
+  @J (@Stream next s0) => case next s0 of
+    @Done      => @Skip i @N
+    @Skip s    => @Skip i (J (Stream next s))
+    @Yield y s => @Yield y i (J (Stream next s))
+  @N => case nextEnum i of
     Done   => Done
     Skip i => Skip i N
     Yield x i => let
       nextRet x = \case
-        True  => Yield (x * x) False
-        False => Done
+        @True  => Yield (x * x) False
+        @False => Done
       in Skip i (J (Stream (nextRet x) True))
 
 go z s0 s1 = case nextConcatMap s0 s1 of
-  Done        => z
-  Skip s q    => go z s q
-  Yield x s q => go (z + x) s q
+  @Done        => z
+  @Skip s q    => go z s q
+  @Yield x s q => go (z + x) s q
 
 sumAppend n = go 0 n N
 -}

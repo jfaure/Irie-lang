@@ -1,0 +1,29 @@
+import imports/prelude
+import imports/foldr
+
+drop n xs = if n <=? 0 then xs else case xs of
+  @Nil => Nil
+  @Cons x ys => drop (n - 1) ys
+
+fromCString str = let
+  go (ok , val , str2) = if ok then @Cons val (go (nextElem str2)) else @Nil
+  in go (nextElem str)
+
+-- takeN c = { str = drop 1 c.str }
+
+--runParse : String -> LR a -> Maybe a
+-- runParse = \case
+--  @TakeN     n => _ --splitAt n str
+--  @Takewhile f => _
+--  @String x    => _
+--  @Alt a b     => _
+--  @LookAhead a => _
+--  @EOF         => _
+
+fmapFree f = \case
+  @Pure x => @Pure x
+  @Free x => @Free (f x)
+
+foldFree pure free f = case f of
+  @Pure x => pure x
+  @Free x => free (fmapFree (foldFree pure free) x)

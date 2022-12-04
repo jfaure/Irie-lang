@@ -52,7 +52,7 @@ ttApp retTy readBind fn args = let --trace (clYellow (show fn <> " $ " <> show a
 --    e → ttApp' e args
 
 --  Special instructions (esp. type constructors)
-    Instr (TyInstr Arrow)  → expr2Ty readBind `mapM` args <&> \case
+    Instr (TyInstr Arrow)  → expr2Ty `mapM` args <&> \case
       { [a , b] → Ty (TyGround (mkTyArrow [a] b)) ; x → error $ "wrong arity for TyArrow" <> show x }
     Instr (TyInstr MkIntN) | [Core (Lit (Int i)) _ty] ← args →
       pure $ Ty (TyGround [THPrim (PrimInt $ fromIntegral i)])

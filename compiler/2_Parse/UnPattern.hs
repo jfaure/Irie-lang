@@ -10,7 +10,7 @@ import qualified Data.List.NonEmpty as NE
 -- Invert a TT into a case-tree, so mixfixes and labels are handled uniformly
 -- Parse > resolve mixfixes > resolve cases > check arg scopes?
 -- parse modules as Fn : [AllHNames] -> Module (ie. structural parse , don't lookup anything since depends on mixfix parse)
--- codo on cofree comonad ⇒ DSL for case analysis on the base functor of the cofree comonad.
+-- codo on cofree comonad => DSL for case analysis on the base functor of the cofree comonad.
 
 -- type Moore = Cofree (-> (Pattern , Rhs)) Scrut
 -- Moore machine with states labeled with values of type Scrut, and transitions on edges of (Pattern , Rhs).
@@ -31,15 +31,15 @@ type MatchOK = TT
 type Rhs     = TT
 type CaseAcc = Scrut -> MatchOK -> MatchKO -> (TT , BruijnSubs)
 
--- λ (η a _) ⇒ \s0 -> if λ s1 -> if η s2 s3 -> name s2 -> rhs
+-- λ (η a _) => \s0 -> if λ s1 -> if η s2 s3 -> name s2 -> rhs
 -- Note. this assigns debruijn args to subPatterns which must be mapped from VExterns later
-buildCase ∷ CasePattern -> CaseAcc
+buildCase :: CasePattern -> CaseAcc
 buildCase = let
-  mkSubCases ∷ [CaseAcc] -> MatchOK -> MatchKO -> (Rhs , BruijnSubs)
+  mkSubCases :: [CaseAcc] -> MatchOK -> MatchKO -> (Rhs , BruijnSubs)
   mkSubCases = let
     -- build a case where if any matches in the list fail , the whole list fails
-    -- eg. [a , b] ⇒ (match a ⇒ match b ⇒ λa b ⇒ ok) else ko
-    subCaseF ∷ ListF CaseAcc (MatchOK -> MatchKO -> (Rhs , [(IName , Int)] , IName)) -> MatchOK -> MatchKO -> (Rhs , [(IName , Int)] , IName)
+    -- eg. [a , b] => (match a => match b => λa b => ok) else ko
+    subCaseF :: ListF CaseAcc (MatchOK -> MatchKO -> (Rhs , [(IName , Int)] , IName)) -> MatchOK -> MatchKO -> (Rhs , [(IName , Int)] , IName)
     subCaseF ret ok ko = case ret of
         Nil            -> (ok , [] , 0)
         Cons caseAcc r -> let
@@ -49,13 +49,16 @@ buildCase = let
           in (this , argSubs2 ++ argSubs , bruijnI + 1)
     in \subPats ok ko -> cata subCaseF subPats ok ko & \(a,b,_) -> (a,b)
 
-  go ∷ TTF CaseAcc -> CaseAcc -- Pass down a scrut and a default branch
-  go pat scrut ok ko = let noSubs = (,[]) in case pat of
-    LabelF q subPats -> let
+  go :: TTF CaseAcc -> CaseAcc -- Pass down a scrut and a default branch
+  go pat scrut ok ko = let
+    noSubs = (,[])
+    goLabel q subPats = let
       (rhs , argSubs) = mkSubCases subPats ok ko
       branch = mkBruijnLam (BruijnAbsF (length subPats) argSubs 0 rhs) -- (η a b) => (\a b ->)
       in noSubs $ MatchB scrut (BSM.singleton q branch) ko
-    -- argument was named => need to sub it for its bruijn name !
+    in case pat of
+    LabelF q subPats  -> goLabel q subPats -- argument was named => need to sub it for its bruijn name !
+    AppExtF q subPats -> goLabel q subPats
     VarF (VExtern i)    -> case scrut of
       Var (VBruijn b) -> (ok , [(i,b)])
       _ -> (DesugarPoison ("Unknown label: " <> show i) , [])
@@ -64,13 +67,11 @@ buildCase = let
     PatternGuardsF pats -> mkSubCases pats ok ko
     ArgProdF cc      -> mkSubCases cc ok ko & \(rhs , bruijnSubs) ->
       (mkBruijnLam (BruijnAbsF (length cc) bruijnSubs 0 rhs) , [])
-    TupleF cc -> (DesugarPoison "Unprepared for tuple" , [])
---  ProdF c   -> let
---    n = length c
---    (keys , subPats) = unzip c
---    unConsArgs = keys <&> \k -> TTLens (-1) scrut [k] LensGet
---    (body , argSubs) = mkSubCases subPats ok ko
---    in (App (mkBruijnLam (BruijnAbsF n [] 0 body)) unConsArgs , argSubs)
+    TupleF subPats -> let -- (DesugarPoison "Unprepared for tuple" , [])
+      n = length subPats 
+      unConsArgs = [qName2Key (mkQName 0 i) | i <- [0 .. n-1]] <&> \k -> TTLens (-1) scrut [k] LensGet
+      (body , argSubs) = mkSubCases subPats ok ko
+      in (App (mkBruijnLam (BruijnAbsF n argSubs 0 body)) unConsArgs , argSubs)
     LitF l          -> noSubs $ let
       alts = (qName2Key builtinTrue , BruijnLam $ BruijnAbsF 1 [] 0 ok)
         : maybe [] (\falseBranch -> [(qName2Key builtinFalse , falseBranch)]) ko
@@ -78,12 +79,12 @@ buildCase = let
     x -> noSubs $ DesugarPoison ("Illegal pattern: " <> show (embed $ x <&> (\x -> fst $ x scrut ok ko)))
   in cata go -- scrut matchOK matchKO -> Term
 
-patternsToCase ∷ Scrut -> [(CasePattern , Rhs)] -> (Rhs , BruijnSubs)
+patternsToCase :: Scrut -> [(CasePattern , Rhs)] -> (Rhs , BruijnSubs)
 patternsToCase scrut patBranchPairs = let
-  r ∷ ([Rhs] , [BruijnSubs])
+  r :: ([Rhs] , [BruijnSubs])
   r@(matches , bruijnSubs) = unzip $ patBranchPairs <&> \(pat , rhs) -> buildCase pat scrut rhs Nothing
 
-  mergeCasesF ∷ NonEmptyF TT TT -> TT
+  mergeCasesF :: NonEmptyF TT TT -> TT
   mergeCasesF (NonEmptyF r Nothing) = r
   mergeCasesF (NonEmptyF case1 (Just case2)) = case (case1 , case2) of
     (MatchB s1 b1 ko1 , MatchB s2 b2 ko2) {- | s1 == s2-}
@@ -94,17 +95,9 @@ patternsToCase scrut patBranchPairs = let
     []     -> DesugarPoison "EmptyCase"
     x : xs -> cata mergeCasesF (x :| xs)
 
-matchesToTT ∷ NonEmpty FnMatch -> TT -- BruijnAbs
+matchesToTT :: NonEmpty FnMatch -> TT -- BruijnAbs
 matchesToTT ms = let
   argCount = NE.head ms & \(FnMatch pats _) -> length pats -- mergeCasesF will notice discrepancies in arg counts
   (rhs , _bruijnSubs@[]) = patternsToCase Question
     $ toList (ms <&> \(FnMatch pats rhs) -> (ArgProd pats , rhs))
   in rhs -- BruijnAbsF 0 bruijnSubs 0 rhs -- TODO just rhs
-
---matchesToTT ∷ NonEmpty FnMatch -> BruijnAbs
---matchesToTT ms = let
---  argCount = NE.head ms & \(FnMatch pats _) -> length pats -- mergeCasesF will notice discrepancies in arg counts
---  scrut    = ArgProd [Var (VBruijn i) | i <- [0 .. argCount - 1]]
---  rhs      = CaseSplits scrut (toList (ms <&> \(FnMatch pats rhs) -> (ArgProd pats , rhs)))
---  bruijnSubs = []
---  in BruijnAbsF argCount [] 0 (CasePat rhs)

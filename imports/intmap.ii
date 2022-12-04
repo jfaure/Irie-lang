@@ -1,20 +1,62 @@
 import imports/prelude
 
+-- Invariant: Nil is never a child of Bin
+-- Invariant: Mask is a power of 2 (largest bit position where 2 maps differ)
+-- Invariant: Prefix is the common high-order bits all elements share to the left of mask bit
+-- Invariant: (Bin prefix mask l r) = l is all elems that don't have mask bit set, right all that do
 -- Prefix = Int
 -- Mask   = Int
 -- IntMap a
 -- = Bin Prefix Mask (IntMap a) (IntMap a) -- prefix of a key up to (not incl.) the switching bit
 -- | Tip Key a
--- | Nil
+-- | Small BitSet -- can use a few avx registers (256 bits)
 
---insertLookupWithKey f k x t = case t of
---  Bin p m l r => if nomatch k p m then (Nothing , link k (Tip k x) p t)
---    else if zero k m then (let (found , l2) = insertLookupWithKey f k x r in (found , Bin p m l2 r)) else (let (found , r2) = insertLookupWithKey f k x r in (found , Bin p m l r2))
---  Tip k y     => if k =? ky then (Just y , Tip k (f k x y)) else (Nothing , link k (Tip k x) ky t)
---  None        => (Nothing , Tip k x)
+-- lookupGT lookupLT findMin findMax disjoint compose empty singleton
+
+wordSize = 32
+branchMask p1 p2 = highestBitMask (bitXOR p1 p2) -- The first bit where prefixes disagree
+highestBitMask w = bitSHL 1 (wordSize - 1 - bitCLZ w)
+
+mask i m = bitAND i (bitXOR m (sub 0 m))
+match i p m = eq (mask i m)
+nomatch i p m = ne (mask i m) p
+
+link p1 t1 p2 t2 = linkWithMask (branchMask p1 p2) p1 t1 {-p2-} t2
+-- `linkWithMask` is useful when the `branchMask` has already been computed
+linkWithMask m p1 t1 t2 = let p = mask p1 m in if zero p1 m then Bin p m t1 t2 else Bin p m t2 t1
 
 zero i m = i B& m =? 0
+
 lookup k = \case
-  @Bin p m l r => if zero k m then lookup k l else lookup k r
+  @Bin p m l r => lookup k (if zero k m then l else r)
   @Tip kx x    => if k =? kx then Just x else Nothing
   @None        => Nothing
+
+-- insertLookupWithKey :: (Key -> a -> a -> a) -> Key -> a -> IntMap a -> (Maybe a, IntMap a)
+insertLookupWithKey f k x t = case t of
+  @Bin p m l r => if nomatch k p m then (Nothing , link k (Tip k x) p t)
+    else (\(found , branch) => (found , if zero k m then Bin p m branch r else Bin p m l branch))
+         (insertLookupWithKey f k x r)
+  @Tip ky y    => if k =? ky then (Just y , Tip k (f k x y)) else (Nothing , link k (Tip k x) ky t)
+  @None        => (Nothing , Tip k x)
+
+-- delete
+-- adjust : (a -> a) -> Key -> IntMap a -> IntMap a
+-- alter :: (Maybe a -> Maybe a) -> Key -> IntMap a -> IntMap a
+-- alterF :: Functor f => (Maybe a -> f (Maybe a)) -> Key -> IntMap a -> f (IntMap a)
+--  flip Control.Lens.At
+-- updateWithKey ::  (Key -> a -> Maybe a) -> Key -> IntMap a -> IntMap a
+-- updateLookupWithKey ::  (Key -> a -> Maybe a) -> Key -> IntMap a -> (Maybe a , IntMap a)
+
+-- Choose whether μ binders wrap or not type joins => eliminate 1 pair of Gs
+-- C and D always appear with %i32, should rm
+--insertLookupWithKey
+-- ∏ A B C D E F G → (A → B → B → B) → (%i32 ⊓ A) → B
+--  → (µf.([Bin {(%i32 ⊓ C) , (%i32 ⊓ D) , E , f} | Tip {(%i32 ⊓ A) , B} | None] ⊓ G) ⊓ G)
+--  → { !0 : [Nothing | Just {B}]
+--    , !1 : µf.(
+--      [ Bin {(%i32 ⊔ C) , (%i32 ⊔ D)
+--        , (µf.([Bin {(%i32 ⊔ C) , (%i32 ⊔ D) , f , f} | Tip {A , B}] ⊔ E ⊔ G) ⊔ G)
+--        , (µf.([Bin {(%i32 ⊔ C) , (%i32 ⊔ D) , f , f} | Tip {A , B}] ⊔ E ⊔ G) ⊔ G)}
+--      | Tip {A , B}] ⊔ E ⊔ G)
+--    }

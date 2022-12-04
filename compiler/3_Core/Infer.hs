@@ -20,101 +20,88 @@ import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
 import Data.Functor.Foldable
 
-judgeModule ∷ P.Module -> BitSet -> ModuleIName -> p -> V.Vector HName -> Externs.Externs -> p1 -> (JudgedModule , Errors)
+judgeModule :: P.Module -> BitSet -> ModuleIName -> p -> V.Vector HName -> Externs.Externs -> p1 -> (JudgedModule , Errors)
 judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
-  wip'      <- MV.new 0
-  letBinds' <- MV.new 10
+  letBinds' <- MV.new 16
   bis'      <- MV.new 64
   (modTT , st) <- runStateT (infer exts modIName importedModules emptyBitSet (pm ^. P.bindings)) TCEnvState
     { _externs  = exts
     , _thisMod  = modIName
 
-    , _wip      = wip'
     , _letBinds = letBinds'
     , _letNest  = 0
     , _errors   = emptyErrors
     , _bruijnArgVars = mempty
 
     , _openModules = importedModules
-    , _bindWIP  = (0 , False)
+    , _bindWIP  = ((0 , -1) , False)
     , _tmpFails = []
     , _blen     = 0
     , _bis      = bis'
-    , _lvls     = [0] -- TODO start state?
---  , _escapedVars  = emptyBitSet
---  , _leakedVars   = emptyBitSet
---  , _deadVars     = emptyBitSet
+    , _lvls     = []
     }
---wip'' <- map ((\abs -> error "impossible") ||| identity) <$> V.unsafeFreeze (st ^. wip)
   pure (JudgedModule modIName (pm ^. P.moduleName) hNames
-    (pm ^. P.parseDetails . P.fields) (pm ^. P.parseDetails . P.labels) modTT Nothing , st ^. errors)
+    (pm ^. P.parseDetails . P.labels) modTT Nothing , st ^. errors)
 
 -- infer >> generalise >> check annotation
 -- This stacks inference of forward references and let-binds
--- Mutuals: wait for end of mutual block to generalise + careful of mutual recursion between nesting levels
--- This includes noting leaked and escaped typevars
-judgeBind :: MV.MVector s (Either P.FnDef Bind) -> IName -> TCEnv s Expr
-judgeBind wip' bindINm = use thisMod >>= \modINm -> (wip' `MV.read` bindINm) >>= \case
-  Left abs -> do
+-- Mutuals: wait for end of mutual block to generalise
+judgeBind :: Int -> IName -> TCEnv s Expr
+judgeBind letDepth bindINm = let
+  inferParsed :: MV.MVector s (Either P.FnDef Bind) -> P.FnDef -> TCEnv s Expr
+  inferParsed wip' abs = do
     freeTVars <- V.toList <$> use bruijnArgVars
-    svwip     <- bindWIP <<.= (bindINm , False)
---  bl <- use blen
---  lvls %= (intList2BitSet freeTVars :)
---  lvls %= (setNBits bl : ) -- enter lvl; all prev-vars marked up a lvl
-    -- TODO don't remark already up-marked lvls
-    -- biunify searches for first match to find a tvars lvl so will trigger too quickly here
-
+    ld        <- use letNest
+    svwip     <- bindWIP <<.= ((ld , bindINm) , False)
     (tvarIdx , jb , ms , isRec) <- freshBiSubs 1 >>= \[idx] -> do
-      MV.write wip' bindINm (Right $ Guard emptyBitSet idx)
-      e <- use externs
-      let required = emptyBitSet
-      open  <- use openModules
-      expr  <- infer e modINm open required (P._fnRhs abs)
+--    d_ (idx , (letDepth , bindINm) , abs) (pure ())
+      MV.write wip' bindINm (Right (Guard emptyBitSet idx))
+      expr  <- use thisMod >>= \modINm -> use externs >>= \e -> use openModules >>= \open ->
+        let required = emptyBitSet in infer e modINm open required (P._fnRhs abs)
       isRec <- snd <$> use bindWIP
       bindWIP .= svwip
       Right (Guard ms _tVar) <- MV.read wip' bindINm -- learn which binds had to be inferred as dependencies
       pure (idx , expr , ms , isRec)
     typeAnn <- getAnnotationType (P._fnSig abs)
-    -- Mutuals check freeVars == 0 to see if can trim bis
     MV.write wip' bindINm (Right $ Mutual jb (intList2BitSet freeTVars) isRec tvarIdx typeAnn)
-
---  letBinds <- (.&. complement svLets) <$> use letBounds
---  (bitSet2IntList letBinds) `forM_` \l -> regeneralise l
 
     lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
     if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
       then pure jb else fromJust . head <$> generaliseBinds wip' lvl0 (bindINm : bitSet2IntList ms) -- <* clearBiSubs 0
 
-  Right b -> case b of
-    BindOK _ _ _isRec e  -> pure e
-    Mutual _e _freeVs _isRec tvar _tyAnn -> pure (Core (Var (VQBind $ mkQName modINm bindINm)) (TyVar tvar)) -- don't inline the expr
-
-    Guard mutuals tvar -> fst <$> use bindWIP >>= \this -> let nm = mkQName modINm bindINm in
+  -- reference to inference stack (forward ref | recursive | mutual)
+  prevInfer :: MV.MVector s (Either P.FnDef Bind) -> Bind -> TCEnv s Expr
+  prevInfer wip' = \case
+    BindOK _ _ _isRec e  -> pure e -- don't inline the expr
+    Mutual _e _freeVs _isRec tvar _tyAnn -> d_ ("mutual module")
+      $ pure (Core (Var (VQBind $ mkQName letDepth bindINm)) (TyVar tvar))
+    -- Stacked bind means this was either forward ref | Mutual | recursive in block (r = { a = r })
+    Guard mutuals tvar -> use bindWIP >>= \((wipLet , wipI) , isRec) -> let nm = mkQName letDepth bindINm in
       ($> Core (Var (VQBind nm)) (TyVar tvar)) $
-      when (this /= bindINm) $ do
-        MV.write wip' bindINm (Right $ Guard (mutuals `setBit` this) tvar)
+      pure ()
+{-
+      when (wipI /= bindINm) $ do
+        traceShowM (mutuals , (wipLet , wipI) , (letDepth , bindINm))
+        MV.write wip' bindINm (Right $ Guard (mutuals `setBit` wipI) tvar)
         -- TODO mutual recursion at different nest depths => use VLetBound instead of a bitset
-        MV.modify wip' mF this where -- ! wip' may be the wrong nest
-          mF = \case
-            Right (Guard ms tv) -> Right $ Guard (ms `setBit` bindINm) tv
-            Right b@(BindOK{})  -> Right (did_ b) -- ?! not actually mutual
+        MV.modify wip' (mF bindINm) wipI where -- TODO wipI doesnt match lvlWip read at letDepth
+          mF i = \case
+            Right (Guard ms tv) -> Right $ Guard (ms `setBit` i) tv -- this is now responsible for another bind
+            Right b@(BindOK{})  -> Right (did_ b)
             x -> error (show x)
+-}
     b -> error (show b)
 
+  in use letBinds >>= \lb -> (lb `MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>=
+--   \abs -> traceShowM (letDepth , bindINm , abs) *> (\x -> x abs)
+     (inferParsed wip ||| prevInfer wip)
+
 -- Converting user types to Types = Generalise to simplify and normalise the type
-getAnnotationType ∷ Maybe P.TT -> TCEnv s (Maybe Type)
+getAnnotationType :: Maybe P.TT -> TCEnv s (Maybe Type)
 getAnnotationType ttAnn = case ttAnn of
   Nothing -> pure Nothing
   _ -> _
 --Just t@P.Abs{} -> let
---  escapes = emptyBitSet
---  genGroundType t = case t of
---    TyGround{} -> generalise escapes (Right t)
---    t -> pure t -- may need to generalise under complex types
---  in fmap tyExpr $ infer t >>= \case
---  Core t ty -> Core t <$> genGroundType ty
---  Ty ty     -> Ty     <$> genGroundType ty
---  x         -> pure x
 --Just t -> tyExpr <$> infer t -- no need to generalise if not Abs since no pi bounds
 
 -- TODO This is slow and repeats work when regeneralisation is not necessary !
@@ -124,12 +111,11 @@ regeneralise wip' l = MV.read wip' l >>= \case
     (Core t <$> generalise 0 (Right ty)) >>= MV.write wip' l . (\r t -> Right $ BindOK o False r t) r
   _ -> pure () -- <* traceM ("attempt to regeneralise non-let-bound: " <> show l)
 
-generaliseBinds ∷ MV.MVector s (Either P.FnDef Bind) -> BitSet -> [Int] -> TCEnv s [Expr]
-generaliseBinds wip' lvl0 ms = ms `forM` \m -> MV.read wip' m >>= \case
- Left e -> error $ show e
- Right b -> case b of
+generaliseBinds :: MV.MVector s (Either P.FnDef Bind) -> BitSet -> [Int] -> TCEnv s [Expr]
+generaliseBinds wip' lvl0 ms = ms `forM` \m -> MV.read wip' m >>= (error . show ||| genBind m) where
+ genBind m = \case
   BindOK _ _ _r e -> pure e -- already handled mutual
-  -- ! The order in which mutuals are generalise these is relevant
+  -- ! The order in which mutuals are generalised is relevant
   Mutual naiveExpr freeVs isRec recTVar annotation -> do
     (_ars , inferred) <- case naiveExpr of
       Core expr coreTy -> (\(ars , ty) -> (ars , Core expr ty)) <$> do -- generalise the type
@@ -140,10 +126,7 @@ generaliseBinds wip' lvl0 ms = ms `forM` \m -> MV.read wip' m >>= \case
         _cast <- use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
           TyGround [] -> BiEQ <$ MV.write v recTVar (BiSub ty (TyGround [])) -- not recursive / mutual
           _t          -> bisub ty (TyVar recTVar) -- ! recursive | mutual ⇒ bisub with -τ (itself)
---      escaped <- use escapedVars
-        g       <- generalise lvl0 {-escaped-} (Left recTVar)
---      when global_debug $ use bis >>= \b -> use blen >>= \bl ->
---        [0 .. bl -1] `forM_` \i -> MV.read b i >>= \e -> traceM (show i <> " = " <> show e)
+        g       <- generalise lvl0 (Left recTVar)
         when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
         pure (intList2BitSet (fst <$> args) , g)
       Ty t -> pure $ (emptyBitSet,) $ Ty $ if not isRec then t else case t of
@@ -153,22 +136,16 @@ generaliseBinds wip' lvl0 ms = ms `forM` \m -> MV.read wip' m >>= \case
         t -> TyGround [THMu 0 t]
       t -> pure (emptyBitSet , t)
 
---  lvls %= drop 1 -- leave Lvl (TODO .|. head into next lvl?)
-    -- l <- leakedVars <<.= svLeaked ; escapedVars .= svEscapes ; deadVars %= (.|. (l .&. complement svEscapes))
-
     done <- case (annotation , inferred) of -- Only Core type annotations are worth replacing inferred ones
       (Just ann , Core e inferredTy) -> Core e <$> checkAnnotation ann inferredTy
       _                              -> pure inferred
-    MV.write wip' m (Right $ BindOK 0 False isRec done) -- todo letbound?
---  unless (null (drop 1 ms)) (regeneralise False `mapM_` ms) -- necessary eg. splitAt where let-bindings access this bind
---  if e == 0 then MV.write wip' m (BindOK 0 isRec done) else (letBounds %= (`setBit` m)) *> MV.write wip' m (LetBound isRec done)
---  when (ars .&. l /= 0) (regeneralise m *> traceM "regen")
+    MV.write wip' m (Right (BindOK 0 False isRec done)) -- todo letbound?
     pure done
   b -> error (show b)
 
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
 -- ! we may have inferred some missing information in type holes
-checkAnnotation ∷ Type -> Type -> TCEnv s Type
+checkAnnotation :: Type -> Type -> TCEnv s Type
 checkAnnotation annTy inferredTy = do
   exts      <- use externs
 --unaliased <- normaliseType mempty annTy
@@ -202,7 +179,7 @@ inferF = let
    x  -> PoisonExpr <$ (tmpFails .= []) <* (errors . biFails %= (map (BiSubError srcOff) x ++))
 
  inferApp srcOff f args = let
-   castRet ∷ BiCast -> ([Term] -> BiCast -> [Term]) -> Expr -> Expr
+   castRet :: BiCast -> ([Term] -> BiCast -> [Term]) -> Expr -> Expr
    castRet biret castArgs = \case
      Core (App f args) retTy -> case biret of
        CastApp _ac (Just pap) rc -> -- partial application TODO use argcasts
@@ -211,7 +188,7 @@ inferF = let
        _ -> Core (App f args) retTy
      t -> t
    -- TODO This will let slip some bieq casts on function arguments
-   castArg (a ∷ Term) = \case { BiEQ -> a ; CastApp [BiEQ] Nothing BiEQ -> a ; cast -> Cast cast a }
+   castArg (a :: Term) = \case { BiEQ -> a ; CastApp [BiEQ] Nothing BiEQ -> a ; cast -> Cast cast a }
    castArgs args' cast = case cast of
      CastApp ac _maybePap _rc -> zipWith castArg args' (ac ++ repeat BiEQ)
      BiEQ -> args'
@@ -220,8 +197,8 @@ inferF = let
    in if any isPoisonExpr (f : args) then pure PoisonExpr else do
      (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
      use tmpFails >>= \case
-       [] -> castRet biret castArgs <$> ttApp retTy (\i -> judgeBind _wip' i) f args -- >>= checkRecApp
-       x  -> PoisonExpr <$ -- trace ("problem fn: " <> show f ∷ Text)
+       [] -> castRet biret castArgs <$> ttApp retTy (\i -> judgeBind _0 i) f args -- >>= checkRecApp
+       x  -> PoisonExpr <$ -- trace ("problem fn: " <> show f :: Text)
          ((tmpFails .= []) *> (errors . biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
 
  judgeLabel qNameL exprs = let
@@ -233,10 +210,9 @@ inferF = let
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  getQBind q = {-traceShow q $-} use thisMod >>= \m -> if modName q == m
-   then use letBinds >>= \lvl -> MV.read lvl 0 >>= \bs -> -- binds at this module are at let-nest 0
-     judgeBind bs (unQName q) <&> \case
-       Core _t ty -> Core (Var $ VLetBind q) ty -- don't inline at this stage
-       x          -> x -- did_ x
+   then judgeBind 0 (unQName q) <&> \case -- binds at this module are at let-nest 0
+     Core _t ty -> Core (Var $ VLetBind q) ty -- don't inline at this stage
+     x          -> x -- did_ x
    else use openModules >>= \openMods -> use externs >>= \exts ->
      case readQParseExtern openMods m exts (modName q) (unQName q) of
        Imported e -> pure e
@@ -247,46 +223,54 @@ inferF = let
    nest <- letNest <<%= (1+)
 
    bl <- use blen
-   lvls %= (setNBits bl :) -- enter lvl all prev vars are escaped => if biunified with new vars must export new vars
+-- lvls %= (setNBits bl :) -- enter lvl all prev vars are escaped => if biunified with new vars must export new vars
+   lvls %= \case
+     []      -> [setNBits bl]
+     l0 : ls -> (setNBits bl .|. l0) : l0 : ls
 -- use lvls >>= \ls -> traceM (" -> enter: " <> show (bitSet2IntList <$> ls))
 
-   block <- use letBinds >>= \lvl -> V.thaw (Left <$> letBindings) >>= \block -> block <$ MV.write lvl nest block
-   judgeBind block `mapM_` [0 .. V.length letBindings - 1]
+   use letBinds >>= \lvl -> V.thaw (Left <$> letBindings) >>= MV.write lvl nest
+   judgeBind nest `mapM_` [0 .. V.length letBindings - 1]
 
 -- use lvls >>= \ls -> traceM (" <- leave: " <> show (bitSet2IntList <$> ls))
    lvls %= drop 1 -- leave Lvl (TODO .|. head into next lvl?)
 
+-- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
+   -- Why does this need to be above the let here?!
    r <- maybe (pure PoisonExpr) identity go -- in expr
 
--- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
-
-   lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= {-fmap did_ .-} V.unsafeFreeze
+   lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
      <&> map ((\unused -> BindOK 0 True False $ PoisonExprWhy ("unused let-bound: " <> show unused)) ||| identity)
-   letNest %= (\x -> x - 1)
+   letNest %= \x -> x - 1
+
    pure (r , V.zipWith (\fn e -> (LetMeta (fn ^. P.fnIName) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
+ mkFieldCol a b = TyGround [THFieldCollision a b]
 
  in \case
   P.QuestionF -> pure $ Core Question tyBot
   P.WildCardF -> pure $ Core Question tyBot
   -- letin Nothing = module / record, need to type it
-  -- ? How to name fields here
-  -- need unique Name for every bind, even if same IName
   P.LetInF b Nothing -> inferBlock b Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
-    mkFieldCol = \a b -> TyGround [THFieldCollision a b]
     nms = lets <&> iName . fst -- [qName2Key (mkQName (ln + 1) i) | i <- [0..]]
     tys = lets <&> tyOfExpr . bind2Expr . snd
     -- letnames = qualified on let-nests + 
     blockTy = THProduct (BSM.fromListWith mkFieldCol $ V.toList $ V.zip nms tys) -- TODO get the correct INames
     in Core (LetBlock lets) (TyGround [THTyCon blockTy])
   P.LetInF b pInTT -> inferBlock b pInTT <&> \(inTT , lets) -> case inTT of
-    Core t ty -> Core (LetBinds lets t) ty -- <* (fst <$> ls) `forM_` regeneralise True
+    Core t ty -> Core (LetBinds lets t) ty
     x -> x
+  P.TupleF ts -> sequence ts <&> \exprs -> let
+    tys = tyOfExpr <$> exprs
+    ty  = THProduct (BSM.fromListWith mkFieldCol $ zipWith (\nm t -> (qName2Key (mkQName 0 nm) , t)) [0..] tys)
+    lets = zipWith (\i c -> (LetMeta (-1) ("!" <> show i) (-1) , BindOK 0 False False c)) [0..] exprs
+    in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
+
   P.VarF v -> case v of -- vars : lookup in appropriate environment
     P.VBruijn b  -> use bruijnArgVars <&> \argTVars -> Core (VBruijn b) (TyVar $ argTVars V.! b)
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VQBind q   -> getQBind q
-    P.VLetBind q -> use letBinds >>= \lvl -> MV.read lvl (modName q) >>= \bs ->
-      judgeBind bs (unQName q) <&> \case
+    P.VLetBind q ->
+      judgeBind (modName q) (unQName q) <&> \case
         Core _t ty -> Core (Var $ VLetBind q) ty
         x          -> x
 
@@ -305,20 +289,18 @@ inferF = let
 --    Ty retTy -> Ty $ if argCount == 0 then retTy else TyPi (Pi (zip _args argTVars) retTy)
       t -> t
 
-  P.AppF fTT argsTT -> fTT >>= \f -> sequence argsTT >>= inferApp (-1) f
+  P.AppF fTT argsTT  -> fTT  >>= \f -> sequence argsTT >>= inferApp (-1) f
   P.PExprAppF _prec q argsTT -> getQBind q >>= \f -> sequence argsTT >>= inferApp (-1) f
   P.RawExprF t -> t
   P.MixfixPoisonF t -> PoisonExpr <$ (tmpFails .= []) <* error (show t) -- (errors . scopeFails %= (e:))
   P.QVarF q -> getQBind q
 --VoidExpr (QVar QName) (PExprApp p q tts) (MFExpr Mixfixy)
 
-  P.TupleF _ts -> d_ "inference of tuple" (pure PoisonExpr)
-
   -- ! Fields are let-bound on VLetNames for inference tables , but typed (and codegenned) on INames
   P.TTLensF o tt fieldsLocal maybeSet -> tt >>= \record -> let
     fields = fieldsLocal -- readField ext <$> fieldsLocal
     recordTy = tyOfExpr record
-    mkExpected ∷ Type -> Type
+    mkExpected :: Type -> Type
     mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton ({-qName2Key-} f) ty)]) dest fields
     in (>>= checkFails o) $ case record of
     (Core object objTy) -> case maybeSet of
@@ -378,6 +360,7 @@ inferF = let
       -- Note we can't use the retTy of fn types in branchFnTys in case the alt returns a function
       let (alts , _branchFnTys) = unzip elems :: ([Term] , [Type])
           labels = qName2Key . readLabel ext <$> ls
+--        labels = ls -- TODO labels are raw INames to maintain 1:1 HName correspondence
           branchTys = elems <&> \case
             (BruijnAbsTyped _ _ _ _ retTy , _) -> retTy
             (_ , ty) -> ty
@@ -391,8 +374,12 @@ inferF = let
             Nothing          -> THSumTy scrutSum
             Just (_ , defTy) -> THSumOpen scrutSum defTy]
           matchTy = TyGround (mkTyArrow [scrutTy] retTy)
+          addLam :: Term -> (Lam , Term) = \case
+            BruijnAbsTyped n free body argTs retT -> (Lam argTs free retT , body) -- TODO merge these in cleaner way
+            BruijnAbs{} -> error "inferred untyped bruijnabs"
+            t -> (Lam [] 0 tyBot , t)
       (BiEQ , retT) <- biUnifyApp matchTy [gotScrutTy]
-      pure $ Core (CaseB scrut retT (BSM.fromList (zip labels alts)) (fst <$> def)) retT
+      pure $ Core (CaseB scrut retT (BSM.fromList (zip labels (addLam <$> alts))) (addLam . fst <$> def)) retT
     x -> error $ show x
 
   P.InlineExprF e -> pure e

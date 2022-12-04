@@ -12,7 +12,7 @@ import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
 import Data.Functor.Foldable.TH (makeBaseFunctor)
 
-global_debug = False
+global_debug = True
 
 type ExtIName  = Int -- VExterns
 type BiSubName = Int -- index into bisubs
@@ -22,12 +22,12 @@ type ILabel    = QName
 type TVarSet   = BitSet
 
 -- LiName
--- * explicit dup nodes ⇒ function args may be duped
+-- * explicit dup nodes => function args may be duped
 -- * mark let-bounds start,end , recursive and mutuals
--- ? different dups in different case-branches ⇒ defer until branch known (potentially duped / dropped linames)
+-- ? different dups in different case-branches => defer until branch known (potentially duped / dropped linames)
 -- ? dependency graph = LetScope ModIName
 -- ? open record
--- 0. Module = \.. ⇒ let .. in exportlist (functor might be const)
+-- 0. Module = \.. => let .. in exportlist (functor might be const)
 -- 1. Parse finds arg binds and uniquely names everything else as Extern
 -- 2. Resolve scope: scopeBitset → IName → LiTable LiName
 type LiName  = QName -- ! The modIName indicates amount of dups
@@ -62,7 +62,9 @@ data Term -- β-reducable (possibly to a type)
  | TTLens  Term [IField] LensOp
 
  | Label   ILabel [Term] --[Expr]
- | CaseB   Term Type (BSM.BitSetMap Term) (Maybe Term)
+
+ -- Doesn't embed Lam info so FEnv can setup a beta-env easily
+ | CaseB   Term Type (BSM.BitSetMap (Lam , Term)) (Maybe (Lam , Term)) -- Output of inference
  | MatchB  Term (BSM.BitSetMap LamB) LamB -- Bruijn match (must have a default)
 
  | LetBinds (V.Vector (LetMeta , Bind)) Term
@@ -72,17 +74,13 @@ data Term -- β-reducable (possibly to a type)
  -- Extra info built for/by simplification --
  -----------------------------------------------
  | Case CaseID Term -- term is the scrutinee. This makes inlining very cheap
-
- | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
- | LinAbs [(LiName , Bool , Type)] Term Type -- indicate if dups its arg
-
- | RecApp   Term [Term] -- direct recursion
-
- -- Named Specialised recursive fns can (mutually) recurse with themselves
- | LetSpecs [Term] Term
  | Spec QName -- mod = bind it came from , unQ = spec number
 
--- | PartialApp [Type] Term [Term] --Top level PAp ⇒ Abs (only parse generates fresh argnames)
+-- | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
+-- | LinAbs [(LiName , Bool , Type)] Term Type -- indicate if dups its arg
+-- | RecApp   Term [Term] -- direct recursion
+-- | LetSpecs [Term] Term Named Specialised recursive fns can (mutually) recurse with themselves
+-- | PartialApp [Type] Term [Term] --Top level PAp => Abs (only parse generates fresh argnames)
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
 -- lensover needs idx for extracting field (??)
@@ -159,16 +157,14 @@ data Expr
 data Bind
  = Queued
  | WIP
- | Guard  { mutuals ∷ BitSet , tvar ∷ IName } -- if met again, its recursive/mutual
+ | Guard  { mutuals :: BitSet , tvar :: IName } -- if met again, its recursive/mutual
  -- | Marker for an inferred type waiting for generalisation when all mutuals inferred
  -- TODO freeVs not too relevant here
- | Mutual { naiveExpr ∷ Expr , freeVs ∷ BitSet , recursive ∷ Bool , tvar ∷ IName , tyAnn ∷ Maybe Type }
+ | Mutual { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
 
  | BindKO -- failed type inference
- | BindOK { optLevel ∷ Int , letBound ∷ Bool , recursive ∷ Bool , naiveExpr ∷ Expr }
+ | BindOK { optLevel :: Int , letBound :: Bool , recursive :: Bool , naiveExpr :: Expr }
 -- | BindMutuals (V.Vector Expr)
-
- | BindOpt Complexity Specs Expr
 
 type Complexity = Int -- number of Apps in the Term
 type Specs      = BitSet
@@ -185,8 +181,8 @@ data ExternVar
  | MixfixyVar Mixfixy           -- temp data fed to solvemixfixes
 
 data Mixfixy = Mixfixy
- { ambigBind   ∷ Maybe QName -- mixfixword also bind, eg. `if_then_else_` and `then`
- , ambigMFWord ∷ [QMFWord]
+ { ambigBind   :: Maybe QName -- mixfixword also bind, eg. `if_then_else_` and `then`
+ , ambigMFWord :: [QMFWord]
  }
 
 type ASMIdx = IName -- Field|Label→ Idx in sorted list (the actual index used at runtime)
@@ -214,16 +210,15 @@ data JudgedModule = JudgedModule {
    modIName   :: IName
  , modHName   :: HName
  , bindNames  :: V.Vector HName
- , fieldNames :: M.Map HName IName -- can we use Vector instead of Map?
  , labelNames :: M.Map HName IName
- , moduleTT   :: Expr -- judgedBinds ∷ V.Vector Bind
- , specs      :: Maybe Specialisations -- TODO can let(spec)-bind these
+ , moduleTT   :: Expr
+ , specs      :: Maybe Specialisations -- TODO let(spec)-bind these
 }
 
 type FnSize = Bool -- <=? 1 App
 data Specialisations = Specialisations
-  { specBinds ∷ V.Vector (FnSize , Term)
-  , specsCache ∷ V.Vector (M.Map [ArgShape] IName) }
+  { specBinds  :: V.Vector (FnSize , Term)
+  , specsCache :: V.Vector (M.Map [ArgShape] IName) }
 
 data ArgShape
  = ShapeNone
@@ -232,9 +227,9 @@ data ArgShape
  deriving (Ord , Eq , Show , Generic)
 
 data OldCachedModule = OldCachedModule {
-   oldModuleIName ∷ ModuleIName
+   oldModuleIName :: ModuleIName
    -- TODO preseed parse env with oldbindnames
- , oldBindNames   ∷ V.Vector HName -- to check if ambiguous names were deleted
+ , oldBindNames   :: V.Vector HName -- to check if ambiguous names were deleted
 } deriving Show
 
 -- only used by prettyCore functions and the error formatter

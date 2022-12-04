@@ -32,7 +32,7 @@ int_t = TPrim (PtrTo (PrimInt 32))
 
 setTop t = modify $ \x→x{top = t}
 
-mkSSAModule coreMod@(JudgedModule modIName modName bindNames pFields pLabels _modTT specs) = let
+mkSSAModule coreMod@(JudgedModule modIName modName bindNames pLabels _modTT specs) = let
   nArgs  = 100 -- TODO !
   nBinds = V.length coreBinds
   wip2Fn = \case
@@ -152,7 +152,6 @@ cgBind ∷ Int → CGEnv s CGWIP
 cgBind i = gets wipBinds ≫= \wip → MV.read wip i ≫= \case
   WIPCore (nm , b) → case b of
     BindOK n letbound isRec b → cgCore wip i nm b
-    BindOpt _ _ b  → cgCore wip i nm b
 --  Ty ty → pure $ ssaTy ty
   x → pure x
 
@@ -170,7 +169,7 @@ cgExpr t = let
   Instr i → _ -- emitInstrWrapper
   Cast cast term → cgExpr term ≫= doCast cast
   App f args → setTop False *> cgApp f args
-  RecApp f args → setTop False *> cgApp f args
+--RecApp f args → setTop False *> cgApp f args
 
 --RecLabel label fixPoints exprs → mdo
 --  et  ← exprs `forM` \(Core t ty) → (,) <$> cgExpr t <*> ssaTy ty

@@ -1,28 +1,29 @@
 ## meta
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
-## Top Priority (PathNames , tvar levels)
-  * compiler pipeline
-  * @ patterns; make case apps always labels (but fn Eqns always args)
-  * expand lambda-mixfixes with explicit holes
-  * resolve let-bound mixfixes to VLetBind qname
-  * (Tuple ?) , toCStruct : {A} -> CStruct , fromCStruct : CStruct -> {A}
-  * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
+## Top Priority (PathNames , cross-level mutuality , machine-code)
+  ** mutuals , μ-roll , let-gen inst
+  * Interpret
+  * Free-vars
   * fix cache
-  * rm meta from prettyCore
+  * μ-roll multi-branch μs merge
 ## Names + meta
   * make global resolver more like a standard module
     atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
   ? dependency graph | arg,bind linearity
 ## ?
+  * ∏ A B → %i32 → (µa.[Cons {⊤ , a} | Nil] ⊓ B) → ([Nil] ⊔ B) => merge away B ?
+    B <= µa.[Cons {⊤ , a} | Nil] && B >= [Nil]
+  * FEnv must identify recons (cons over matches) and rewrite to Lens insert / modify
+  * FEnv make dup nodes so MC can assume everything is linear
   * derived functions: specs / β-rewritings as terms under main function
-  * freevar types added to type of let-binds; need to extract all let-blocks to regeneralise?
-  * type application (eg. perfect tree)
+  * type application (eg. perfect tree) `PTree a = Leaves a | Cons (PTree (a , a))` (μ insufficient advanced recursion)
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
-  * audit oldcachedmodule , seems slightly broken (probably BindOpt)
   * trim bisubs
-  * make solveScopes an anamorphism
+  * expand lambda-mixfixes with explicit holes
+  * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
+  * make solveScopes an anamorphism (need to delay solvemixfixes to infer)
 ## Parse
   * typed lambda case: \case : scrut -> ret
   * allow tabs instead of spaces
@@ -34,38 +35,29 @@
   * Ad-hoc polymorphism: `Int <: [ NumInt Int ]` show (esp for repl JIT)
   * THFieldCollision
   * Dependent normalisation
-  * first class polymorphism
+  * first class polymorphism:
+      eg. require instantiating << with polytype => let f : [a] -> [a] -> Int ; g : Bool -> [a] -> [a] in f << g
   * Linear types; dependent types required to quantify relative linearity `Lin t >= Lin f => t → u`
-  * splitAt with Nils should also simplify
 ## Beta-optimality:
   * λ Minimise normal forms: λ-encoding + lifting + sharing (if subterms of App or Match contain λ, lift them)
   * case-splitters as data for runtime optimisation
   * Partial applications extracted and specialised for beta optimality
   * Fns passed as args must have interpretable format
   * fns that do case-splits lazy in arguments they may not need
-## MachineCode
-  * eliminate polymorphism
-  * Identify recursive datas: then flatten and SOA form
-  * convert all aggregates to Tuples + eliminate bicasts
-  * Insert memory handling
-  * explicit free-vars + β-optimality
-  * SIMD
 ## Error messages
-  * qualified bindings
   * Warn nonsense type joins | infer a dependent type
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
+  * Need totality checker, else a Refl type may not terminate and thus proves nothing
   * optimise tycons to avoid level retraversal
   * strictly positive recursion
   * underdetermined recursion: https://counterexamples.org/underdetermined-recursion.html
-    equirecursive ⇒ A = F[A] ; B = F[B] ⇒ A = B (unsound for arbitrary type-level functions F!)
+    equirecursive => A = F[A] ; B = F[B] => A = B (unsound for arbitrary type-level functions F!)
     if multiple solutions for X = F X; eg. F X = X ; A = Int ; B = String
   * the avoidance problem (types about to go out of scope)
   * don't assume injectivity!
-  * Need totality checker, else a Refl type may not terminate and thus proves nothing
-  * Advanced recursive types µ insufficient `PTree a = Leaves a | Cons (PTree (a , a))`
   * equality constraints are central to GADTs `Gabriel Scherer and Didier Rémy. GADTs meet subtyping.` `https://okmij.org/ftp/ML/first-class-modules/#GADT`
   * switch to codeberg
   * List comprehensions

@@ -38,7 +38,6 @@ executable irie-exe
   other-modules:
       Name
       MachineCode
-      CH
       Scope
       MUnrolls
       BitSetMap
@@ -153,6 +152,7 @@ executable irie-exe
     , adjunctions
     , kan-extensions
     , profunctors
+--  , harpy
 --  , lawz
 --  , rings
 --  , magmas

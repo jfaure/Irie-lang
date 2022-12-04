@@ -38,7 +38,7 @@ data Params = Params
   } deriving Show ; makeLenses ''Params
 
 initParams open required = let
-  extCount = 300 -- max possible number of let-bindings (should be less due to bruijn args)
+  extCount = 300 -- TODO use max number of let-bindings (should be less due to bruijn args)
   in Params open required emptyBitSet emptyBitSet (V.create (MV.new extCount)) 0 (V.create (MV.new extCount)) 0
 
 -- * Track name scopes , free variables and linearity , resolve VExterns to BruijnArg | QName
@@ -61,13 +61,16 @@ solveScopesF exts thisMod this params = let
       & lets %~ (.|. intList2BitSet bindNms)
       & letNest %~ (1+)
       & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName params._letNest i))
-  in case this of
-  VarF (VBruijn i) -> {-(0 `setBit` i ,-} Var (VBruijn i)
-  VarF (VExtern i) -> if
+  resolveExt i = if
     | params._args `testBit` i -> Var $ VBruijn  (params._bruijnCount - 1 - (params._bruijnMap V.! i))
     | params._lets `testBit` i -> Var $ VLetBind (params._letMap V.! i)
     | otherwise -> handleExtern exts thisMod params._open params._letMap i
+  in case this of
+  VarF (VBruijn i) -> {-(0 `setBit` i ,-} Var (VBruijn i)
+  VarF (VExtern i) -> resolveExt i
   VarF (VQBind q) -> ScopePoison (ScopeError $ "Var . VQBind " <> showRawQName q)
+  AppExtF i args  -> solveMixfixes $ (resolveExt i) : (distribute args params)
+  JuxtF _o args -> solveMixfixes (distribute args params)
   BruijnLamF b -> doBruijnAbs b
 
   -- ? mutual | let | rec scopes
@@ -100,12 +103,10 @@ solveScopesF exts thisMod this params = let
     in case bruijnSubs of
       [] -> cata (solveScopesF exts thisMod) this params -- proceed with solvescopes using current context
       x  -> error ("non-empty bruijnSubs after case-solve: " <> show x)
-
-  JuxtF _o args -> solveMixfixes (distribute args params)
   tt -> embed (distribute tt params)
 
 -- TODO don't allow `bind = lonemixfixword`
--- handleExtern (readParseExtern open mod e i) ||| readQParseExtern ∷ ExternVar
+-- handleExtern (readParseExtern open mod e i) ||| readQParseExtern :: ExternVar
 handleExtern exts mod open lm i = case readParseExtern open mod exts i of
   ForwardRef b  -> Var (VLetBind (lm V.! b))
   Imported e    -> InlineExpr e

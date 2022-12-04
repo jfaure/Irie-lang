@@ -1,8 +1,9 @@
 import imports/prelude
+
 fmap f = \case
-  Done      ⇒ Done
---Skip r    ⇒ Skip r
-  Yield x r ⇒ Yield x (f r)
+  Done      => Done
+--Skip r    => Skip r
+  Yield x r => Yield x (f r)
 
 rcata f = f << fmap (rcata f)
 rana g = fmap (rana g) << g
@@ -20,13 +21,15 @@ map f = Sfuse \case
   Done      ⇒ Done
   Yield x r ⇒ Yield (f x) r
 
-enumFromTo lo hi = ana (\i ⇒ if i >? hi then Done else Yield i (i + 1)) lo
+enumFromTo lo hi = ana (\i => if i >? hi then Done else Yield i (i + 1)) lo
 
 sum = cata \case
-  Done      ⇒ 0
-  Yield x r ⇒ x + r
+  @Done      => 0
+  @Yield x r => x + r
 
 --l = sum < map (add 1) < enumFromTo 5 10
+--l = sum (enumFromTo 5 10)
+r = sum (map (add 1) (enumFromTo 5 10))
 
 {-
 append s1 s2 = ana (\case
@@ -49,3 +52,11 @@ zip (Stream na sa) (Stream nb sb) = rana \(a0 , b0 , pair) ⇒
   --  Skip b    ⇒ Skip (a0 , b , Just x)
       Yield y b ⇒ Yield (x , y) (a0 , b , Nothing)
 -}
+
+-- f n = sum [ k * m | k ← [1..n] , m ← [1..k] ]
+-- T[E | ] = return E
+-- T[E | B , Q] = guard B T[E | Q]
+-- T[E | P ← L , Q] = let f P = True ; f _ = False
+--                        g P = T[E | Q]
+--                    in concatMap (\x => guard (f x) (g x)) L
+-- T[E | let decls , Q] = let decls in T [E | Q]

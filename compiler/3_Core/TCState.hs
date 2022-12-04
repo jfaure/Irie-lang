@@ -3,7 +3,7 @@ module TCState where
 import CoreSyn ( tyBot, tyTop, BiSub(BiSub), Bind )
 import Externs ( Externs )
 import Errors ( Errors, TmpBiSubError )
-import Control.Lens ( use, (.=), makeLenses, (%=) )
+import Control.Lens ( use, (.=), makeLenses )
 import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write )
 import qualified ParseSyntax as P ( FnDef )
 import qualified Data.Vector as V ( Vector )
@@ -19,24 +19,17 @@ data TCEnvState s = TCEnvState {
  , _openModules :: BitSet
 
  -- out
- , _wip         :: MV.MVector s (Either P.FnDef Bind)
  , _letBinds    :: MV.MVector s (MV.MVector s (Either P.FnDef Bind))
  , _letNest     :: Int
  , _errors      :: Errors
 
  -- Biunification state
  , _bruijnArgVars :: V.Vector Int    -- bruijn arg -> TVar map
- , _bindWIP       :: (IName , Bool)     -- to identify recursion and mutuals (Bool indicates recursion)
+ , _bindWIP       :: ((Int , IName) , Bool)     -- to identify recursion and mutuals (Bool indicates recursion)
  , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen          :: Int                -- cursor for bis which may have spare space
  , _bis           :: MV.MVector s BiSub -- typeVars
-
- -- tvar kinds (see Generalise.hs)
- , _lvls        :: [BitSet]
--- , _escapedVars :: BitSet -- TVars of shallower let-nests
--- , _leakedVars  :: BitSet -- TVars bisubbed with escapedVars
--- , _deadVars    :: BitSet -- formerly leaked now fully captured
-
+ , _lvls          :: [BitSet] -- tvar let-nest scope (see Generalise.hs)
 }; makeLenses ''TCEnvState
 
 clearBiSubs :: Int -> TCEnv s ()
