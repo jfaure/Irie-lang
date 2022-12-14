@@ -3,7 +3,7 @@
   * https://documentation.divio.com/
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   ** mutuals , μ-roll , let-gen inst
-  * optimise co-occurence analysis
+  * co-occurence analysis inplace + updateable as types are merged
   * Interpret
   * Free-vars
   * fix cache
@@ -13,8 +13,6 @@
     atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
   ? dependency graph | arg,bind linearity
 ## ?
-  * ∏ A B → %i32 → (µa.[Cons {⊤ , a} | Nil] ⊓ B) → ([Nil] ⊔ B) => merge away B ?
-    B <= µa.[Cons {⊤ , a} | Nil] && B >= [Nil]
   * FEnv must identify recons (cons over matches) and rewrite to Lens insert / modify
   * FEnv make dup nodes so MC can assume everything is linear
   * derived functions: specs / β-rewritings as terms under main function

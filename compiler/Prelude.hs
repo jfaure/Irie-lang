@@ -19,7 +19,7 @@ import qualified Data.Map.Strict as M
 import Data.Align
 import Data.These
 import Text.Printf
-import Control.Arrow ((|||) , (&&&) , (***))
+import Control.Arrow ((|||) , (&&&) , (***) , (>>>) , (<<<))
 
 import Control.Applicative.Unicode hiding ((∅))
 --import Control.Arrow.Unicode

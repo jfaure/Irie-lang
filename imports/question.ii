@@ -1,56 +1,19 @@
-import imports/prelude
 import imports/list
 
--- mu as subtype of outer layer
--- ?! how to roll µd.[Nil | Cons {A , [Cons {B , d}]}]
--- prependToAll sep = \case
---   Nil => Nil
---   Cons x xs => Cons sep (Cons x (prependToAll sep xs))
+-- unwords :: [[Char]] -> [Char]
+-- use check not (==) to test layers
+unwords ws = let
+  goUnwords x = case x of
+    @Nil => @Nil
+    @Cons v vs => @Cons ' ' (append v (goUnwords vs))
+  in case ws of
+    @Nil => Nil
+    @Cons w ws => append w (goUnwords ws)
 
--- : ∏ A B C D → A → µc.[Nil | Cons {B , c}]
--- → µd.[Nil | Cons {A , [Cons {B , d}]}]
--- a -> [a] -> [a]
-prependToAll sep = \case
-  Nil => Nil
-  Cons x xs  => Cons sep (Cons x (prependToAll sep xs))
-
--- [Nil | Cons {B , µe.[Nil | Cons {A , [Cons {C , e}]}]}]
--- a -> [a] -> [a]
-intersperse sep = \case
-  Nil => Nil
-  Cons x xs  => Cons x (prependToAll sep xs)
-
---intersectBy          :: (a -> a -> Bool) -> [a] -> [a] -> [a]
---intersectBy _  [] _  =  []
---intersectBy _  _  [] =  []
---intersectBy eq xs ys =  [x | x <- xs, any (eq x) ys]
-
--- wordsBy linesBy
--- unionBy
--- transpose permutations
--- mapAccumL(R)
--- insertBy
--- sortBy
--- zip
--- find findIndex findIndices
--- partition
--- isInfixOf isSuffixOf isPrefixOf
--- span break
--- split splitOn chunksOf
--- compareLength : [a] -> Int -> Ordering
---   = foldr (\_ acc n -> if n > 0 then acc (n - 1) else GT) (compare 0)
--- dropWhileEnd : (a -> Bool) -> [a] -> [a]
---   = \p -> foldr (\x xs -> if p x && null xs then [] else x : xs) []
-
---qsort p s Nil          = Empty
---qsort p s (Cons x Nil) = Single x
---qsort p s (Cons x xs)  =
---  split p s (Cons x xs) Nil Nil
----- Splits list in two partitions
---split p s Nil min max =
---  let s'   = shiftR s 1
---      min' = qsort (p - s') s' min
---      max' = qsort (p + s') s' max
---  in  Concat min' max'
---split p s (Cons x xs) min max =
---  place p s (p < x) x xs min max
+-- [a] -> [[a]]
+-- lost a μ-bound
+nonEmptySubSequences = \case
+  @Nil       => Nil
+  @Cons x xs => let
+    f ys r = Cons ys (Cons (Cons x ys) r)
+    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))

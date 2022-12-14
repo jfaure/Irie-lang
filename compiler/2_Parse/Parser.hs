@@ -95,14 +95,8 @@ brackets  = symbol  "[" `between` symbol  "]"
 -- lvl = lvl of first indented item (often == pos)
 indentedItems :: Pos -> Parser a -> Parser () -> Parser [a]
 indentedItems prev p finished = let
- go lvl = indentn *> do
-  pos <- L.indentLevel
---svIndent
-  [] <$ lookAhead (eof <|> finished) <|> if
-  -- 'fail' here backtracks the whitespace/newlines. Otherwise the App parser sees and eats things from later lines
-    | pos <= prev -> fail ("end of indent: " <> show pos <> " <= " <> show prev)
-    | pos == lvl  -> p >>= \ok -> option [ok] ((ok :) <$> try (go lvl))
-    | otherwise   -> fail ("incorrect indentation, got " <> show pos <> ", expected " <> show lvl <> " (<= " <> show prev <>")")
+ go lvl = try $ indentn *> do
+  [] <$ lookAhead (eof <|> finished) <|> (checkIndent prev lvl *> p >>= \ok -> option [ok] ((ok :) <$> go lvl))
  in L.indentLevel >>= go
 
 checkIndent :: Pos -> Pos -> Parser ()
@@ -309,10 +303,13 @@ tt :: Parser TT
 
   branchArrow = reserved "=>" <|> reserved "⇒"
   caseSplits :: Parser [(TT , TT)]
-  caseSplits = let split = svIndent *> ((,) <$> tt <* branchArrow <*> tt) :: Parser (TT , TT)
+  caseSplits = let
+    pattern = tt
+  --  >>= option tt $ (\pat rhs -> CasePat (CaseSplits pat [rhs])) <$> (reservedName '|' *> tt) <*> (reservedName "<-" *> tt)
+    split = svIndent *> ((,) <$> pattern <* branchArrow <*> tt) :: Parser (TT , TT)
     in braces (split `sepBy` reservedChar ';') <|> let
-     finishEarly = (void $ char ')' <|> lookAhead (reservedChar '_'))
-     in (use indent <* scn) >>= \ref -> indentedItems ref split finishEarly
+     finishEarly = void $ char ')' <|> reservedChar '_'
+     in option [] $ try $ (use indent <* scn) >>= \ref -> indentedItems ref split finishEarly
   lambdaCase = BruijnLam . BruijnAbsF 1 [] 0 . CasePat . CaseSplits (Var (VBruijn 0)) <$> caseSplits
   casePat = (\tt splits -> CasePat (CaseSplits tt splits)) <$> tt <* reserved "of" <*> caseSplits
 

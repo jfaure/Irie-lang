@@ -223,7 +223,7 @@ mergeRolls' (NoRoll t) (BuildRoll a ms)  = BuildRoll (a {-mergeTypes True a t-})
 mergeRolls' (NoRoll t) (Rolling a m r z) = Rolling   (a {-mergeTypes True a t-}) m r z
 mergeRolls' a b@NoRoll{} = mergeRolls b a
 mergeRolls' (Rolling a m r z) (Rolling a2 m2 r2 z2)
- | m == m2 = Rolling (mergeTypes True a a2) m r z
+ | m == m2 = d_ ("roll-roll") $ Rolling (mergeTypes True a a2) m r z
  | m < m2  = d_ ("roll-roll" , m , m2) $ cata rollType (patchMu m2 m $ mergeTypes True a a2)
  | m > m2  = d_ ("roll-roll" , m , m2) $ cata rollType (patchMu m m2 $ mergeTypes True a2 a)
 
@@ -246,16 +246,17 @@ rollType this = let -- ! we may be building | rolling μs out of multiple branch
     this = let tt = [forgetRoll <$> th] in if vs == 0 then TyGround tt else TyVars vs tt
     ith = Generalise.indexed th
     -- if. μ-bound in hole start μ-build
-    -- if. μ-build in a hole => if μ-binder: switch build to roll ||| continue build
-    -- if. μ-roll in hole check if roll ok: roll and reset ||| test more layers
+    -- if. Build in a hole => if μ-binder: switch build to roll ||| continue build
+    -- if. Roll in hole check if roll ok: roll and reset ||| test more layers
     layer i = ith <&> \(j , t) -> if i == j then Nothing else Just (forgetRoll t) -- void out rec-branch for (==)
+    -- TODO don't insert this into rolls !!
     mkRoll :: Int -> TypeRoll -> [TypeRoll]
     mkRoll i = \case
       BuildRoll ty mus -> [mergeRollsNE $ mus <&> \(m , rollFn , b) -> let l = layer i : rollFn
         in if m `elem` ms then let r = reverse l in Rolling (addMu m (mergeTypes True b this)) m r r
            else BuildRoll this ((m , l , b) :| [])]
-      Rolling ty m reset (r : nextRolls) -> [if layer i /= r -- TODO test eq modulo μ and bounds
-        then NoRoll this else Rolling ty m reset (nextRolls <|> reset)]
+      Rolling ty m (r : nextRolls) reset -> {-trace (prettyTyRaw ty <> " <=> " <> prettyTyRaw this)-} [if layer i /= r -- TODO check subtype (roughly eq modulo μ and bounds)
+        then NoRoll this else Rolling ty m (nextRolls <|> reset) reset]
       NoRoll t -> []
       x -> error $ show x
     in case concat (Prelude.imap mkRoll (toList th)) of

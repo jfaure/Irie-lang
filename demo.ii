@@ -15,6 +15,8 @@
 --import imports/question
 --import imports/ls
 
+--f = \case { @x b | @y <- b => 1 }
+
 -- Merge equations properly, this creates 2 bindings and bugs out inames
 --eq1 (@x) b = 2
 --eq1 a b = 3
@@ -44,22 +46,22 @@
 -- import imports/sumMul
 
 -- lost some μ-bounds (? buildroll just before making μ binder)
---import imports/foldr
---nonEmptySubSequences = \case
---  @Nil       => Nil
---  @Cons x xs => let
---    f ys r = Cons ys (Cons (Cons x ys) r)
---    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+import imports/foldr
+nonEmptySubSequences = \case
+  @Nil       => Nil
+  @Cons x xs => let
+    f ys r = Cons ys (Cons (Cons x ys) r)
+    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
 
 --list2.unwords = merge μ-bounds upwards even if layer not equal
 
 -- multi-branch different μ merging =>
 --rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
---import imports/mkParser
-
 -- register occurs buggy
 -- import imports/intmap
+
+--import imports/mkParser
 
 -- Wildcard
 --null = \case
@@ -67,9 +69,7 @@
 --  ? => @False
 -- import imports/intmap
 
--- co-occurence analysis inplace + updateable as types are merged
-
-import imports/prelude
+--import imports/question
 
 {-
 import imports/prelude

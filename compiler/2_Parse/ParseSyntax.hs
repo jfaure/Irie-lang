@@ -123,9 +123,9 @@ type Pattern = TT
 
 data IndentType = IndentTab | IndentSpace | IndentEither -- files must commit to an indent style
 data ParseState = ParseState {
-   _indent      ∷ Pos        -- start of line indentation (need to save it for subparsers)
- , _indentType  ∷ IndentType -- tab or space indent style must be consistent
- , _moduleWIP   ∷ Module -- result
+   _indent      :: Pos        -- start of line indentation (need to save it for subparsers)
+ , _indentType  :: IndentType -- tab or space indent style must be consistent
+ , _moduleWIP   :: Module -- result
 }
 emptyParseState nm = ParseState (mkPos 1) IndentEither (emptyParsedModule nm)
 

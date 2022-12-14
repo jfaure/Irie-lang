@@ -1,2 +1,3 @@
-unwords = ∏ A B C D E → µd.[Nil | Cons {µc.[Nil | Cons {A , c}] , d}] → µe.[Nil | Cons {(%i8 ⊔ A) , e}]
-nonEmptySubSequences = ∏ A B C D → µb.[Nil | Cons {A , b}] → µd.[Nil | Cons {µc.[Cons {A , c}] , d}]
+prependToAll = ∏ A B C D → A → µc.[Nil | Cons {B , c}] → µd.[Nil | Cons {A , [Cons {B , d}]}]
+intersperse = ∏ A B C D E → A → [Nil | Cons {B , µd.[Nil | Cons {C , d}]}] → [Nil | Cons {B , µe.[Nil | Cons {A , [Cons {C , e}]}]}]
+intercalate = ∏ A B C D → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {µb.[Nil | Cons {A , b}] , c}] → µd.[Nil | Cons {A , d}]
