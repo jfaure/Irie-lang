@@ -2,7 +2,6 @@ import imports/prelude
 import imports/list
 
 -- mu as subtype of outer layer
--- unrollable because the sandwiched layer is not necessarily recursive..
 -- ?! how to roll µd.[Nil | Cons {A , [Cons {B , d}]}]
 -- prependToAll sep = \case
 --   Nil => Nil

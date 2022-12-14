@@ -12,6 +12,7 @@ import qualified Data.Vector as V
 import qualified Data.List
 import qualified Data.List.NonEmpty as NE
 import Data.Functor.Foldable
+import MUnrolls (anaM)
 debug_gen = False || global_debug
 fst3 (a,_,_) = a
 
@@ -58,6 +59,10 @@ type Cooc s = MV.MVector s ([Type] , [Type])
 data AnalyseState s = AnalyseState { _anaBis :: MV.MVector s BiSub , _recs :: BitSet , _instVars :: Int , _coocs :: Cooc s }; makeLenses ''AnalyseState
 type AnaEnv s = StateT (AnalyseState s) (ST s)
 
+data AState s = AState { _arecs :: BitSet , _acoocs :: Cooc s }; makeLenses ''AState
+type AEnv s = StateT (AState s) (ST s)
+type Seed = (Type , Bool , BitSet , BitSet , Int)
+
 data GState s = GState { _quants :: Int , _genMap :: MV.MVector s Int }; makeLenses ''GState
 type GEnv s = StateT (GState s) (ST s)
 
@@ -71,6 +76,9 @@ generalise lvl0 rawType = do
   bl   <- use blen
   (analysedType , recursives , occurs) <- lift $ do -- re-use same ST state thread to avoid copying bisubs
     coocVStart <- MV.replicate coocLen ([],[])
+
+--  (ty , (AState recs coocV))
+--    <- runStateT (analyseT bis' ((TyVar ||| identity) rawType , True , 0 , 0 , 0)) (AState 0 coocVStart)
     (ty , (AnalyseState _bis recs _instVs coocV)) <-
       -- merge with recTVar in case of direct recursion `r = { next = r } : µx.{next : x}`
       runStateT (analyseType ((TyVar ||| identity) rawType) True 0 0) (AnalyseState bis' 0 bl coocVStart)
@@ -148,7 +156,7 @@ judgeVars nVars lvl0 recursives coocs = V.constructN nVars $ \prevSubs -> let
     vPvMRec = let partialRecCoocs = complement prevTVs .&. recMask .&. foldr (.|.) 0 (pVars ++ mVars) `clearBit` v
       in if vIsRec then maybe generalise SubVar (head (bitSet2IntList partialRecCoocs)) else generalise
 
-    -- recmask to disallow merge x & A in (x & A) -> (µx.[Cons {%i32 , x}] & A)
+    -- (?) recmask to disallow merge x & A in (x & A) -> (µx.[Cons {%i32 , x}] & A)
     vPwP = polarCoocs True  ({-recMask .&.-} coocPVs) :: [VarSub]
     vMwM = polarCoocs False ({-recMask .&.-} coocMVs) :: [VarSub]
     -- look for some T present at all v+v- (since this is expensive and rarer try it last) `A & %i32 -> A & %i32`
@@ -325,18 +333,22 @@ type Acc s = Bool -> BitSet -> BitSet -> AnaEnv s Type
 analyseType :: Type -> Acc s
 analyseType = let
   registerOccurs :: Bool -> Type -> AnaEnv s Type
-  registerOccurs pos ty = use coocs >>= \cooc -> partitionType ty & \(vset , other) ->
-    ty <$ bitSet2IntList vset `forM` \i ->
-      MV.modify cooc (over (if pos then _1 else _2) (TyVars vset other :)) i
+  registerOccurs pos ty = {-trace (prettyTyRaw ty) $-} use coocs >>= \cooc -> partitionType ty & \(vset , other) ->
+    ty <$ (bitSet2IntList vset) `forM` \i ->
+--    MV.modify cooc (over (if pos then _1 else _2) (TyVars vset other :)) i
+      MV.modify cooc (over (if pos then _1 else _2) (\l -> if elem ty l then l else ty : l)) i
+      -- TODO co-occurence directly
 
   subVar pos loops guarded v = if
     | testBit loops v   -> pure (TyVars loops []) -- unguarded var loop
     | testBit guarded v -> TyVars (0 `setBit` v) [] <$ (recs %= (`setBit` v))
-    | otherwise -> use anaBis >>= \b -> use instVars >>= \iv -> if v >= iv then pure $ TyVar v -- THBound vars spawned in later
+    | otherwise -> use anaBis >>= \b -> use instVars >>= \iv -> if v >= iv
+      then pure $ TyVar v -- THBound vars spawned in later
       else MV.read b v >>= \(BiSub pty mty) -> let -- not atm a TVar cycle
       loops' = setBit loops v
       ty = if pos then pty else mty
-      in if nullType ty then pure (TyVars loops' []) else mergeTVar v <$> analyseType ty pos loops' guarded
+      in if nullType ty then pure (TyVars loops' [])
+        else mergeTVar v <$> analyseType ty pos loops' guarded
 
   go :: [THead (Acc s)] -> BitSet -> Acc s
   go g vars pos loops guarded = let
@@ -365,3 +377,57 @@ analyseType = let
     TyVarsF vs g -> go g vs pos loops guarded
     TyVarF v     -> subVar pos loops guarded v
     x -> embed <$> traverse (\x -> x pos loops guarded) x
+
+{-
+-- recursively sub-in all type vars and build co-occurence vector
+-- TODO instvars needs to be monadic
+analyse :: forall s. MV.MVector s BiSub -> Seed -> AEnv s (TypeF Seed)
+analyse bis seed@(ty , pos , loops , guarded , instVars) = let
+  go :: [TyHead] -> BitSet -> AEnv s (TypeF Seed)
+  go g vars = let
+    registerOccurs :: Bool -> Type -> AEnv s Type
+    registerOccurs pos ty = {-trace (prettyTyRaw ty) $-} use acoocs >>= \cooc -> partitionType ty & \(vset , other) ->
+      ty <$ bitSet2IntList vset `forM` \i ->
+        MV.modify cooc (over (if pos then _1 else _2) (\l -> if elem ty l then l else ty : l)) i
+
+    varSubs = bitSet2IntList vars `forM` subVar instVars
+    mkT t = TyGroundF [THTyCon t]
+    grounds :: [TyHead] -> AEnv s [TypeF Seed]
+    grounds g = let loops' = 0 ; guarded' = guarded .|. loops .|. vars in g `forM` \case
+      tycon@(THTyCon t) -> fmap mkT $ case t of -- update loops and guarded for tycons
+        THArrow ars r -> THArrow -- THArrow is the only tycon with contravariant subtrees
+          <$> (traverse (registerOccurs (not pos)) ars <&> fmap (, not pos , loops' , guarded' , instVars))
+          <*> (registerOccurs pos r <&> (, pos , loops' , guarded' , instVars))
+        _ -> traverse (registerOccurs pos) t <&> fmap (, pos , loops' , guarded' , instVars)
+
+      -- THBounds cannot occur together with tvars, else would have been instantiated already
+      THBound b   -> subVar instVars (instVars + b)
+      THMuBound m -> subVar instVars (instVars + m)
+      THBi b ty   -> pure (fmap (, pos , loops , guarded , instVars + b) (project ty))
+      THMu m ty -> (arecs %= (`setBit` (instVars + m)))
+        $> (fmap (, pos , loops, guarded , instVars + m) . project) (mergeTVar (instVars + m) ty)
+      x -> pure $ TyGroundF [(fmap (, pos , loops , guarded , instVars) x)]
+    in (\grounds vs -> mergeTypeFList pos (grounds ++ vs)) <$> grounds g <*> varSubs
+
+  subVar :: Int -> Int -> AEnv s (TypeF Seed)
+  subVar instVars' v = if
+    | testBit loops v   -> pure (TyVarsF loops []) -- unguarded var loop
+    | testBit guarded v -> TyVarsF (0 `setBit` v) [] <$ (arecs %= (`setBit` v)) -- recursive tvar
+    | v >= instVars'    -> pure (TyVarF v) -- THBound vars spawned in later (?!)
+    | otherwise -> MV.read bis v >>= \(BiSub pty mty) -> let -- not atm a TVar cycle
+      loops' = setBit loops v
+      ty = if pos then pty else mty
+      in if nullType ty then pure (TyVarsF loops' [])
+         else mergeTypeF (TyVarF v) <$> analyse bis (ty , pos , loops' , guarded , instVars') -- HACK merge tvar !
+  in case ty of
+  TyGround g  -> go g 0
+  TyVars vs g -> go g vs
+  TyVar v     -> subVar instVars v
+  x -> _ -- project <$>
+
+analyseT :: MV.MVector s BiSub -> Seed -> AEnv s Type
+analyseT bis = anaM (analyse bis)
+
+mergeTypeF (TyGroundF a) (TyGroundF b) = TyGroundF (a ++ b)
+mergeTypeFList _pos = foldr mergeTypeF (TyGroundF [])
+-}

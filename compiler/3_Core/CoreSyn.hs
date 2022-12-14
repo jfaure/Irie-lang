@@ -12,7 +12,7 @@ import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
 import Data.Functor.Foldable.TH (makeBaseFunctor)
 
-global_debug = True
+global_debug = False
 
 type ExtIName  = Int -- VExterns
 type BiSubName = Int -- index into bisubs

@@ -16,3 +16,17 @@ nonEmptySubSequences = \case
   @Cons x xs => let
     f ys r = Cons ys (Cons (Cons x ys) r)
     in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+
+{-
+-- should this merge?: µd.[Nil | Cons {A , [Cons {B , d}]}]
+-- a -> [a] -> [a]
+prependToAll sep = \case
+  @Nil => Nil
+  @Cons x xs  => Cons sep (Cons x (prependToAll sep xs))
+
+-- [Nil | Cons {B , µe.[Nil | Cons {A , [Cons {C , e}]}]}]
+-- a -> [a] -> [a]
+intersperse sep = \case
+  Nil => Nil
+  Cons x xs  => Cons x (prependToAll sep xs)
+-}

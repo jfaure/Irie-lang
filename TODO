@@ -3,6 +3,7 @@
   * https://documentation.divio.com/
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   ** mutuals , μ-roll , let-gen inst
+  * optimise co-occurence analysis
   * Interpret
   * Free-vars
   * fix cache

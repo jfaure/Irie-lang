@@ -49,7 +49,7 @@ insertLookupWithKey f k x t = case t of
 -- updateLookupWithKey ::  (Key -> a -> Maybe a) -> Key -> IntMap a -> (Maybe a , IntMap a)
 
 -- Choose whether μ binders wrap or not type joins => eliminate 1 pair of Gs
--- C and D always appear with %i32, should rm
+-- C and D always appear with %i32 (after simplifications), should rm
 --insertLookupWithKey
 -- ∏ A B C D E F G → (A → B → B → B) → (%i32 ⊓ A) → B
 --  → (µf.([Bin {(%i32 ⊓ C) , (%i32 ⊓ D) , E , f} | Tip {(%i32 ⊓ A) , B} | None] ⊓ G) ⊓ G)

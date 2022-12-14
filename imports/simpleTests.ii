@@ -121,5 +121,5 @@ misc0 = (\x => (let y = (x x.v) in 0)) -- ∏ A → ((A → ⊤) ⊓ {v : A}) �
 -- hp1 = (\f => { a = f 1 , b = f "a" }) (\x => x)
 
 -- Type Checking (Note. these require prelude imported for ->)
-add1 : Arrow Int Int = \a => add a 1  -- %i32 → %i32
+--add1 : Arrow Int Int = \a => add a 1  -- %i32 → %i32
 --identity : Arrow (a : Set) a = \x => x -- ∏ A → A → A

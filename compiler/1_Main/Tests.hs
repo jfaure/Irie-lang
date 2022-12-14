@@ -138,13 +138,13 @@ goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
   Main.sh (fName <> " -o" <> tmpFile <> " " <> opts)
   readFile tmpFile
 
-tuple    = S.it "tuple.ii"       (goldenInfer "-p types --no-fuse --no-color" "imports/tuple.ii"       "tuple")
-list1    = S.it "list.ii"        (goldenInfer "-p types --no-fuse --no-color" "imports/list.ii"        "list")
-list2    = S.it "list2.ii"       (goldenInfer "-p types --no-fuse --no-color" "imports/list2.ii"       "list2")
-mutual   = S.it "mutual.ii"      (goldenInfer "-p types --no-fuse --no-color" "imports/sumMul.ii"      "sumMul")
-tree     = S.it "tree.ii"        (goldenInfer "-p types --no-fuse --no-color" "imports/tree.ii"        "tree")
-intmap   = S.it "intmap.ii"      (goldenInfer "-p types --no-fuse --no-color" "imports/intmap.ii"      "intmap")
-mixfixes = S.it "mixfixTests.ii" (goldenInfer "-p core  --no-fuse --no-color" "imports/mixfixTests.ii" "mixfixTests")
+tuple    = S.it "tuple.ii"        (goldenInfer "-p types --no-fuse --no-color" "imports/tuple.ii"       "tuple")
+list1    = S.it "list.ii"         (goldenInfer "-p types --no-fuse --no-color" "imports/list.ii"        "list")
+list2    = S.it "list2.ii"        (goldenInfer "-p types --no-fuse --no-color" "imports/list2.ii"       "list2")
+mutual   = S.it "mutual sumMul.ii"(goldenInfer "-p types --no-fuse --no-color" "imports/sumMul.ii"      "sumMul")
+tree     = S.it "tree.ii"         (goldenInfer "-p types --no-fuse --no-color" "imports/tree.ii"        "tree")
+intmap   = S.it "intmap.ii"       (goldenInfer "-p types --no-fuse --no-color" "imports/intmap.ii"      "intmap")
+mixfixes = S.it "mixfixTests.ii"  (goldenInfer "-p core  --no-fuse --no-color" "imports/mixfixTests.ii" "mixfixTests")
 
 specialise = S.it "simpleMutual.ii" (goldenInfer "-p simple  --no-color" "imports/SpecialisationTests/SimpleMutual.ii" "simpleMutual")
 
@@ -162,6 +162,6 @@ s = S.sydTest $ do
   mutual
   tree
   mixfixes
-  intmap
+--intmap
 
 testMixfixes = S.sydTest mixfixes

@@ -37,9 +37,14 @@ repeat x = let xs = Cons x xs in xs
 
 -- can produce different types depending on Nil case
 -- Int -> [a] -> ([a] , [a])
-splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
-  @Nil =>  { l = Nil , r = Nil } -- { l = xs , r = xs }
-  @Cons x xs => let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
+--splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
+--  @Nil =>  { l = Nil , r = Nil } -- { l = xs , r = xs }
+--  @Cons x xs => let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
+
+splitAt n xs = if n <=? 0 then ( @Nil , xs ) else case xs of
+  @Nil =>  ( Nil , Nil )
+--  @Nil =>  ( xs , xs )
+  @Cons x xs => splitAt (n - 1) xs > \(l , r) => ( Cons x l , r )
 
 -- TODO let-scope depends on parsed mixfixes
 span p xs = case xs of

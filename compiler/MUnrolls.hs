@@ -169,6 +169,9 @@ myfutu psi = embed . fmap worker . psi where
   worker (Pure f) = myfutu psi f
   worker (Free f) = embed (fmap worker f)
 
+mutu :: Recursive t => (Base t (b, a) -> b) -> (Base t (b, a) -> a) -> t -> a
+mutu f g = snd . cata (f &&& g)
+
 --myPrepro :: Corecursive t => (forall b. Base t b -> Base t b) -> (Base t a -> a) -> t -> a
 --myPrepro e f = c where c = f . fmap (c . hoist e) . project
 --
