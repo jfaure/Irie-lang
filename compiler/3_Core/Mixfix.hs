@@ -13,19 +13,19 @@ import MUnrolls (hypoM)
 
 type Expr = TT
 type ExprF = TTF
-data ParseState = ParseState { _stream ∷ [Expr] }
+data ParseState = ParseState { _stream :: [Expr] }
 makeLenses ''ParseState
 type Parser = ExceptT Text (State ParseState) --type P = Prelude.State ParseState
-newtype SubParser = SubParser { unSubParser ∷ Parser (ExprF (Either Expr SubParser)) }
+newtype SubParser = SubParser { unSubParser :: Parser (ExprF (Either Expr SubParser)) }
 
-tryParse ∷ Parser a -> Parser a
+tryParse :: Parser a -> Parser a
 tryParse p = use stream >>= \s -> catchE p (\e -> (stream .= s) *> throwE e)
 
-solveMixfixes ∷ [Expr] -> Expr
+solveMixfixes :: [Expr] -> Expr
 solveMixfixes juxt = MixfixPoison ||| identity
   $ runExceptT (hypoM (pure . solveFixities) unSubParser parseExpr) `evalState` ParseState juxt
 
-solveFixities ∷ ExprF Expr -> Expr
+solveFixities :: ExprF Expr -> Expr
 solveFixities = let
   clearVoids = filter (\case {VoidExpr{} -> False ; _ -> True})
   in \case
@@ -45,11 +45,11 @@ solveFixities = let
   e -> embed e
 
 -- Parser apomorphism
-parseExpr ∷ SubParser
+parseExpr :: SubParser
 parseExpr = SubParser $ let
   isMF = \case { MFExpr{} -> True ; _ -> False }
   mkApp = \case { [f] -> f ; f : args -> App f args ; [] -> MixfixPoison "impossible" }
-  mkMFSubParsers ∷ ModuleIName -> [Maybe IName] -> [SubParser]
+  mkMFSubParsers :: ModuleIName -> [Maybe IName] -> [SubParser]
   mkMFSubParsers m = let
     parseMFWord q = SubParser $ stream %%= splitAt 1 >>= \case
       [MFExpr (Mixfixy _ qs)] | QMFPart q `elem` qs -> pure VoidExprF

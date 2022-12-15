@@ -1,6 +1,6 @@
 import imports/prelude
 import imports/list
-import imports/list2
+--import imports/list2
 
 {-
 --some v = let
@@ -71,4 +71,4 @@ pPlus m n = @Parser \s cok cko eok eko ⇒ let
 runParser p s = unParser p s (\a s ⇒ @COK s a)
   (\err s ⇒ @CKO err) (\a s ⇒ @EOK a) (\err s ⇒ @EKO err)
 
-p1 = runParser pEof { input = @Nil }
+--p1 = runParser pEof { input = @Nil }

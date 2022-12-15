@@ -45,13 +45,13 @@
 -- Need to accurately delegate generalisation to first mutual
 -- import imports/sumMul
 
--- lost some μ-bounds (? buildroll just before making μ binder)
-import imports/foldr
-nonEmptySubSequences = \case
-  @Nil       => Nil
-  @Cons x xs => let
-    f ys r = Cons ys (Cons (Cons x ys) r)
-    in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
+-- lost some μ-bounds
+-- import imports/foldr
+-- nonEmptySubSequences = \case -- [a] -> [[a]]
+--   @Nil       => Nil
+--   @Cons x xs => let
+--     f ys r = Cons ys (Cons (Cons x ys) r)
+--     in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
 
 --list2.unwords = merge μ-bounds upwards even if layer not equal
 
@@ -60,8 +60,6 @@ nonEmptySubSequences = \case
 
 -- register occurs buggy
 -- import imports/intmap
-
---import imports/mkParser
 
 -- Wildcard
 --null = \case

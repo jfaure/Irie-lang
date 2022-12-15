@@ -44,7 +44,7 @@ partitionType :: Type -> (BitSet , GroundType)
 partitionType = \case
   TyVars vs g -> (vs , g)
   TyGround g  -> (0  , g)
-  TyVar v     -> (0 `setBit` v , [])
+--TyVar v     -> (0 `setBit` v , [])
 --pi@TyPi{}   -> (0 , [pi]) -- TODO ok?
 --TyIndexed{} -> _
   t -> error $ show t
@@ -54,7 +54,6 @@ tyLatticeEmpty pos = \case
   t  -> t
 
 hasVar t v = case t of
-  TyVar w     -> v == w
   TyVars vs _ -> testBit vs v
   _ -> False
 
@@ -207,22 +206,17 @@ rmMuBound m = let goGround = filter (\case { THMuBound x -> x /= m ; _ -> True }
   t -> t
 
 rmTVar v = \case
-  TyVar w     -> if w == v then TyGround [] else TyVar w
   TyVars ws g -> TyVars (ws `clearBit` v) g
   t -> t
 
 mergeTVars vs = \case
-  TyVar w     -> TyVars (vs `setBit` w) []
   TyVars ws g -> TyVars (ws .|. vs) g
   TyGround g  -> TyVars vs g
 mergeTypeGroundType pos a b = mergeTypes pos a (TyGround b)
 mergeTVar v = \case
-  TyVar w     -> TyVars (setBit 0 w `setBit` v) []
   TyVars ws g -> TyVars (ws `setBit` v) g
   TyGround g  -> TyVars (0  `setBit` v) g
 mergeTypes pos (TyGround a) (TyGround b)     = TyGround (mergeTyUnions pos a b)
-mergeTypes _   (TyVar v) t                   = mergeTVar v t
-mergeTypes _   t (TyVar v)                   = mergeTVar v t
 mergeTypes pos (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions pos g1 g2)
 mergeTypes pos (TyVars vs g1) (TyGround g2)  = TyVars vs (mergeTyUnions pos g1 g2)
 mergeTypes pos (TyGround g1) (TyVars vs g2)  = TyVars vs (mergeTyUnions pos g1 g2)

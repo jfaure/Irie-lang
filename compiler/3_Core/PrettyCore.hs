@@ -132,7 +132,7 @@ pTy pos = let
     ts  -> parens $ hsep (punctuate (" " <> latChar) (pTyHeadParens pos <$> ts))
   in \case
   TyAlias q   -> annotate (AQBindName q) ""
-  TyVar  i    -> "τ" <> viaShow i
+--  TyVar  i    -> "τ" <> viaShow i
   TyVars i [] -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
   TyVars i g  -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> latChar <+> parens (pTyUnion g)
   TyGround u  -> pTyUnion u

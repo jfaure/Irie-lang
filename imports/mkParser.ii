@@ -9,7 +9,12 @@ fromCString str = let
   go (ok , val , str2) = if ok then @Cons val (go (nextElem str2)) else @Nil
   in go (nextElem str)
 
--- takeN c = { str = drop 1 c.str }
+--1. String matching: scan all input to find all strs, then trigger FA matching
+--2. each FA has execution switch (starts off except leftmost)
+--3. /left , FA str , right/ => if all components left of an FA are matched, switch on and run FA if str is found, if FA matches switch right on
+-- eg. /.*foo[ˆX]barY+/
+-- => .* "foo" [ˆX]  "bar" Y+
+FA = | Str String | Many FA | Try FA FA | Bind (a -> FA)
 
 --runParse : String -> LR a -> Maybe a
 -- runParse = \case
@@ -19,11 +24,3 @@ fromCString str = let
 --  @Alt a b     => _
 --  @LookAhead a => _
 --  @EOF         => _
-
-fmapFree f = \case
-  @Pure x => @Pure x
-  @Free x => @Free (f x)
-
-foldFree pure free f = case f of
-  @Pure x => pure x
-  @Free x => free (fmapFree (foldFree pure free) x)

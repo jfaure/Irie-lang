@@ -97,10 +97,8 @@ tyBot = TyGround []
 data Pi = Pi [(IName , Type)] Type deriving Eq -- pi binder Π (x : T) → F T
 data Type
  = TyGround GroundType
-
  -- vv tvars are temporary artifacts of inference
- | TyVar    Int -- generalizes to THBound if survives biunification and simplification
- | TyVars   BitSet GroundType
+ | TyVars   BitSet GroundType -- vars generalise to THBound if survive simplification
 
  -- vv User type annotations
  | TyAlias  QName
@@ -109,13 +107,11 @@ data Type
  | TySi Pi (IM.IntMap Expr) -- Existential: some TT and a function of them (~partial app)
  | TyIndexed Type [Expr]    -- Indexed family (raw Terms can only exist here after normalisation)
 
+tyVar v = TyVars (setBit 0 v) []
 -- equality of types minus dependent normalisation
 instance Eq Type where
   TyGround g1 == TyGround g2 = g1 == g2
-  TyVar i     == TyVar j     = i == j
   TyVars i g1 == TyVars j g2 = i == j && g1 == g2
-  TyVar i     == TyVars j [] = j == (0 `setBit` i)
-  TyVars j [] == TyVar i     = j == (0 `setBit` i)
   _           == _           = False
 
 data TyCon t -- Type constructors

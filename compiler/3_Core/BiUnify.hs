@@ -52,17 +52,17 @@ biSubTVars :: BitSet -> BitSet -> TCEnv s BiCast
 biSubTVars p m = BiEQ <$ (bitSet2IntList p `forM` \v -> biSubTVarTVar v `mapM` bitSet2IntList m)
 
 biSubTVarTVar p m = use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
-  when debug_biunify (traceM ("bisubττ: " <> prettyTyRaw (TyVar p) <> " <=> " <> prettyTyRaw (TyVar m)))
+  when debug_biunify (traceM ("bisubττ: " <> prettyTyRaw (tyVar p) <> " <=> " <> prettyTyRaw (tyVar m)))
   live <- checkLvl p
   leakVars p (0 `setBit` m)
   leakVars m (0 `setBit` p)
   MV.write v p (BiSub (mergeTVar m p') (mergeTVar m m')) -- TODO is ok? intended to fix recursive type unification
-  unless (hasVar m' m || live) $ void (biSubType p' (TyVar m)) -- Avoid loops
+  unless (hasVar m' m || live) $ void (biSubType p' (TyVars (setBit 0 m) [])) -- Avoid loops
   pure BiEQ
 
 biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let mMerged = mergeTypes True m m'
-  when debug_biunify (traceM ("bisub: " <> prettyTyRaw (TyVar v) <> " <=> " <> prettyTyRaw m))
+  when debug_biunify (traceM ("bisub: " <> prettyTyRaw (tyVar v) <> " <=> " <> prettyTyRaw m))
 --live <- checkLvl v
   leakTyVars v m
   MV.write b v (BiSub p' mMerged)
@@ -71,7 +71,7 @@ biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
 
 biSubTVarM p v = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let pMerged = mergeTypes False p p'
-  when debug_biunify (traceM ("bisub: " <> prettyTyRaw p <> " <=> " <> prettyTyRaw (TyVar v)))
+  when debug_biunify (traceM ("bisub: " <> prettyTyRaw p <> " <=> " <> prettyTyRaw (TyVars (setBit 0 v) [])))
 --live <- checkLvl v
   leakTyVars v p
   MV.write b v (BiSub pMerged m')
@@ -107,7 +107,7 @@ instantiate pos nb ty = (if nb == 0 then pure mempty else freshBiSubs nb <&> V.f
 instantiateF :: V.Vector Int -> TypeF (Bool -> (BitSet , Type)) -> Bool -> (BitSet , Type)
 instantiateF tvars t pos = let
   instGround :: THead (Bool -> (BitSet , Type)) -> (BitSet , Type)
-  instGround = let thBound i = (0 , TyVar (tvars V.! i)) in \case -- (0 `setBit` (tvars V.! i) , []) in \case
+  instGround = let thBound i = (0 , TyVars (setBit 0 (tvars V.! i)) []) in \case -- (0 `setBit` (tvars V.! i) , []) in \case
     THMu m t    -> let mInst = tvars V.! m in -- µx.F(x) is to inference (x & F(x))
       case t pos of
         (rs , TyGround g ) -> (setBit rs m , TyVars (0 `setBit` mInst) g)
@@ -160,7 +160,6 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
 
 -- TODO cache THTycon contained vars?
 getTVarsType = \case
-  TyVar v -> setBit 0 v
   TyVars vs g -> foldr (.|.) vs (getTVarsTyHead <$> g)
   TyGround  g -> foldr (.|.) 0 (getTVarsTyHead <$> g)
   _ -> error "panic: getTVars on non-trivial type"

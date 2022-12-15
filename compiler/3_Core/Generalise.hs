@@ -81,7 +81,7 @@ generalise lvl0 rawType = do
 --    <- runStateT (analyseT bis' ((TyVar ||| identity) rawType , True , 0 , 0 , 0)) (AState 0 coocVStart)
     (ty , (AnalyseState _bis recs _instVs coocV)) <-
       -- merge with recTVar in case of direct recursion `r = { next = r } : µx.{next : x}`
-      runStateT (analyseType ((TyVar ||| identity) rawType) True 0 0) (AnalyseState bis' 0 bl coocVStart)
+      runStateT (analyseType (((\x -> TyVars (setBit 0 x) []) ||| identity) rawType) True 0 0) (AnalyseState bis' 0 bl coocVStart)
     occurs <- V.unsafeFreeze coocV
     pure (ty , recs , occurs)
   nVars  <- use blen
@@ -189,10 +189,11 @@ judgeVars nVars lvl0 recursives coocs = V.constructN nVars $ \prevSubs -> let
 -- muBounds serves to propagate co-occurences of recursive vars upwards
 type Roller = [THead (Maybe Type)] -- x to μx. binder [TypeF] typeconstructor wrappers
 data TypeRoll
- = NoRoll    { forgetRoll :: Type }
- | BuildRoll { forgetRoll :: Type , mus :: NonEmpty (Int , Roller , Type) } -- μVar + tycon wrappers + bounds per mu
- | Rolling   { forgetRoll :: Type , muR :: Int , roller :: Roller , resetRoll :: Roller }
+ = NoRoll    { forgetRoll' :: Type }
+ | BuildRoll { forgetRoll' :: Type , mus :: NonEmpty (Int , Roller , Type) } -- μVar + tycon wrappers + bounds per mu
+ | Rolling   { forgetRoll' :: Type , muR :: Int , roller :: Roller , resetRoll :: Roller }
  deriving Show
+forgetRoll x = {-d_ (rollTy x)-} (forgetRoll' x)
 -- forgetRoll but keeps μvar bounds
 --dropRoll m = \case
 --  BuildRoll uf ms -> mergeTypeList True $ uf : (filter (\(i,_,_) -> i `elem` m) (NE.toList ms) <&> \(_ , _ , t) -> t)
@@ -227,8 +228,8 @@ mergeRolls' (Rolling a m r z) (Rolling a2 m2 r2 z2)
  | m < m2  = d_ ("roll-roll" , m , m2) $ cata rollType (patchMu m2 m $ mergeTypes True a a2)
  | m > m2  = d_ ("roll-roll" , m , m2) $ cata rollType (patchMu m m2 $ mergeTypes True a2 a)
 
-mergeRolls' (BuildRoll a ms) (BuildRoll a2 ms2) = d_ ("build-build" , fst3 <$> ms , fst3 <$> ms2)
- $ BuildRoll (mergeTypes True a a2) (ms <> ms2)
+mergeRolls' (BuildRoll a ms) (BuildRoll a2 ms2) = d_ ("build-build" , fst3 <$> ms , fst3 <$> ms2) $
+  BuildRoll (mergeTypes True a a2) (ms <> ms2)
 
 mergeRolls' a@BuildRoll{} b@Rolling{} = mergeRolls b a
 mergeRolls' (Rolling a m r z) (BuildRoll a2 ms)
@@ -243,22 +244,27 @@ rollType this = let -- ! we may be building | rolling μs out of multiple branch
   getTHeadTypeRoll vs ms th = let
     addMu m t@(TyGround [THMu n t2]) = if n == m then t else error "internal error stacked μ"
     addMu m t = TyGround [THMu m t]
+    mkTy tt = if vs == 0 then TyGround [tt] else TyVars vs [tt]
     this = let tt = [forgetRoll <$> th] in if vs == 0 then TyGround tt else TyVars vs tt
     ith = Generalise.indexed th
     -- if. μ-bound in hole start μ-build
     -- if. Build in a hole => if μ-binder: switch build to roll ||| continue build
     -- if. Roll in hole check if roll ok: roll and reset ||| test more layers
     layer i = ith <&> \(j , t) -> if i == j then Nothing else Just (forgetRoll t) -- void out rec-branch for (==)
-    -- TODO don't insert this into rolls !!
+    -- TODO don't insert 'this' into rolls !! need to re-construct type at top to propagate μ-bounds
+    -- 'this' is the current type, mkRoll examines each branch (one layer down)
     mkRoll :: Int -> TypeRoll -> [TypeRoll]
     mkRoll i = \case
       BuildRoll ty mus -> [mergeRollsNE $ mus <&> \(m , rollFn , b) -> let l = layer i : rollFn
         in if m `elem` ms then let r = reverse l in Rolling (addMu m (mergeTypes True b this)) m r r
            else BuildRoll this ((m , l , b) :| [])]
-      Rolling ty m (r : nextRolls) reset -> {-trace (prettyTyRaw ty <> " <=> " <> prettyTyRaw this)-} [if layer i /= r -- TODO check subtype (roughly eq modulo μ and bounds)
-        then NoRoll this else Rolling ty m (nextRolls <|> reset) reset]
+      Rolling ty m (r : nextRolls) reset -> {-trace (prettyTyRaw ty <> " <=> " <> prettyTyRaw this)-} if layer i /= r -- TODO check subtype (roughly eq modulo μ and bounds)
+        then [] -- NoRoll this
+--      then NoRoll $ mkTy $ ith <&> \(j , oldT) -> if i == j then trace (prettyTyRaw ty) ty else forgetRoll oldT -- re-insert μ-bounds
+        else [Rolling ty m (nextRolls <|> reset) reset]
       NoRoll t -> []
       x -> error $ show x
+    -- TODO use forget-roll properly, atm it mixes layers and is unreliable
     in case concat (Prelude.imap mkRoll (toList th)) of
       [] -> case ms of
         []  -> NoRoll this
@@ -282,7 +288,6 @@ rollType this = let -- ! we may be building | rolling μs out of multiple branch
   in case this of
   TyVarsF vs g -> aggregateBranches vs (partitionMus g)
   TyGroundF g  -> aggregateBranches 0  (partitionMus g)
-  TyVarF    v  -> NoRoll (TyVar v)
   _ -> NoRoll (embed $ fmap forgetRoll this)
 
 deriving instance Show (THead (Maybe Type))
@@ -302,7 +307,7 @@ doGen tvarSubs recs rawType pos = let
   genVar v = if v >= V.length tvarSubs
     then generaliseVar v <&> \q -> TyGround [if testBit recs v then THMuBound q else THBound q] 
     else case tvarSubs V.! v of
-    Escaped    -> pure (TyVar v)
+    Escaped    -> pure (TyVars (setBit 0 v) [])
     Remove     -> pure (TyGround []) -- pure $ if leaks `testBit` v then TyVar v else TyGround []
     Recursive  -> generaliseVar v <&> \q -> TyGround [THMuBound q]
     Generalise -> generaliseVar v <&> \q -> TyGround [THBound q]
@@ -321,7 +326,6 @@ doGen tvarSubs recs rawType pos = let
 
   in case rawType of
     TyGroundF gs  -> go 0 gs
-    TyVarF v      -> genVar v
     TyVarsF vs gs -> go vs gs
     x             -> embed <$> traverse (\f -> f pos) x
 
@@ -344,7 +348,7 @@ analyseType = let
     | testBit loops v   -> pure (TyVars loops []) -- unguarded var loop
     | testBit guarded v -> TyVars (0 `setBit` v) [] <$ (recs %= (`setBit` v))
     | otherwise -> use anaBis >>= \b -> use instVars >>= \iv -> if v >= iv
-      then pure $ TyVar v -- THBound vars spawned in later
+      then pure $ TyVars (setBit 0 v) [] -- THBound vars spawned in later
       else MV.read b v >>= \(BiSub pty mty) -> let -- not atm a TVar cycle
       loops' = setBit loops v
       ty = if pos then pty else mty
@@ -376,7 +380,6 @@ analyseType = let
   in cata $ \t pos loops guarded -> case t of
     TyGroundF g  -> go g 0  pos loops guarded
     TyVarsF vs g -> go g vs pos loops guarded
-    TyVarF v     -> subVar pos loops guarded v
     x -> embed <$> traverse (\x -> x pos loops guarded) x
 
 {-

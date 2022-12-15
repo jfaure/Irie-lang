@@ -15,7 +15,7 @@ import Generalise ( generalise )
 
 import Control.Lens
 import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV ( MVector, modify, new, read, write )
+import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
 import Data.Functor.Foldable
@@ -70,14 +70,14 @@ judgeBind letDepth bindINm = let
       then pure jb else fromJust . head <$> generaliseBinds wip' lvl0 (bindINm : bitSet2IntList ms) -- <* clearBiSubs 0
 
   -- reference to inference stack (forward ref | recursive | mutual)
-  prevInfer :: MV.MVector s (Either P.FnDef Bind) -> Bind -> TCEnv s Expr
-  prevInfer wip' = \case
+  prevInfer :: Bind -> TCEnv s Expr
+  prevInfer = \case
     BindOK _ _ _isRec e  -> pure e -- don't inline the expr
     Mutual _e _freeVs _isRec tvar _tyAnn -> d_ ("mutual module")
-      $ pure (Core (Var (VQBind $ mkQName letDepth bindINm)) (TyVar tvar))
+      $ pure (Core (Var (VQBind $ mkQName letDepth bindINm)) (tyVar tvar))
     -- Stacked bind means this was either forward ref | Mutual | recursive in block (r = { a = r })
     Guard mutuals tvar -> use bindWIP >>= \((wipLet , wipI) , isRec) -> let nm = mkQName letDepth bindINm in
-      ($> Core (Var (VQBind nm)) (TyVar tvar)) $
+      ($> Core (Var (VQBind nm)) (tyVar tvar)) $
       pure ()
 {-
       when (wipI /= bindINm) $ do
@@ -94,7 +94,7 @@ judgeBind letDepth bindINm = let
 
   in use letBinds >>= \lb -> (lb `MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>=
 --   \abs -> traceShowM (letDepth , bindINm , abs) *> (\x -> x abs)
-     (inferParsed wip ||| prevInfer wip)
+     (inferParsed wip ||| prevInfer)
 
 -- Converting user types to Types = Generalise to simplify and normalise the type
 getAnnotationType :: Maybe P.TT -> TCEnv s (Maybe Type)
@@ -125,7 +125,7 @@ generaliseBinds wip' lvl0 ms = ms `forM` \m -> MV.read wip' m >>= (error . show 
         -- rec | mutual: if this bind : τ was used within itself then something bisubed with -τ
         _cast <- use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
           TyGround [] -> BiEQ <$ MV.write v recTVar (BiSub ty (TyGround [])) -- not recursive / mutual
-          _t          -> bisub ty (TyVar recTVar) -- ! recursive | mutual ⇒ bisub with -τ (itself)
+          _t          -> bisub ty (tyVar recTVar) -- ! recursive | mutual ⇒ bisub with -τ (itself)
         g       <- generalise lvl0 (Left recTVar)
         when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
         pure (intList2BitSet (fst <$> args) , g)
@@ -166,11 +166,11 @@ inferF = let
    imapM_ (\i n -> MV.write w i n) argTVars
 
    (bruijnArgVars .=) =<< V.unsafeFreeze w
-   (map TyVar argTVars , ) <$> go <* (bruijnArgVars %= V.drop n)
+   (map tyVar argTVars , ) <$> go <* (bruijnArgVars %= V.drop n)
 
   -- App is the only place typechecking can fail
  biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
-   (, TyVar retV) <$> bisub fTy (prependArrowArgsTy argTys (TyVar retV))
+   (, tyVar retV) <$> bisub fTy (prependArrowArgsTy argTys (tyVar retV))
 
  retCast rc tt = case rc of { BiEQ -> tt ; c -> case tt of { Core f ty -> Core (Cast c f) ty ; x -> error (show x) } }
 
@@ -266,7 +266,7 @@ inferF = let
     in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
-    P.VBruijn b  -> use bruijnArgVars <&> \argTVars -> Core (VBruijn b) (TyVar $ argTVars V.! b)
+    P.VBruijn b  -> use bruijnArgVars <&> \argTVars -> Core (VBruijn b) (tyVar $ argTVars V.! b)
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VQBind q   -> getQBind q
     P.VLetBind q ->
@@ -304,20 +304,20 @@ inferF = let
     mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton ({-qName2Key-} f) ty)]) dest fields
     in (>>= checkFails o) $ case record of
     (Core object objTy) -> case maybeSet of
-      P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (TyVar i))
-        <&> \cast -> Core (TTLens (Cast cast object) fields LensGet) (TyVar i)
+      P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (tyVar i))
+        <&> \cast -> Core (TTLens (Cast cast object) fields LensGet) (tyVar i)
 
       -- LeafTy -> Record -> Record & { path : LeafTy }
       -- + is right for mergeTypes since this is output
       P.LensSet x  -> x <&> \case
 --      new@(Core _newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (mergeTypes True objTy (mkExpected newLeafTy))
-        leaf@(Core _newLeaf newLeafTy) ->  -- freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected TyVar i)
+        leaf@(Core _newLeaf newLeafTy) ->  -- freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected tyVar i)
           Core (TTLens object fields (LensSet leaf)) (mergeTypes True objTy (mkExpected newLeafTy))
         _ -> PoisonExpr
 
       P.LensOver x -> x >>= \fn -> do
          (ac , rc , outT , rT) <- freshBiSubs 3 >>= \[inI , outI , rI] -> let
-           inT = TyVar inI ; outT = TyVar outI
+           inT = tyVar inI ; outT = tyVar outI
            in do -- need 3 fresh TVars since we cannot assume anything about the "fn" or the "record"
            argCast <- bisub (tyOfExpr fn) (TyGround [THTyCon $ THArrow [inT] outT]) <&> \case
              CastApp [argCast] _pap BiEQ  -> argCast -- pap ?

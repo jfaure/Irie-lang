@@ -3,11 +3,12 @@
   * https://documentation.divio.com/
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   ** mutuals , μ-roll , let-gen inst
+  * rm Tyground etc..
   * co-occurence analysis inplace + updateable as types are merged
   * Interpret
   * Free-vars
   * fix cache
-  * μ-roll multi-branch μs merge
+  * μ-roll multi-branch μs merge; μ-roll needs rewrite
 ## Names + meta
   * make global resolver more like a standard module
     atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]

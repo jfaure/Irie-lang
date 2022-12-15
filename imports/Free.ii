@@ -1,0 +1,12 @@
+-- f must be a functor to recursively descend the free branch
+fmapFree f ffmap = \case
+  @Pure x => @Pure (f x)
+  @Free x => @Free (fmapFree (ffmap f) x)
+
+--bindFree m f ffmap = case m of
+--  @Pure x => f x
+--  @Free g => @Free (ffmap (\m => bindFree m f) g)
+--
+--foldFree pure free f = case f of
+--  @Pure x => pure x
+--  @Free x => free (fmapFree (foldFree pure free) x)
