@@ -14,7 +14,10 @@ fromCString str = let
 --3. /left , FA str , right/ => if all components left of an FA are matched, switch on and run FA if str is found, if FA matches switch right on
 -- eg. /.*foo[ˆX]barY+/
 -- => .* "foo" [ˆX]  "bar" Y+
-FA = | Str String | Many FA | Try FA FA | Bind (a -> FA)
+FA t a =
+ | Str String (String -> a)
+ | Many FA (t -> a)
+ | Try FA (t -> a) FA (t -> a)
 
 --runParse : String -> LR a -> Maybe a
 -- runParse = \case

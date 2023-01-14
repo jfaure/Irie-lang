@@ -79,12 +79,15 @@ data PrimInstr
 
  -- Posix instructions
  | GetCWD
- | OpenDir
- | ReadDir
  | ReadFile
  | WriteFile
  | Execve
  | Fork
+
+ -- Almost Posix
+ | OpenDir
+ | ReadDir
+ | IsDir -- check if a DIRP ptr is not null
 
  -- Posix glue
  | DirentName -- extract name from dirent struct

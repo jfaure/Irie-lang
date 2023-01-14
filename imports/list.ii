@@ -98,7 +98,6 @@ span p xs = case xs of
 
 reverse = foldl (\x xs => Cons xs x) Nil
 
--- somehow mis-parsed; the Cons q app is assumed to be a label but don't want that
 scanl f q ls = (Cons q) case ls of
   @Nil => Nil
   @Cons x xs => scanl f (f q x) xs

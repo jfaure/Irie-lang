@@ -30,6 +30,10 @@ data TCEnvState s = TCEnvState {
  , _blen          :: Int                -- cursor for bis which may have spare space
  , _bis           :: MV.MVector s BiSub -- typeVars
  , _lvls          :: [BitSet] -- tvar let-nest scope (see Generalise.hs)
+
+ , _recursives    :: BitSet -- type analysis
+ , _nquants :: Int
+ , _genVec  :: MV.MVector s Int
 }; makeLenses ''TCEnvState
 
 clearBiSubs :: Int -> TCEnv s ()

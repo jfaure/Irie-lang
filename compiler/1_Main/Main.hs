@@ -13,6 +13,7 @@ import PrettyCore
 import qualified PrettySSA
 import Infer (judgeModule)
 import qualified FEnv (simplifyModule)
+import Interpret
 import MkSSA (mkSSAModule)
 import C (mkC)
 
@@ -45,7 +46,7 @@ getCachePath fName = let
   in objDir <> map (\case { '/' -> '%' ; x -> x} ) (normalise fName)
 resolverCacheFName = getCachePath "resolver"
 doCacheCore  = False
-doFuse       = False
+doFuse       = True
 cacheVersion = 0
 
 deriving instance Generic GlobalResolver
@@ -64,6 +65,7 @@ core       = sh $ demoFile <> " -p core"
 types      = sh $ demoFile <> " -p types"
 opt        = sh $ demoFile <> " -p simple"
 emitC      = sh $ demoFile <> " -p C"
+interp     = sh $ demoFile <> " --interpret"
 testRepl   = sh ""
 
 --data Pipeline
@@ -193,6 +195,7 @@ simplifyModule (flags , fName , judgedModule , iNames , newResolver , _exts , er
 putResults :: (CmdLine, Bool, Errors, Maybe SrcInfo , FilePath , V.Vector HName , GlobalResolver , JudgedModule)
   -> IO (GlobalResolver, JudgedModule)
 putResults (flags , coreOK , errors , srcInfo , fName , iNamesV , r , j) = let
+  raw = not doFuse || noFuse flags || not coreOK -- TODO same as above
 --testPass p = coreOK && p `elem` printPass flags && not (quiet flags)
   putErrors h = do
     T.IO.hPutStr  h $ T.concat  $ (<> "\n\n") . formatError bindSrc srcInfo <$> (errors ^. biFails)
@@ -216,8 +219,8 @@ putResults (flags , coreOK , errors , srcInfo , fName , iNamesV , r , j) = let
   unless (outHandle == stdout) (SIO.hClose outHandle)
 
   when (doCacheCore && not (noCache flags)) (DB.encodeFile resolverCacheFName r *> cacheFile fName j)
-  let okMsg = if coreOK then "OK" <> ({-if isJust oSimple then " Simplified" else-} " Raw") else "KO"
-    in T.IO.putStrLn $ show fName <> " " <> "(" <> show (modIName j) <> ") " <>  okMsg
+  let okMsg = if coreOK then "OK " <> (if raw then "Raw" else "Fused") else "KO"
+    in T.IO.putStrLn $ show fName <> " " <> "(" <> show (modIName j) <> ") " <> okMsg
   pure (r , j)
 
 ---------------------------------
@@ -228,6 +231,7 @@ codegen flags input@(_resolver , jm) = let ssaMod = mkSSAModule jm in do
   when ("ssa" `elem` printPass flags) $ TL.IO.putStrLn (PrettySSA.prettySSAModule PrettySSA.ansiRender ssaMod)
   when ("C"   `elem` printPass flags) $ let str = mkC ssaMod
     in BSL.IO.putStr str *> BSL.IO.putStr "\n" *> BSL.IO.writeFile "/tmp/aryaOut.c" str
+  when (interpret flags) (T.IO.putStrLn $ interpretModule jm)
   pure input
 
 ----------

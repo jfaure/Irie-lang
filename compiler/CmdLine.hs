@@ -4,25 +4,27 @@ import Options.Applicative
 import qualified Data.Text as T ( words, isInfixOf, intercalate, split )
 
 data CmdLine = CmdLine
-  { printPass      ∷ [Text]
-  , jit            ∷ Bool
-  , noColor        ∷ Bool
-  , repl           ∷ Bool
-  , optlevel       ∷ Word
-  , threads        ∷ Int
-  , noPrelude      ∷ Bool
-  , noFuse         ∷ Bool
-  , noCache        ∷ Bool
---  , reportErrors   ∷ Bool -- print an error summary (not doing so is probably only useful for the test suite)
-  , recompile      ∷ Bool   -- recompile even if cached
-  , quiet          ∷ Bool
-  , outFile        ∷ Maybe FilePath
-  , strings        ∷ String -- work on text from the commandline (as opposed to reading it from a file)
-  , files          ∷ [FilePath]
+  { printPass      :: [Text]
+  , interpret      :: Bool
+  , jit            :: Bool
+  , noColor        :: Bool
+  , repl           :: Bool
+  , optlevel       :: Word
+  , threads        :: Int
+  , noPrelude      :: Bool
+  , noFuse         :: Bool
+  , noCache        :: Bool
+--  , reportErrors   :: Bool -- print an error summary (not doing so is probably only useful for the test suite)
+  , recompile      :: Bool   -- recompile even if cached
+  , quiet          :: Bool
+  , outFile        :: Maybe FilePath
+  , strings        :: String -- work on text from the commandline (as opposed to reading it from a file)
+  , files          :: [FilePath]
   } deriving (Show)
 
 defaultCmdLine = CmdLine -- Intended for use from ghci
   { printPass      = []
+  , interpret      = False
   , jit            = False
   , noColor        = True
   , repl           = False
@@ -38,9 +40,9 @@ defaultCmdLine = CmdLine -- Intended for use from ghci
   , files          = []
   }
 
-printPasses = T.words "args source parseTree types core simple ssa C" ∷ [Text]
+printPasses = T.words "args source parseTree types core simple ssa C" :: [Text]
 
-parsePrintPass ∷ ReadM [Text]
+parsePrintPass :: ReadM [Text]
 parsePrintPass = eitherReader $ \str → let
   passesStr = T.split (==',') (toS str)
   checkAmbiguous s = case Prelude.filter (T.isInfixOf s) printPasses of
@@ -49,12 +51,15 @@ parsePrintPass = eitherReader $ \str → let
     tooMany → Left $ "Ambiguous print pass: '" <> str <> "' : " <> show tooMany
   in sequence (checkAmbiguous <$> passesStr)
 
-cmdLineDecls ∷ Parser CmdLine
+cmdLineDecls :: Parser CmdLine
 cmdLineDecls = CmdLine
   <$> (option parsePrintPass)
       (short 'p' <> long "print"
       <> help (toS $ "list of compiler passes to print (separated by ',') : [" <> T.intercalate " | " printPasses <> "]")
       <> value [])
+  <*> switch
+      (short 'i' <> long "interpret"
+      <> help "Execute 'main' binding in haskell interpreter")
   <*> switch
       (short 'j' <> long "jit"
       <> help "Execute 'main' binding in jit")
@@ -104,8 +109,8 @@ cmdLineInfo =
         <> progDesc progDescription
   in info (helper <*> cmdLineDecls) description
 
--- parseCmdLine ∷ IO CmdLine
+-- parseCmdLine :: IO CmdLine
 -- parseCmdLine = execParser cmdLineInfo
 -- parseCmdLine = customExecParser (prefs disambiguate) cmdLineInfo
-parseCmdLine ∷ [String] → IO CmdLine
+parseCmdLine :: [String] → IO CmdLine
  = \rawArgs → handleParseResult $ execParserPure (prefs disambiguate) cmdLineInfo rawArgs

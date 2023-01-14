@@ -1,0 +1,40 @@
+import imports/prelude
+import imports/stream
+
+-- Stream a b = ∃s. Stream (s -> Step a b s) s
+-- Step a b s = Leaf a | Node b s s | Skip s
+
+--treeCata n l = \case -- only way to eliminate streams
+--  @TS next seed => let -- rhylo c a seed
+--    go s = case next s of
+--      @Leaf a     => l a
+--      @Skip r     => go r
+--      @Node x r q => n x (go r) (go q)
+--    in go seed
+
+recFMapDir f = \case
+  @Dir n dirp => @Dir n (f dirp)
+  @File n     => @File n
+
+mkDirent = \(dirp , name) => if isdir dirp then @Dir name dirp else @File name
+
+dirStream dirp = @stream (readdir >> \(nextDirp , name) => if isdir nextDirp then Yield name nextDirp else Done) dirp
+X = readdir
+
+ls fName = foldr (\n _ => puts n) 0 < dirStream (opendir fName)
+
+--catFileNames fName = foldr (\n z => Sappend (fromStr n) z) (fromStr "") < dirStream (opendir fName)
+
+--dirCata onDir onFile fName = readdir (opendir fName) > \(isDir , dirp , name) => if isDir then onFile name else onDir name (dirStream dirp)
+
+-- catDirs = dirCata (\nm subDirs => fromStr nm) fromStr (fromStr "hello")
+
+--printDirTree prefix = \case
+--  @File f  => Sappend prefix (fromStr f)
+--  @Dir d r => let
+--    p = Sappend (fromStr " | -- ") prefix
+--    in Sappend (Sappend prefix (fromStr d)) (SconcatMap (printDirTree p) r)
+
+--concatNames = dirCata \case
+--  @Dir name dirp => name
+--  @File name     => name

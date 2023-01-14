@@ -23,23 +23,6 @@ getArgShape = \case
 
 isPoisonExpr :: Expr -> Bool = (\case { PoisonExpr -> True ; _ -> False })
 
-{-
--- eqTypes a b = all identity (zipWith eqTyHeads a b) -- not zipwith !
-eqTypes (TyGround a) (TyGround b) = all identity (alignWith (these (const False) (const False) eqTyHeads) a b)
-
-eqTyHeads a b = kindOf a == kindOf b && case (a,b) of
-  (THPrim a  , THPrim b)  -> a == b
-  (THMuBound m  , THMu n _)  -> m == n
-  (THMu n _ , THMuBound m)  -> m == n
-  (THTyCon a , THTyCon b) -> case (a,b) of
---  (THSumTy a , THSumTy b) -> and $ BSM.elems $ alignWith (these (const False) (const False) eqTypes) a b
-    (THSumTy a , THSumTy b)     -> and $ BSM.elems $ BSM.intersectionWith eqTypes a b
-    (THProduct a , THProduct b) -> and $ BSM.elems $ BSM.intersectionWith eqTypes a b
-    (THTuple a , THTuple b) -> and $ V.zipWith eqTypes a b
-  (THBound a , THBound b) -> a == b
-  _ -> False
--}
-
 partitionType :: Type -> (BitSet , GroundType)
 partitionType = \case
   TyVars vs g -> (vs , g)
@@ -118,7 +101,7 @@ expr2Ty e = case e of
  x -> error $ "raw term cannot be a type: " ++ show x
 
 bind2Expr = \case
-  BindOK _ _ _isRec e -> e
+  BindOK _ e -> e
   x -> error (show x)
 
 ------------------------
@@ -169,8 +152,8 @@ mergeTyHead pos t1 t2 = -- (\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ "
     _ -> join
 
   -- v should avoid producing this
-  [THMu m a , THMuBound n] -> if m == n then [t1] else join
-  [THMuBound n , THMu m a] -> if m == n then [t2] else join
+  [THMu m _ , THMuBound n] -> if m == n then [t1] else join
+  [THMuBound n , THMu m _] -> if m == n then [t2] else join
 
   [THMu m _ , THBound n]  -> if m == n then [t1] else join
   [THBound n , THMu m _]  -> if m == n then [t2] else join
@@ -216,11 +199,12 @@ mergeTypeGroundType pos a b = mergeTypes pos a (TyGround b)
 mergeTVar v = \case
   TyVars ws g -> TyVars (ws `setBit` v) g
   TyGround g  -> TyVars (0  `setBit` v) g
-mergeTypes pos (TyGround a) (TyGround b)     = TyGround (mergeTyUnions pos a b)
-mergeTypes pos (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions pos g1 g2)
-mergeTypes pos (TyVars vs g1) (TyGround g2)  = TyVars vs (mergeTyUnions pos g1 g2)
-mergeTypes pos (TyGround g1) (TyVars vs g2)  = TyVars vs (mergeTyUnions pos g1 g2)
-mergeTypes pos a b = error $ "attempt to merge weird types at " <> if pos then "+" else "-" <> ": " <> show (a , b)
+mergeTypes pos a b = {-d_ (a , b) $-} mergeTypes' pos a b
+mergeTypes' pos (TyGround a) (TyGround b)     = TyGround (mergeTyUnions pos a b)
+mergeTypes' pos (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions pos g1 g2)
+mergeTypes' pos (TyVars vs g1) (TyGround g2)  = TyVars vs (mergeTyUnions pos g1 g2)
+mergeTypes' pos (TyGround g1) (TyVars vs g2)  = TyVars vs (mergeTyUnions pos g1 g2)
+mergeTypes' pos a b = error $ "attempt to merge weird types at " <> if pos then "+" else "-" <> ": " <> show (a , b)
 
 -- TODO check at the same time if this did anything
 mergeTysNoop :: Bool -> Type -> Type -> Maybe Type = \pos a b -> Just $ mergeTypes pos a b

@@ -16,7 +16,7 @@ import qualified Data.List.NonEmpty as NE
 -- Moore machine with states labeled with values of type Scrut, and transitions on edges of (Pattern , Rhs).
 
 -- ? multi-arg case ⇒ arg inter-dependencies
--- ? pattern ⇔ case isomorphism for specialisations (need to operate on Term syntax)
+-- ? pattern <=> case isomorphism for specialisations (need to operate on Term syntax)
 -- β-optimality for sharing branches between different paps in dependency tree
 -- [ [Pattern , TT] ] -> [ Case ]        2 ^ (nArgs - 1) paps
 -- case on tuples + labeled arg presence for β-optimality?
@@ -39,18 +39,19 @@ buildCase = let
   mkSubCases = let
     -- build a case where if any matches in the list fail , the whole list fails
     -- eg. [a , b] => (match a => match b => λa b => ok) else ko
-    subCaseF :: ListF CaseAcc (MatchOK -> MatchKO -> (Rhs , [(IName , Int)] , IName)) -> MatchOK -> MatchKO -> (Rhs , [(IName , Int)] , IName)
+    subCaseF :: ListF CaseAcc (MatchOK -> MatchKO -> (Rhs , [(IName , Int)] , IName)) -> MatchOK -> MatchKO
+      -> (Rhs , [(IName , Int)] , IName)
     subCaseF ret ok ko = case ret of
-        Nil            -> (ok , [] , 0)
-        Cons caseAcc r -> let
-          scrut = Var (VBruijn bruijnI)
-          (nextMatch , argSubs , bruijnI) = r ok ko
-          (this , argSubs2)               = caseAcc scrut nextMatch ko
-          in (this , argSubs2 ++ argSubs , bruijnI + 1)
+      Nil            -> (ok , [] , 0)
+      Cons caseAcc r -> let
+        (nextMatch , argSubs , bruijnI) = r ok ko
+        scrut = Var (VBruijn bruijnI)
+        (this , argSubs2) = caseAcc scrut nextMatch ko
+        in (this , argSubs2 ++ argSubs , bruijnI + 1)
     in \subPats ok ko -> cata subCaseF subPats ok ko & \(a,b,_) -> (a,b)
 
   go :: TTF CaseAcc -> CaseAcc -- Pass down a scrut and a default branch
-  go pat scrut ok ko = let
+  go pat scrut ok ko = let -- d_ (embed $ Question <$ pat) $ let
     noSubs = (,[])
     goLabel q subPats = let
       (rhs , argSubs) = mkSubCases subPats ok ko
@@ -65,7 +66,7 @@ buildCase = let
     VarF _              -> noSubs ok
     QuestionF           -> noSubs ok -- unconditional match
     PatternGuardsF pats -> mkSubCases pats ok ko
-    ArgProdF cc      -> mkSubCases cc ok ko & \(rhs , bruijnSubs) ->
+    ArgProdF cc    -> mkSubCases cc ok ko & \(rhs , bruijnSubs) ->
       (mkBruijnLam (BruijnAbsF (length cc) bruijnSubs 0 rhs) , [])
     TupleF subPats -> let -- (DesugarPoison "Unprepared for tuple" , [])
       n = length subPats 

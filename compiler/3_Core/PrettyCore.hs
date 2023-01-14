@@ -199,9 +199,10 @@ pBind nm showRhs bind = pretty nm <> " = " <> case bind of
   Guard m tvar      -> "GUARD : "   <> viaShow m <> viaShow tvar
   Mutual m _free isRec tvar tyAnn → "MUTUAL: " <> viaShow m <> viaShow isRec <> viaShow tvar <> viaShow tyAnn
   Queued{} -> "Queued"
-  BindOK n lbound isRec expr → let
-    recKW = if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
-    in (if lbound then "let " else "") <> {-viaShow n <+> -} recKW <> pExpr showRhs expr
+  BindOK n {-lbound isRec-} expr → let
+    recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
+    letW  = "" -- if lbound then "let " else ""
+    in letW <> {-viaShow n <+> -} recKW <> pExpr showRhs expr
   WIP -> "WIPBind"
   x -> error $ show x -- bindKO
 

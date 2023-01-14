@@ -20,3 +20,4 @@ deriving instance Show Lam
 deriving instance Show LamB
 deriving instance Show Specialisations
 deriving instance Show LetMeta
+deriving instance Show OptBind

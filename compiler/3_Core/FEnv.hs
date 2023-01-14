@@ -20,31 +20,30 @@ debug_fuse = True
 -- The only optimisation worth doing is fusing Match with Labels
 -- All cases "eventually" receive structure; fusion blocks on args | recursion
 -- Most of the complexity here addresses fusion accross fn (partial) applications
--- Thus we un-inline cases and branches to allow partial inlining (upto structure)
+-- Thus we un-inline cases and branches to allow partial inlining (up to structure)
 
 -- ? static arg transformation vs partial specialisation
 
 -- specialisations are keyed on arg structure (labels | constants)
 data FEnv s = FEnv
- { _thisMod     ∷ IName
- , _cBinds      ∷ MV.MVector s Bind
- , _structure   ∷ [CaseID] -- passed down to indicate we're building a fusable
- , _argTable    ∷ MV.MVector s Term
- , _activeBetas ∷ BitSet
- , _specStack   ∷ BitSet -- ensure not to inline a spec into itself
--- , _bindStack   ∷ BitSet
+ { _thisMod     :: IName
+ , _cBinds      :: MV.MVector s Bind
+ , _structure   :: [CaseID] -- passed down to indicate we're building a fusable
+ , _argTable    :: MV.MVector s Term
+ , _activeBetas :: BitSet
+ , _specStack   :: BitSet -- ensure not to inline a spec into itself
 
- , _specCache   ∷ MV.MVector s (M.Map [ArgShape] IName) -- Bind -> Spec cache
+ , _specCache   :: MV.MVector s (M.Map [ArgShape] IName) -- Bind -> Spec cache
  -- v INamed fresh specialisations: -- Nothing marks recursive specs, ie. noinline
- , _specBound   ∷ MV.MVector s (Maybe (FnSize , Term))
- , _specsLen    ∷ Int
- , _bruijnArgs  ∷ Maybe (V.Vector Term) -- fresh argNames for specialisations
+ , _specBound   :: MV.MVector s (Maybe (FnSize , Term))
+ , _specsLen    :: Int
+ , _bruijnArgs  :: Maybe (V.Vector Term) -- fresh argNames for specialisations
 
  -- name and extract all cases and branches (to cheapen duplication and inlining)
--- , _branches    ∷ MV.MVector s Term -- always Abs
--- , _branchLen   ∷ BranchID
--- , _cases       ∷ MV.MVector s (BSM.BitSetMap LamB , Maybe LamB) -- BranchIDs
--- , _caseLen     ∷ CaseID
+-- , _branches    :: MV.MVector s Term -- always Abs
+-- , _branchLen   :: BranchID
+-- , _cases       :: MV.MVector s (BSM.BitSetMap LamB , Maybe LamB) -- BranchIDs
+-- , _caseLen     :: CaseID
  }; makeLenses ''FEnv
 type SimplifierEnv s = StateT (FEnv s) (ST s)
 
@@ -63,10 +62,10 @@ type SimplifierEnv s = StateT (FEnv s) (ST s)
 --  s  <- use branches >>= \br -> (branches <.=) =≪ if MV.length br <= n then MV.grow br 32 else pure br
 --  n <$ MV.write s n newBranch
 
-addSpec ∷ Int -> Int -> Term -> SimplifierEnv s FnSize
+addSpec :: Int -> Int -> Term -> SimplifierEnv s FnSize
 addSpec s bruijnN term = do
   sb    <- use specBound
-  specs <- (specBound <.=) =≪ if MV.length sb <= s
+  specs <- (specBound <.=) =<< if MV.length sb <= s
     then MV.grow sb 32 >>= \v -> v <$ ([s..s+31] `forM_` \i -> MV.write v i Nothing)
     else pure sb
   let etaReduced = if bruijnN == 0 then term else case term of
@@ -75,7 +74,7 @@ addSpec s bruijnN term = do
 --      App (BruijnAbs 1 _free (Match (VBruijn 0) t branches d)) [scrut] -> Match scrut t branches d
         _ -> BruijnAbs bruijnN 0 term
       -- check if fn is larger than 1 apps, otherwise can inline it for free - the State monad allows this to shortcut
-      fnSize ∷ Int
+      fnSize :: Int -- TODO perhaps still avoid inlining large records / tycons
       fnSize = cata go etaReduced `evalState` 0 where
         go = \case
           AppF f ars -> get >>= \n -> if n > 2 then pure n else modify (1+) *> ((\f ars -> f + sum ars) <$> f <*> sequence ars)
@@ -83,14 +82,14 @@ addSpec s bruijnN term = do
       smallFn = fnSize <= 1
   smallFn <$ MV.write specs s (Just (smallFn , etaReduced))
 
-destructureArgs ∷ [Term] -> (Int , [Term] , [Term] , [ArgShape])
+destructureArgs :: [Term] -> (Int , [Term] , [Term] , [ArgShape])
 destructureArgs args = let
   (ret , bruijnN) = traverse solveArg args `runState` 0
   (  unstructuredArgsL -- subExpressions of Labels , now deBruijn args
    , repackedArgsL     -- original args with label subExprs replaced with deBruijn args
    , argShapes)
    = unzip3 ret
-  solveArg ∷ Term -> State Int ([Term] , [Term] , ArgShape)
+  solveArg :: Term -> State Int ([Term] , [Term] , ArgShape)
   solveArg arg = case arg of
     Var (VQBind q) -> pure ([] , [arg] , ShapeQBind q)
     Label l ars -> traverse solveArg ars <&> \case
@@ -102,7 +101,7 @@ destructureArgs args = let
 -- Replace all label | const args with new deBruijn argNames
 -- q is (either spec to respecialise or bind to specialise)
 data MkSpec = ReSpec QName | SpecBind QName
-mkSpec ∷ MkSpec -> Term -> [Term] -> SimplifierEnv s (Maybe Term)
+mkSpec :: MkSpec -> Term -> [Term] -> SimplifierEnv s (Maybe Term)
 mkSpec q body args = let
   (bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
   rawSpec = App body repackedArgs -- Simplifying this will produce our specialisation as λBruijn -> body'
@@ -134,9 +133,11 @@ inlineSpecApp specName args = inlineSpec specName >>= \case
   f@BruijnAbs{} -> simpleTerm (App f args) -- have to re-simplify the body with new args (β-optimality?)
   f -> simpleApp f args
 
--- Inline partially a binding if we believe something will fuse
+-- Inline partially a binding if we believe something will fuse (or fully inline unconditionally if interpreting)
+-- True = letbind ; false = VQBind
 inlineMaybe :: Bool -> QName -> wrapCases -> [Term] -> SimplifierEnv s Term
-inlineMaybe True _ _ _ = error "how to inline / update let-bound specs?"
+--inlineMaybe True _ _ _ = error "how to inline / update let-bound specs?"
+inlineMaybe True  q _ args = pure (App (Var (VLetBind q)) args)
 inlineMaybe False q cs args = use thisMod >>= \mod -> let
   bindINm  = unQName q
   noInline = App (Var (VQBind q)) args
@@ -153,15 +154,15 @@ inlineMaybe False q cs args = use thisMod >>= \mod -> let
     Nothing -> if mod /= modName q
       then pure noInline
       else simpleLetName bindINm >>= \case -- make a specialisation
-        BindOK _o _l _r (Core inlineF _ty) | shouldSpec _ args cs
+        BindOK _o (Core inlineF _ty) | shouldSpec _ args cs
           -- If recursive, we must spawn a specialisation.
           -- Also may as well cache non-recursive specs rather than alwaysinline
           -> fromMaybe noInline <$> mkSpec (SpecBind q) inlineF args
         _ -> pure noInline
 
-forceInline ∷ QName -> SimplifierEnv s (Maybe Term)
+forceInline :: QName -> SimplifierEnv s (Maybe Term)
 forceInline q = simpleLetName (unQName q) <&> \case -- make a specialisation
-  BindOK _o _l _r (Core inlineF _ty) -> Just inlineF
+  BindOK _o (Core inlineF _ty) -> Just inlineF
   _ -> Nothing
 
 -- Is this worth inlining
@@ -171,8 +172,8 @@ shouldSpec _fnInfo _args _caseWraps = True
   -- unfused cases have a dependency tree: (ScrutApp | ScrutArg) ⇒ each case: [Args] required to reduce
   -- * inline only happens upto cases/branches
 
---simplifyBindings ∷ IName -> MV.MVector s Bind -> ST s (Maybe Specialisations)
-simplifyModule ∷ IName -> Expr -> ST s (Expr , Maybe Specialisations)
+--simplifyBindings :: IName -> MV.MVector s Bind -> ST s (Maybe Specialisations)
+simplifyModule :: IName -> Expr -> ST s (Expr , Maybe Specialisations)
 simplifyModule modIName mod = do
   argSubs <- MV.new 0
 --br      <- MV.new 32
@@ -189,7 +190,6 @@ simplifyModule modIName mod = do
     , _activeBetas = emptyBitSet
 
     , _specStack   = emptyBitSet
---  , _bindStack   = emptyBitSet
 
     , _specCache   = sc -- a Map of ArgShapes -> Spec for each bind
     , _specBound   = sb -- raw binds table
@@ -206,7 +206,7 @@ simplifyModule modIName mod = do
   sc' <- V.unsafeFreeze s._specCache
   pure $ if slen == 0 then (retTT , Nothing) else (retTT , Just (Specialisations sb' sc'))
 
---traceSpecs ∷ Int -> SimplifierEnv s ()
+--traceSpecs :: Int -> SimplifierEnv s ()
 traceSpecs nBinds = do
   sl <- use specsLen
   when (sl /= 0) $ do
@@ -221,20 +221,19 @@ traceSpecs nBinds = do
 -- read from bindList, simplify or return binding and guard recursion
 simpleLetName :: Int -> SimplifierEnv s Bind
 simpleLetName bindN = use cBinds >>= \cb -> MV.read cb bindN >>= \b -> do
---bindStack %= (`setBit` bindN)
   MV.write cb bindN WIP
   newB <- simpleBind b
   newB <$ MV.write cb bindN newB
 
 simpleBind :: Bind -> SimplifierEnv s Bind
 simpleBind b = newBetaEnv $ case b of
-  BindOK n l isRec (Core t ty) -> if n /= 0 then pure b else simpleTerm t <&> \case
+  BindOK n (Core t ty) -> if optId n /= 0 then pure b else simpleTerm t <&> \case
     -- catch top level partial application (ie. extra implicit args)
-    App (Instr (MkPAp _n)) (f2 : args2) -> let
-      (arTs , retT) = getArrowArgs ty
-      in BindOK n l isRec $ Core (_PartialApp arTs f2 args2) retT
-    newT -> BindOK n l isRec $ Core newT ty
-  _x -> pure {-$ trace ("not bindok: " <> show bindN <> " " <> show x ∷ Text)-} WIP
+--  App (Instr (MkPAp _n)) (f2 : args2) -> let
+--    (arTs , retT) = getArrowArgs ty
+--    in BindOK n $ Core (_PartialApp arTs f2 args2) retT
+    newT -> BindOK n $ Core newT ty
+  _x -> pure {-$ trace ("not bindok: " <> show bindN <> " " <> show x :: Text)-} WIP
 
 simpleExpr :: Expr -> SimplifierEnv s Expr
 simpleExpr (Core t ty) = simpleTerm t <&> \t' -> Core t' ty -- ?! how tf did this work when t was typoed instead of t'
@@ -246,7 +245,7 @@ newBetaEnv go = (activeBetas <<.= emptyBitSet) >>= \svBetas -> (bruijnArgs <<.= 
   go <* (activeBetas .= svBetas) <* (bruijnArgs .= svBruijn)
 
 -- Should be able to rm
-inBetaEnv ∷ [(Int , Type)] -> BitSet -> [Term] -> SimplifierEnv s Term -> SimplifierEnv s ([(Int , Type)] , [Term] , Term)
+inBetaEnv :: [(Int , Type)] -> BitSet -> [Term] -> SimplifierEnv s Term -> SimplifierEnv s ([(Int , Type)] , [Term] , Term)
 inBetaEnv argDefs _free args go = let
   (resArgDefs , trailingArgs , betaReducable) = partitionThese (align argDefs args)
   in do
@@ -260,7 +259,7 @@ inBetaEnv argDefs _free args go = let
   sv `forM_` \(i , arg) -> MV.write aT i arg
   pure (resArgDefs , trailingArgs , r)
 
-bruijnEnv ∷ Int -> BitSet -> [Term] -> SimplifierEnv s Term -> SimplifierEnv s Term
+bruijnEnv :: Int -> BitSet -> [Term] -> SimplifierEnv s Term -> SimplifierEnv s Term
 bruijnEnv n _free args go = do
   when (n /= length args) (error "bruijnPap")
   let unBruijnAbs = \case
@@ -274,7 +273,7 @@ bruijnEnv n _free args go = do
 
 -- Note. if we β-reduce an arg with some fn of itself (while deriving specialisations)
 -- must not β-reduce it again: ie. Excessive calls to simpleTerm are incorrect. para helps guarantee this
-simpleTerm ∷ Term -> SimplifierEnv s Term
+simpleTerm :: Term -> SimplifierEnv s Term
 simpleTerm = RS.para go where
   go :: TermF (Term , SimplifierEnv s Term) -> SimplifierEnv s Term
   go = \case
@@ -283,12 +282,12 @@ simpleTerm = RS.para go where
       <$> (lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind bind)
       <*> simpleTerm (fst inE)
     VBruijnF v -> use bruijnArgs <&> maybe (VBruijn v) (V.! v)
-    VarF v -> case v of
+    VarF v -> pure $ case v of
 --    VArg i   -> use activeBetas >>= \betas -> if betas `testBit` i then use argTable >>= \at -> MV.read at i
 --      else pure (Var (VArg i))-- >>= \a -> a <$ traceM (show i <> " β " <>  prettyTermRaw a)
-      VQBind i   -> pure (Var (VQBind i))
-      VLetBind q -> pure (Var (VLetBind q)) -- TODO should inline?
-      v          -> pure (Var v) -- ext | foreign
+      VQBind i   -> Var v
+      VLetBind q -> Var v -- TODO should inline?
+      VForeign{} -> Var v -- ext | foreign
 --  SpecF q     -> inlineSpec q
     AppF f args -> case fst f of
       -- paramorphism catches Abs so we can setup β-reduction env before running f
@@ -301,7 +300,7 @@ simpleTerm = RS.para go where
     t -> embed <$> sequence (fmap snd t)
 
 -- one-step fusion on images of recursion
-simpleApp ∷ Term -> [Term] -> SimplifierEnv s Term
+simpleApp :: Term -> [Term] -> SimplifierEnv s Term
 simpleApp f sArgs = let noop = App f sArgs in case f of
   Instr i        -> pure (simpleInstr i sArgs)
   Label l params -> pure (Label l (params ++ sArgs))

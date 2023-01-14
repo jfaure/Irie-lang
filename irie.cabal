@@ -59,6 +59,7 @@ executable irie-exe
       Externs
       FEnv
       Generalise
+      Typer
       Infer
       Mixfix
       MixfixSyn

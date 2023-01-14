@@ -201,16 +201,16 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
        else let leaves = snd <$> leafCasts
        in if all (\case {BiEQ->True;_->False}) leaves then BiEQ else CastLeaves leaves
   (THSumTy x , THSumTy y) -> let
-    go label subType = case y BSM.!? label of -- y must contain supertypes of all x labels
+    go label subType = case y BSM.!? label of -- x must contain supertypes of all x labels
       Nothing -> failBiSub (AbsentLabel (QName label)) tyP tyM
       Just superType -> biSubType subType superType
     in BiEQ <$ (go `BSM.traverseWithKey` x) -- TODO bicasts
-  (THSumTy s , THArrow args retT) | [(lName , tuple)] ← BSM.toList s -> -- singleton sumtype ⇒ Partial application of Label
+  (THSumTy s , THArrow args retT) | [(lName , tuple)] <- BSM.toList s -> -- singleton sumtype ⇒ Partial application of Label
     let t' = TyGround $ case tuple of
                TyGround [THTyCon (THTuple x)] -> [THTyCon $ THTuple (x V.++ V.fromList args)]
                x                              -> [THTyCon $ THTuple (V.fromList (x : args))]
     in biSubType (TyGround [THTyCon (THSumTy $ BSM.singleton lName t')]) retT
-  (THSumTy s , THArrow{}) | [_single] ← BSM.toList s -> failBiSub (TextMsg "Note. Labels must be fully applied to avoid ambiguity") tyP tyM
+  (THSumTy s , THArrow{}) | [_single] <- BSM.toList s -> failBiSub (TextMsg "Note. Labels must be fully applied to avoid ambiguity") tyP tyM
   _         -> failBiSub TyConMismatch tyP tyM
 
 arrowBiSub (argsp,argsm) (retp,retm) = let

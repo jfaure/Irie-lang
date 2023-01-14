@@ -1,3 +1,6 @@
+Variable binding and substitution for (nameless) dummies
+https://amblafont.github.io/articles/debruijn-extended.pdf
+
 Unify parsing and reflective printing for fully disambiguated grammars
 https://josh-hs-ko.github.io/manuscripts/NGCO20.pdf
 

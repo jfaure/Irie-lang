@@ -17,3 +17,4 @@ import Prelude
 :def types (\_->pure ":r\n types\n")
 :def emitSSA (\_->pure ":r\n ssa\n")
 :def emitC (\_->pure ":r\n emitC\n")
+:def interpret (\_->pure ":r\n interp\n")

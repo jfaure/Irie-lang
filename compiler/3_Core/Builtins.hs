@@ -122,6 +122,11 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("readFile"  , (ReadFile  , mkTHArrow [mkExt str] (mkExt str)))
   , ("writeFile" , (WriteFile , mkTHArrow [mkExt str] (mkExt str)))
 
+  , ("opendir" , (OpenDir , mkTHArrow [mkExt str]  (mkExt dirp)))
+  , ("readdir" , (ReadDir , mkTHArrow [mkExt dirp] (mkTHTuple $ TyGround <$> [[mkExt dirp] , [mkExt str]] )))
+  , ("isdir"   , (IsDir   , mkTHArrow [mkExt dirp] boolL))
+--, ("direntName", (DirentName ,([mkExt dirent] , str)))
+
 --, ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , b) ))
   , ("le"      , (NumInstr (PredInstr LECmp ) , mkTHArrow [iTy , iTy]    boolL))
   , ("ge"      , (NumInstr (PredInstr GECmp ) , mkTHArrow [iTy , iTy]    boolL))
@@ -142,9 +147,6 @@ primInstrs ∷ [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("puts"      , (Puts    , ([str] , i)))
   , ("putNumber" , (PutNbr  , ([i] , i)))
   , ("putChar"   , (PutChar , ([c] , c)))
-  , ("opendir"   , (OpenDir , ([str] , dirp)))
-  , ("readdir"   , (ReadDir , ([dirp] , dirent)))
-  , ("direntName", (DirentName , ([dirent] , str)))
 
   , ("add64" , (NumInstr (IntInstr Add    ) , ([i64, i64] , i64) ))
   , ("add"   , (NumInstr (IntInstr Add    ) , ([i, i] , i) ))

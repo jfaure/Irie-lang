@@ -1,18 +1,27 @@
 ## meta
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
+## Let (record) as Bruijn; VLetBind is + , VBruijn -
+  * write specs to Bind
+  * Lazy-gen => iff top-level / duplicated (also escaped vars)
+  * mutual   => generalise together
+  * rewrite lambda application to let-bind, since it needn't guess its arg types and dupd args must be generalised
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
-  ** mutuals , μ-roll , let-gen inst
-  * rm Tyground etc..
-  * co-occurence analysis inplace + updateable as types are merged
+  * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
+  * mode to print type-var bounds
+  * cross-module mixfixes broken
   * Interpret
   * Free-vars
   * fix cache
   * μ-roll multi-branch μs merge; μ-roll needs rewrite
+  * Unpattern multi-args: SSfuse next (@stream n0 s0) = @stream (next << n0) s0
 ## Names + meta
   * make global resolver more like a standard module
     atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
   ? dependency graph | arg,bind linearity
+  * UpName = (depth , nm)
+  * DownName = [nm]; each index contextualised by count
+  * Transitive deps may require IO / aggressive preloading
 ## ?
   * FEnv must identify recons (cons over matches) and rewrite to Lens insert / modify
   * FEnv make dup nodes so MC can assume everything is linear
@@ -24,10 +33,10 @@
   * expand lambda-mixfixes with explicit holes
   * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
   * make solveScopes an anamorphism (need to delay solvemixfixes to infer)
+  * lambdas name-scope are leaking out
 ## Parse
+  * pat guards
   * typed lambda case: \case : scrut -> ret
-  * allow tabs instead of spaces
-  * Pattern guards
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
   * repl parser: multiline case / let
 ## Types
@@ -50,6 +59,7 @@
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
+  * tabs v spaces
   * Need totality checker, else a Refl type may not terminate and thus proves nothing
   * optimise tycons to avoid level retraversal
   * strictly positive recursion

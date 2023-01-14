@@ -11,7 +11,8 @@ import Errors
 import TypeCheck ( check )
 import TCState
 import Externs ( typeOfLit, readLabel, readQParseExtern , Externs )
-import Generalise ( generalise )
+import Generalise (generalise)
+--import Typer (generalise)
 
 import Control.Lens
 import qualified Data.Vector as V
@@ -24,6 +25,7 @@ judgeModule :: P.Module -> BitSet -> ModuleIName -> p -> V.Vector HName -> Exter
 judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
   letBinds' <- MV.new 16
   bis'      <- MV.new 64
+  g <- MV.new 0
   (modTT , st) <- runStateT (infer exts modIName importedModules emptyBitSet (pm ^. P.bindings)) TCEnvState
     { _externs  = exts
     , _thisMod  = modIName
@@ -39,6 +41,10 @@ judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
     , _blen     = 0
     , _bis      = bis'
     , _lvls     = []
+
+    , _recursives = 0
+    , _nquants = 0
+    , _genVec = g
     }
   pure (JudgedModule modIName (pm ^. P.moduleName) hNames
     (pm ^. P.parseDetails . P.labels) modTT Nothing , st ^. errors)
@@ -72,24 +78,21 @@ judgeBind letDepth bindINm = let
   -- reference to inference stack (forward ref | recursive | mutual)
   prevInfer :: Bind -> TCEnv s Expr
   prevInfer = \case
-    BindOK _ _ _isRec e  -> pure e -- don't inline the expr
+    BindOK _ e  -> pure e -- don't inline the expr
     Mutual _e _freeVs _isRec tvar _tyAnn -> d_ ("mutual module")
       $ pure (Core (Var (VQBind $ mkQName letDepth bindINm)) (tyVar tvar))
     -- Stacked bind means this was either forward ref | Mutual | recursive in block (r = { a = r })
     Guard mutuals tvar -> use bindWIP >>= \((wipLet , wipI) , isRec) -> let nm = mkQName letDepth bindINm in
-      ($> Core (Var (VQBind nm)) (tyVar tvar)) $
-      pure ()
-{-
-      when (wipI /= bindINm) $ do
-        traceShowM (mutuals , (wipLet , wipI) , (letDepth , bindINm))
-        MV.write wip' bindINm (Right $ Guard (mutuals `setBit` wipI) tvar)
-        -- TODO mutual recursion at different nest depths => use VLetBound instead of a bitset
-        MV.modify wip' (mF bindINm) wipI where -- TODO wipI doesnt match lvlWip read at letDepth
-          mF i = \case
-            Right (Guard ms tv) -> Right $ Guard (ms `setBit` i) tv -- this is now responsible for another bind
-            Right b@(BindOK{})  -> Right (did_ b)
-            x -> error (show x)
--}
+      pure (Core (Var (VQBind nm)) (tyVar tvar))
+--    when (wipI /= bindINm) $ do
+--      traceShowM (mutuals , (wipLet , wipI) , (letDepth , bindINm))
+--      MV.write wip' bindINm (Right $ Guard (mutuals `setBit` wipI) tvar)
+--      -- TODO mutual recursion at different nest depths => use VLetBound instead of a bitset
+--      MV.modify wip' (mF bindINm) wipI where -- TODO wipI doesnt match lvlWip read at letDepth
+--        mF i = \case
+--          Right (Guard ms tv) -> Right $ Guard (ms `setBit` i) tv -- this is now responsible for another bind
+--          Right b@(BindOK{})  -> Right (did_ b)
+--          x -> error (show x)
     b -> error (show b)
 
   in use letBinds >>= \lb -> (lb `MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>=
@@ -107,14 +110,14 @@ getAnnotationType ttAnn = case ttAnn of
 -- TODO This is slow and repeats work when regeneralisation is not necessary !
 regeneralise :: MV.MVector s (Either P.FnDef Bind) -> Int -> TCEnv s ()
 regeneralise wip' l = MV.read wip' l >>= \case
-  Right (BindOK o _letbound r (Core t ty)) ->
-    (Core t <$> generalise 0 (Right ty)) >>= MV.write wip' l . (\r t -> Right $ BindOK o False r t) r
+  Right (BindOK o (Core t ty)) ->
+    (Core t <$> generalise 0 (Right ty)) >>= MV.write wip' l . (\r t -> Right $ BindOK o t) False -- HACK isRec
   _ -> pure () -- <* traceM ("attempt to regeneralise non-let-bound: " <> show l)
 
 generaliseBinds :: MV.MVector s (Either P.FnDef Bind) -> BitSet -> [Int] -> TCEnv s [Expr]
 generaliseBinds wip' lvl0 ms = ms `forM` \m -> MV.read wip' m >>= (error . show ||| genBind m) where
  genBind m = \case
-  BindOK _ _ _r e -> pure e -- already handled mutual
+  BindOK _ e -> pure e -- already handled mutual
   -- ! The order in which mutuals are generalised is relevant
   Mutual naiveExpr freeVs isRec recTVar annotation -> do
     (_ars , inferred) <- case naiveExpr of
@@ -139,7 +142,7 @@ generaliseBinds wip' lvl0 ms = ms `forM` \m -> MV.read wip' m >>= (error . show 
     done <- case (annotation , inferred) of -- Only Core type annotations are worth replacing inferred ones
       (Just ann , Core e inferredTy) -> Core e <$> checkAnnotation ann inferredTy
       _                              -> pure inferred
-    MV.write wip' m (Right (BindOK 0 False isRec done)) -- todo letbound?
+    MV.write wip' m (Right (BindOK optInferred done)) -- todo letbound?
     pure done
   b -> error (show b)
 
@@ -240,7 +243,7 @@ inferF = let
    r <- maybe (pure PoisonExpr) identity go -- in expr
 
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
-     <&> map ((\unused -> BindOK 0 True False $ PoisonExprWhy ("unused let-bound: " <> show unused)) ||| identity)
+     <&> map ((\unused -> BindOK optInferred $ PoisonExprWhy ("unused let-bound: " <> show unused)) ||| identity)
    letNest %= \x -> x - 1
 
    pure (r , V.zipWith (\fn e -> (LetMeta (fn ^. P.fnIName) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
@@ -262,7 +265,7 @@ inferF = let
   P.TupleF ts -> sequence ts <&> \exprs -> let
     tys = tyOfExpr <$> exprs
     ty  = THProduct (BSM.fromListWith mkFieldCol $ zipWith (\nm t -> (qName2Key (mkQName 0 nm) , t)) [0..] tys)
-    lets = zipWith (\i c -> (LetMeta (-1) ("!" <> show i) (-1) , BindOK 0 False False c)) [0..] exprs
+    lets = zipWith (\i c -> (LetMeta (-1) ("!" <> show i) (-1) , BindOK optInferred c)) [0..] exprs
     in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment

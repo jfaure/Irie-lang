@@ -4,6 +4,9 @@
 -- ? make top-level lambda over entire module to resolve patterns
 -- (f , g) = (2 , 3)
 
+-- let-bound mixfix => make VLetBind instead of QName
+-- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
+
 --rect (P : Set) : Set = record
 --Recangle = record
 --  f : Int
@@ -11,18 +14,27 @@
 --import imports/prelude
 --import imports/list
 --import imports/list2
---import imports/cata -- Recursion schemes
 --import imports/question
 --import imports/ls
+--import imports/foldr
+--import imports/question
+--import imports/Free
+--import imports/parsec
+--import imports/intmap
 
---f = \case { @x b | @y <- b => 1 }
+--import imports/stream
+--main = ls "hello"
+
+--import imports/TreeStream
+
+-- Trouble with unpatterning multiple labels
+--f (@A a) (@B b) = add a b
+
+--f = \case { @x b | @y <- b => 1 } -- doesn't parse
 
 -- Merge equations properly, this creates 2 bindings and bugs out inames
 --eq1 (@x) b = 2
 --eq1 a b = 3
-
--- let-bound mixfix => make VLetBind instead of QName
--- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
 
 -- Re-generalise let-binds + Add free-variables into type to codegen let-binds
 
@@ -39,7 +51,7 @@
 
 -- tvars must never refer to deeper let-nest tvars through their bounds
 -- need to save state tvars => only biunify with instantations not the escaped tvar
--- lp17 f = let r x g = { a = g x , b = f x } in { u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
+--lp17 f = let r x g = { a = g x , b = f x } in { u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
 -- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
 
 -- Need to accurately delegate generalisation to first mutual
@@ -56,20 +68,14 @@
 --list2.unwords = merge μ-bounds upwards even if layer not equal
 
 -- multi-branch different μ merging =>
---rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
+-- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
+-- import imports/foldr
 
--- register occurs buggy
--- import imports/intmap
+-- Wildcard (poison cannot merge cases)
+null = \case
+  @None => @True
+  ? => @False
 
--- Wildcard
---null = \case
---  @None => @True
---  ? => @False
--- import imports/intmap
-
---import imports/question
-
-{-
 import imports/prelude
 -- Fusion
 -- sumAppend n = sum [m * m | m <- [1..n]]
@@ -98,4 +104,3 @@ go z s0 s1 = case nextConcatMap s0 s1 of
   @Yield x s q => go (z + x) s q
 
 sumAppend n = go 0 n N
--}

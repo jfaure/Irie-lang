@@ -21,7 +21,7 @@ type IField    = Int -- QName
 type ILabel    = QName
 type TVarSet   = BitSet
 
--- LiName
+-- LiName (investigate + vs -)
 -- * explicit dup nodes => function args may be duped
 -- * mark let-bounds start,end , recursive and mutuals
 -- ? different dups in different case-branches => defer until branch known (potentially duped / dropped linames)
@@ -36,9 +36,9 @@ type CaseID = Int
 type BranchID = Int
 
 data VName
- = VQBind   QName -- qualified name (modulename << moduleBits | IName)
- | VLetBind QName
+ = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
  | VForeign HName -- opaque name resolved at linktime
+ | VLetBind QName -- + counterpart of VBruijn
 
 data LamB = LamB Int {-BitSet-} Term
 data Lam  = Lam [(IName , Type)] BitSet Type -- arg inames, types, freevars, term, ty
@@ -73,7 +73,7 @@ data Term -- β-reducable (possibly to a type)
  -----------------------------------------------
  -- Extra info built for/by simplification --
  -----------------------------------------------
- | Case CaseID Term -- term is the scrutinee. This makes inlining very cheap
+ | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
  | Spec QName -- mod = bind it came from , unQ = spec number
 
 -- | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
@@ -150,20 +150,35 @@ data Expr
  | PoisonExpr
  | PoisonExprWhy Text
 
+type FnSize = Bool -- <=? 1 App
+data Specialisations = Specialisations
+  { specBinds  :: V.Vector (FnSize , Term)
+  , specsCache :: V.Vector (M.Map [ArgShape] IName) }
+
+data ArgShape
+ = ShapeNone
+ | ShapeLabel ILabel [ArgShape]
+ | ShapeQBind QName
+ deriving (Ord , Eq , Show , Generic)
+
 data Bind
  = Queued
- | WIP
- | Guard  { mutuals :: BitSet , tvar :: IName } -- if met again, its recursive/mutual
- -- | Marker for an inferred type waiting for generalisation when all mutuals inferred
- -- TODO freeVs not too relevant here
+ | Guard  { mutuals :: BitSet , tvar :: IName } -- being inferred; if met again, is recursive/mutual
+ | RawInferred
+ -- | inferred type waiting for batch generalisation; freeVs used to test if can clear bisubs
  | Mutual { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
 
  | BindKO -- failed type inference
- | BindOK { optLevel :: Int , letBound :: Bool , recursive :: Bool , naiveExpr :: Expr }
+ | BindOK { optLevel :: OptBind , naiveExpr :: Expr }
 -- | BindMutuals (V.Vector Expr)
 
-type Complexity = Int -- number of Apps in the Term
-type Specs      = BitSet
+ | WIP -- Fenv
+
+data OptBind = OptBind
+  { optId :: Int
+  , bindSpecs :: M.Map [ArgShape] Term -- opt-level , specialisations
+  }
+optInferred = OptBind 0 mempty
 
 data ExternVar
  = ForwardRef IName -- not extern
@@ -210,17 +225,6 @@ data JudgedModule = JudgedModule {
  , moduleTT   :: Expr
  , specs      :: Maybe Specialisations -- TODO let(spec)-bind these
 }
-
-type FnSize = Bool -- <=? 1 App
-data Specialisations = Specialisations
-  { specBinds  :: V.Vector (FnSize , Term)
-  , specsCache :: V.Vector (M.Map [ArgShape] IName) }
-
-data ArgShape
- = ShapeNone
- | ShapeLabel ILabel [ArgShape]
- | ShapeQBind QName
- deriving (Ord , Eq , Show , Generic)
 
 data OldCachedModule = OldCachedModule {
    oldModuleIName :: ModuleIName

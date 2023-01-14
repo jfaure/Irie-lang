@@ -1,12 +1,39 @@
 -- f must be a functor to recursively descend the free branch
+-- import imports/prelude
 fmapFree f ffmap = \case
   @Pure x => @Pure (f x)
-  @Free x => @Free (fmapFree (ffmap f) x)
+  @Free x => @Free (ffmap (fmapFree f ffmap) x)
 
---bindFree m f ffmap = case m of
---  @Pure x => f x
---  @Free g => @Free (ffmap (\m => bindFree m f) g)
---
+returnFree x = @Pure x
+bindFree ffmap m f = case m of
+  @Pure x => f x
+  @Free g => @Free (ffmap (\mm => bindFree ffmap mm f) g)
+
+--liftF fmap = wrap << fmap return
+
 --foldFree pure free f = case f of
 --  @Pure x => pure x
 --  @Free x => free (fmapFree (foldFree pure free) x)
+
+-- StateF s a = StateF { runStateF :: s -> (a, s) }
+-- getF :: StateF s s
+fmapState f = \case
+  @StateF fn => @StateF \s => (\(a , s) => (f a , s)) (fn s)
+getF = @StateF \s => (s , s)   -- :: State s s
+putF s = @StateF \x => ((), s) -- :: s -> StateF s ()
+
+liftFState fn = @Free (fmapState @Pure fn)
+get   = @Free (fmapState @Pure getF)
+put x = @Free (fmapState @Pure (putF x))
+
+-- ? why broken
+-- b = bindFree fmapState
+--test2 = b get (\i => put (add i 1))
+
+test = bindFree fmapState get (\i => put (add i 1))
+
+_>_ = \x f => f x
+--runState :: State s a -> s -> (a, s)
+runState m s = case m of
+  @Pure x => (x , s)
+  @Free (@StateF f) => f s > \(m , s') => runState m s'

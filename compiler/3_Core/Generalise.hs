@@ -78,7 +78,7 @@ generalise lvl0 rawType = do
     coocVStart <- MV.replicate coocLen ([],[])
 
 --  (ty , (AState recs coocV))
---    <- runStateT (analyseT bis' ((TyVar ||| identity) rawType , True , 0 , 0 , 0)) (AState 0 coocVStart)
+--    <- runStateT (analyseT bis' (((\x -> TyVars (setBit 0 x)) ||| identity) rawType , True , 0 , 0 , 0)) (AState 0 coocVStart)
     (ty , (AnalyseState _bis recs _instVs coocV)) <-
       -- merge with recTVar in case of direct recursion `r = { next = r } : µx.{next : x}`
       runStateT (analyseType (((\x -> TyVars (setBit 0 x) []) ||| identity) rawType) True 0 0) (AnalyseState bis' 0 bl coocVStart)
@@ -217,6 +217,7 @@ patchMu n m = let
   TyVarsF v g -> TyVars v (go <$> g)
   x -> embed x
 
+m_ = flip const-- d_
 mergeRolls a b = -- d_ (rollTy a , rollTy b)
   (mergeRolls' a b)
 mergeRolls' (NoRoll t) (NoRoll t2)       = NoRoll (mergeTypes True t t2) -- TODO pos/neg type merge?!
@@ -224,16 +225,16 @@ mergeRolls' (NoRoll t) (BuildRoll a ms)  = BuildRoll (a {-mergeTypes True a t-})
 mergeRolls' (NoRoll t) (Rolling a m r z) = Rolling   (a {-mergeTypes True a t-}) m r z
 mergeRolls' a b@NoRoll{} = mergeRolls b a
 mergeRolls' (Rolling a m r z) (Rolling a2 m2 r2 z2)
- | m == m2 = d_ ("roll-roll") $ Rolling (mergeTypes True a a2) m r z
- | m < m2  = d_ ("roll-roll" , m , m2) $ cata rollType (patchMu m2 m $ mergeTypes True a a2)
- | m > m2  = d_ ("roll-roll" , m , m2) $ cata rollType (patchMu m m2 $ mergeTypes True a2 a)
+ | m == m2 = m_ ("roll-roll") $ Rolling (mergeTypes True a a2) m r z
+ | m < m2  = m_ ("roll-roll" , m , m2) $ cata rollType (patchMu m2 m $ mergeTypes True a a2)
+ | m > m2  = m_ ("roll-roll" , m , m2) $ cata rollType (patchMu m m2 $ mergeTypes True a2 a)
 
-mergeRolls' (BuildRoll a ms) (BuildRoll a2 ms2) = d_ ("build-build" , fst3 <$> ms , fst3 <$> ms2) $
+mergeRolls' (BuildRoll a ms) (BuildRoll a2 ms2) = m_ ("build-build" , fst3 <$> ms , fst3 <$> ms2) $
   BuildRoll (mergeTypes True a a2) (ms <> ms2)
 
 mergeRolls' a@BuildRoll{} b@Rolling{} = mergeRolls b a
 mergeRolls' (Rolling a m r z) (BuildRoll a2 ms)
- = d_ ("roll-build" , m , ms) $ let
+ = m_ ("roll-build" , m , ms) $ let
    tbounds = NE.filter (\(n,_,_) -> n == m) ms <&> (\(_,_,b) -> b)
    in BuildRoll (mergeTypeList True (a : a2 : tbounds)) ms -- TODO merged roll + build somehow
 
