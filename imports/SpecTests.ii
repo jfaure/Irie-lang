@@ -1,0 +1,16 @@
+t0 = case @True of
+  @True => 1
+  @False => 0
+
+true = @True
+t1 = case true of
+  @True => 1
+  @False => 0
+
+go fn s = case fn s of
+  @True  => 1
+  @False => 0
+not = \case
+  @True  => @False
+  @False => @True
+t3 = go not @True

@@ -7,12 +7,10 @@
   * mutual   => generalise together
   * rewrite lambda application to let-bind, since it needn't guess its arg types and dupd args must be generalised
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
+  * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
-  * mode to print type-var bounds
   * cross-module mixfixes broken
-  * Interpret
   * Free-vars
-  * fix cache
   * μ-roll multi-branch μs merge; μ-roll needs rewrite
   * Unpattern multi-args: SSfuse next (@stream n0 s0) = @stream (next << n0) s0
 ## Names + meta
@@ -21,11 +19,10 @@
   ? dependency graph | arg,bind linearity
   * UpName = (depth , nm)
   * DownName = [nm]; each index contextualised by count
-  * Transitive deps may require IO / aggressive preloading
+  * Transitive deps may require IO / aggressive preloading (test with True, defined in builtins + prelude already)
 ## ?
   * FEnv must identify recons (cons over matches) and rewrite to Lens insert / modify
   * FEnv make dup nodes so MC can assume everything is linear
-  * derived functions: specs / β-rewritings as terms under main function
   * type application (eg. perfect tree) `PTree a = Leaves a | Cons (PTree (a , a))` (μ insufficient advanced recursion)
   * subtype sum of record = [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)
@@ -40,6 +37,7 @@
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
   * repl parser: multiline case / let
 ## Types
+  * mode to print type-var bounds
   * Annotations (record , sum , TPi)
   * Ad-hoc polymorphism: `Int <: [ NumInt Int ]` show (esp for repl JIT)
   * THFieldCollision

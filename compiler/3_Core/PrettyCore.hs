@@ -232,6 +232,8 @@ pTerm showRhs = let
 --  in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " ⇒ " <> term
   prettyBruijn (LamB i term) =
     (annotate AAbs $ "λB " <> viaShow i) <> " ⇒ " <> pTerm showRhs term -- todo no cata here
+  prettyLamBEnv (LamBEnv n argTs retT , term) =
+    (annotate AAbs $ "λBEnv " <> viaShow n) <> " ⇒ " <> term -- todo no cata here
   prettyFreeArgs x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
@@ -252,7 +254,7 @@ pTerm showRhs = let
 --  RecAppF f args -> parens (annotate AKeyWord "recApp" <+> f <+> sep args)
 --  MatchF  arg caseTy ts d → arg <+> " > " <+> prettyMatch prettyLam (Just caseTy) ts d
     MatchBF arg ts d -> arg <+> " > " <+> prettyMatch prettyBruijn Nothing ts (Just d)
-    CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing (snd <$> ts) (snd <$> d)
+    CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch prettyLamBEnv Nothing ts d
     AppF f args    -> parens (f <+> nest 2 (sep args))
 --  PartialAppF extraTs fn args → "PartialApp " <> viaShow extraTs <> parens (fn <> fillSep args)
     InstrF   p -> annotate AInstr (prettyInstr p)
@@ -267,7 +269,8 @@ pTerm showRhs = let
         LensSet  tt      -> " . set "  <> parens (pExpr showRhs tt)
         LensOver cast tt -> " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr showRhs tt)
       in r <> " . " <> hsep (punctuate "." $ {-prettyField-} viaShow <$> target) <> pLens ammo
-    SpecF q      -> "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
+--  SpecF q      -> "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
+    LetSpecF q sh -> "let-spec: " <> viaShow q <> "(" <> viaShow sh <> ")"
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
     TupleF    {} -> error "tuple"
 --  LinF      {} -> error "lin"

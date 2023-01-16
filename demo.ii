@@ -72,10 +72,16 @@
 -- import imports/foldr
 
 -- Wildcard (poison cannot merge cases)
-null = \case
-  @None => @True
-  ? => @False
+--null = \case
+--  @None => @True
+--  ? => @False
 
+--import SpecialisationTests/SimpleMutual
+--import SpecTests
+
+--import imports/simpleTests
+
+{-
 import imports/prelude
 -- Fusion
 -- sumAppend n = sum [m * m | m <- [1..n]]
@@ -104,3 +110,4 @@ go z s0 s1 = case nextConcatMap s0 s1 of
   @Yield x s q => go (z + x) s q
 
 sumAppend n = go 0 n N
+-}

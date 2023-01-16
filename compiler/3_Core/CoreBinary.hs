@@ -30,6 +30,7 @@ deriving instance Generic Lam
 deriving instance Generic LamB
 deriving instance Generic LetMeta
 deriving instance Generic OptBind
+deriving instance Generic LamBEnv
 
 -- Prim
 deriving instance Generic Literal
@@ -74,6 +75,7 @@ instance Binary ArgShape
 instance Binary Specialisations
 instance Binary LetMeta
 instance Binary OptBind
+instance Binary LamBEnv
 
 -- primitives
 instance Binary Literal

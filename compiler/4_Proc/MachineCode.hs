@@ -6,6 +6,12 @@ import CoreSyn
 type V = V.Vector
 type LName = Int -- TODO
 
+-- ## New revelations
+-- * cap fields/labels to 64
+--   => use pdep to mark frets for subtyping casts
+--   => can inc. limit using a tree if necessary
+
+
 -- ## MachineCode
 --  * eliminate Trees : flatten all data to Tuples up to recursion & lift all tags
 --  * SOA form for data

@@ -39,16 +39,16 @@ buildCase = let
   mkSubCases = let
     -- build a case where if any matches in the list fail , the whole list fails
     -- eg. [a , b] => (match a => match b => λa b => ok) else ko
-    subCaseF :: ListF CaseAcc (MatchOK -> MatchKO -> (Rhs , [(IName , Int)] , IName)) -> MatchOK -> MatchKO
-      -> (Rhs , [(IName , Int)] , IName)
-    subCaseF ret ok ko = case ret of
-      Nil            -> (ok , [] , 0)
+--  subCaseF :: ListF CaseAcc (MatchOK -> MatchKO -> (Rhs , [(IName , Int)] , IName)) -> MatchOK -> MatchKO
+--    -> (Rhs , [(IName , Int)] , IName)
+    subCaseF ret bruijnI ok ko = case ret of
+      Nil            -> (ok , [])
       Cons caseAcc r -> let
-        (nextMatch , argSubs , bruijnI) = r ok ko
+        (nextMatch , argSubs) = r (bruijnI + 1) ok ko
         scrut = Var (VBruijn bruijnI)
         (this , argSubs2) = caseAcc scrut nextMatch ko
-        in (this , argSubs2 ++ argSubs , bruijnI + 1)
-    in \subPats ok ko -> cata subCaseF subPats ok ko & \(a,b,_) -> (a,b)
+        in (this , argSubs2 ++ argSubs) --  , bruijnI)
+    in \subPats ok ko -> cata subCaseF subPats 0 ok ko -- & \(a,b,_) -> (a,b)
 
   go :: TTF CaseAcc -> CaseAcc -- Pass down a scrut and a default branch
   go pat scrut ok ko = let -- d_ (embed $ Question <$ pat) $ let

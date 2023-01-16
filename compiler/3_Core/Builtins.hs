@@ -74,7 +74,7 @@ primTys :: V.Vector (HName , PrimType) = V.fromList
   ]
 
 --b = boolL
-[i, bi, b, f, c, ia, str, set , i64 , dirp , dirent , cstruct] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64" , "DIR*" , "dirent*" , "CStruct"]
+[i, bi, b, f, c, ia, str, set , i64 , dirp , _dirent , cstruct] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64" , "DIR*" , "dirent*" , "CStruct"]
 
 --substPrimTy i = THPrim $ primTyBinds V.! i
 

@@ -1,15 +1,23 @@
 -- Mutual specialisation
-bool2N = \case
-  True  => 1
-  False => 0
+
+ifThenElse cond a b = case cond of
+  @True  => a
+  @False => b
 
 go2 z i next s = case next s of
-  Done      => go1 z i
-  Skip s h  => go2 z i next s
-  Yield x s => go2 (add z x) i next s
+  @Done      => go1 z i
+  @Skip s h  => go2 z i next s
+  @Yield x s => go2 (add z x) i next s
 
-go1 z i = let
-  nextRet x = case x of
-    True  => Yield (mul i i) False
-    False => Done
-  in ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet) True)
+nextRet i x = case x of
+  True  => Yield (mul i i) False
+  False => Done
+
+go1 z i =
+--nextRet i x = case x of
+--  True  => Yield (mul i i) False
+--  False => Done
+----in ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet) True)
+  case (ge i 10) of
+    @True => z
+    @False => (go2 z (add i 1) (\x => nextRet i x) True)

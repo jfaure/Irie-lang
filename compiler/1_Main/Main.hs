@@ -13,7 +13,6 @@ import PrettyCore
 import qualified PrettySSA
 import Infer (judgeModule)
 import qualified FEnv (simplifyModule)
-import Interpret
 import MkSSA (mkSSAModule)
 import C (mkC)
 
@@ -231,7 +230,7 @@ codegen flags input@(_resolver , jm) = let ssaMod = mkSSAModule jm in do
   when ("ssa" `elem` printPass flags) $ TL.IO.putStrLn (PrettySSA.prettySSAModule PrettySSA.ansiRender ssaMod)
   when ("C"   `elem` printPass flags) $ let str = mkC ssaMod
     in BSL.IO.putStr str *> BSL.IO.putStr "\n" *> BSL.IO.writeFile "/tmp/aryaOut.c" str
-  when (interpret flags) (T.IO.putStrLn $ interpretModule jm)
+  when (interpret flags) (T.IO.putStrLn $ _interpretModule jm)
   pure input
 
 ----------

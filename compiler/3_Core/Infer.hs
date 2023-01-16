@@ -169,7 +169,7 @@ inferF = let
    imapM_ (\i n -> MV.write w i n) argTVars
 
    (bruijnArgVars .=) =<< V.unsafeFreeze w
-   (map tyVar argTVars , ) <$> go <* (bruijnArgVars %= V.drop n)
+   (reverse $ map tyVar argTVars , ) <$> go <* (bruijnArgVars %= V.drop n)
 
   -- App is the only place typechecking can fail
  biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
@@ -377,10 +377,11 @@ inferF = let
             Nothing          -> THSumTy scrutSum
             Just (_ , defTy) -> THSumOpen scrutSum defTy]
           matchTy = TyGround (mkTyArrow [scrutTy] retTy)
-          addLam :: Term -> (Lam , Term) = \case
-            BruijnAbsTyped n free body argTs retT -> (Lam argTs free retT , body) -- TODO merge these in cleaner way
+          addLam :: Term -> (LamBEnv , Term) = \case
+--          BruijnAbsTyped n free body argTs retT -> (Lam argTs free retT , body) -- TODO merge these in cleaner way
+            BruijnAbsTyped n free body argTs retT -> (LamBEnv n argTs retT , body) -- TODO merge these in cleaner way
             BruijnAbs{} -> error "inferred untyped bruijnabs"
-            t -> (Lam [] 0 tyBot , t)
+            t -> (LamBEnv 0 [] tyBot , t) -- (Lam [] 0 tyBot , t)
       (BiEQ , retT) <- biUnifyApp matchTy [gotScrutTy]
       pure $ Core (CaseB scrut retT (BSM.fromList (zip labels (addLam <$> alts))) (addLam . fst <$> def)) retT
     x -> error $ show x

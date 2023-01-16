@@ -42,6 +42,7 @@ data VName
 
 data LamB = LamB Int {-BitSet-} Term
 data Lam  = Lam [(IName , Type)] BitSet Type -- arg inames, types, freevars, term, ty
+data LamBEnv = LamBEnv Int [(Int , Type)] Type -- TODO add freevars?
 
 -- TODO split off the functor part so types can share constructions
 data Term -- β-reducable (possibly to a type)
@@ -63,8 +64,8 @@ data Term -- β-reducable (possibly to a type)
 
  | Label   ILabel [Term] --[Expr]
 
- -- Doesn't embed Lam info so FEnv can setup a beta-env easily
- | CaseB   Term Type (BSM.BitSetMap (Lam , Term)) (Maybe (Lam , Term)) -- Output of inference
+ -- Lift Lam info above the body so FEnv can setup the β-env via catamorphism
+ | CaseB   Term Type (BSM.BitSetMap (LamBEnv , Term)) (Maybe (LamBEnv , Term))
  | MatchB  Term (BSM.BitSetMap LamB) LamB -- Bruijn match (must have a default)
 
  | LetBinds (V.Vector (LetMeta , Bind)) Term
@@ -74,7 +75,9 @@ data Term -- β-reducable (possibly to a type)
  -- Extra info built for/by simplification --
  -----------------------------------------------
  | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
- | Spec QName -- mod = bind it came from , unQ = spec number
+-- | Spec QName -- mod = bind it came from , unQ = spec number
+
+ | LetSpec QName [ArgShape]
 
 -- | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
 -- | LinAbs [(LiName , Bool , Type)] Term Type -- indicate if dups its arg
@@ -159,6 +162,7 @@ data ArgShape
  = ShapeNone
  | ShapeLabel ILabel [ArgShape]
  | ShapeQBind QName
+ | ShapeLetBind QName
  deriving (Ord , Eq , Show , Generic)
 
 data Bind
