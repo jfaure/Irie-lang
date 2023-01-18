@@ -161,8 +161,10 @@ data Specialisations = Specialisations
 data ArgShape
  = ShapeNone
  | ShapeLabel ILabel [ArgShape]
+-- | ShapeLiteral
  | ShapeQBind QName
  | ShapeLetBind QName
+ | ShapePAPLet QName [ArgShape] -- even if fully applied, it makes little difference
  deriving (Ord , Eq , Show , Generic)
 
 data Bind

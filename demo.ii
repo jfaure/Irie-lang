@@ -76,10 +76,18 @@
 --  @None => @True
 --  ? => @False
 
---import SpecialisationTests/SimpleMutual
---import SpecTests
+-- ! returning let-bind outside its scope messes up its name resolution
 
---import imports/simpleTests
+-- LBEnv in case-branches must spawn new β-env even if no args!
+-- Tedious renaming of Bruijn variables on β-reduction
+
+--import prelude
+--f = (\a b => \c d => a + b + c + d) 3 2
+
+--import SpecialisationTests/SpecPapArg
+import SpecialisationTests/SimpleMutual
+--import SpecTests
+--import stream
 
 {-
 import imports/prelude

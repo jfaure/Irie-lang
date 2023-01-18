@@ -6,6 +6,7 @@
   * Lazy-gen => iff top-level / duplicated (also escaped vars)
   * mutual   => generalise together
   * rewrite lambda application to let-bind, since it needn't guess its arg types and dupd args must be generalised
+  * lets as const args => mutuals may refer to things outside their scope
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
@@ -20,6 +21,7 @@
   * UpName = (depth , nm)
   * DownName = [nm]; each index contextualised by count
   * Transitive deps may require IO / aggressive preloading (test with True, defined in builtins + prelude already)
+  * Bug: can have multiple bindings of same name in record
 ## ?
   * FEnv must identify recons (cons over matches) and rewrite to Lens insert / modify
   * FEnv make dup nodes so MC can assume everything is linear

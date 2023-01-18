@@ -1,0 +1,16 @@
+-- Specialise go2 on the (partial) application of nextRet
+
+nextRet i x = case x of
+  @True  => Yield (mul i i) @False
+  @False => Done
+
+go2 z i next s = case next s of
+  @Done      => add i z
+  @Yield x s => go2 x i next s
+
+-- t1 = 0
+t1 = case nextRet 3 @False of
+  @Done => 0
+  @Yield x s => 0 -- fuses away; should typesystem allow it?
+-- t2 = add 6 5
+t2 = go2 5 6 (nextRet 3) @False

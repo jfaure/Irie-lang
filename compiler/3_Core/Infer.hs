@@ -379,7 +379,7 @@ inferF = let
           matchTy = TyGround (mkTyArrow [scrutTy] retTy)
           addLam :: Term -> (LamBEnv , Term) = \case
 --          BruijnAbsTyped n free body argTs retT -> (Lam argTs free retT , body) -- TODO merge these in cleaner way
-            BruijnAbsTyped n free body argTs retT -> (LamBEnv n argTs retT , body) -- TODO merge these in cleaner way
+            BruijnAbsTyped n free body argTs retT -> (LamBEnv n argTs retT , BruijnAbs n 0 body) -- TODO merge these in cleaner way
             BruijnAbs{} -> error "inferred untyped bruijnabs"
             t -> (LamBEnv 0 [] tyBot , t) -- (Lam [] 0 tyBot , t)
       (BiEQ , retT) <- biUnifyApp matchTy [gotScrutTy]
