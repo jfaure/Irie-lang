@@ -51,7 +51,7 @@ buildCase = let
     in \subPats ok ko -> cata subCaseF subPats 0 ok ko -- & \(a,b,_) -> (a,b)
 
   go :: TTF CaseAcc -> CaseAcc -- Pass down a scrut and a default branch
-  go pat scrut ok ko = let -- d_ (embed $ Question <$ pat) $ let
+  go pat scrut ok ko = {-d_ (embed $ Question <$ pat) $-} let
     noSubs = (,[])
     goLabel q subPats = let
       (rhs , argSubs) = mkSubCases subPats ok ko
@@ -60,7 +60,7 @@ buildCase = let
     in case pat of
     LabelF q subPats  -> goLabel q subPats -- argument was named => need to sub it for its bruijn name !
     AppExtF q subPats -> goLabel q subPats
-    VarF (VExtern i)    -> case scrut of
+    VarF (VExtern i) -> case scrut of
       Var (VBruijn b) -> (ok , [(i,b)])
       _ -> (DesugarPoison ("Unknown label: " <> show i) , [])
     VarF _              -> noSubs ok
@@ -81,7 +81,7 @@ buildCase = let
   in cata go -- scrut matchOK matchKO -> Term
 
 patternsToCase :: Scrut -> [(CasePattern , Rhs)] -> (Rhs , BruijnSubs)
-patternsToCase scrut patBranchPairs = let
+patternsToCase scrut patBranchPairs = did_ $ let
   r :: ([Rhs] , [BruijnSubs])
   r@(matches , bruijnSubs) = unzip $ patBranchPairs <&> \(pat , rhs) -> buildCase pat scrut rhs Nothing
 

@@ -208,7 +208,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
     [Just nm] -> let pArgs = many (lexeme singlePattern) in do
       iNm  <- addUnknownName nm <* when isTop (void $ addTopName nm)
       eqns <- pEqns pArgs (pName nm *> pArgs)
-      let rhs = CasePat $ CaseSplits (Var (VBruijn 0)) eqns
+      let rhs = CasePat $ CaseSplits (Var (VBruijn 0)) eqns -- PatternGuards eqns
       pure $ Just (FnDef nm iNm Let Nothing rhs Nothing , subParse)
     mfDefHNames   -> let
       pMixFixArgs = cata $ \case

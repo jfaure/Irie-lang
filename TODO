@@ -2,7 +2,6 @@
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
 ## Let (record) as Bruijn; VLetBind is + , VBruijn -
-  * write specs to Bind
   * Lazy-gen => iff top-level / duplicated (also escaped vars)
   * mutual   => generalise together
   * rewrite lambda application to let-bind, since it needn't guess its arg types and dupd args must be generalised
