@@ -9,29 +9,27 @@ rhylo f g = f << fmap (rhylo f g) << g
 --  (@stream a seed) => rhylo c a seed
 
 -- ∀s. stream (unstream s) => s
-Sfuse next s = case s of
-  @stream n0 s0 => @stream (next << n0) s0
+Sfuse next (@stream n0 s0) = @stream (next << n0) s0
 --SSfuse next (@stream n0 s0) = @stream (next << n0) s0
 
 --Sana  (@stream n s) = rana  n s
 --Scata (@stream n s) = rcata n s
 
 ana next seed = @stream next seed
-foldr c z = \case -- only way to eliminate streams
-  @stream next seed => let -- rhylo c a seed
-    go s = case next s of
-      @Done      => z
-      @Skip r    => go r
-      @Yield x r => c x (go r)
-    in go seed
+-- foldr/l = only way to eliminate streams
+foldr c z (@stream next seed) = let -- rhylo c a seed
+  go s = case next s of
+    @Done      => z
+    @Skip r    => go r
+    @Yield x r => c x (go r)
+  in go seed
 
-foldl f z = \case -- only way to eliminate streams
-  @stream next seed => let -- rhylo c a seed
-    go z s = case next s of
-      @Done      => z
-      @Skip r    => go z r
-      @Yield x r => go (f z x) r
-    in go z seed
+foldl f z (@stream next seed) = let -- rhylo c a seed
+  go z s = case next s of
+    @Done      => z
+    @Skip r    => go z r
+    @Yield x r => go (f z x) r
+  in go z seed
 
 fmap f = \case
   @Done      => Done
@@ -41,46 +39,41 @@ map = Sfuse << fmap
 
 enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
 
-Sappend sl sr = case sl of
-  @stream nextL sl0 => case sr of
-    @stream nextR sr0 => let
-      next = \case
-        @Left  sa => case nextL sa of
-          @Done      => Skip    (Right sr0)
-          @Skip s    => Skip    (Left s)
-          @Yield x s => Yield x (Left s)
-        @Right sb => case nextR sb of
-          @Done      => Done
-          @Skip s    => Skip    (Right s)
-          @Yield x s => Yield x (Right s)
-      in ana next (@Left sl0)
+Sappend sl sr (@stream nextL sl0) (@stream nextR sr0) = let
+  next = \case
+    @Left  sa => case nextL sa of
+      @Done      => Skip    (Right sr0)
+      @Skip s    => Skip    (Left s)
+      @Yield x s => Yield x (Left s)
+    @Right sb => case nextR sb of
+      @Done      => Done
+      @Skip s    => Skip    (Right s)
+      @Yield x s => Yield x (Right s)
+  in ana next (@Left sl0)
 
-SzipWith f SL SR = case SL of
-  @stream nextL sl0 => case SR of
-    @stream nextR sr0 => let
-      nxt (sl , sr , maybeST) = case maybeST of
-        @None => case nextL sl of
-          @Done      => Done
-          @Skip s    => Skip (s , sr , None)
-          @Yield x s => Skip (s , sr , One x)
-        @One a => case nextR sr of
-          @Done      => Done
-          @Skip s    => Skip          (sl , s , One a)
-          @Yield x s => Yield (f a x) (sl , s , None)
-      in ana nxt (sl0 , sr0 , None)
+SzipWith f (@stream nextL sl0) (@stream nextR sr0) = let
+  nxt (sl , sr , maybeST) = case maybeST of
+    @None => case nextL sl of
+      @Done      => Done
+      @Skip s    => Skip (s , sr , None)
+      @Yield x s => Skip (s , sr , One x)
+    @One a => case nextR sr of
+      @Done      => Done
+      @Skip s    => Skip          (sl , s , One a)
+      @Yield x s => Yield (f a x) (sl , s , None)
+  in ana nxt (sl0 , sr0 , None)
 
-SconcatMap f = \case
-  stream nexta seed => let
-    next (sa , m) = case m of
-      None => case nexta sa of
-        @Done      => Done
-        @Skip s    => Skip (s , None)
-        @Yield a s => Skip (s , One (f a))
-      One (stream nextb sb) => case nextb sb of
-        @Done      => Skip    (sa , None)
-        @Skip s    => Skip    (sa , One (stream nextb s))
-        @Yield b s => Yield b (sa , One (stream nextb s))
-    in @stream next (seed , None)
+SconcatMap f = (@stream nexta seed) = let
+  next (sa , m) = case m of
+    None => case nexta sa of
+      @Done      => Done
+      @Skip s    => Skip (s , None)
+      @Yield a s => Skip (s , One (f a))
+    One (@stream nextb sb) = case nextb sb of
+      @Done      => Skip    (sa , None)
+      @Skip s    => Skip    (sa , One (stream nextb s))
+      @Yield b s => Yield b (sa , One (stream nextb s))
+  in @stream next (seed , None)
 
 -- takes fn to apply to the front of list and returns the back
 -- ?! support having access to both lists

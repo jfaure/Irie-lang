@@ -12,6 +12,15 @@ import Data.List (intersect)
 import Data.Functor.Foldable
 debug_gen = False || global_debug
 
+-- generalise: standard rule for polymorphism=
+-- good :: forall a . IO (IORef (Maybe a))
+-- bad  :: IO (forall a . IORef (Maybe a))
+-- ⊥ = ∀α.
+-- ⊤ = ∃α. But conversions depend on variance
+-- ∃α.(List[α] -> Int)a => List[⊥]->Int (since all uses of α are contravariant) , but not List[⊤]->Int
+-- iff expr has a type A mentioning tvar a, and a is only used in A, then it can be reused with different types substituted for a
+-- if polymorphic type inferred inside a variable f, f must not mention the polymorphic variable else it escapes its scope
+
 tyVars vs g = if vs == 0 then TyGround g else TyVars vs g
 
 intersectTypes :: Type -> Type -> Type

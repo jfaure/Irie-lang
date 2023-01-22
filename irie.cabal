@@ -82,7 +82,7 @@ executable irie-exe
       compiler/1_Main/
       compiler/2_Parse/
       compiler/3_Core/
-      compiler/4_Proc/
+      compiler/4_ASM/
       compiler/5_Backends/
   default-extensions:
       StrictData

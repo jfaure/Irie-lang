@@ -26,7 +26,10 @@ judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
   letBinds' <- MV.new 16
   bis'      <- MV.new 64
   g <- MV.new 0
-  (modTT , st) <- runStateT (infer exts modIName importedModules emptyBitSet (pm ^. P.bindings)) TCEnvState
+
+  let scopeparams = initParams importedModules emptyBitSet -- open required
+      bindings    = cata (solveScopesF exts modIName) (pm ^. P.bindings) scopeparams
+  (modTT , st) <- runStateT (infer bindings) TCEnvState
     { _externs  = exts
     , _thisMod  = modIName
 
@@ -63,7 +66,7 @@ judgeBind letDepth bindINm = let
 --    d_ (idx , (letDepth , bindINm) , abs) (pure ())
       MV.write wip' bindINm (Right (Guard emptyBitSet idx))
       expr  <- use thisMod >>= \modINm -> use externs >>= \e -> use openModules >>= \open ->
-        let required = emptyBitSet in infer e modINm open required (P._fnRhs abs)
+        let required = emptyBitSet in infer (P._fnRhs abs)
       isRec <- snd <$> use bindWIP
       bindWIP .= svwip
       Right (Guard ms _tVar) <- MV.read wip' bindINm -- learn which binds had to be inferred as dependencies
@@ -156,10 +159,13 @@ checkAnnotation annTy inferredTy = do
   then pure annTy
   else inferredTy <$ (errors . checkFails %= (CheckError inferredTy annTy:))
 
-infer :: Externs -> ModuleIName -> Scope.OpenModules -> Scope.RequiredModules -> P.TT -> TCEnv s Expr
-infer e modINm open required tt = let
-  scopeparams = initParams open required
-  in cata inferF $ cata (solveScopesF e modINm) tt scopeparams
+infer :: P.TT -> TCEnv s Expr
+infer = cata inferF
+--infer :: Externs -> ModuleIName -> Scope.OpenModules -> Scope.RequiredModules -> P.TT -> TCEnv s Expr
+--infer e modINm open required tt = let
+--  scopeparams = initParams open required
+----in cata inferF $ cata (solveScopesF e modINm) tt scopeparams
+--  in cata inferF tt
 
 inferF :: P.TTF (TCEnv s Expr) -> TCEnv s Expr
 inferF = let

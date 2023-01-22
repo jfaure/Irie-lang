@@ -2,7 +2,7 @@ module Parser (parseModule , parseMixFixDef) where
 import Prim ( Literal(PolyFrac, Char, String, Int, PolyInt) )
 import ParseSyntax as P
 import MixfixSyn ( defaultPrec, Assoc(..), MFWord(..), MixfixDef(..), Prec(Prec) )
-import UnPattern (matchesToTT)
+import UnPattern (patternsToCase)
 import Text.Megaparsec
 import Text.Megaparsec.Char ( char, char', string )
 import qualified Data.Vector as V
@@ -208,7 +208,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
     [Just nm] -> let pArgs = many (lexeme singlePattern) in do
       iNm  <- addUnknownName nm <* when isTop (void $ addTopName nm)
       eqns <- pEqns pArgs (pName nm *> pArgs)
-      let rhs = CasePat $ CaseSplits (Var (VBruijn 0)) eqns -- PatternGuards eqns
+      let rhs = CasePat $ CaseSplits (Question {-Var (VBruijn 0)-}) eqns -- PatternGuards eqns
       pure $ Just (FnDef nm iNm Let Nothing rhs Nothing , subParse)
     mfDefHNames   -> let
       pMixFixArgs = cata $ \case
@@ -220,10 +220,11 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       iNm  <- addUnknownName nm <* when isTop (void $ addTopName nm)
       prec <- fromMaybe defaultPrec <$> optional (braces parsePrec)
       mfDefINames <- addMixfixWords mfDefHNames mfDef
-      rhs <- CasePat . CaseSplits (Var (VBruijn 0)) <$> pEqns (pure []) (pMixFixArgs mfDefHNames)
+      rhs <- CasePat . CaseSplits (Question {-Var (VBruijn 0)-}) <$> pEqns (pure []) (pMixFixArgs mfDefHNames)
       pure $ Just (FnDef nm iNm Let (Just mfDef) rhs Nothing , subParse)
 
-lambda = matchesToTT <$> (:|[]) <$> fnMatch (many singlePattern) (reserved "=>" <|> reserved "⇒" <|> reserved "=")
+--lambda = matchesToTT <$> (:|[]) <$> fnMatch (many singlePattern) (reserved "=>" <|> reserved "⇒" <|> reserved "=")
+lambda = fmap LamPats $ FnMatch <$> many singlePattern <* lexemen (reserved "=>" <|> reserved "⇒" <|> reserved "=") <*> tt
 tyAnn = reservedChar ':' *> tt
 
 fnMatch pMFArgs sep = FnMatch <$> pMFArgs <* lexemen sep <*> tt
@@ -310,7 +311,7 @@ tt :: Parser TT
     in braces (split `sepBy` reservedChar ';') <|> let
      finishEarly = void $ char ')' <|> reservedChar '_'
      in option [] $ try $ (use indent <* scn) >>= \ref -> indentedItems ref split finishEarly
-  lambdaCase = BruijnLam . BruijnAbsF 1 [] 0 . CasePat . CaseSplits (Var (VBruijn 0)) <$> caseSplits
+  lambdaCase = LambdaCase . CaseSplits' <$> caseSplits
   casePat = (\tt splits -> CasePat (CaseSplits tt splits)) <$> tt <* reserved "of" <*> caseSplits
 
   letIn = let -- svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems

@@ -42,8 +42,35 @@ initParams open required = let
   in Params open required emptyBitSet emptyBitSet (V.create (MV.new extCount)) 0 (V.create (MV.new extCount)) 0
 
 -- * Track name scopes , free variables and linearity , resolve VExterns to BruijnArg | QName
+-- resolution of deBruijns: debruijns are assigned backwards by unpattern, reversed here (deBruijnEnv - b - 1)
 solveScopesF :: Externs -> ModuleIName -> TTF ScopeAcc -> ScopeAcc
 solveScopesF exts thisMod this params = let
+  -- CasePatF overrides the scopeF cata via newtype: patterns contain mixfixes and introduce arguments
+  -- for patterns we need: resolve mixfix externs > solvemixfix > unpattern > solvescopes
+  -- * insert a pretraversal of *only* patterns under this scope context, then patternsToCase then resume solveScopes
+  doCase scrut patBranchPairs params = let
+    solvedBranches :: [(TT , TT)]
+    solvedBranches = patBranchPairs <&> \(pat' , br) -> let
+      pat = case pat' of -- convert lone VExterns here to a Label (ie. assume label not new arg name)
+--      Var (VExtern e) -> Label 0 [] -- TODO need to spawn a label name + meta etc..?!
+        _ -> pat'
+      -- Special treatment for Terms in pattern position: we need to find and resolve mixfix labels immediately
+      clearExtsF = \case
+        VarF (VExtern i)
+          -- overwrites λ-bounds: x = 3 ; f x = x
+          -- TODO how to deal with let-bound labels?
+--        | params._lets `testBit` i -> Var $ VLetBind (mkQName thisMod i) -- ?! i
+          -- Only inline mixfixes, nothing else, (? mutually bound mixfixes used in pattern)
+          | MixfixyVar m <- readParseExtern params._open thisMod exts i -> MFExpr m -- Only inline possible mixfixes
+          | otherwise -> Var (VExtern i)
+        JuxtF _o args -> solveMixfixes args
+        tt -> embed tt
+      in (cata clearExtsF pat , br)
+    (this , bruijnSubs) = patternsToCase (scrut{- params-}) (params._bruijnCount) solvedBranches
+    in case bruijnSubs of
+      [] -> cata (solveScopesF exts thisMod) this params -- proceed with solvescopes using current context
+      x  -> error ("non-empty bruijnSubs after case-solve: " <> show x)
+
   doBruijnAbs :: BruijnAbsF ScopeAcc -> TT -- (BitSet , TT)
   doBruijnAbs (BruijnAbsF n bruijnSubs _ tt) = let
     argsSet    = intList2BitSet (fst <$> bruijnSubs)
@@ -54,24 +81,32 @@ solveScopesF exts thisMod this params = let
     in tt (params
       & args %~ (.|. argsSet)
       & bruijnCount %~ (+ n)
-      & bruijnMap %~ V.modify (\v -> bruijnSubs `forM_` \(i , b) -> MV.write v i (b + params._bruijnCount))
+      & bruijnMap %~ V.modify (\v -> bruijnSubs `forM_` \(i , b) -> MV.write v i b)
       ) & \body -> warnShadows $ BruijnLam (BruijnAbsF n [] params._bruijnCount body)
 
   updateLetParams params bindNms = params
-      & lets %~ (.|. intList2BitSet bindNms)
-      & letNest %~ (1+)
-      & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName params._letNest i))
+    & lets %~ (.|. intList2BitSet bindNms)
+    & letNest %~ (1+)
+    & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName params._letNest i))
   resolveExt i = if
     | params._args `testBit` i -> Var $ VBruijn  (params._bruijnCount - 1 - (params._bruijnMap V.! i))
     | params._lets `testBit` i -> Var $ VLetBind (params._letMap V.! i)
     | otherwise -> handleExtern exts thisMod params._open params._letMap i
-  in case this of
-  VarF (VBruijn i) -> {-(0 `setBit` i ,-} Var (VBruijn i)
-  VarF (VExtern i) -> resolveExt i
-  VarF (VQBind q) -> ScopePoison (ScopeError $ "Var . VQBind " <> showRawQName q)
+  in case {-d_ (embed $ Question <$ this) $-} this of
+  VarF v -> case v of
+    VBruijn i -> {-(0 `setBit` i ,-} Var (VBruijn $ params._bruijnCount - 1 - i)
+    VBruijnFixed i -> Var (VBruijn i)
+    VExtern i -> resolveExt i
+    VQBind q  -> ScopePoison (ScopeError $ "Var . VQBind " <> showRawQName q)
+    VLetBind l -> Var v
   AppExtF i args  -> solveMixfixes $ (resolveExt i) : (distribute args params)
   JuxtF _o args -> solveMixfixes (distribute args params)
   BruijnLamF b -> doBruijnAbs b
+  LamPatsF (FnMatch args rhs) -> patternsToCase Question (params._bruijnCount) [(ArgProd args , rhs)]
+    & fst & \t -> cata (solveScopesF exts thisMod) t params
+
+  LambdaCaseF (CaseSplits' branches) -> BruijnLam $ BruijnAbsF 1 [] 0
+    $ doCase (Var $ VBruijnFixed 0) branches (params & bruijnCount %~ (1+))
 
   -- ? mutual | let | rec scopes
   LetInF (Block open letType binds) tt -> let
@@ -80,29 +115,7 @@ solveScopesF exts thisMod this params = let
     bindsDone = binds <&> (& fnRhs %~ (\t -> cata (solveScopesF exts thisMod) t letParams))
     in LetIn (Block open letType bindsDone) (distribute tt letParams)
 
-  -- CasePatF overrides the scopeF cata via newtype: patterns contain mixfixes and introduce arguments
-  -- for patterns we need: resolve mixfix externs > solvemixfix > unpattern > solvescopes
-  -- * insert a pretraversal of *only* patterns under this scope context, then patternsToCase then resume solveScopes
-  CasePatF (CaseSplits scrut patBranchPairs) -> let
-    solvedBranches :: [(TT , TT)]
-    solvedBranches = patBranchPairs <&> \(pat' , br) -> let
-      pat = case pat' of -- convert lone VExterns here to a Label (ie. assume label not new arg name)
---      Var (VExtern e) -> Label 0 [] -- TODO need to spawn a label name + meta etc..?!
-        _ -> pat'
-      -- Special treatment for Terms in pattern position: we need to find and resolve mixfix labels immediately
-      clearExtsF = \case
-        VarF (VExtern i)
-          | params._lets `testBit` i -> Var $ VLetBind (mkQName thisMod i) -- ?! i
-          -- Only inline mixfixes, nothing else, (? mutually bound mixfixes used in pattern)
-          | MixfixyVar m <- readParseExtern params._open thisMod exts i -> MFExpr m -- Only inline possible mixfixes
-          | otherwise -> Var (VExtern i)
-        JuxtF _o args -> solveMixfixes args
-        tt -> embed tt
-      in (cata clearExtsF pat , br)
-    (this , bruijnSubs) = patternsToCase scrut solvedBranches
-    in case bruijnSubs of
-      [] -> cata (solveScopesF exts thisMod) this params -- proceed with solvescopes using current context
-      x  -> error ("non-empty bruijnSubs after case-solve: " <> show x)
+  CasePatF (CaseSplits scrut patBranchPairs) -> doCase scrut patBranchPairs params
   tt -> embed (distribute tt params)
 
 -- TODO don't allow `bind = lonemixfixword`

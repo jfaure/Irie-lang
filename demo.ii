@@ -81,23 +81,16 @@
 -- LBEnv in case-branches must spawn new β-env even if no args!
 -- Tedious renaming of Bruijn variables on β-reduction
 
---import prelude
---f = (\a b => \c d => a + b + c + d) 3 2
-
---"f" CasePat CaseSplits (Var (VBruijn 0))
--- ArgProd [Var (VExtern 1),Label 0 []],AppExt 2 [Var (VExtern 1),Var (VExtern 1)]
---"g" CasePat CaseSplits (Var (VBruijn 0))
--- ArgProd [Var (VExtern 1),Var (VExtern 4)],CasePat (CaseSplits (Var (VExtern 4)) [(Label 0 [],AppExt 2 [Var (VExtern 1),Var (VExtern 1)])])
-
---f a (@Wrap) = add a a
-g a w = case w of
-  @Wrap => add a a
-
-
 --import SpecialisationTests/SpecPapArg
---import SpecialisationTests/SimpleMutual
 --import SpecTests
+import SpecialisationTests/SimpleMutual
+
 --import stream
+--import list
+--import testBruijns
+
+-- ? need the return debruijn count
+-- f (@Wrap a b) (@XD c d) = add (add (add a b) c) d
 
 {-
 import imports/prelude

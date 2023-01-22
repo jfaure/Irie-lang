@@ -1,9 +1,9 @@
-t0 = case @True of
+t0 = case @True of -- 1
   @True => 1
   @False => 0
 
 true = @True
-t1 = case true of
+t1 = case true of -- 1
   @True => 1
   @False => 0
 
@@ -13,4 +13,10 @@ go fn s = case fn s of
 not = \case
   @True  => @False
   @False => @True
-t3 = go not @True
+t3 = go not @True -- 0
+
+f A B = case A of
+ @Wrap a b => case B of
+  @XD c d => add (add (add a b) c) d
+
+t4 = f (@Wrap 0 1) (@XD 2 3) -- 0 + 1 + 2 + 3

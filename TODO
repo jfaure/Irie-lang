@@ -2,21 +2,23 @@
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
 ## Let (record) as Bruijn; VLetBind is + , VBruijn -
-  * Lazy-gen => iff top-level / duplicated (also escaped vars)
-  * mutual   => generalise together
-  * rewrite lambda application to let-bind, since it needn't guess its arg types and dupd args must be generalised
-  * lets as const args => mutuals may refer to things outside their scope
+    let-App = sv mutual info (? solve-scopes figures that out) => generalise together (iff any duped)
+    - normal
+    + not guessed; generalise iff duplicated
+  ? Free-vars
+  * Specced = (Term , Map [ArgShapes] Term)
+  * record-field patterns
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
   * cross-module mixfixes broken
-  * Free-vars
   * μ-roll multi-branch μs merge; μ-roll needs rewrite
-  * Unpattern multi-args: SSfuse next (@stream n0 s0) = @stream (next << n0) s0
+  * Infer may be happening multiple times on same expr (via judgeBind)
 ## Names + meta
   * make global resolver more like a standard module
     atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
   ? dependency graph | arg,bind linearity
+  ? how to deal with let-bound labels?
   * UpName = (depth , nm)
   * DownName = [nm]; each index contextualised by count
   * Transitive deps may require IO / aggressive preloading (test with True, defined in builtins + prelude already)

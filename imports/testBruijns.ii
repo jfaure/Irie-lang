@@ -1,0 +1,14 @@
+-- (λB(2) (_+_ (_+_ (_+_ (Int 3) (Int 2)) B1) B0))
+f = (\a b => \c d => add (add (add a b) c) d) 3 2 1 0
+
+ycomb f = (\x => f (x x)) (\x => f (x x))
+rename x y = add x y
+
+fg a w = case w of { @Wrap => add a a } -- i32 → [Wrap] → %i32
+ff a (@Wrap) = add a a -- %i32 → [Wrap] → %i32
+fg a w = case w of { @Wrap => add a a } -- i32 → [Wrap] → %i32
+fh a (@Wrap x) = add x a -- i32 → [Wrap {%i32}] → %i32
+foldr1 f = \case -- g = case g of
+  @Cons x xs => case xs of
+    @Nil => x
+    @Cons y ys => f x (foldr1 f xs)

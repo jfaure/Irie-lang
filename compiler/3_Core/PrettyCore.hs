@@ -226,7 +226,7 @@ pTerm showRhs = let
 --  VArg i     -> annotate (AArg i)       ""
     VQBind q   -> annotate (AQBindName q) ""
     VForeign i -> "foreign " <> viaShow i
-    VLetBind q -> "letBound: " <> viaShow q
+    VLetBind q -> "letBound: " <> viaShow (modName q) <> "." <> viaShow (unQName q)
 --prettyLam (Lam ars free _ty , term) = let
 --  prettyArg (i , _ty) = viaShow i
 --  in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " ⇒ " <> term

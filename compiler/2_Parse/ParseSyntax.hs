@@ -49,6 +49,7 @@ data LetRecT = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show) -- scope of o
 
 data TTName
  = VBruijn  IName
+ | VBruijnFixed IName -- HACK for lambdacase to bypass VBruijn renaming
  | VExtern  IName
  | VQBind   QName
  | VLetBind QName -- let-block nesting depth and IName
@@ -64,6 +65,7 @@ data BruijnAbsF tt = BruijnAbsF
 type BruijnAbs = BruijnAbsF TT
 type BruijnSubs = [(IName , Int)] -- Extern -> VBruijn -- TODO can just be a straight list to imap
 data CaseSplits = CaseSplits TT [(TT , TT)] -- deliberately wrapped so unaffected by solveScopes initial cata
+data CaseSplits' = CaseSplits' [(TT , TT)] -- deliberately wrapped so unaffected by solveScopes initial cata
 data Block      = Block { open :: Bool , letType :: LetRecT , binds :: V.Vector FnDef }
 data TT -- Type | Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
@@ -88,7 +90,15 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Label  LName [TT]
 
  | PatternGuards [TT]
+
+ -- These negative-position TTs must be inverted first before solveScopes
+ -- The newtypes hide this to allow interleaving UnPattern with solveScopes
+ -- Since both Unpattern and solveScopes deal with deBruijn naming, they may need to be run this way
+ -- LambdaCase is also complicated by requiring renaming of deBruijn vars
  | CasePat CaseSplits -- unsolved patterns
+ | LamPats FnMatch
+ | LambdaCase CaseSplits'
+
  | MatchB TT (BSM.BitSetMap TT) (Maybe TT) -- solved patterns UnPattern.patternsToCase
 
  | List   [TT]
@@ -133,7 +143,11 @@ makeLenses ''ParseState ; makeLenses ''ParseDetails ; makeLenses ''Module ; make
 makeBaseFunctor ''TT
 
 mkBruijnLam (BruijnAbsF 0 _       _    rhs) = rhs
-mkBruijnLam (BruijnAbsF n argSubs nest rhs) = BruijnLam (BruijnAbsF n argSubs nest rhs)
+mkBruijnLam (BruijnAbsF n argSubs nest rhs) = case rhs of
+--BruijnLam (BruijnAbsF n2 argSubs2 nest2 rhs2) -> d_ rhs $
+--  if nest /= 0 || nest2 /= 0 then error "what is nest"
+--  else mkBruijnLam (BruijnAbsF (n + n2) ((argSubs <&> \(i,b) -> (i , b + n2)) ++ argSubs2) 0 rhs2)
+  _ -> BruijnLam (BruijnAbsF n argSubs nest rhs)
 
 showL ind = Prelude.concatMap $ (('\n' : ind) <>) . show
 prettyModule m = show (m^.moduleName) <> " {\n"
@@ -148,8 +162,10 @@ prettyParseDetails p = Prelude.concatMap ("\n  " <>)
 
 deriving instance Show ParseDetails
 deriving instance Show FnDef
+deriving instance Show FnMatch
 deriving instance Show TTName
 deriving instance Show Block
 deriving instance Show TT
 deriving instance Show CaseSplits
+deriving instance Show CaseSplits'
 deriving instance Show DoStmt

@@ -123,3 +123,8 @@ misc0 = (\x => (let y = (x x.v) in 0)) -- ∏ A → ((A → ⊤) ⊓ {v : A}) �
 -- Type Checking (Note. these require prelude imported for ->)
 --add1 : Arrow Int Int = \a => add a 1  -- %i32 → %i32
 --identity : Arrow (a : Set) a = \x => x -- ∏ A → A → A
+
+-- Simple lambda and case inversion tests
+ff a (@Wrap) = add a a -- %i32 → [Wrap] → %i32
+fg a w = case w of { @Wrap => add a a } -- %i32 → [Wrap] → %i32
+fh a (@Wrap x) = add x a -- %i32 → [Wrap {%i32}] → %i32

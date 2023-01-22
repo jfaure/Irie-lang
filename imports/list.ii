@@ -33,7 +33,7 @@ null l = case l of
 
 singleton x = Cons x Nil
 
-repeat x = let xs = Cons x xs in xs
+repeat x = let xss = Cons x xss in xss
 
 -- can produce different types depending on Nil case
 -- Int -> [a] -> ([a] , [a])
@@ -41,10 +41,10 @@ repeat x = let xs = Cons x xs in xs
 --  @Nil =>  { l = Nil , r = Nil } -- { l = xs , r = xs }
 --  @Cons x xs => let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
 
-splitAt n xs = if n <=? 0 then ( @Nil , xs ) else case xs of
-  @Nil =>  ( Nil , Nil )
+splitAt n xs = if n <=? 0 then (@Nil , xs) else case xs of
+  @Cons x xs => splitAt (n - 1) xs > \(l , r) => ( @Cons x l , r )
+  @Nil =>  ( @Nil , @Nil )
 --  @Nil =>  ( xs , xs )
-  @Cons x xs => splitAt (n - 1) xs > \(l , r) => ( Cons x l , r )
 
 -- TODO let-scope depends on parsed mixfixes
 span p xs = case xs of

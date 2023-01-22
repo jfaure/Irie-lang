@@ -73,6 +73,7 @@ termSize term = cata go term `evalState` 0 where
 --  s  <- use branches >>= \br -> (branches <.=) =≪ if MV.length br <= n then MV.grow br 32 else pure br
 --  n <$ MV.write s n newBranch
 
+-- !? does this assign VBruijns in reverse
 destructureArgs :: [Term] -> (Int , [Term] , [Term] , [ArgShape])
 destructureArgs args = let
   (ret , bruijnN) = traverse solveArg args `runState` 0
@@ -91,7 +92,7 @@ destructureArgs args = let
       [] -> ([] , [Label l []] , ShapeLabel l []) -- lone label is like a constant VQBind
       ars -> unzip3 ars & \(uL , rL , shL) -> (concat uL , [Label l (concat rL)] , ShapeLabel l shL)
     rawArg         -> gets identity >>= \bruijn -> modify (1+) $> ([rawArg] , [VBruijn bruijn] , ShapeNone)
-  in (bruijnN , concat unstructuredArgsL , concat repackedArgsL , argShapes)
+  in (bruijnN , reverse $ concat unstructuredArgsL , concat repackedArgsL , argShapes)
 
 -- TODO HACK letbinds may escape their scope !!
 getLetSpec q argShapes = d_ ("warning: not robust if the let-bound escapes its scope") $ 
@@ -109,8 +110,8 @@ specApp isLetBind q cs args = use thisMod >>= \mod -> case isLetBind of
     noInline = App (Var (VLetBind q)) args
     x@(bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
     in use letBinds >>= \lb -> (lb `MV.read` nest) >>= \bindVec -> MV.read bindVec bindNm >>= \case
-    BindOK o expr@(Core inlineF _ty) -> case bindSpecs o M.!? argShapes of
-      Just cachedSpec -> simpleApp cachedSpec unstructuredArgs
+    BindOK o expr@(Core inlineF _ty) -> case d_ (q , argShapes) $ bindSpecs o M.!? argShapes of
+      Just cachedSpec -> simpleTerm $ App cachedSpec $ unstructuredArgs
       Nothing -> if all (\case { ShapeNone -> True ; _ -> False }) argShapes then pure noInline else do
         let recGuard = LetSpec q argShapes
         MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) t)
@@ -121,7 +122,7 @@ specApp isLetBind q cs args = use thisMod >>= \mod -> case isLetBind of
             rawAbs = if bruijnN == 0 then raw else BruijnAbs bruijnN emptyBitSet raw
 
         spec <- identityBruijn bruijnN -- We're working under a fresh bruijn wrapper
-          $ simpleTerm raw
+          $ simpleApp inlineF repackedArgs
         let specFn = if bruijnN == 0 then spec else BruijnAbs bruijnN emptyBitSet spec -- HACK
         when debug_fuse $ traceM $ "raw spec "    <> prettyTermRaw raw <> "\n"
         when debug_fuse $ traceM $ "simple spec " <> prettyTermRaw specFn <> "\n"
@@ -130,8 +131,8 @@ specApp isLetBind q cs args = use thisMod >>= \mod -> case isLetBind of
           -> BindOK (OptBind oLvl (M.insert argShapes specFn oSpecs)) expr) bindNm
 
         -- TODO inline spec iff under some cases || fully β-reducing || small
---      then inlineSpecApp specName unstructuredArgs
-        if null unstructuredArgs then pure specFn else simpleApp specFn (reverse unstructuredArgs)
+        -- Need to deep simplify to ensure VBruijn consistency if any present in unstructuredArgs
+        if null unstructuredArgs then simpleTerm specFn else simpleTerm $ App specFn unstructuredArgs
     _ -> pure noInline
 
   -- Don't specialise imported binds
@@ -167,7 +168,7 @@ simplifyModule modIName mod = do
     , _structure   = []
 
     , _bruijnArgs  = mempty
-    , _bruijnPending   = mempty
+    , _bruijnPending  = mempty
 
     , _interpret   = False
     , _letBinds    = letBinds'
@@ -187,8 +188,8 @@ simpleLetName bindN = use cBinds >>= \cb -> MV.read cb bindN >>= \b -> do
 
 simpleBind :: Bind -> SimplifierEnv s Bind
 simpleBind b = case b of
-  BindOK n (Core t ty) -> if optId n /= 0 then pure b else simpleTerm t <&> \case
-    newT -> BindOK n $ Core newT ty
+  BindOK (OptBind optlvl specs) (Core t ty) -> if optlvl /= 0 then pure b else simpleTerm t <&> \case
+    newT -> BindOK (OptBind (optlvl + 1) specs) $ Core newT ty
   _x -> pure {-$ trace ("not bindok: " <> show bindN <> " " <> show x :: Text)-} WIP
 
 simpleExpr :: Expr -> SimplifierEnv s Expr
@@ -201,7 +202,7 @@ simpleExpr x = pure $ d_ x PoisonExpr
 -------------------
 readVBruijn v = use bruijnArgs <&> \vec -> if v < V.length vec
   then let r = vec V.! v in {-d_ (v , r , vec)-} r
-  else VBruijn (v + 100)
+  else VBruijn (v + 100) -- ie. bug
 
 incBruijns n args = do
   svv <- bruijnPending <<.= Nothing
@@ -218,7 +219,7 @@ bruijnEnv :: Int -> BitSet -> SimplifierEnv s Term -> SimplifierEnv s Term
 bruijnEnv n 0 go = do
   new <- (bruijnPending <<.= Nothing) <&> fromMaybe (V.generate n VBruijn) -- TODO check reverse
   prevSubs <- use bruijnArgs
-  fixSubs  <- incBruijns n prevSubs
+  fixSubs  <- pure prevSubs -- incBruijns n prevSubs
   bruijnArgs .= (new <> fixSubs)
   go <* (bruijnArgs .= prevSubs)
 
@@ -226,12 +227,16 @@ bruijnEnv n 0 go = do
 bruijnApp :: Int -> BitSet -> [Term] -> SimplifierEnv s Term -> SimplifierEnv s Term
 bruijnApp n 0 args go | n /= 0 && n == length args = do
   bruijnPending %= \Nothing -> Just (V.reverse (V.fromList args))
---bruijnArgs %= \v -> V.reverse (V.fromList args) <> v
   go <&> \case
     BruijnAbs m _ t          | m == n -> t
     BruijnAbsTyped m _ t _ _ | m == n -> t
     x -> x
-bruijnApp n free args go = error $ show (n , length args)
+bruijnApp n free args go = error $ "Bruijn-pap: " <> show (n , length args , args)
+
+--incTermBruijns n = cata $ \case
+--  VBruijnF x -> VBruijn (x + n)
+--  MatchBF{} -> error "LamB obscures term from cata"
+--  t -> embed t
 
 -- Note. if we β-reduce an arg with some fn of itself (while deriving specialisations)
 -- must not β-reduce it again: ie. Excessive calls to simpleTerm are incorrect. para helps guarantee this
@@ -247,7 +252,7 @@ simpleTerm = RS.para go where
     letNest %= \x -> x - 1
     pure r
   go :: TermF (Term , SimplifierEnv s Term) -> SimplifierEnv s Term
-  go = \case
+  go term = case term of -- d_ (embed $ Question <$ term) $ case term of
     LetBlockF lets -> inferBlock lets $ LetBlock <$> lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind bind
     LetBindsF lets inE -> inferBlock lets $ do
       newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind bind
@@ -268,6 +273,7 @@ simpleTerm = RS.para go where
 --    Spec q -> traverse snd args >>= inlineSpecApp q
       _      -> snd f >>= \rawF -> traverse snd args >>= simpleApp rawF
     CaseBF scrut retT branches d -> snd scrut >>= \sc -> fuseMatch retT sc (map snd <$> branches) (map snd <$> d)
+    MatchBF{} -> error ""
     -- Don't leak β-envs
     t -> embed <$> sequence (fmap snd t)
 
@@ -303,7 +309,7 @@ fuseMatch retT scrut branches d = case scrut of
     Just (LamBEnv n argDefs retT , body) -> if n == 0 
       then (if null params then body else error $ show params)
       else bruijnApp n 0 params body
-    Nothing -> error $ "nothing: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
+    Nothing -> error $ "panic: label not found: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
 
   -- case-of-case: push outer case into each branch,
   -- then the inner case fuses with outer case output labels
