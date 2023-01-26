@@ -11,7 +11,9 @@ simpleInstr i args = case i of
   GMPInstr j → simpleGMPInstr j args
   Zext | [Lit (Int i)]   ← args → Lit (Fin 64 i)
        | [Lit (Fin _ i)] ← args → Lit (Fin 64 i)
-  i → App (Instr i) args
+  NumInstr (IntInstr Add) | [Lit (I32 a) , Lit (I32 b)] <- args -> Lit (I32 (a + b))
+  NumInstr (IntInstr Mul) | [Lit (I32 a) , Lit (I32 b)] <- args -> Lit (I32 (a * b))
+  _ -> App (Instr i) args
 
 simpleGMPInstr ∷ NumInstrs → [Term] → Term
 simpleGMPInstr i args = let

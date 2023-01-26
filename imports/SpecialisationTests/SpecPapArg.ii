@@ -11,6 +11,6 @@ go2 z i next s = case next s of
 -- t1 = 0
 t1 = case nextRet 3 @False of
   @Done => 0
-  @Yield x s => 0 -- fuses away; should typesystem allow it?
+  @Yield x s => 0 -- fuses away; should typesystem allow its absence?
 -- t2 = add 6 5
 t2 = go2 5 6 (nextRet 3) @False

@@ -83,11 +83,11 @@
 
 --import SpecialisationTests/SpecPapArg
 --import SpecTests
-import SpecialisationTests/SimpleMutual
+--import SpecialisationTests/SimpleMutual
 
 --import stream
 --import list
---import testBruijns
+import testBruijns
 
 -- ? need the return debruijn count
 -- f (@Wrap a b) (@XD c d) = add (add (add a b) c) d

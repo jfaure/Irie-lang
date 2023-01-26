@@ -15,6 +15,7 @@ import Data.List (unzip3)
 -- TODO identify ReCons => rewrite to Lens operations
 -- make Dup nodes
 
+normalise = True
 debug_fuse = True
 
 -- The only optimisation worth doing is fusing Match with Labels
@@ -43,7 +44,6 @@ data FEnv s = FEnv
  , _structure  :: [CaseID] -- passed down to indicate we're building a fusable
 
  , _bruijnArgs :: V.Vector Term -- fresh argNames for specialisations
- , _bruijnPending :: Maybe (V.Vector Term)
 
  , _letBinds   :: MV.MVector s (MV.MVector s Bind)
  , _letNest    :: Int
@@ -109,8 +109,9 @@ specApp isLetBind q cs args = use thisMod >>= \mod -> case isLetBind of
     nest = modName q ; bindNm  = unQName q
     noInline = App (Var (VLetBind q)) args
     x@(bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
-    in use letBinds >>= \lb -> (lb `MV.read` nest) >>= \bindVec -> MV.read bindVec bindNm >>= \case
-    BindOK o expr@(Core inlineF _ty) -> case d_ (q , argShapes) $ bindSpecs o M.!? argShapes of
+    in {-d_ args $ d_ repackedArgs $ d_ unstructuredArgs $ -}
+    use letBinds >>= \lb -> (lb `MV.read` nest) >>= \bindVec -> MV.read bindVec bindNm >>= \case
+    BindOK o expr@(Core inlineF _ty) -> case {-d_ (q , argShapes) $-} bindSpecs o M.!? argShapes of
       Just cachedSpec -> simpleTerm $ App cachedSpec $ unstructuredArgs
       Nothing -> if all (\case { ShapeNone -> True ; _ -> False }) argShapes then pure noInline else do
         let recGuard = LetSpec q argShapes
@@ -124,6 +125,7 @@ specApp isLetBind q cs args = use thisMod >>= \mod -> case isLetBind of
         spec <- identityBruijn bruijnN -- We're working under a fresh bruijn wrapper
           $ simpleApp inlineF repackedArgs
         let specFn = if bruijnN == 0 then spec else BruijnAbs bruijnN emptyBitSet spec -- HACK
+--      when debug_fuse $ traceM $ show args <> "\n" <> show repackedArgs <> "\n" <> show unstructuredArgs
         when debug_fuse $ traceM $ "raw spec "    <> prettyTermRaw raw <> "\n"
         when debug_fuse $ traceM $ "simple spec " <> prettyTermRaw specFn <> "\n"
 
@@ -168,7 +170,6 @@ simplifyModule modIName mod = do
     , _structure   = []
 
     , _bruijnArgs  = mempty
-    , _bruijnPending  = mempty
 
     , _interpret   = False
     , _letBinds    = letBinds'
@@ -202,35 +203,39 @@ simpleExpr x = pure $ d_ x PoisonExpr
 -------------------
 readVBruijn v = use bruijnArgs <&> \vec -> if v < V.length vec
   then let r = vec V.! v in {-d_ (v , r , vec)-} r
-  else VBruijn (v + 100) -- ie. bug
+  else {-error $ show $-} VBruijn (v + 100) -- ie. bug probably
 
 incBruijns n args = do
-  svv <- bruijnPending <<.= Nothing
   sv <- use bruijnArgs
   bruijnArgs .= V.generate (V.length sv) (\i -> VBruijn (i + n))
   ret <- mapM simpleTerm args
-  bruijnPending .= svv
+  bruijnArgs .= sv
   pure ret
 
 identityBruijn n go = (bruijnArgs <<%= (V.generate n VBruijn <>)) >>= \sv -> go <* (bruijnArgs .= sv)
 
 -- Enter bruijn abstraction
 bruijnEnv :: Int -> BitSet -> SimplifierEnv s Term -> SimplifierEnv s Term
-bruijnEnv n 0 go = do
-  new <- (bruijnPending <<.= Nothing) <&> fromMaybe (V.generate n VBruijn) -- TODO check reverse
-  prevSubs <- use bruijnArgs
-  fixSubs  <- pure prevSubs -- incBruijns n prevSubs
-  bruijnArgs .= (new <> fixSubs)
-  go <* (bruijnArgs .= prevSubs)
+bruijnEnv n 0 go = go -- do
+--prevSubs <- use bruijnArgs
+--fixSubs  <- pure prevSubs -- incBruijns n prevSubs
+--bruijnArgs .= (new <> fixSubs)
+--go <* (bruijnArgs .= prevSubs)
 
 -- Application under a bruijn abstraction => override bruijn subs + clear resulting abstraction
 bruijnApp :: Int -> BitSet -> [Term] -> SimplifierEnv s Term -> SimplifierEnv s Term
 bruijnApp n 0 args go | n /= 0 && n == length args = do
-  bruijnPending %= \Nothing -> Just (V.reverse (V.fromList args))
-  go <&> \case
+  prev <- use bruijnArgs
+  incBruijns n prev >>= \prev' -> bruijnArgs .= (V.reverse (V.fromList args) <> prev')
+--prev <- bruijnArgs <<%= \prev -> V.reverse (V.fromList args) <> prev
+  r <- go <* (bruijnArgs .= prev) <&> \case
     BruijnAbs m _ t          | m == n -> t
     BruijnAbsTyped m _ t _ _ | m == n -> t
     x -> x
+  when debug_fuse $ traceM $ "App: "  <> prettyTermRaw (App Question args) <> "\n"
+  when debug_fuse $ traceM $ prettyTermRaw r <> "\n"
+  pure r
+
 bruijnApp n free args go = error $ "Bruijn-pap: " <> show (n , length args , args)
 
 --incTermBruijns n = cata $ \case
@@ -271,6 +276,8 @@ simpleTerm = RS.para go where
       BruijnAbs n free t          -> traverse snd args >>= \ars -> bruijnApp n free ars (snd f)
       BruijnAbsTyped n free t _ _ -> traverse snd args >>= \ars -> bruijnApp n free ars (snd f)
 --    Spec q -> traverse snd args >>= inlineSpecApp q
+--    VBruijn i -> App (VBruijn i) <$> traverse snd args
+--    x -> error $ show x
       _      -> snd f >>= \rawF -> traverse snd args >>= simpleApp rawF
     CaseBF scrut retT branches d -> snd scrut >>= \sc -> fuseMatch retT sc (map snd <$> branches) (map snd <$> d)
     MatchBF{} -> error ""
@@ -280,7 +287,7 @@ simpleTerm = RS.para go where
 -- one-step fusion on images of recursion
 simpleApp :: Term -> [Term] -> SimplifierEnv s Term
 simpleApp f sArgs = let noop = App f sArgs in case f of
-  Instr i        -> pure (simpleInstr i sArgs)
+  Instr i        -> pure $ if normalise then simpleInstr i sArgs else App (Instr i) sArgs
   Label l params -> pure (Label l (params ++ sArgs))
   App f1 args1   -> simpleApp f1 (args1 ++ sArgs) -- can try again
 --Lens
