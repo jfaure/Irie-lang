@@ -22,3 +22,4 @@ deriving instance Show Specialisations
 deriving instance Show LetMeta
 deriving instance Show OptBind
 deriving instance Show LamBEnv
+deriving instance Show NT

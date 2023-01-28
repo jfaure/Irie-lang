@@ -78,6 +78,7 @@ data Term -- β-reducable (possibly to a type)
 -- | Spec QName -- mod = bind it came from , unQ = spec number
 
  | LetSpec QName [ArgShape]
+ | Opaque NT -- stop any recursion here
 
 -- | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
 -- | LinAbs [(LiName , Bool , Type)] Term Type -- indicate if dups its arg
@@ -86,6 +87,7 @@ data Term -- β-reducable (possibly to a type)
 -- | PartialApp [Type] Term [Term] --Top level PAp => Abs (only parse generates fresh argnames)
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
+newtype NT = NT Term
 -- lensover needs idx for extracting field (??)
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr
 

@@ -80,21 +80,24 @@
 
 --import SpecialisationTests/SpecPapArg
 --import SpecTests
-import SpecialisationTests/SimpleMutual
+--import SpecialisationTests/SimpleMutual
 
 --import stream
 --import list
 --import testBruijns
 
---go2 z i next s = case next s of
---  @Skip   => div z i -- go2 z i next s
---  @Done   => go1 z i
---
---nextRet = \case
---  @True  => @Skip -- @False
---  @False => @Done
---
---go1 z i = go2 (mul z i) (add i 1) nextRet @True
+-- go1 z i = go2 (mul z i) (add i 1) nextRet @True
+
+-- go2 z i next s = case next s of
+--   @Skip s => go2 z i next s
+--   @Done   => go1 z i
+-- 
+-- nextRet = \case
+--   @True  => @Skip @False
+--   @False => @Done
+-- 
+-- go1 z i = go2 (mul z i) (add i 1) nextRet @True
+-- = \b1 b0 => (b1 * b0) / (b0 + 1)
 
 -- ? need the return debruijn count
 -- f (@Wrap a b) (@XD c d) = add (add (add a b) c) d

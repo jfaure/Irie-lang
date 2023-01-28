@@ -12,3 +12,7 @@ foldr1 f g = case g of
   @Cons x xs => case xs of
     @Nil => x
     @Cons y ys => f x (foldr1 f xs)
+
+-- free-var debruijn arithmetic
+fv1 a b = (\c => div b a) @True
+fv2 a b = (\c d => div b c) 0 1

@@ -15,18 +15,19 @@ import Numeric.Natural
 import Data.List (unzip3)
 import Control.Comonad
 import Control.Comonad.Cofree
+
+debug_fuse = True
+normalise = False
+-- Inline everything and constant-fold
+
 -- TODO identify ReCons => rewrite to Lens operations
 -- make Dup nodes
 
--- Recursion-schemes histo based on distHisto fails to share subcomputations
+-- Recursion-schemes histo based on distHisto fails to share all subcomputations
 histo' :: forall t a. Recursive t => (Base t (Cofree (Base t) a) -> a) -> t -> a
 histo' f = extract . h where
   h :: t -> Cofree (Base t) a
   h = (\bc -> f bc :< bc) . fmap h . project
-
-debug_fuse = True
--- Inline everything and constant-fold
-normalise = True
 
 -- The only optimisation worth doing is fusing Match with Labels
 -- All cases "eventually" receive structure; fusion blocks on args | recursion
@@ -153,18 +154,9 @@ forceInlineLetBind q = let letDepth = modName q ; bindNm = unQName q
     BindOK _o (Core inlineF _ty) -> Just inlineF
     _ -> Nothing
 
--- Is this worth inlining
--- | Does fn Case any of its args
--- | Does fn produce any Labels
-shouldSpec _fnInfo _args _caseWraps = True
-  -- unfused cases have a dependency tree: (ScrutApp | ScrutArg) ⇒ each case: [Args] required to reduce
-  -- * inline only happens upto cases/branches
-
 --simplifyBindings :: IName -> MV.MVector s Bind -> ST s (Maybe Specialisations)
 simplifyModule :: IName -> Expr -> ST s (Expr , Maybe Specialisations)
 simplifyModule modIName mod = do
---br       <- MV.new 32
---cs       <- MV.new 32
   cBinds'  <- MV.new 0
   letBinds' <- MV.new 16
   (retTT , s) <- simpleExpr mod `runStateT` FEnv
@@ -177,9 +169,6 @@ simplifyModule modIName mod = do
     , _interpret   = False
     , _letBinds    = letBinds'
     , _letNest     = 0
-
---  , _cases       = cs , _caseLen     = 0
---  , _branches    = br , _branchLen   = 0
     }
   pure $ (retTT , Nothing)
 
@@ -208,7 +197,7 @@ simpleExpr x = pure $ d_ x PoisonExpr
 -- one-step fusion on images of recursion (post β-reduction)
 simpleApp :: Term -> [Term] -> SimplifierEnv s Term
 simpleApp f sArgs = let noop = App f sArgs in case f of
-  Instr i        -> pure $ if False && normalise then simpleInstr i sArgs else App (Instr i) sArgs
+  Instr i        -> pure $ if normalise then simpleInstr i sArgs else App (Instr i) sArgs
   Label l params -> pure (Label l (params ++ sArgs))
   App f1 args1   -> simpleApp f1 (args1 ++ sArgs) -- merge Args and retry
   BruijnAbsTyped n f (BruijnAbsTyped n2 f2 t aT2 rT2) aT rT -> -- merge Abs and retry
@@ -230,16 +219,20 @@ simpleApp f sArgs = let noop = App f sArgs in case f of
 -- Bruijn β-envs --
 -------------------
 readVBruijn v = use bruijnArgs <&> \vec -> if v < V.length vec then vec V.! v
-  else error $ (show v <> " >= " <> show (V.length vec))
+  else VBruijn v -- error $ (show v <> " >= " <> show (V.length vec))
 
-bruijnApp :: SimplifierEnv s Term -> [Term] -> SimplifierEnv s Term
-bruijnApp f args = do
+-- \a b => ((\x => a + b) _)
+-- free variables must be decremented on binder removal !
+-- isApp indicates substituting args, else traversal needs to increment prev args
+bruijnEnv :: Int -> Bool -> SimplifierEnv s Term -> [Term] -> SimplifierEnv s Term
+bruijnEnv n isApp f args = do
   let new = V.reverse (V.fromList args)
-      n = V.length new
+      l = V.length new
+  when (n /= l) (error "")
   prev  <- use bruijnArgs
   -- need to increment any debruijn free variables in the prev arguments
   -- (ie. when simplifying functions / making specialisations we're working under some debruijn abstractions)
-  prev' <- (bruijnArgs .= V.generate (V.length prev) (\i -> VBruijn (i + n))) *> mapM simpleTerm prev
+  prev' <- (bruijnArgs .= V.generate (V.length prev) (\i -> VBruijn (if isApp then i else i + l))) *> mapM simpleTerm prev
 --traceShowM prev
 --traceShowM n
 --traceShowM $ new <> prev'
@@ -260,20 +253,20 @@ betaTermF tt = let
     use letBinds >>= \lvl -> V.thaw (snd <$> lets) >>= MV.write lvl nest
     go <* (letNest %= \x -> x - 1) <* traceM "decBlock" 
   in case tt of -- d_ (embed $ Question <$ tt) $ tt of
---VarF (VQBind q)   | normalise -> forceInline q <&> fromMaybe (error "failed to inline")
---VarF (VLetBind q) | normalise -> forceInlineLetBind q <&> fromMaybe (error "failed to inline")
+  VarF (VQBind q)   | normalise -> forceInline q <&> fromMaybe (error "failed to inline") >>= simpleTerm
+  VarF (VLetBind q) | normalise -> forceInlineLetBind q <&> fromMaybe (error "failed to inline") >>= simpleTerm
   VBruijnF v -> readVBruijn v
   -- unapped abstractions => make an identity app
-  BruijnAbsF n free body -> BruijnAbs n free <$> bruijnApp (extract body) [VBruijn i | i <- [n-1,n-2 .. 0]]
+  BruijnAbsF n free body -> BruijnAbs n free <$> bruijnEnv n False (extract body) [VBruijn i | i <- [n-1,n-2 .. 0]]
   BruijnAbsTypedF n free body aT rT -> (\b -> BruijnAbsTyped n free b aT rT) <$>
-    bruijnApp (extract body) [VBruijn i | i <- [n-1,n-2 .. 0]]
+    bruijnEnv n False (extract body) [VBruijn i | i <- [n-1,n-2 .. 0]]
   AppF f args
     | BruijnAbsF n free body <- unwrap f -> let l = length args in
-      traverse extract args >>= \ars -> bruijnApp (extract body) ars <&> \r ->
+      traverse extract args >>= \ars -> bruijnEnv n True (extract body) ars <&> \r ->
         -- TODO Abs before simplification
         if l < n then _BruijnAbs (n - l) free r else r
     | BruijnAbsTypedF n free body argsT retT <- unwrap f -> let l = length args in
-      traverse extract args >>= \ars -> bruijnApp (extract body) ars <&> \r ->
+      traverse extract args >>= \ars -> bruijnEnv n True (extract body) ars <&> \r ->
         if l < n then _BruijnAbsTyped (n - l) free r (drop l argsT) retT else r
     | otherwise -> (embed <$> traverse extract tt) >>= \(App f args) -> simpleApp f args
 --  opaque -> App opaque <$> args
@@ -282,20 +275,30 @@ betaTermF tt = let
     newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind bind
     newInE  <- {-simpleTerm-} (extract inE)
     pure (LetBinds newLets newInE)
-  CaseBF{} -> fuseMatch tt & extract
+  CaseBF s r b d -> (fuseMatch tt & extract) >>= \case
+    -- Case didn't fuse pre- β-reduction of scrut
+    -- ! cannot re-β-env the same thing since may contain free debruijns
+    CaseB (Label l params) retT branches d' -> case (branches BSM.!? qName2Key l) <|> d' of
+      Just body | null params -> pure body
+--    Just body -> betaTermF (AppF body (params <&> \p -> pure p :< QuestionF)) -- pure $ App body params
+--    TODO how to β-reduce body without touching any debruijns in the params ?
+      Just body -> pure $ App body params
+      Nothing -> error $ "panic: label not found: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
+    x -> pure x
   MatchBF{} -> error ""
   t -> embed <$> traverse extract t
 
 -- attempt Fusion before β-reducing anything
 -- Also attempt fusion after β-reducing the scrut
--- Note. the type indicates we should limit ourselves to setting up histories and delegate a maximum to betaTermF
+-- We must limit ourselves to setting up histories and delegate everything to betaTermF
+-- We Cannot rewrite history that depends on result of scrut
 -- ! Any duplicate traversal in a β-env may overwrite debruijn subs so is incorrect
 fuseMatch :: TermF (Cofree TermF (SimplifierEnv s Term)) -> Cofree TermF (SimplifierEnv s Term)
 --fuseMatch :: Type -> CTS s -> BitSetMap (LamBEnv , CTS s) -> Maybe (LamBEnv , CTS s) -> CTS s
 fuseMatch hist@(CaseBF scrut retT branches d) = case unwrap scrut of
   -- trivial case-of-label Delay simplifying case-alts until we setup β-env:
   LabelF l params -> case (branches BSM.!? qName2Key l) <|> d of
-    Just body | null params -> extract body :< AppF body params
+    Just body | null params -> extract body :< CastF BiEQ body
     Just body -> betaTermF (AppF body params) :< AppF body params -- Can avoid traversing the other branches this way
     Nothing -> error $ "panic: label not found: " <> show l -- <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
 --  -- case-of-case: push outer case into each branch,
@@ -306,31 +309,14 @@ fuseMatch hist@(CaseBF scrut retT branches d) = case unwrap scrut of
     optD        = pushCase <$> innerDefault
     in fuseMatch (CaseBF innerScrut ty2 optBranches optD)
 
--- LetSpec q sh -> error $ show q --Spec q -> inlineSpec q >>= \s -> fuseMatch retT s branches d
-
+-- Force sub-expression upto structure if possible
 -- Theres no useful history post-inline, so QuestionF is a good candidate to erase it
   VarF (VQBind q)   -> let inlined = forceInline q <&> fromMaybe (error "failed to inline")
     in fuseMatch (CaseBF (inlined :< QuestionF) retT branches d)
   VarF (VLetBind q) -> let inlined = forceInlineLetBind q <&> fromMaybe (error "failed to inline")
     in fuseMatch (CaseBF (inlined :< QuestionF) retT branches d)
-
---  -- Should force subexpressions upto structure if possible (ie. f is VBruijn or app is non-specialisable)
---  App f@(BruijnAbs{})      args -> simpleApp f args >>= \scrut2 -> fuseMatch retT scrut2 branches d
---  App f@(BruijnAbsTyped{}) args -> simpleApp f args >>= \scrut2 -> fuseMatch retT scrut2 branches d
-
-  -- opaque scrut = App | Arg ; ask scrut to be inlined up to Label;
-  -- This will require specialising | inlining enclosing function
-  -- un-inline the case
-  opaque -> let
-    postFuse = extract scrut >>= \case
-      -- ! params may now contain VBruijns already β-enved !
-      Label l params -> case (branches BSM.!? qName2Key l) <|> d of
-        Just body | null params -> extract body
-        -- histo will β-env this if it finds Bruijns / App, so simply mark the App
-        Just body -> extract body <&> \f -> App f params
-        Nothing -> error $ "panic: label not found: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
-      scrutPost -> (structure %= (0 :))
-        *> (traverse extract branches >>= \br -> traverse extract d <&> \d' -> embed (CaseBF scrutPost retT br d'))
-    in postFuse :< QuestionF -- hist -- should we keep track of the real history ?
+--VBruijnF{} -> fuseMatch (CaseBF (extract scrut :< scrut) retT branches d)
+--AppF{}     -> fuseMatch (CaseBF (extract scrut :< scrut) retT branches d)
+-- LetSpec q sh -> error $ show q --Spec q -> inlineSpec q >>= \s -> fuseMatch retT s branches d
 
   noop -> (embed <$> traverse extract hist) :< hist
