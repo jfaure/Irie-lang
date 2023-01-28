@@ -24,6 +24,7 @@
   * Transitive deps may require IO / aggressive preloading (test with True, defined in builtins + prelude already)
   * Bug: can have multiple bindings of same name in record
 ## ?
+  * Can delete LamBEnv ?
   * FEnv must identify recons (cons over matches) and rewrite to Lens insert / modify
   * FEnv make dup nodes so MC can assume everything is linear
   * type application (eg. perfect tree) `PTree a = Leaves a | Cons (PTree (a , a))` (μ insufficient advanced recursion)

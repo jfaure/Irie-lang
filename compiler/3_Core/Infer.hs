@@ -383,11 +383,12 @@ inferF = let
             Nothing          -> THSumTy scrutSum
             Just (_ , defTy) -> THSumOpen scrutSum defTy]
           matchTy = TyGround (mkTyArrow [scrutTy] retTy)
-          addLam :: Term -> (LamBEnv , Term) = \case
---          BruijnAbsTyped n free body argTs retT -> (Lam argTs free retT , body) -- TODO merge these in cleaner way
-            BruijnAbsTyped n free body argTs retT -> (LamBEnv n argTs retT , BruijnAbs n 0 body) -- TODO merge these in cleaner way
-            BruijnAbs{} -> error "inferred untyped bruijnabs"
-            t -> (LamBEnv 0 [] tyBot , t) -- (Lam [] 0 tyBot , t)
+          addLam = identity
+--          addLam :: Term -> (LamBEnv , Term) = \case
+----          BruijnAbsTyped n free body argTs retT -> (Lam argTs free retT , body) -- TODO merge these in cleaner way
+----          BruijnAbsTyped n free body argTs retT -> (LamBEnv n argTs retT , BruijnAbsTyped n free body argTs retT) -- TODO merge these in cleaner way
+--            BruijnAbs{} -> error "inferred untyped bruijnabs"
+--            t -> (LamBEnv 0 [] tyBot , t) -- (Lam [] 0 tyBot , t)
       (BiEQ , retT) <- biUnifyApp matchTy [gotScrutTy]
       pure $ Core (CaseB scrut retT (BSM.fromList (zip labels (addLam <$> alts))) (addLam . fst <$> def)) retT
     x -> error $ show x

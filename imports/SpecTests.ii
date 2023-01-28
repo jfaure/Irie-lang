@@ -20,3 +20,12 @@ f A B = case A of
   @XD c d => add (add (add a b) c) d
 
 t4 = f (@Wrap 0 1) (@XD 2 3) -- 0 + 1 + 2 + 3
+
+-- go2 z i next s = case next s of
+-- --  @Skip s => div z i -- go2 z i next s
+--   @Done   => t5 z i
+-- nextRet = \case
+--   @True  => @Done -- @Skip @False
+--   @False => @Done
+-- -- \B2 => go1 (add B0 1) (mul B1 B0)
+-- t5 z i = go2 (mul z i) (add i 1) nextRet @True

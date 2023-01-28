@@ -249,12 +249,12 @@ pTerm showRhs = let
     VarF     v -> pVName v
     VBruijnF b -> "B" <> viaShow b
     LitF     l -> annotate ALiteral $ parens (viaShow l)
-    BruijnAbsF n free body -> parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
+    BruijnAbsF n free body -> parens $ "λb(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
     BruijnAbsTypedF n free body argMetas retTy -> parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
 --  RecAppF f args -> parens (annotate AKeyWord "recApp" <+> f <+> sep args)
 --  MatchF  arg caseTy ts d → arg <+> " > " <+> prettyMatch prettyLam (Just caseTy) ts d
     MatchBF arg ts d -> arg <+> " > " <+> prettyMatch prettyBruijn Nothing ts (Just d)
-    CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch prettyLamBEnv Nothing ts d
+    CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity {-prettyLamBEnv-} Nothing ts d
     AppF f args    -> parens (f <+> nest 2 (sep args))
 --  PartialAppF extraTs fn args → "PartialApp " <> viaShow extraTs <> parens (fn <> fillSep args)
     InstrF   p -> annotate AInstr (prettyInstr p)

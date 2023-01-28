@@ -65,7 +65,7 @@ data Term -- β-reducable (possibly to a type)
  | Label   ILabel [Term] --[Expr]
 
  -- Lift Lam info above the body so FEnv can setup the β-env via catamorphism
- | CaseB   Term Type (BSM.BitSetMap (LamBEnv , Term)) (Maybe (LamBEnv , Term))
+ | CaseB   Term Type (BSM.BitSetMap ({-LamBEnv ,-} Term)) (Maybe ({-LamBEnv ,-} Term))
  | MatchB  Term (BSM.BitSetMap LamB) LamB -- Bruijn match (must have a default)
 
  | LetBinds (V.Vector (LetMeta , Bind)) Term

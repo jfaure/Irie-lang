@@ -78,16 +78,23 @@
 
 -- ! returning let-bind outside its scope messes up its name resolution
 
--- LBEnv in case-branches must spawn new β-env even if no args!
--- Tedious renaming of Bruijn variables on β-reduction
-
 --import SpecialisationTests/SpecPapArg
 --import SpecTests
---import SpecialisationTests/SimpleMutual
+import SpecialisationTests/SimpleMutual
 
 --import stream
 --import list
-import testBruijns
+--import testBruijns
+
+--go2 z i next s = case next s of
+--  @Skip   => div z i -- go2 z i next s
+--  @Done   => go1 z i
+--
+--nextRet = \case
+--  @True  => @Skip -- @False
+--  @False => @Done
+--
+--go1 z i = go2 (mul z i) (add i 1) nextRet @True
 
 -- ? need the return debruijn count
 -- f (@Wrap a b) (@XD c d) = add (add (add a b) c) d

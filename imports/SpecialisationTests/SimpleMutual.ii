@@ -18,5 +18,5 @@ go1 z i =
 ----in ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet) True)
   case ge i 10 of
     @True  => z
-    @False => go2 z (add i 1) (nextRet) True
+    @False => go2 z (add i 1) nextRet True
     -- go1 i z
