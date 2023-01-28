@@ -33,9 +33,9 @@ inferType = toS . inferTypes
 newtype UniText = UniText L.Text deriving Eq
 instance Show UniText where show (UniText l) = toS l
 
-fTests = readTestsFromfile "imports/simpleTests.ii"
-selfAppTests = readTestsFromfile "imports/selfAppTests.ii"
-recTests = readTestsFromfile "imports/recTests.ii"
+fTests = readTestsFromfile "ii/simpleTests.ii"
+selfAppTests = readTestsFromfile "ii/selfAppTests.ii"
+recTests = readTestsFromfile "ii/recTests.ii"
 
 readTestsFromfile fName = let
   ls = filter (/= "") (T.lines (unsafePerformIO (T.IO.readFile fName)))
@@ -83,7 +83,7 @@ mergeRec = \case
         `S.shouldBe` UniText "mergeRec = [N | C] → {}"
 
   let e ∷ Text = [r|
-import imports/prelude
+import prelude
 testParity n = let
   isEven n = ifThenElse (eq n 0) 1 (isOdd  (sub n 1))
   isOdd  n = ifThenElse (eq n 0) 0 (isEven (sub n 1))
@@ -138,15 +138,15 @@ goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
   Main.sh (fName <> " -o" <> tmpFile <> " " <> opts)
   readFile tmpFile
 
-tuple    = S.it "tuple.ii"        (goldenInfer "-p types --no-fuse --no-color" "imports/tuple.ii"       "tuple")
-list1    = S.it "list.ii"         (goldenInfer "-p types --no-fuse --no-color" "imports/list.ii"        "list")
-list2    = S.it "list2.ii"        (goldenInfer "-p types --no-fuse --no-color" "imports/list2.ii"       "list2")
-mutual   = S.it "mutual sumMul.ii"(goldenInfer "-p types --no-fuse --no-color" "imports/sumMul.ii"      "sumMul")
-tree     = S.it "tree.ii"         (goldenInfer "-p types --no-fuse --no-color" "imports/tree.ii"        "tree")
-intmap   = S.it "intmap.ii"       (goldenInfer "-p types --no-fuse --no-color" "imports/intmap.ii"      "intmap")
-mixfixes = S.it "mixfixTests.ii"  (goldenInfer "-p core  --no-fuse --no-color" "imports/mixfixTests.ii" "mixfixTests")
+tuple    = S.it "tuple.ii"        (goldenInfer "-p types --no-fuse --no-color" "ii/tuple.ii"       "tuple")
+list1    = S.it "list.ii"         (goldenInfer "-p types --no-fuse --no-color" "ii/list.ii"        "list")
+list2    = S.it "list2.ii"        (goldenInfer "-p types --no-fuse --no-color" "ii/list2.ii"       "list2")
+mutual   = S.it "mutual sumMul.ii"(goldenInfer "-p types --no-fuse --no-color" "ii/sumMul.ii"      "sumMul")
+tree     = S.it "tree.ii"         (goldenInfer "-p types --no-fuse --no-color" "ii/tree.ii"        "tree")
+intmap   = S.it "intmap.ii"       (goldenInfer "-p types --no-fuse --no-color" "ii/intmap.ii"      "intmap")
+mixfixes = S.it "mixfixTests.ii"  (goldenInfer "-p core  --no-fuse --no-color" "ii/mixfixTests.ii" "mixfixTests")
 
-specialise = S.it "simpleMutual.ii" (goldenInfer "-p simple  --no-color" "imports/SpecialisationTests/SimpleMutual.ii" "simpleMutual")
+specialise = S.it "simpleMutual.ii" (goldenInfer "-p simple  --no-color" "ii/SpecialisationTests/SimpleMutual.ii" "simpleMutual")
 
 specTests = S.sydTest $ do
   specialise

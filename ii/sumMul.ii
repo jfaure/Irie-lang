@@ -1,4 +1,4 @@
-import imports/prelude
+import prelude
 n = 10
 go1 z k = ifThenElse (ge k n) z (go2 z k (add k 1) 1)
 go2 z k k' m = ifThenElse (ge m k) (go1 z k')

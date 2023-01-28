@@ -1,4 +1,4 @@
-import imports/prelude
+import prelude
 
 --List A = data
 --  Nil

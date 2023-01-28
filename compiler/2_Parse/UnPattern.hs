@@ -71,8 +71,10 @@ buildCase = let
     VarF _              -> noSubs ok
     QuestionF           -> noSubs ok -- unconditional match
     PatternGuardsF pats -> mkSubCases pats bN 0 ok ko
-    ArgProdF cc    -> let n = length cc in mkSubCases cc bN n ok ko & \(rhs , bruijnSubs) ->
-      (mkBruijnLam (BruijnAbsF n bruijnSubs 0 rhs) , [])
+    ArgProdF caseAcc    -> let (this , bruijnSubs) = caseAcc (Var (VBruijn bN)) (bN + 1) ok ko
+      in (mkBruijnLam (BruijnAbsF 1 bruijnSubs 0 this) , [])
+--  ArgProdF cc    -> let n = length cc in mkSubCases cc bN n ok ko & \(rhs , bruijnSubs) ->
+--    (mkBruijnLam (BruijnAbsF n bruijnSubs 0 rhs) , [])
     TupleF subPats -> let -- (DesugarPoison "Unprepared for tuple" , [])
       n = length subPats 
       unConsArgs = [qName2Key (mkQName 0 i) | i <- [0 .. n-1]] <&> \k -> TTLens (-1) scrut [k] LensGet
@@ -100,10 +102,3 @@ patternsToCase scrut bruijnAcc patBranchPairs = let
   in (, concat bruijnSubs) $ case matches of
     []     -> DesugarPoison "EmptyCase"
     x : xs -> cata mergeCasesF (x :| xs)
-
---matchesToTT :: NonEmpty FnMatch -> TT -- BruijnAbs
---matchesToTT ms = let
---  argCount = NE.head ms & \(FnMatch pats _) -> length pats -- mergeCasesF will notice discrepancies in arg counts
---  (rhs , _bruijnSubs@[]) = patternsToCase Question 0
---    $ toList (ms <&> \(FnMatch pats rhs) -> (ArgProd pats , rhs))
---  in rhs -- BruijnAbsF 0 bruijnSubs 0 rhs -- TODO just rhs

@@ -102,7 +102,7 @@ solveScopesF exts thisMod this params = let
   AppExtF i args  -> solveMixfixes $ (resolveExt i) : (distribute args params)
   JuxtF _o args -> solveMixfixes (distribute args params)
   BruijnLamF b -> doBruijnAbs b
-  LamPatsF (FnMatch args rhs) -> patternsToCase Question (params._bruijnCount) [(ArgProd args , rhs)]
+  LamPatsF (FnMatch args rhs) -> patternsToCase Question (params._bruijnCount) [(args , rhs)]
     & fst & \t -> cata (solveScopesF exts thisMod) t params
 
   LambdaCaseF (CaseSplits' branches) -> BruijnLam $ BruijnAbsF 1 [] 0

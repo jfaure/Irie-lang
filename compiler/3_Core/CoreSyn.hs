@@ -42,7 +42,6 @@ data VName
 
 data LamB = LamB Int {-BitSet-} Term
 data Lam  = Lam [(IName , Type)] BitSet Type -- arg inames, types, freevars, term, ty
-data LamBEnv = LamBEnv Int [(Int , Type)] Type -- TODO add freevars?
 
 -- TODO split off the functor part so types can share constructions
 data Term -- β-reducable (possibly to a type)
@@ -65,7 +64,7 @@ data Term -- β-reducable (possibly to a type)
  | Label   ILabel [Term] --[Expr]
 
  -- Lift Lam info above the body so FEnv can setup the β-env via catamorphism
- | CaseB   Term Type (BSM.BitSetMap ({-LamBEnv ,-} Term)) (Maybe ({-LamBEnv ,-} Term))
+ | CaseB   Term Type (BSM.BitSetMap Term) (Maybe Term)
  | MatchB  Term (BSM.BitSetMap LamB) LamB -- Bruijn match (must have a default)
 
  | LetBinds (V.Vector (LetMeta , Bind)) Term
@@ -78,7 +77,6 @@ data Term -- β-reducable (possibly to a type)
 -- | Spec QName -- mod = bind it came from , unQ = spec number
 
  | LetSpec QName [ArgShape]
- | Opaque NT -- stop any recursion here
 
 -- | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
 -- | LinAbs [(LiName , Bool , Type)] Term Type -- indicate if dups its arg
@@ -87,7 +85,6 @@ data Term -- β-reducable (possibly to a type)
 -- | PartialApp [Type] Term [Term] --Top level PAp => Abs (only parse generates fresh argnames)
 --data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
 
-newtype NT = NT Term
 -- lensover needs idx for extracting field (??)
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr
 

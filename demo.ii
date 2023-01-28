@@ -11,20 +11,19 @@
 --Recangle = record
 --  f : Int
 --  g : Int
---import imports/prelude
---import imports/list
---import imports/list2
---import imports/question
---import imports/ls
---import imports/foldr
---import imports/question
---import imports/Free
---import imports/parsec
---import imports/intmap
+--import prelude
+--import list
+--import list2
+--import question
+--import ls
+--import foldr
+--import question
+--import Free
+--import parsec
+--import intmap
 
---import imports/stream
+--import stream
 --main = ls "hello"
-
 --import imports/TreeStream
 
 -- Trouble with unpatterning multiple labels
@@ -99,8 +98,17 @@
 -- go1 z i = go2 (mul z i) (add i 1) nextRet @True
 -- = \b1 b0 => (b1 * b0) / (b0 + 1)
 
+--twiceCurry f = \x => f (f x)
+--twice f x = f (f x)
+
+import prelude
 -- ? need the return debruijn count
--- f (@Wrap a b) (@XD c d) = add (add (add a b) c) d
+ff = \(@Wrap a b) (@XD c d) => add (add (add a b) c) d
+gg (@Wrap a b) = \(@XD c d) => add (add (add a b) c) d
+f (a , b) = \(c , d) => \(e , f) => add e (add (add (add a b) c) d)
+g (a , b) (c , d) = add (add (add a b) c) d
+h = \(a , b) (c , d) => add (add (add a b) c) d
+f x = \y => \z => add x (add y z)
 
 {-
 import imports/prelude

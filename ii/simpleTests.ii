@@ -128,3 +128,18 @@ misc0 = (\x => (let y = (x x.v) in 0)) -- ∏ A → ((A → ⊤) ⊓ {v : A}) �
 ff a (@Wrap) = add a a -- %i32 → [Wrap] → %i32
 fg a w = case w of { @Wrap => add a a } -- %i32 → [Wrap] → %i32
 fh a (@Wrap x) = add x a -- %i32 → [Wrap {%i32}] → %i32
+
+-- multi-arg case inversion tests
+ff = \(@Wrap a b) (@XD c d) => add (add (add a b) c) d               --   [Wrap {%i32 , %i32}] → [XD {%i32 , %i32}] → %i32
+gg (@Wrap a b) = \(@XD c d) => add (add (add a b) c) d               --   [Wrap {%i32 , %i32}] → [XD {%i32 , %i32}] → %i32
+f (a , b) = \(c , d) => \(e , f) => add e (add (add (add a b) c) d)  --   !0 : %i32 , !1 : %i32} → {!0 : %i32 , !1 : %i32} → {!0 : %i32 , !1 : ⊤} → %i32
+g (a , b) (c , d) = add (add (add a b) c) d                          --   !0 : %i32 , !1 : %i32} → {!0 : %i32 , !1 : %i32} → %i32
+h = \(a , b) (c , d) => add (add (add a b) c) d                      --   !0 : %i32 , !1 : %i32} → {!0 : %i32 , !1 : %i32} → %i32
+f x = \y => \z => add x (add y z)                                    --   i32 → %i32 → %i32 → %i32
+
+
+
+
+
+
+

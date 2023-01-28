@@ -2,7 +2,6 @@ module Parser (parseModule , parseMixFixDef) where
 import Prim ( Literal(PolyFrac, Char, String, Int, PolyInt) )
 import ParseSyntax as P
 import MixfixSyn ( defaultPrec, Assoc(..), MFWord(..), MixfixDef(..), Prec(Prec) )
-import UnPattern (patternsToCase)
 import Text.Megaparsec
 import Text.Megaparsec.Char ( char, char', string )
 import qualified Data.Vector as V
@@ -199,7 +198,13 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
   pEqns :: Parser [TT] -> Parser [TT] -> Parser [(TT , TT)]
   pEqns pArgs pMFArgs = let -- first parse is possibly different
     fnMatch :: Parser [TT] -> Parser () -> Parser (TT , TT)
-    fnMatch pMFArgs sep = (,) <$> (ArgProd <$> pMFArgs) <* lexemen sep <*> tt
+--  fnMatch pMFArgs sep = (,) <$> (ArgProd <$> pMFArgs) <* lexemen sep <*> tt
+    fnMatch pMFArgs sep = let
+      hack = \case
+        CasePat (CaseSplits Question [r]) -> r
+        x -> (Question , x) -- VExtern etc.. error $ show x
+      in fmap (hack) $ mkCurriedLambda <$> pMFArgs <* lexemen sep <*> tt
+
     in -- optional tyAnn >>= \_ann -> -- TODO maybe don't allow `_+_ a b = add a b`
       (:) <$> fnMatch pArgs (reserved "=")
           <*> many (try $ endLine *> scn *> svIndent *> fnMatch pMFArgs (reserved "="))
@@ -208,7 +213,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
     [Just nm] -> let pArgs = many (lexeme singlePattern) in do
       iNm  <- addUnknownName nm <* when isTop (void $ addTopName nm)
       eqns <- pEqns pArgs (pName nm *> pArgs)
-      let rhs = CasePat $ CaseSplits (Question {-Var (VBruijn 0)-}) eqns -- PatternGuards eqns
+      let rhs = CasePat $ CaseSplits Question eqns -- PatternGuards eqns
       pure $ Just (FnDef nm iNm Let Nothing rhs Nothing , subParse)
     mfDefHNames   -> let
       pMixFixArgs = cata $ \case
@@ -220,14 +225,29 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       iNm  <- addUnknownName nm <* when isTop (void $ addTopName nm)
       prec <- fromMaybe defaultPrec <$> optional (braces parsePrec)
       mfDefINames <- addMixfixWords mfDefHNames mfDef
-      rhs <- CasePat . CaseSplits (Question {-Var (VBruijn 0)-}) <$> pEqns (pure []) (pMixFixArgs mfDefHNames)
+      rhs <- CasePat . CaseSplits Question <$> pEqns (pure []) (pMixFixArgs mfDefHNames)
       pure $ Just (FnDef nm iNm Let (Just mfDef) rhs Nothing , subParse)
 
---lambda = matchesToTT <$> (:|[]) <$> fnMatch (many singlePattern) (reserved "=>" <|> reserved "⇒" <|> reserved "=")
-lambda = fmap LamPats $ FnMatch <$> many singlePattern <* lexemen (reserved "=>" <|> reserved "⇒" <|> reserved "=") <*> tt
-tyAnn = reservedChar ':' *> tt
+--lambda = fmap LamPats $ FnMatch <$> many singlePattern <* lexemen (reserved "=>" <|> reserved "⇒" <|> reserved "=") <*> tt
 
-fnMatch pMFArgs sep = FnMatch <$> pMFArgs <* lexemen sep <*> tt
+lambda = glambda (reserved "=>" <|> reserved "⇒" <|> reserved "=")
+glambda sep = mkCurriedLambda <$> many singlePattern <* lexemen sep <*> tt
+
+-- Hack to avoid multi-arg functions, which are hard to handle in unpattern
+mkCurriedLambda' :: [TT] -> TT -> TT
+mkCurriedLambda' [] rhs = rhs
+mkCurriedLambda' (a : r) rhs = let
+--curried = foldr (\next rhs -> LamPats (FnMatch next rhs)) rhs r
+  curried = foldr (\next rhs -> CasePat (CaseSplits Question [(ArgProd next , rhs)])) rhs r
+  in CasePat (CaseSplits Question [(ArgProd a , curried)])
+mkCurriedLambda a b = mkCurriedLambda' a b
+
+-- curried
+-- CasePat (CaseSplits Question
+--   [(ArgProd [Var (VExtern 1)]
+--   ,LamPats (FnMatch [Var (VExtern 2)] (LamPats (FnMatch [Var (VExtern 3)] (AppExt 4 [Var (VExtern 1),AppExt 4 [Var (VExtern 2),Var (VExtern 3)]])))))])
+
+tyAnn = reservedChar ':' *> tt
 
 -- make a lambda around any '_' found within the tt eg. `(_ + 1)` => `\x => x + 1`
 catchUnderscoreAbs = pure

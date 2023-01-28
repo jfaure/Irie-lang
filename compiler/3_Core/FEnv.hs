@@ -125,6 +125,7 @@ specApp isLetBind q cs args = use thisMod >>= \mod -> case isLetBind of
             rawAbs = if bruijnN == 0 then raw else BruijnAbs bruijnN emptyBitSet raw -- TODO get the types also !
 
         prev <- use bruijnArgs
+        -- TODO setup identity debruijns for free variables ?
         specFn <- simpleTerm rawAbs -- β-reduce (There may be outer VBruijns present in the args)
 
         when debug_fuse $ traceM $ show args <> "\n" <> show repackedArgs <> "\n" <> show unstructuredArgs

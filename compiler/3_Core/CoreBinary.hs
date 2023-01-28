@@ -26,12 +26,9 @@ deriving instance Generic Mixfixy
 deriving instance Generic MixfixDef
 deriving instance Generic Prec
 deriving instance Generic Assoc
-deriving instance Generic Lam
 deriving instance Generic LamB
 deriving instance Generic LetMeta
 deriving instance Generic OptBind
-deriving instance Generic LamBEnv
-deriving instance Generic NT
 
 -- Prim
 deriving instance Generic Literal
@@ -52,7 +49,6 @@ deriving instance Generic Specialisations
 
 instance Binary VName
 instance Binary QName
-instance Binary Lam
 instance Binary LamB
 instance Binary Term
 instance Binary LensOp
@@ -76,8 +72,6 @@ instance Binary ArgShape
 instance Binary Specialisations
 instance Binary LetMeta
 instance Binary OptBind
-instance Binary LamBEnv
-instance Binary NT
 
 -- primitives
 instance Binary Literal

@@ -44,7 +44,8 @@ data FnDef = FnDef {
  , _fnSig        :: Maybe TT
 }
 
-data FnMatch = FnMatch [TT] TT -- TODO rm
+-- single argument match
+data FnMatch = FnMatch TT TT -- TODO rm
 data LetRecT = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show) -- scope of opened records (blocks)
 
 data TTName
@@ -85,7 +86,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  -- tt primitives (sum , product , list)
 -- | Prod   [(FName , TT)] -- can be used to type itself
  | Tuple   [TT] -- Cartesian product
- | ArgProd [TT] -- packed arguments; used only by UnPattern within case expressions
+ | ArgProd TT -- argument; used only by UnPattern within case expressions
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
 

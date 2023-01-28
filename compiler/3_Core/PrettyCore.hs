@@ -232,8 +232,6 @@ pTerm showRhs = let
 --  in (annotate AAbs $ "λ " <> hsep (prettyArg <$> ars)) <> prettyFreeArgs free <> " ⇒ " <> term
   prettyBruijn (LamB i term) =
     (annotate AAbs $ "λB " <> viaShow i) <> " ⇒ " <> pTerm showRhs term -- todo no cata here
-  prettyLamBEnv (LamBEnv n argTs retT , term) =
-    (annotate AAbs $ "λBEnv " <> viaShow n) <> " ⇒ " <> term -- todo no cata here
   prettyFreeArgs x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
@@ -254,7 +252,7 @@ pTerm showRhs = let
 --  RecAppF f args -> parens (annotate AKeyWord "recApp" <+> f <+> sep args)
 --  MatchF  arg caseTy ts d → arg <+> " > " <+> prettyMatch prettyLam (Just caseTy) ts d
     MatchBF arg ts d -> arg <+> " > " <+> prettyMatch prettyBruijn Nothing ts (Just d)
-    CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity {-prettyLamBEnv-} Nothing ts d
+    CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing ts d
     AppF f args    -> parens (f <+> nest 2 (sep args))
 --  PartialAppF extraTs fn args → "PartialApp " <> viaShow extraTs <> parens (fn <> fillSep args)
     InstrF   p -> annotate AInstr (prettyInstr p)
@@ -279,7 +277,6 @@ pTerm showRhs = let
     LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
       <> hardline <> "in" <+> t
     LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
-    OpaqueF (NT t) -> "opaque"
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 
 --  x → _

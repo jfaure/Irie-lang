@@ -1,4 +1,4 @@
-import imports/list
+import list
 -- Tricker to simplify than list.ii
 
 -- mu as subtype of outer layer

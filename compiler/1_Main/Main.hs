@@ -32,7 +32,7 @@ import System.Directory ( createDirectoryIfMissing, doesFileExist, getModificati
 import qualified System.IO as SIO (hClose)
 import Data.List (words)
 
-searchPath = ["./" , "imports/"]
+searchPath = ["./" , "ii/"]
 objPath    = ["./"]
 objDir'    = ".irie-obj/"
 objDir     = objDir' <> "@" -- prefix '@' to files in there
@@ -45,7 +45,7 @@ getCachePath fName = let
   in objDir <> map (\case { '/' -> '%' ; x -> x} ) (normalise fName)
 resolverCacheFName = getCachePath "resolver"
 doCacheCore  = False
-doFuse       = True
+doFuse       = False
 cacheVersion = 0
 
 deriving instance Generic GlobalResolver

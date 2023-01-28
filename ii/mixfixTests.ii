@@ -1,4 +1,4 @@
-import imports/prelude
+import prelude
 
 --brac   = < 3 >
 --bracs  = < add 2 1 >
