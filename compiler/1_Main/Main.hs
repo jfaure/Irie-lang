@@ -45,7 +45,7 @@ getCachePath fName = let
   in objDir <> map (\case { '/' -> '%' ; x -> x} ) (normalise fName)
 resolverCacheFName = getCachePath "resolver"
 doCacheCore  = False
-doFuse       = False
+doFuse       = True
 cacheVersion = 0
 
 deriving instance Generic GlobalResolver
@@ -183,12 +183,12 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
 simplifyModule :: (CmdLine, f, JudgedModule, V.Vector HName , GlobalResolver, e, Errors, e2)
   -> ( CmdLine, Bool, Errors, e2, f, V.Vector HName , GlobalResolver , JudgedModule)
 simplifyModule (flags , fName , judgedModule , iNames , newResolver , _exts , errors , srcInfo) = let
-  JudgedModule modI modNm bindNames lMap judgedModTT _specs = judgedModule
+  JudgedModule modI modNm bindNames lMap judgedModTT = judgedModule
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
   judgedSimple = if not doFuse || noFuse flags || not coreOK then judgedModule else runST $
-    FEnv.simplifyModule modI judgedModTT <&> \(modTTSimple , specs)
-      -> JudgedModule modI modNm bindNames lMap modTTSimple specs
+    FEnv.simplifyModule judgedModTT <&> \modTTSimple
+      -> JudgedModule modI modNm bindNames lMap modTTSimple
   in (flags , coreOK , errors , srcInfo , fName , iNames , newResolver , judgedSimple)
 
 putResults :: (CmdLine, Bool, Errors, Maybe SrcInfo , FilePath , V.Vector HName , GlobalResolver , JudgedModule)

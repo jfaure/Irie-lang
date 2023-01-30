@@ -2,7 +2,7 @@
 -- ! the Prelude supplies mixfixes and more convenient access to these primitives
 -- * constructs a vector of primitives
 -- * supplys a (Map HName IName) to resolve names to indexes
-module Builtins (primBinds , primMap , typeOfLit , primLabelHNames , primLabelMap , primFieldHNames , primFieldMap , builtinFalse , builtinTrue) where
+module Builtins (primBinds , primMap , typeOfLit , primLabelHNames , primLabelMap , primFieldHNames , primFieldMap , builtinFalse , builtinTrue , builtinFalseQ , builtinTrueQ) where
 import Prim
 import CoreSyn
 import qualified Data.Map.Strict as M ( Map , (!?) , fromList )
@@ -13,16 +13,16 @@ import qualified BitSetMap as BSM
 mkExtTy x  = [mkExt x]
 getPrimIdx = (primMap M.!?)
 
-getPrimTy ∷ HName → IName
+getPrimTy :: HName → IName
 getPrimTy nm = case getPrimIdx nm of
   Nothing → panic $ "panic: badly setup primtables; " <> nm <> " not in scope"
   Just i  → i
 
 primMap = M.fromList $ zipWith (\(nm,_val) i → (nm,i)) primTable [0..]
-primBinds ∷ V.Vector (HName , Expr) = V.fromList primTable
+primBinds :: V.Vector (HName , Expr) = V.fromList primTable
 
 primType2Type x = Ty (TyGround [THPrim x])
-primTable ∷ [(HName , Expr)]
+primTable :: [(HName , Expr)]
 primTable = concat
   [ (\(nm , x)         → (nm , primType2Type x)) <$> V.toList primTys
   , boolLabel
@@ -35,24 +35,26 @@ primTable = concat
 
 -- Primitive Labels
 -- * Predicates must return labels so if_then_else_ can fuse
-boolLabel ∷ [(HName , Expr)]
+boolLabel :: [(HName , Expr)]
 boolLabel =
   [ ("BoolL" , Ty (TyGround [boolL]))
-  , ("True"  , Core (Label builtinTrue  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
-  , ("False" , Core (Label builtinFalse mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
+  , ("True"  , Core (Label builtinTrueQ  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
+  , ("False" , Core (Label builtinFalseQ mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
   ]
-builtinFalse = mkQName 0 0 -- 0.0
-builtinTrue = mkQName 0 1 -- 0.1
-falseLabelT = (qName2Key builtinFalse , TyGround [THTyCon (THTuple mempty)])
-trueLabelT  = (qName2Key builtinTrue  , TyGround [THTyCon (THTuple mempty)])
+builtinTrue  = Label builtinTrueQ  mempty
+builtinFalse = Label builtinFalseQ mempty
+builtinFalseQ = mkQName 0 0 -- 0.0
+builtinTrueQ = mkQName 0 1 -- 0.1
+falseLabelT = (qName2Key builtinFalseQ , TyGround [THTyCon (THTuple mempty)])
+trueLabelT  = (qName2Key builtinTrueQ  , TyGround [THTyCon (THTuple mempty)])
 boolL       = THTyCon (THSumTy (BSM.fromList [trueLabelT , falseLabelT]))
 
-primLabelHNames = V.fromList ["False" , "True"] ∷ V.Vector HName
-primLabelMap    = M.fromList [("True" , builtinTrue) , ("False" , builtinFalse)] ∷ M.Map HName QName
+primLabelHNames = V.fromList ["False" , "True"] :: V.Vector HName
+primLabelMap    = M.fromList [("True" , builtinTrueQ) , ("False" , builtinFalseQ)] :: M.Map HName QName
 
 -- Primitive field Names
-primFieldHNames = mempty ∷ V.Vector HName
-primFieldMap    = mempty ∷ M.Map HName QName
+primFieldHNames = mempty :: V.Vector HName
+primFieldMap    = mempty :: M.Map HName QName
 
 -- ! Indexes here are of vital importance: THExts are assigned to these to speed up comparisons
 -- If anything here is changed, type of lit must also change
@@ -139,7 +141,7 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   ]
 iTy = THPrim (PrimInt 32)
 
-primInstrs ∷ [(HName , (PrimInstr , ([IName] , IName)))] =
+primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("Arrow" , (TyInstr Arrow  , ([set,set] , set)))
   , ("IntN"  , (TyInstr MkIntN , ([i] , set)))
   , ("primLen" , (Len , ([ia] , i)))

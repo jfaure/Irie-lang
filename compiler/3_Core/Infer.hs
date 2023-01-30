@@ -50,7 +50,7 @@ judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
     , _genVec = g
     }
   pure (JudgedModule modIName (pm ^. P.moduleName) hNames
-    (pm ^. P.parseDetails . P.labels) modTT Nothing , st ^. errors)
+    (pm ^. P.parseDetails . P.labels) modTT , st ^. errors)
 
 -- infer >> generalise >> check annotation
 -- This stacks inference of forward references and let-binds

@@ -48,6 +48,7 @@ solveScopesF exts thisMod this params = let
   -- CasePatF overrides the scopeF cata via newtype: patterns contain mixfixes and introduce arguments
   -- for patterns we need: resolve mixfix externs > solvemixfix > unpattern > solvescopes
   -- * insert a pretraversal of *only* patterns under this scope context, then patternsToCase then resume solveScopes
+  doCase :: UnPattern.Scrut -> [(TT, TT)] -> Params -> TT
   doCase scrut patBranchPairs params = let
     solvedBranches :: [(TT , TT)]
     solvedBranches = patBranchPairs <&> \(pat' , br) -> let
@@ -104,9 +105,9 @@ solveScopesF exts thisMod this params = let
   BruijnLamF b -> doBruijnAbs b
   LamPatsF (FnMatch args rhs) -> patternsToCase Question (params._bruijnCount) [(args , rhs)]
     & fst & \t -> cata (solveScopesF exts thisMod) t params
-
   LambdaCaseF (CaseSplits' branches) -> BruijnLam $ BruijnAbsF 1 [] 0
     $ doCase (Var $ VBruijnFixed 0) branches (params & bruijnCount %~ (1+))
+  CasePatF (CaseSplits scrut patBranchPairs) -> doCase scrut patBranchPairs params
 
   -- ? mutual | let | rec scopes
   LetInF (Block open letType binds) tt -> let
@@ -115,7 +116,6 @@ solveScopesF exts thisMod this params = let
     bindsDone = binds <&> (& fnRhs %~ (\t -> cata (solveScopesF exts thisMod) t letParams))
     in LetIn (Block open letType bindsDone) (distribute tt letParams)
 
-  CasePatF (CaseSplits scrut patBranchPairs) -> doCase scrut patBranchPairs params
   tt -> embed (distribute tt params)
 
 -- TODO don't allow `bind = lonemixfixword`

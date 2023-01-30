@@ -1,9 +1,9 @@
-module UnPattern (patternsToCase) where
+module UnPattern (patternsToCase , Scrut) where
 import Data.Functor.Foldable
 import Data.Functor.Base
 import ParseSyntax
 import QName
-import Builtins (builtinTrue , builtinFalse)
+import Builtins (builtinTrueQ , builtinFalseQ)
 import qualified BitSetMap as BSM
 import qualified Data.List.NonEmpty as NE
 
@@ -11,9 +11,6 @@ import qualified Data.List.NonEmpty as NE
 -- Parse > resolve mixfixes > resolve cases > check arg scopes?
 -- parse modules as Fn : [AllHNames] -> Module (ie. structural parse , don't lookup anything since depends on mixfix parse)
 -- codo on cofree comonad => DSL for case analysis on the base functor of the cofree comonad.
-
--- type Moore = Cofree (-> (Pattern , Rhs)) Scrut
--- Moore machine with states labeled with values of type Scrut, and transitions on edges of (Pattern , Rhs).
 
 -- ? multi-arg case ⇒ arg inter-dependencies
 -- ? pattern <=> case isomorphism for specialisations (need to operate on Term syntax)
@@ -81,8 +78,8 @@ buildCase = let
       (body , argSubs) = mkSubCases subPats bN n ok ko
       in (App (mkBruijnLam (BruijnAbsF n argSubs 0 body)) unConsArgs , argSubs)
     LitF l          -> noSubs $ let
-      alts = (qName2Key builtinTrue , BruijnLam $ BruijnAbsF 1 [] 0 ok)
-        : maybe [] (\falseBranch -> [(qName2Key builtinFalse , falseBranch)]) ko
+      alts = (qName2Key builtinTrueQ , BruijnLam $ BruijnAbsF 1 [] 0 ok)
+        : maybe [] (\falseBranch -> [(qName2Key builtinFalseQ , falseBranch)]) ko
       in MatchB (LitEq l scrut) (BSM.fromList alts) Nothing
     x -> noSubs $ DesugarPoison ("Illegal pattern: " <> show (embed $ x <&> (\x -> fst $ x scrut bN ok ko)))
   in cata go -- scrut matchOK matchKO -> Term

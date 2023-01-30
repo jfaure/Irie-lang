@@ -26,12 +26,10 @@
 --main = ls "hello"
 --import imports/TreeStream
 
--- Trouble with unpatterning multiple labels
---f (@A a) (@B b) = add a b
-
 --f = \case { @x b | @y <- b => 1 } -- doesn't parse
 
 -- Merge equations properly, this creates 2 bindings and bugs out inames
+-- Also disallow extra names between the equations (scoped fields?)
 --eq1 (@x) b = 2
 --eq1 a b = 3
 
@@ -42,11 +40,11 @@
 --f (x a) = a
 --g = \case
 --  x => x -- Always label
--- v  (prelude + demo.ii.True)
+
 -- import imports/prelude
 -- x = True -- Ambiguous binding (@True OK)
 
--- f (x a) = a -- x uses bind-name not label name
+-- g (x a) = a -- no '@', so x uses bind-name not label name
 
 -- tvars must never refer to deeper let-nest tvars through their bounds
 -- need to save state tvars => only biunify with instantations not the escaped tvar
@@ -68,7 +66,6 @@
 
 -- multi-branch different μ merging =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
--- import imports/foldr
 
 -- Wildcard (poison cannot merge cases)
 --null = \case
@@ -80,63 +77,9 @@
 --import SpecialisationTests/SpecPapArg
 --import SpecTests
 --import SpecialisationTests/SimpleMutual
+import SpecialisationTests/SumOfSquares
+--import SpecialisationTests/fib
 
 --import stream
 --import list
 --import testBruijns
-
--- go1 z i = go2 (mul z i) (add i 1) nextRet @True
-
--- go2 z i next s = case next s of
---   @Skip s => go2 z i next s
---   @Done   => go1 z i
--- 
--- nextRet = \case
---   @True  => @Skip @False
---   @False => @Done
--- 
--- go1 z i = go2 (mul z i) (add i 1) nextRet @True
--- = \b1 b0 => (b1 * b0) / (b0 + 1)
-
---twiceCurry f = \x => f (f x)
---twice f x = f (f x)
-
-import prelude
--- ? need the return debruijn count
-ff = \(@Wrap a b) (@XD c d) => add (add (add a b) c) d
-gg (@Wrap a b) = \(@XD c d) => add (add (add a b) c) d
-f (a , b) = \(c , d) => \(e , f) => add e (add (add (add a b) c) d)
-g (a , b) (c , d) = add (add (add a b) c) d
-h = \(a , b) (c , d) => add (add (add a b) c) d
-f x = \y => \z => add x (add y z)
-
-{-
-import imports/prelude
--- Fusion
--- sumAppend n = sum [m * m | m <- [1..n]]
--- = foldl _+_ 0 (concatMap (\m => pure (m * m)) (enum 1 n)
-nextEnum n = case n >=? 10 of
-  @True  => @Done
-  @False => @Yield n (1 + n)
-
-nextConcatMap i nest = case nest of
-  @J (@Stream next s0) => case next s0 of
-    @Done      => @Skip i @N
-    @Skip s    => @Skip i (J (Stream next s))
-    @Yield y s => @Yield y i (J (Stream next s))
-  @N => case nextEnum i of
-    Done   => Done
-    Skip i => Skip i N
-    Yield x i => let
-      nextRet x = \case
-        @True  => Yield (x * x) False
-        @False => Done
-      in Skip i (J (Stream (nextRet x) True))
-
-go z s0 s1 = case nextConcatMap s0 s1 of
-  @Done        => z
-  @Skip s q    => go z s q
-  @Yield x s q => go (z + x) s q
-
-sumAppend n = go 0 n N
--}

@@ -116,7 +116,7 @@ data TyInstrs
 data Predicates  = EQCmp | NEQCmp | GECmp | GTCmp | LECmp | LTCmp | AND | OR
 data IntInstrs   = Add | Sub | Mul | SDiv | SRem | Neg | AbsVal | IPow
 data NatInstrs   = UDiv | URem
-data BitInstrs   = And | Or | Not | Xor | ShL | ShR | BitRev | ByteSwap | PopCount | CTZ | CLZ | FShL | FShR | RotL | RotR
+data BitInstrs   = And | Or | Not | Complement | Xor | ShL | ShR | BitRev | ByteSwap | PopCount | CTZ | CLZ | FShL | FShR | RotL | RotR | TestBit | SetBit
                  {- BMI1 -} | ANDN | BEXTR | BLSI | BLSMSK | BLSR| CtTZ {- BMI2 -} | BZHI | MULX | PDEP | PEXT
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp
 data ArrayInstrs = ExtractVal  -- | InsertVal | Gep

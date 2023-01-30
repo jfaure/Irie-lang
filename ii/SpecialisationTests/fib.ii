@@ -1,0 +1,7 @@
+-- recursively inline iff args contain no deBruijns
+-- ie. top-level bind being simplified is fully applied
+-- need to track if Terms contain any deBruijns
+fib n = case le n 2 of
+  @True  => 1
+  @False => add (fib (sub n 1)) (fib (sub n 2))
+g = fib 10

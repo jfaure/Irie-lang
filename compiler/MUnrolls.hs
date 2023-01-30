@@ -7,7 +7,6 @@ import qualified Data.Functor.Rep as Rep
 import Control.Monad.Free
 import Control.Comonad
 import Control.Comonad.Cofree
-import Control.Arrow
 import Control.Monad.Fix
 
 -- Control functor F = (A + _)
@@ -162,7 +161,7 @@ rAKleisli f = Kleisli $ unKAG . f . unKAF
 -- Recursion-schemes
 myHisto :: Recursive t => (Base t (Cofree (Base t) a) -> a) -> t -> a
 myHisto psi = extract . h where
-  h = (\(a , b) → a :< b) . (psi &&& identity) . fmap h . project
+  h = (\(a , b) -> a :< b) . (psi &&& identity) . fmap h . project
 
 myfutu :: Corecursive t => (a -> Base t (Free (Base t) a)) -> a -> t
 myfutu psi = embed . fmap worker . psi where

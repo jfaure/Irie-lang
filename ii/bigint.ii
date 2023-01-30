@@ -1,40 +1,54 @@
 -- BigInt = List Int
 -- bitsPerLimb = 64
 
--- Since zips are frequent, use foldl for fusion
+-- TODO abort addition if adding 0
 -- least significant limbs first
-addInt a int = add a (Singleton int)
+-- for Stream (I64 , I64) -> Stream I64
+SAddCarry = \case
+--  @Yield (a , b) carry => add3Overflow a b carry > \(r , carry2) => (Yield r carry2)
+-- carry is a I1
+    @Yield (a , b) carry => add a b > \x => add x carry > \r => Yield r ((x <? a) .|. (r <? x))
+    @Skip s => Skip s
+    @Done   => Done
 
-uAdd a b = let
-  collect (next , nextO) (prevLimbs , carry) = let
-    (this , thisCarry) = addOverflow next carry
-    in (Cons (next + carry) prevLimbs , nextCarry + thisCarry) -- | the carries
-  in foldl collect (alignWith identity identity addOverflow a b)
+SSubCarry = \case
+  @Yield (a , b) => sub next carry > \x => sub x carry > \r => Yield r ((x >? a) .|. (r >? x))
+  @Skip s => Skip s
+  @Done => Done
+UAdd a b = SAddCarry (alignWith identity identity (\x y => (x , y)) a b)
 
--- Knowing the sign requires knowing a >? b
--- limb length estimates give approximate bounds
--- if that's inconclusive then finding the sign forces the bigint into memory
-sub a b = let
-  collect (next , next0) (prevLimbs , carry) =
-    (Cons (next - carry) prevLimbs , nextCarry - (next <? carry))
-  in foldl collect (alignWith identity identity subOverflow a b)
+-- Knowing the sign requires knowing a >? b , which blocks streaming
+SUB a b = let
+  in SSubCarry (alignWith identity identity subOverflow a b)
+
+-- mulppm returns a tuple of the high 64 bits and low 64 bits of a multiplication
+-- multiply a bigint by a point: (c + 10b + 100a) * m = mc + 10mb + 100ma
+-- TODO check power of 2. TODO need to stagger mul_ppmm results
+MUL1 n ms = if n == 0 then 0 else if n == 1 then ms else addCarries (fmap (mul_ppmm n) ms)
+
+-- β-optimal mul: m * n = 2*m * n//2 + (m * (n mod 2)) # can replace 2 with any base B, eg. power 2 for left-shifts
+MUL [m] n = MUL1 m n
+MUL m [n] = MUL1 n m
+MUL (m : ms) (n : ns) = uAdd (MUL (0 : m : ms) ns) (MUL1 n (m : ms))
+-- Sum the staggered stack of remainders
+-- ie. (maybe) duplicate m then mul on trivial substream and stack maybe additions on intermediate m
 
 -- only 'a' fusable since `map (_ * aVal)` requires entire b at each iteration
 -- therefore ideally b <? a && b small
-longMul a b = let
-   -- the nth summand must be left shifted by Base^n (=> _ ++ repeat n 0)
-  summands = concat (map (\aVal => map (_ * aVal) b) a)
-  in foldl _+_ (zipWith (\i n => n ++ replicate n 0) [0..] summands)
+--longMul a b = let
+--   -- the nth summand must be left shifted by Base^n (=> _ ++ repeat n 0)
+--  summands = concat (map (\aVal => map (_ * aVal) b) a)
+--  in foldl _+_ (zipWith (\i n => n ++ replicate n 0) [0..] summands)
 
-karatsuba a b = let
-  l = min (length a // 2) (length b // 2)
-  (x0 , x1) = splitAt l a
-  (y0 , y1) = splitAt l b
-  (z0 , z1 , z2) =
-    ( x1 * y1
-    , (x0 - x1) * (y1 - y0) + z2 + z0 -- or x1 * y0 + x0 * y1
-    , x0 * y0)
-  in z0 + (z1 ++ replicate l 0) + (z2 ++ replicate l 0)
+--karatsuba a b = let
+--  l = min (length a // 2) (length b // 2)
+--  (x0 , x1) = splitAt l a
+--  (y0 , y1) = splitAt l b
+--  (z0 , z1 , z2) =
+--    ( x1 * y1
+--    , (x0 - x1) * (y1 - y0) + z2 + z0 -- or x1 * y0 + x0 * y1
+--    , x0 * y0)
+--  in z0 + (z1 ++ replicate l 0) + (z2 ++ replicate l 0)
 
 -- tmp[0] = a[0]
 -- r[0]   = tmp // b
@@ -65,12 +79,12 @@ karatsuba a b = let
 --    R := R − D
 --    Q(i) := 1
 -- schoolbook long division adapted to work from least significant digits first
-longDiv N D = let
-  go (lastQ , rem) nextA = let
-    remTMP = (Cons rem nextA)
-    if q < D then (Cons 0 q , remTMP) else (Cons q remTMP , remTMP - D)
-    in
-  in foldl0 go (0 , 0) N
+--longDiv N D = let
+--  go (lastQ , rem) nextA = let
+--    remTMP = (Cons rem nextA)
+--    if q < D then (Cons 0 q , remTMP) else (Cons q remTMP , remTMP - D)
+--    in
+--  in foldl0 go (0 , 0) N
 
 -- More devious versions
 

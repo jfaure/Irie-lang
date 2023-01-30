@@ -1,10 +1,11 @@
 -- Optimized cpu form designed to be easily converted to C or llvm or wasm
+-- Explicit memory read/writes
 
--- Runtime fusion
--- Reflection: Runtime beta-optimality (pap-reduce) & GPU/distribution ⇒ lib JIT ?
--- Memory: non-fusible | duped Labels
--- Mem-layout , label subtyping
--- Clone Lazy-incremental
+-- * Runtime fusion
+-- * Reflection: Runtime beta-optimality (pap-reduce) & GPU/distribution ⇒ lib JIT ?
+-- * Memory: non-fusible | duped Labels
+-- * Mem-layout , label subtyping
+-- * Clone Lazy-incremental
 
 -- # Mem-layout , label subtyping , cloning
 -- Labels have their own run of memory in case they need to grow (64 elems + bitset)

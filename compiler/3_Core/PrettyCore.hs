@@ -50,7 +50,7 @@ prettyBind flags showTerm nm b = render flags . layoutPretty defaultLayoutOption
 prettyJudgedModule :: Bool -> RenderOptions -> JudgedModule -> TL.Text
 prettyJudgedModule showRhs flags j = render flags . layoutPretty defaultLayoutOptions $ pJM showRhs j
 
-pJM showRhs (JudgedModule _mI _mH _bindNms _lNms modTT _specs) = pTopExpr showRhs $ modTT
+pJM showRhs (JudgedModule _mI _mH _bindNms _lNms modTT) = pTopExpr showRhs $ modTT
 
 showRawQName q = show (modName q) <> "." <> show (unQName q)
 

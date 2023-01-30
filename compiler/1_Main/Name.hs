@@ -12,3 +12,8 @@ mkUpName depth mod i = UpName $ depth `shiftL` 48 .|. (mod `shiftL` 32) .|. i
 -- Lens into modules
 -- QName is a 2layer DownName from global module map
 newtype DownName = DownName [Word16]
+
+-- deBruijnLet vs Record = fields are named sequentially
+-- Eraser can 'subtype' away fields, without renaming all deBruijns
+-- Operational semantics can get away with not fully normalising
+-- TT | Letbounds

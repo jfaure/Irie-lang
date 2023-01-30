@@ -11,7 +11,6 @@ type LName = Int -- TODO
 --   => use pdep to mark frets for subtyping casts
 --   => can inc. limit using a tree if necessary
 
-
 -- ## MachineCode
 --  * eliminate Trees : flatten all data to Tuples up to recursion & lift all tags
 --  * SOA form for data
@@ -28,6 +27,14 @@ type LName = Int -- TODO
 -- * RLE each branch
 -- rec = (depth , ptree) : D
 -- eg. 1 (2 (0) (0)) =
+
+-- * Subtype
+-- label promotion
+-- sumtypes
+-- record
+-- erased lambdas
+-- tycon trees
+
 data MType
   = TPoly
   | TAtom PrimType

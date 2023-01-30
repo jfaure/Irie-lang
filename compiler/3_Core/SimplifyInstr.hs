@@ -1,8 +1,56 @@
 module SimplifyInstr where
 import CoreSyn
 import Prim
+import Builtins
+import Data.Bits
 
-simpleInstr i args = case i of
+interpretBinaryIntInstr = \case
+  Add  -> (+)
+  Mul  -> (*)
+  Sub  -> (-)
+  SDiv -> div
+  SRem -> mod
+  IPow -> (^)
+interpretUnaryIntInsrt = \case
+ Neg -> \x -> - x
+ AbsVal -> abs
+interpretBinaryPredInstr = \case
+  EQCmp  -> (==)
+  NEQCmp -> (/=)
+  LTCmp  -> (< )
+  GTCmp  -> (> )
+  LECmp  -> (<=)
+  GECmp  -> (>=)
+interpretUnaryBitInsrt = \case
+  Not -> not
+  Complement -> complement
+interpretBinaryBitInstr :: (Num i , Bits i) => _ -> i -> i -> i
+interpretBinaryBitInstr = \case
+  Prim.And -> (.&.)
+  Or  -> (.|.)
+  Prim.Xor -> xor
+--BitRev ->
+--ByteSwap ->
+-- vv Explicitly require Ints
+--ShL -> shiftL
+--ShR -> shiftR
+--PopCount -> popCount
+--CTZ -> countTrailingZeros
+--CLZ -> countLeadingZeros
+--FShL 
+--FShR 
+--RotL -> rotateL
+--RotR -> rotateR
+--TestBit -> testBit
+--SetBit  -> setBit
+  -- complement
+  -- BMI1 & 2
+
+simpleInstr i args = let
+--args = args' <&> \case
+--  App (Instr j) ars -> simpleInstr j ars
+--  x -> x
+  in case i of
   IfThenE | [cond , a , b] <- args
           , App pred [Lit (Int x) , Lit (Int y)] <- cond
           , Instr (NumInstr (PredInstr p)) <- pred ->
@@ -11,11 +59,10 @@ simpleInstr i args = case i of
   GMPInstr j -> simpleGMPInstr j args
   Zext | [Lit (Int i)]   <- args -> Lit (Fin 64 i)
        | [Lit (Fin _ i)] <- args -> Lit (Fin 64 i)
-  NumInstr (IntInstr Add)  | [Lit (I32 a) , Lit (I32 b)] <- args -> Lit (I32 (a + b))
-                           | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (a + b))
-  NumInstr (IntInstr Mul)  | [Lit (I32 a) , Lit (I32 b)] <- args -> Lit (I32 (a * b))
-  NumInstr (IntInstr Mul)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (a * b))
---NumInstr (IntInstr UDiv) | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (a / b))
+--NumInstr (IntInstr i)  | [Lit (I32 a) , Lit (I32 b)] <- args ->
+  NumInstr (IntInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryIntInstr i a b))
+  NumInstr (BitInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryBitInstr i a b))
+  NumInstr (PredInstr p)   | [Lit (Int a) , Lit (Int b)] <- args -> if interpretBinaryPredInstr p a b then builtinTrue else builtinFalse
   _ -> App (Instr i) args
 
 simpleGMPInstr ∷ NumInstrs -> [Term] -> Term

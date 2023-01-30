@@ -228,7 +228,6 @@ data JudgedModule = JudgedModule {
  , bindNames  :: V.Vector HName
  , labelNames :: M.Map HName IName
  , moduleTT   :: Expr
- , specs      :: Maybe Specialisations -- TODO let(spec)-bind these
 }
 
 data OldCachedModule = OldCachedModule {
