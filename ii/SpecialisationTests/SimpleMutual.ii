@@ -9,8 +9,6 @@ nextRet = \case
   @True  => Yield (mul 0 0 {-i i-}) @False
   @False => Done
 
--- got: λ2. if B0 > 10
--- then ? (add B0 (mul B0 B0)) B3 else B1
 go1 z i =
 --nextRet i x = case x of
 --  True  => Yield (mul i i) False
@@ -20,3 +18,6 @@ go1 z i =
     @True  => z
     @False => go2 z (add i 1) nextRet True
     -- go1 i z
+
+--test = go1 0 1
+test2 = go2 0 1 nextRet @False

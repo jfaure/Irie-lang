@@ -35,6 +35,10 @@ type LiTable = V.Vector VName
 type CaseID = Int
 type BranchID = Int
 
+-- Debruijn indices vs levels
+-- levels indexes from the bottom of the stack, eliminating the need to reindex free vars (eg. when weakening context)
+-- indices eliminate need to reindex bound variables, eg when substituting a closed expression in another context
+-- locally nameless = indices for bound vars, global names for free vars.
 data VName
  = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
  | VForeign HName -- opaque name resolved at linktime
@@ -54,6 +58,7 @@ data Term -- β-reducable (possibly to a type)
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
  | VBruijn IName
+ | VBruijnLvl IName
  | BruijnAbs Int BitSet Term
  | BruijnAbsTyped Int BitSet Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]    -- IName [Term]

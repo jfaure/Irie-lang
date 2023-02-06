@@ -8,6 +8,7 @@ import qualified BitSetMap as BSM
 import qualified Data.List.NonEmpty as NE
 
 -- Invert a TT into a case-tree, so mixfixes and labels are handled uniformly
+-- This assigns deBruijn levels to bound variables, which are converted (reversed) to deBruijn indices by solveScopes
 -- Parse > resolve mixfixes > resolve cases > check arg scopes?
 -- parse modules as Fn : [AllHNames] -> Module (ie. structural parse , don't lookup anything since depends on mixfix parse)
 -- codo on cofree comonad => DSL for case analysis on the base functor of the cofree comonad.
@@ -45,7 +46,7 @@ buildCase = let
       Nil            -> (ok , [])
       Cons caseAcc r -> let
         (nextMatch , argSubs) = r (bruijnI + 1) ok ko
-        scrut = Var (VBruijn bruijnI)
+        scrut = Var (VBruijnLevel bruijnI)
         (this , argSubs2) = caseAcc scrut subN nextMatch ko
         -- TODO need to obtain the new debruijnN introduced by subcases !
         in (this , argSubs2 ++ argSubs)
@@ -63,12 +64,12 @@ buildCase = let
     LabelF q subPats  -> goLabel q subPats -- argument was named => need to sub it for its bruijn name !
     AppExtF q subPats -> goLabel q subPats
     VarF (VExtern i) -> case scrut of
-      Var (VBruijn b) -> (ok , [(i , b)])
+      Var (VBruijnLevel b) -> (ok , [(i , b)])
       _ -> (DesugarPoison ("Unknown label: " <> show i) , [])
     VarF _              -> noSubs ok
     QuestionF           -> noSubs ok -- unconditional match
     PatternGuardsF pats -> mkSubCases pats bN 0 ok ko
-    ArgProdF caseAcc    -> let (this , bruijnSubs) = caseAcc (Var (VBruijn bN)) (bN + 1) ok ko
+    ArgProdF caseAcc    -> let (this , bruijnSubs) = caseAcc (Var (VBruijnLevel bN)) (bN + 1) ok ko
       in (mkBruijnLam (BruijnAbsF 1 bruijnSubs 0 this) , [])
 --  ArgProdF cc    -> let n = length cc in mkSubCases cc bN n ok ko & \(rhs , bruijnSubs) ->
 --    (mkBruijnLam (BruijnAbsF n bruijnSubs 0 rhs) , [])

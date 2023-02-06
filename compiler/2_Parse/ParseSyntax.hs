@@ -49,8 +49,8 @@ data FnMatch = FnMatch TT TT -- TODO rm
 data LetRecT = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show) -- scope of opened records (blocks)
 
 data TTName
- = VBruijn  IName
- | VBruijnFixed IName -- HACK for lambdacase to bypass VBruijn renaming
+ = VBruijnLevel IName
+ | VBruijn  IName
  | VExtern  IName
  | VQBind   QName
  | VLetBind QName -- let-block nesting depth and IName

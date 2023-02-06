@@ -2,6 +2,7 @@
 f = (\a b c d => add (add (add a b) c) d) 3 2 1 0
 
 ycomb f = (\x => f (x x)) (\x => f (x x))
+ycomb2 f = (\g => g g) (\x => f (x x))
 rename x y = add x y
 
 fg a w = case w of { @Wrap => add a a } -- i32 → [Wrap] → %i32
@@ -15,4 +16,4 @@ foldr1 f g = case g of
 
 -- free-var debruijn arithmetic
 fv1 a b = (\c => div b a) @True
-fv2 a b = (\c d => div b c) 0 1
+fv2 a b = (\c d => add a (div b c)) 0 1

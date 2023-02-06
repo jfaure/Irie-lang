@@ -236,7 +236,7 @@ pTerm showRhs = let
   prettyLabel l = annotate (AQLabelName l) ""
   prettyField f = annotate (AQFieldName f) ""
   prettyMatch prettyLam _caseTy ts d = let
-    showLabel l t = prettyLabel (QName l) <+> prettyLam t
+    showLabel l t = prettyLabel (QName l) <+> "=>" <+> prettyLam t
     in brackets $ annotate AKeyWord "\\case " <> nest 2 ( -- (" : " <> annotate AType (pTy caseTy)) <> hardline
       hardline <> (vsep (Prelude.foldr (\(l,k) -> (showLabel l k :)) [] (BSM.toList ts)))
       <> maybe "" (\catchAll → hardline <> ("_ ⇒ " <> prettyLam catchAll)) d
@@ -246,6 +246,7 @@ pTerm showRhs = let
     QuestionF -> " ? "
     VarF     v -> pVName v
     VBruijnF b -> "B" <> viaShow b
+    VBruijnLvlF b -> "BL" <> viaShow b
     LitF     l -> annotate ALiteral $ parens (viaShow l)
     BruijnAbsF n free body -> parens $ "λb(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
     BruijnAbsTypedF n free body argMetas retTy -> parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body

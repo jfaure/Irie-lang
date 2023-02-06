@@ -4,7 +4,7 @@
 -- fromList O(n)
 -- (!?) O(1)
 -- union , intersection , mergeWithKey O(n)
-module BitSetMap (BitSetMap , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , singleton , (!?) , BitSetMap.elems , BitSetMap.keys
+module BitSetMap (BitSetMap(..) , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , singleton , (!?) , BitSetMap.elems , BitSetMap.keys
   , unionWith , intersectionWith , traverseWithKey , mergeWithKey' , mergeWithKey , mapAccum , mapWithKey) where
 
 -- For oneshot built ordered lists, dichotomy lookup on a (Vector (Int , a)) is a clear improvement vs Data.IntMap

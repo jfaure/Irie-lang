@@ -57,7 +57,7 @@ executable irie-exe
       CoreUtils
       Errors
       Externs
-      FEnv
+      BetaEnv
       Generalise
       Typer
       Infer

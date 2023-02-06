@@ -14,6 +14,7 @@
 --import prelude
 --import list
 --import list2
+--import tree
 --import question
 --import ls
 --import foldr
@@ -77,9 +78,9 @@
 --import SpecialisationTests/SpecPapArg
 --import SpecTests
 --import SpecialisationTests/SimpleMutual
-import SpecialisationTests/SumOfSquares
+--import SpecialisationTests/SumOfSquares
 --import SpecialisationTests/fib
 
---import stream
+import stream
 --import list
 --import testBruijns

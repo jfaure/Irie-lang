@@ -20,7 +20,7 @@ import qualified Test.Syd as S
 import qualified GHC.Show
 
 inferTypes s = let
-  cmdLine = defaultCmdLine {noColor = True , printPass = ["types"] , noCache = True}
+  cmdLine = defaultCmdLine {noColor = True , printPass = ["types"] , noCache = True , noFuse = True}
   getResult (_flags , _coreOK , _errors , _srcInfo , _fName , iNames , r , j) =
     let bindSrc = BindSource mempty mempty iNames (labelHNames r) (allBinds r)
     in prettyJudgedModule False ansiRender {bindSource = Just bindSrc , ansiColor = False} j

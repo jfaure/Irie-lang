@@ -95,8 +95,8 @@ solveScopesF exts thisMod this params = let
     | otherwise -> handleExtern exts thisMod params._open params._letMap i
   in case {-d_ (embed $ Question <$ this) $-} this of
   VarF v -> case v of
-    VBruijn i -> {-(0 `setBit` i ,-} Var (VBruijn $ params._bruijnCount - 1 - i)
-    VBruijnFixed i -> Var (VBruijn i)
+    VBruijnLevel i -> {-(0 `setBit` i ,-} Var (VBruijn $ params._bruijnCount - 1 - i)
+    VBruijn i -> Var (VBruijn i)
     VExtern i -> resolveExt i
     VQBind q  -> ScopePoison (ScopeError $ "Var . VQBind " <> showRawQName q)
     VLetBind l -> Var v
@@ -106,7 +106,7 @@ solveScopesF exts thisMod this params = let
   LamPatsF (FnMatch args rhs) -> patternsToCase Question (params._bruijnCount) [(args , rhs)]
     & fst & \t -> cata (solveScopesF exts thisMod) t params
   LambdaCaseF (CaseSplits' branches) -> BruijnLam $ BruijnAbsF 1 [] 0
-    $ doCase (Var $ VBruijnFixed 0) branches (params & bruijnCount %~ (1+))
+    $ doCase (Var $ VBruijn 0) branches (params & bruijnCount %~ (1+))
   CasePatF (CaseSplits scrut patBranchPairs) -> doCase scrut patBranchPairs params
 
   -- ? mutual | let | rec scopes
