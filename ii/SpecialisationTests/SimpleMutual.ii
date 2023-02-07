@@ -5,8 +5,8 @@ go2 z i next s = case next s of
   @Skip s    => go2 z i next s
   @Yield x s => go2 (add z x) i next s
 
-nextRet = \case
-  @True  => Yield (mul 0 0 {-i i-}) @False
+nextRet i = \case
+  @True  => Yield (mul i i) @False
   @False => Done
 
 go1 z i =
@@ -16,8 +16,8 @@ go1 z i =
 --in ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet) True)
   case ge i 10 of
     @True  => z
-    @False => go2 z (add i 1) nextRet True
+    @False => go2 z (add i 1) (nextRet i) True
     -- go1 i z
 
---test = go1 0 1
-test2 = go2 0 1 nextRet @False
+-- 285
+test2 = go2 0 1 (nextRet 1) @False

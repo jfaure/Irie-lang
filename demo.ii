@@ -77,10 +77,9 @@
 
 --import SpecialisationTests/SpecPapArg
 --import SpecTests
---import SpecialisationTests/SimpleMutual
+import SpecialisationTests/SimpleMutual
 --import SpecialisationTests/SumOfSquares
 --import SpecialisationTests/fib
 
-import stream
 --import list
 --import testBruijns

@@ -41,6 +41,30 @@ data Sub
 
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
 fuse (lvl , env , term) = let envLen = V.length env in case term of
+  -- Fusion
+  abs | Just (n , body) <- getBruijnAbs abs , Just (m , b2) <- getBruijnAbs body
+    -> fuse (lvl , env , BruijnAbs (n + m) 0 b2)
+  App (App g ars)   args -> fuse (lvl , env , App g (ars <> args))
+  App (Label l ars) args -> fuse (lvl , env , Label l (ars <> args))
+  CaseB scrut retT branches d -> simpleTerm' lvl env scrut >>= \case -- Need to pull out the seed immediately
+    Label l params -> case (branches BSM.!? qName2Key l) <|> d of
+      Just body | null params -> fuse (lvl , env , body)
+      -- !! WARNING params are already β-d (does double β-reduction change anything?)
+      Just body -> fuse (lvl , env , App body params)
+      Nothing -> error $ "panic: no label: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
+    CaseB innerScrut ty2 innerBranches innerDefault -> let
+      pushCase innerBody = simpleTerm' lvl env (CaseB innerBody retT branches d)
+      optBranches = traverse pushCase innerBranches
+      optD        = traverse pushCase innerDefault
+      in (\b d -> CaseBF (Left innerScrut) ty2 (Left <$> b) (Left <$> d)) <$> optBranches <*> optD
+    opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches) (Right . (lvl,env,) <$> d)
+
+  LetBlock lets -> inferBlock lets $ LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
+  LetBinds lets inE -> inferBlock lets $ do
+    newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
+    newInE  <- simpleTerm' lvl env inE
+    pure (LetBindsF newLets (Left newInE))
+
   -- Bruijn manipulations
   -- Any contained debruijns must be diffed with their lvl change
   VBruijn i -> if i >= V.length env then error $ show (i , env) else (env V.! i) & \case
@@ -59,38 +83,17 @@ fuse (lvl , env , term) = let envLen = V.length env in case term of
       | n > l  -> _
 --    | n > l  -> fuse (lvl , argEnv <> env , BruijnAbs (n - l) 0 body)
 
---App (Var (VLetBind q)) args | lvl == 0 -> inlineLetBind q >>= \inlineF ->
---  (simpleTerm' lvl env `mapM` args) >>= \ars -> fuse (lvl , env , App inlineF ars)
+  -- β-reduction may produce more fusible cases! (eg. let-bounds to inline)
+  -- TODO avoid retraversal of the args at this lvl
+  App (VBruijn i) args | lvl == 0 -> simpleTerm' lvl env (VBruijn i) >>= \case
+    VBruijn j -> pure $ AppF (Left (VBruijn j)) (Right . (lvl,env,) <$> args)
+    f -> (simpleTerm' lvl env `mapM` args) >>= \ars -> fuse (lvl , env , App f ars)
 
-  -- need to re-level the term?
---Var (VLetBind q) | lvl == 0 -> inlineLetBind q <&> \term -> Left <$> project term
---Var (VLetBind q) | lvl == 0 -> inlineLetBind q >>= \term -> fuse (lvl , mempty , term)
+  App (Var (VLetBind q)) args | lvl == 0 -> inlineLetBind q >>= \inlineF ->
+    (simpleTerm' lvl env `mapM` args) >>= \ars -> fuse (lvl , env , App inlineF ars)
 
---App (Var (VLetBind q)) args -> specApp lvl env q args
-
-  -- Fusion
-  abs | Just (n , body) <- getBruijnAbs abs , Just (m , b2) <- getBruijnAbs body
-    -> fuse (lvl , env , BruijnAbs (n + m) 0 b2)
-  App (App g ars)   args -> fuse (lvl , env , App g (ars <> args))
-  App (Label l ars) args -> fuse (lvl , env , Label l (ars <> args))
-  CaseB scrut retT branches d -> simpleTerm' lvl env scrut >>= \case -- Need to pull out the seed immediately
-    Label l params -> case (branches BSM.!? qName2Key l) <|> d of
-      Just body | null params -> pure $ Right . (lvl,env,) <$> project body
-       -- !! WARNING params are already β-d (does double β-reduction change anything?)
-      Just body -> fuse (lvl, env , App body params)
-      Nothing -> error $ "panic: no label: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
-    CaseB innerScrut ty2 innerBranches innerDefault -> let
-      pushCase innerBody = simpleTerm' lvl env (CaseB innerBody retT branches d)
-      optBranches = traverse pushCase innerBranches
-      optD        = traverse pushCase innerDefault
-      in (\b d -> CaseBF (Left innerScrut) ty2 (Left <$> b) (Left <$> d)) <$> optBranches <*> optD
-    opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches) (Right . (lvl,env,) <$> d)
-
-  LetBlock lets -> inferBlock lets $ LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
-  LetBinds lets inE -> inferBlock lets $ do
-    newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
-    newInE  <- simpleTerm' lvl env inE
-    pure (LetBindsF newLets (Left newInE))
+--Var (VLetBind q) | lvl == 0 -> inlineLetBind q >>= \inlineF -> fuse (lvl , env , inlineF)
+  App (Var (VLetBind q)) args -> specApp lvl env q args
 
   x -> pure $ Right . (lvl , env,) <$> project x
 

@@ -100,6 +100,8 @@ ls fName = foldr (\n ? => puts n) 0 < dirStream (opendir fName)
 
 tree fName = foldr (\n ? => puts n + tree n) 0 < dirStream (opendir fName)
 
+test = tree "./"
+
 -- f n = sum [ k * m | k ← [1..n] , m ← [1..k] ]
 -- T[E | ] = return E
 -- T[E | B , Q] = guard B T[E | Q]
