@@ -12,7 +12,6 @@ import qualified Data.Vector as V
 import qualified Data.List
 import qualified Data.List.NonEmpty as NE
 import Data.Functor.Foldable
-import MUnrolls (anaM)
 debug_gen = False || global_debug
 fst3 (a,_,_) = a
 
@@ -59,9 +58,9 @@ type Cooc s = MV.MVector s ([Type] , [Type])
 data AnalyseState s = AnalyseState { _anaBis :: MV.MVector s BiSub , _recs :: BitSet , _instVars :: Int , _coocs :: Cooc s }; makeLenses ''AnalyseState
 type AnaEnv s = StateT (AnalyseState s) (ST s)
 
-data AState s = AState { _arecs :: BitSet , _acoocs :: Cooc s }; makeLenses ''AState
-type AEnv s = StateT (AState s) (ST s)
-type Seed = (Type , Bool , BitSet , BitSet , Int)
+--data AState s = AState { _arecs :: BitSet , _acoocs :: Cooc s }; makeLenses ''AState
+--type AEnv s = StateT (AState s) (ST s)
+--type Seed = (Type , Bool , BitSet , BitSet , Int)
 
 data GState s = GState { _quants :: Int , _genMap :: MV.MVector s Int }; makeLenses ''GState
 type GEnv s = StateT (GState s) (ST s)
@@ -198,10 +197,10 @@ forgetRoll x = {-d_ (rollTy x)-} (forgetRoll' x)
 --dropRoll m = \case
 --  BuildRoll uf ms -> mergeTypeList True $ uf : (filter (\(i,_,_) -> i `elem` m) (NE.toList ms) <&> \(_ , _ , t) -> t)
 --  x -> forgetRoll x
-rollTy = \case
-  NoRoll{} -> "noroll"
-  BuildRoll{} -> "buildroll"
-  Rolling{} -> "rolling"
+--rollTy = \case
+--  NoRoll{} -> "noroll"
+--  BuildRoll{} -> "buildroll"
+--  Rolling{} -> "rolling"
 
 mergeTRolls :: [TypeRoll] -> TypeRoll
 mergeTRolls = \case { x : xs -> foldr mergeRolls x xs ; [] -> _ }
@@ -221,10 +220,10 @@ m_ = flip const-- d_
 mergeRolls a b = -- d_ (rollTy a , rollTy b)
   (mergeRolls' a b)
 mergeRolls' (NoRoll t) (NoRoll t2)       = NoRoll (mergeTypes True t t2) -- TODO pos/neg type merge?!
-mergeRolls' (NoRoll t) (BuildRoll a ms)  = BuildRoll (a {-mergeTypes True a t-}) ms
-mergeRolls' (NoRoll t) (Rolling a m r z) = Rolling   (a {-mergeTypes True a t-}) m r z
+mergeRolls' (NoRoll _t) (BuildRoll a ms)  = BuildRoll (a {-mergeTypes True a t-}) ms
+mergeRolls' (NoRoll _t) (Rolling a m r z) = Rolling   (a {-mergeTypes True a t-}) m r z
 mergeRolls' a b@NoRoll{} = mergeRolls b a
-mergeRolls' (Rolling a m r z) (Rolling a2 m2 r2 z2)
+mergeRolls' (Rolling a m r z) (Rolling a2 m2 _r2 _z2)
  | m == m2 = m_ ("roll-roll") $ Rolling (mergeTypes True a a2) m r z
  | m < m2  = m_ ("roll-roll" , m , m2) $ cata rollType (patchMu m2 m $ mergeTypes True a a2)
  | m > m2  = m_ ("roll-roll" , m , m2) $ cata rollType (patchMu m m2 $ mergeTypes True a2 a)
@@ -233,7 +232,7 @@ mergeRolls' (BuildRoll a ms) (BuildRoll a2 ms2) = m_ ("build-build" , fst3 <$> m
   BuildRoll (mergeTypes True a a2) (ms <> ms2)
 
 mergeRolls' a@BuildRoll{} b@Rolling{} = mergeRolls b a
-mergeRolls' (Rolling a m r z) (BuildRoll a2 ms)
+mergeRolls' (Rolling a m _r _z) (BuildRoll a2 ms)
  = m_ ("roll-build" , m , ms) $ let
    tbounds = NE.filter (\(n,_,_) -> n == m) ms <&> (\(_,_,b) -> b)
    in BuildRoll (mergeTypeList True (a : a2 : tbounds)) ms -- TODO merged roll + build somehow
@@ -243,9 +242,9 @@ rollType this = let -- ! we may be building | rolling μs out of multiple branch
   -- compute typeRolls from a single THead (each sub-branch of tycons).
   getTHeadTypeRoll :: Integer -> [Int] -> THead TypeRoll -> TypeRoll
   getTHeadTypeRoll vs ms th = let
-    addMu m t@(TyGround [THMu n t2]) = if n == m then t else error "internal error stacked μ"
+    addMu m t@(TyGround [THMu n _]) = if n == m then t else error "internal error stacked μ"
     addMu m t = TyGround [THMu m t]
-    mkTy tt = if vs == 0 then TyGround [tt] else TyVars vs [tt]
+--  mkTy tt = if vs == 0 then TyGround [tt] else TyVars vs [tt]
     this = let tt = [forgetRoll <$> th] in if vs == 0 then TyGround tt else TyVars vs tt
     ith = Generalise.indexed th
     -- if. μ-bound in hole start μ-build
@@ -256,14 +255,14 @@ rollType this = let -- ! we may be building | rolling μs out of multiple branch
     -- 'this' is the current type, mkRoll examines each branch (one layer down)
     mkRoll :: Int -> TypeRoll -> [TypeRoll]
     mkRoll i = \case
-      BuildRoll ty mus -> [mergeRollsNE $ mus <&> \(m , rollFn , b) -> let l = layer i : rollFn
+      BuildRoll _ty mus -> [mergeRollsNE $ mus <&> \(m , rollFn , b) -> let l = layer i : rollFn
         in if m `elem` ms then let r = reverse l in Rolling (addMu m (mergeTypes True b this)) m r r
            else BuildRoll this ((m , l , b) :| [])]
       Rolling ty m (r : nextRolls) reset -> {-trace (prettyTyRaw ty <> " <=> " <> prettyTyRaw this)-} if layer i /= r -- TODO check subtype (roughly eq modulo μ and bounds)
         then [] -- NoRoll this
 --      then NoRoll $ mkTy $ ith <&> \(j , oldT) -> if i == j then trace (prettyTyRaw ty) ty else forgetRoll oldT -- re-insert μ-bounds
         else [Rolling ty m (nextRolls <|> reset) reset]
-      NoRoll t -> []
+      NoRoll _ -> []
       x -> error $ show x
     -- TODO use forget-roll properly, atm it mixes layers and is unreliable
     in case concat (Prelude.imap mkRoll (toList th)) of
@@ -281,7 +280,7 @@ rollType this = let -- ! we may be building | rolling μs out of multiple branch
       [] -> NoRoll (mkTy vs (fmap forgetRoll <$> xs))
       xs -> mergeTRolls xs
     (m , []) -> let allEq l = and (zipWith (==) l (drop 1 l)) in case m of
-      mh:ms | allEq m -> BuildRoll (mkTy vs [THMuBound mh]) ((mh , [] , (TyGround [])) :| [])
+      mh:_ | allEq m -> BuildRoll (mkTy vs [THMuBound mh]) ((mh , [] , (TyGround [])) :| [])
       _   -> error (show m)
     (ms , xs) -> mergeTRolls (getTHeadTypeRoll vs ms <$> xs)
   partitionMus g = let (ms , gs) = Data.List.partition (\case {THMuBound{} -> True ; _ -> False}) g
@@ -339,7 +338,7 @@ type Acc s = Bool -> BitSet -> BitSet -> AnaEnv s Type
 analyseType :: Type -> Acc s
 analyseType = let
   registerOccurs :: Bool -> Type -> AnaEnv s Type
-  registerOccurs pos ty = {-trace (prettyTyRaw ty) $-} use coocs >>= \cooc -> partitionType ty & \(vset , other) ->
+  registerOccurs pos ty = {-trace (prettyTyRaw ty) $-} use coocs >>= \cooc -> partitionType ty & \(vset , _tys) ->
     ty <$ (bitSet2IntList vset) `forM` \i ->
 --    MV.modify cooc (over (if pos then _1 else _2) (TyVars vset other :)) i
       MV.modify cooc (over (if pos then _1 else _2) (\l -> if elem ty l then l else ty : l)) i

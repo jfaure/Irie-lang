@@ -5,7 +5,6 @@ import ParseSyntax
 import QName
 import Builtins (builtinTrueQ , builtinFalseQ)
 import qualified BitSetMap as BSM
-import qualified Data.List.NonEmpty as NE
 
 -- Invert a TT into a case-tree, so mixfixes and labels are handled uniformly
 -- This assigns deBruijn levels to bound variables, which are converted (reversed) to deBruijn indices by solveScopes

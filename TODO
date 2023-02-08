@@ -2,12 +2,14 @@
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
+  * make lazy arg-sub in BetaEnv
   * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
   * cross-module mixfixes broken
-  * μ-roll multi-branch μs merge; μ-roll needs rewrite
+  * rewrite μ-roll; esp. for multi-branch μs merge
 ### Linearity ; free variables (type must be known) ; β vs always-inline
   GlobalResolver = { Modules } BitSetMap of modules keyed on INames
+  Duplicated lams passed into functions should be generalised
   Module : (λimportBruijns -> {}) i1..in
   Modules arguments (imports) are themselves λ applied to transitive imports
   ? trans-deps ; open/require ; record-field pattern ; update-spec
@@ -15,26 +17,25 @@
   module is given all its imports as LetArg debruijn arguments
     solveScopes qualifies all names on LetArg imports (VBruijn x . name) => build bitset of used fields for +VBruijns
     opened = bruijn name all fields => linearity will show the dep-tree
-  quote: Val -> Term -- converts all free-variables to explicit arguments, with application on the current env
 # Mutuality: insane Π = λM[a , b] -> (a , b) => 
   ? mutual functions within separate records =eg. let a = { f = b.g } ; b = { g = a.f }
   Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
   make lazy-gen marker to indicate fn still needs generalisation later. (also count ungeneralised types for clearBis)
 ## Notes. Let (record) as Bruijn (generalise duplicated arguments & mutual fn args)
-    ? Cap field number to 64 for cheaper subtyping with i64 bitset
-    Must know type of all (also free) bruijns at codegen
-    let-App = sv mutual info
-    BruijnSub = Either Int Bind  -- VBruijn typevar | Bind
-    Let-App = BruijnApp 1 Binds  -- Eraser argument is a form of function subtyping
-    Generalise top-level & duplicated lambdas (inline the rest)
-    specs (also FEnv returns specs for imported binds)
-    linearity
-    DownName = [nm]; each index capped by bruijn n
-    unInline case-branch lambdas
-    open / required (also locally) | dependency graph vv
-    Transitive deps may require IO / aggressive preloading eg. True, builtins => prelude => import prelude
-    record-field patterns ((a , b) = rhs) => (\case { (a , b) => rhs })
-      ? case over whole record or just the field when it is used
+  ? export list
+  ? Cap field number to 64 for cheaper subtyping with i64 bitset
+  let-App = sv mutual info
+  BruijnSub = Either Int Bind  -- VBruijn typevar | Bind
+  Let-App = BruijnApp 1 Binds  -- Eraser argument is a form of function subtyping
+  Generalise top-level & duplicated lambdas (inline the rest)
+  new specs for imported binds
+  linearity
+  DownName = [nm]; each index capped by bruijn n
+  unInline case-branch lambdas
+  open / required (also locally) | dependency graph vv
+  Transitive deps may require IO / aggressive preloading eg. True, builtins => prelude => import prelude
+  record-field patterns ((a , b) = rhs) => (\case { (a , b) => rhs })
+    ? case over whole record or just the field when it is used
   ? let-bound labels
   atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
 ## FEnv
@@ -42,7 +43,9 @@
   * make dup nodes so MC can assume everything is linear
   * optimise App of inline functions (make a new Sub type that patches arguments later?)
   * ShapePoly to indicate shape doesn't matter (stronger than ShapeNone)
+  * identify duplicated paps
 ## ?
+  * named arguments (perhaps by subtype from a record arg)
   * shared streams (eg. MUL)
   * derived streams: splitAt creates 2 streams from 1, but the second is only available after the first
   * dynamic fuse pap: (+1) << (+1) => (+2)

@@ -19,35 +19,17 @@ type BiSubName = Int -- index into bisubs
 type SrcOff    = Int -- offset into the source file
 type IField    = Int -- QName
 type ILabel    = QName
-type TVarSet   = BitSet
-
--- LiName (investigate + vs -)
--- * explicit dup nodes => function args may be duped
--- * mark let-bounds start,end , recursive and mutuals
--- ? different dups in different case-branches => defer until branch known (potentially duped / dropped linames)
--- ? dependency graph = LetScope ModIName
--- ? open record
--- 0. Module = \.. => let .. in exportlist (functor might be const)
--- 1. Parse finds arg binds and uniquely names everything else as Extern
--- 2. Resolve scope: scopeBitset → IName → LiTable LiName
-type LiName  = QName -- ! The modIName indicates amount of dups
-type LiTable = V.Vector VName
-type CaseID = Int
-type BranchID = Int
+type CaseID    = Int
 
 -- Debruijn indices vs levels
--- levels indexes from the bottom of the stack, eliminating the need to reindex free vars (eg. when weakening context)
--- indices eliminate need to reindex bound variables, eg when substituting a closed expression in another context
+-- levels index from the bottom of the stack, eliminating the need to reindex free vars (eg. when weakening context)
+-- indices eliminate the need to reindex bound variables, eg when substituting a closed expression in another context
 -- locally nameless = indices for bound vars, global names for free vars.
 data VName
  = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
  | VForeign HName -- opaque name resolved at linktime
  | VLetBind QName -- + counterpart of VBruijn
 
-data LamB = LamB Int {-BitSet-} Term
-data Lam  = Lam [(IName , Type)] BitSet Type -- arg inames, types, freevars, term, ty
-
--- TODO split off the functor part so types can share constructions
 data Term -- β-reducable (possibly to a type)
  = Var     !VName
  | Lit     !Literal
@@ -57,38 +39,26 @@ data Term -- β-reducable (possibly to a type)
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
+-- ->
  | VBruijn IName
- | VBruijnLvl IName
  | BruijnAbs Int BitSet Term
  | BruijnAbsTyped Int BitSet Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]    -- IName [Term]
 
- | Tuple   (V.Vector Term)      -- Cartesian product
+-- {}
+ | Tuple    (V.Vector Term)      -- Cartesian product
+ | LetBlock (V.Vector (LetMeta , Bind))
+ | LetBinds (V.Vector (LetMeta , Bind)) Term
  | TTLens  Term [IField] LensOp
 
- | Label   ILabel [Term] --[Expr]
-
- -- Lift Lam info above the body so FEnv can setup the β-env via catamorphism
+-- []
+ | Label   ILabel [Term]
  | CaseB   Term Type (BSM.BitSetMap Term) (Maybe Term)
- | MatchB  Term (BSM.BitSetMap LamB) LamB -- Bruijn match (must have a default)
 
- | LetBinds (V.Vector (LetMeta , Bind)) Term
- | LetBlock (V.Vector (LetMeta , Bind)) -- Module | record
-
- -----------------------------------------------
- -- Extra info built for/by simplification --
- -----------------------------------------------
+-- Simplifier
  | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
--- | Spec QName -- mod = bind it came from , unQ = spec number
-
  | LetSpec QName [ArgShape]
-
--- | Lin LiName -- Lambda-bound (may point to dup-node if bound by duped LinAbs)
--- | LinAbs [(LiName , Bool , Type)] Term Type -- indicate if dups its arg
--- | RecApp   Term [Term] -- direct recursion
--- | LetSpecs [Term] Term Named Specialised recursive fns can (mutually) recurse with themselves
--- | PartialApp [Type] Term [Term] --Top level PAp => Abs (only parse generates fresh argnames)
---data LabelKind = Peano | Array Int | Tree [Int] -- indicate recurse indexes
+ | Forced Int Term -- already simplified term - must not re-β-reduce it since that would be incorrect (should re-lvl it?)
 
 -- lensover needs idx for extracting field (??)
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr
@@ -157,11 +127,6 @@ data Expr
  | PoisonExpr
  | PoisonExprWhy Text
 
-type FnSize = Bool -- <=? 1 App
-data Specialisations = Specialisations
-  { specBinds  :: V.Vector (FnSize , Term)
-  , specsCache :: V.Vector (M.Map [ArgShape] IName) }
-
 data ArgShape
  = ShapeNone
  | ShapeLabel ILabel [ArgShape]
@@ -174,9 +139,8 @@ data ArgShape
 data Bind
  = Queued
  | Guard  { mutuals :: BitSet , tvar :: IName } -- being inferred; if met again, is recursive/mutual
- | RawInferred
  -- | inferred type waiting for batch generalisation; freeVs used to test if can clear bisubs
- | Mutual { naiveExpr :: Expr , freeVs :: BitSet , recursive :: Bool , tvar :: IName , tyAnn :: Maybe Type }
+ | Mutual { naiveExpr :: Expr , freeVs :: BitSet , tvar :: IName , tyAnn :: Maybe Type }
 
  | BindKO -- failed type inference
  | BindOK { optLevel :: OptBind , naiveExpr :: Expr }

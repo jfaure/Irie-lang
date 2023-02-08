@@ -1,43 +1,38 @@
--- BigInt = List Int
--- bitsPerLimb = 64
+-- BigInt = List I64
+-- Knowing signs after sub requires knowing a >? b , which blocks streaming
 
--- TODO abort addition if adding 0
 -- least significant limbs first
 -- for Stream (I64 , I64) -> Stream I64
-SAddCarry = \case
---  @Yield (a , b) carry => add3Overflow a b carry > \(r , carry2) => (Yield r carry2)
--- carry is a I1
-    @Yield (a , b) carry => add a b > \x => add x carry > \r => Yield r ((x <? a) .|. (r <? x))
-    @Skip s => Skip s
-    @Done   => Done
+SUAddCarry = \case
+  @Yield (a , b) carry => add a b > \x => add x carry > \r
+    => Yield r ((x <? a) .|. (r <? x))
+  @Skip s => Skip s
+  @Done   => Done
 
-SSubCarry = \case
-  @Yield (a , b) => sub next carry > \x => sub x carry > \r => Yield r ((x >? a) .|. (r >? x))
+SUSubCarry = \case
+  @Yield (a , b) => sub next carry > \x => sub x carry > \r
+    => Yield r ((x >? a) .|. (r >? x))
   @Skip s => Skip s
   @Done => Done
-UAdd a b = SAddCarry (alignWith identity identity (\x y => (x , y)) a b)
 
--- Knowing the sign requires knowing a >? b , which blocks streaming
-SUB a b = let
-  in SSubCarry (alignWith identity identity subOverflow a b)
+-- TODO align with a sumtype?
+UAdd a b = SAddCarry (alignWith (_ , 0) (0 , _) (_ , _) a b)
 
 -- mulppm returns a tuple of the high 64 bits and low 64 bits of a multiplication
 -- multiply a bigint by a point: (c + 10b + 100a) * m = mc + 10mb + 100ma
 -- TODO check power of 2. TODO need to stagger mul_ppmm results
-MUL1 n ms = if n == 0 then 0 else if n == 1 then ms else addCarries (fmap (mul_ppmm n) ms)
+MUL1 n ms = if n =? 0 then 0 else if n =? 1 then ms else addCarries (fmap (mul_ppmm n) ms)
 
--- β-optimal mul: m * n = 2*m * n//2 + (m * (n mod 2)) # can replace 2 with any base B, eg. power 2 for left-shifts
+-- m * n = B*m * n//B + (m * (n mod B))
 MUL [m] n = MUL1 m n
 MUL m [n] = MUL1 n m
-MUL (m : ms) (n : ns) = uAdd (MUL (0 : m : ms) ns) (MUL1 n (m : ms))
--- Sum the staggered stack of remainders
--- ie. (maybe) duplicate m then mul on trivial substream and stack maybe additions on intermediate m
+MUL ms (n : ns) = uAdd (MUL (0 : ms) ns) (MUL1 n ms)
 
 -- only 'a' fusable since `map (_ * aVal)` requires entire b at each iteration
 -- therefore ideally b <? a && b small
 --longMul a b = let
 --   -- the nth summand must be left shifted by Base^n (=> _ ++ repeat n 0)
---  summands = concat (map (\aVal => map (_ * aVal) b) a)
+--  summands = concatMap (\aVal => map (_ * aVal) b) a
 --  in foldl _+_ (zipWith (\i n => n ++ replicate n 0) [0..] summands)
 
 --karatsuba a b = let

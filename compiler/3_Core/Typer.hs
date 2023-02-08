@@ -6,10 +6,8 @@ import CoreUtils
 import PrettyCore (number2CapLetter , prettyTyRaw)
 import TCState
 import qualified Data.Vector.Mutable as MV
-import qualified Data.Text as T
 import qualified Data.Vector as V
 import Data.List (intersect)
-import Data.Functor.Foldable
 debug_gen = False || global_debug
 
 -- generalise: standard rule for polymorphism=
@@ -51,12 +49,12 @@ generalise lvl0 rawType = let startType = ((\x -> TyVars (setBit 0 x) []) ||| id
   done <- buildType lvl0 bis' varSubs 0 True startType
   use nquants <&> \case { 0 -> done ; n -> TyGround [THBi n done] }
 
-buildVarSubs bis' coocV recs lvl0 = let
+buildVarSubs _bis' coocV recs lvl0 = let
   len = V.length coocV
   recursiveVar = pure GeneraliseVar
   in do
   varSubs <- MV.new len
-  [0.. len - 1] `forM` \v -> let cooc = coocV V.! v in traceM (show v <> " => " <> show cooc) *>
+  [0.. len - 1] `forM_` \v -> let cooc = coocV V.! v in traceM (show v <> " => " <> show cooc) *>
     MV.write varSubs v =<< case cooc of
       _ | testBit lvl0 v -> pure EscapedVar
       (Nothing , t) -> if testBit recs v then d_ t $ recursiveVar else pure DeleteVar -- polar variables
@@ -67,9 +65,9 @@ buildVarSubs bis' coocV recs lvl0 = let
       (Just x , Just y) -> let
         prevTVs = setNBits v :: Integer -- don't redo co-occurence on prev-vars
         cooc x y = case partitionType (intersectTypes x y) of
-          (vs , ts) | clearBit vs v /= 0 -> DeleteVar
-          (vs , ts) | (x:_) <- ts -> d_ x DeleteVar
-          t -> GeneraliseVar
+          (vs , _ts) | clearBit vs v /= 0 -> DeleteVar
+          (_vs , ts) | (x:_) <- ts -> d_ x DeleteVar
+          _t -> GeneraliseVar
         oppCooc t pol = partitionType t & \(ws , _) ->
           maybe GeneraliseVar (cooc t) . (if pol then fst else snd) . (coocV V.!) <$> bitSet2IntList (complement prevTVs .&. ws)
         bestSub ok next = case ok of { DeleteVar -> ok ; SubTy _ -> ok ; SubVar _ -> ok ; _ko -> next }
@@ -88,7 +86,7 @@ buildCoocs bis' coocV guards pos = let
       THTyCon (THArrow ars ret) -> fmap THTyCon $ THArrow <$> (b l (not pos) `mapM` ars) <*> b l pos ret
       t -> b l pos `mapM` t
     let ret = mergeTypeList pos (tyVars vs grounds : varBounds) -- Which vars can be dropped / generalised?
-    partitionType ret & \(ws , gs) -> bitSet2IntList ws `forM` \w ->
+    partitionType ret & \(ws , gs) -> bitSet2IntList ws `forM_` \w ->
       (recursives %= (.|. (ws .&. guards))) *>
       MV.modify coocV (over (if pos then _1 else _2) (Just . maybe (TyVars ws gs) (intersectTypes (TyVars ws gs)))) w
     pure ret

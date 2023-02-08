@@ -99,7 +99,7 @@ solveScopesF exts thisMod this params = let
     VBruijn i -> Var (VBruijn i)
     VExtern i -> resolveExt i
     VQBind q  -> ScopePoison (ScopeError $ "Var . VQBind " <> showRawQName q)
-    VLetBind l -> Var v
+    VLetBind _-> Var v
   AppExtF i args  -> solveMixfixes $ (resolveExt i) : (distribute args params)
   JuxtF _o args -> solveMixfixes (distribute args params)
   BruijnLamF b -> doBruijnAbs b

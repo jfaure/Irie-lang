@@ -87,20 +87,23 @@ fromStr str = @stream (\(ok , head , tail) => if ok then Yield head (nextElem ta
 --ll = Sappend (enumFromTo 11 15) (enumFromTo 5 10)
 --ll a = cata add 0 < Sappend a a
 --rr a = foldr add 0 < SzipWith add a a
-t5 = foldr add 0 << SconcatMap (enumFromTo 10)
-t6 a = (Sappend a a)
-t6 a = foldr add 0 < Sappend a (Sappend a a)
-t7 a = foldr add 0 < map (add 1) < Sappend a a
+t5   = foldr add 0 < SconcatMap (enumFromTo 10) (enumFromTo 5 10)
+{-
+t6 a = Sappend a a
+t7 a = foldr add 0 < Sappend a (Sappend a a)
+t8 a = foldr add 0 < map (add 1) < Sappend a a
 flatStream xs ys = foldr add 0 (Sappend xs ys)
 
 -- DirStream
-dirStream dirp = @stream (readdir >> \(nextDirp , name) => if isdir nextDirp then Yield name nextDirp else Done) dirp
+-- TODO indicate end of dirstream?
+dirStream dirp = @stream (readdir >> \(ok , nextDirp , name) => if ok then Done else Yield name nextDirp) dirp
 
 ls fName = foldr (\n ? => puts n) 0 < dirStream (opendir fName)
 
 tree fName = foldr (\n ? => puts n + tree n) 0 < dirStream (opendir fName)
 
 test = tree "./"
+-}
 
 -- f n = sum [ k * m | k ← [1..n] , m ← [1..k] ]
 -- T[E | ] = return E

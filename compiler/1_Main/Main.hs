@@ -12,7 +12,7 @@ import CoreBinary()
 import PrettyCore
 import qualified PrettySSA
 import Infer (judgeModule)
-import qualified BetaEnv (simplifyModule)
+import qualified BetaEnv (simpleExpr)
 import MkSSA (mkSSAModule)
 import C (mkC)
 
@@ -187,7 +187,7 @@ simplifyModule (flags , fName , judgedModule , iNames , newResolver , _exts , er
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
   judgedSimple = if not doFuse || noFuse flags || not coreOK then judgedModule else runST $
-    BetaEnv.simplifyModule judgedModTT <&> \modTTSimple
+    BetaEnv.simpleExpr judgedModTT <&> \modTTSimple
       -> JudgedModule modI modNm bindNames lMap modTTSimple
   in (flags , coreOK , errors , srcInfo , fName , iNames , newResolver , judgedSimple)
 

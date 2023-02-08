@@ -26,7 +26,6 @@ deriving instance Generic Mixfixy
 deriving instance Generic MixfixDef
 deriving instance Generic Prec
 deriving instance Generic Assoc
-deriving instance Generic LamB
 deriving instance Generic LetMeta
 deriving instance Generic OptBind
 
@@ -45,11 +44,9 @@ deriving instance Generic BitInstrs
 deriving instance Generic NumInstrs
 deriving instance Generic GMPSpecial
 deriving instance Generic POSIXType
-deriving instance Generic Specialisations
 
 instance Binary VName
 instance Binary QName
-instance Binary LamB
 instance Binary Term
 instance Binary LensOp
 instance Binary (TyCon Type)
@@ -69,7 +66,6 @@ instance Binary Prec
 instance Binary MixfixDef
 instance Binary Assoc
 instance Binary ArgShape
-instance Binary Specialisations
 instance Binary LetMeta
 instance Binary OptBind
 

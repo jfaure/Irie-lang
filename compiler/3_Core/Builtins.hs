@@ -125,9 +125,8 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("writeFile" , (WriteFile , mkTHArrow [mkExt str] (mkExt str)))
 
   , ("opendir" , (OpenDir , mkTHArrow [mkExt str]  (mkExt dirp)))
-  , ("readdir" , (ReadDir , mkTHArrow [mkExt dirp] (mkTHTuple $ TyGround <$> [[mkExt dirp] , [mkExt str]] )))
-  , ("isdir"   , (IsDir   , mkTHArrow [mkExt dirp] boolL))
---, ("direntName", (DirentName ,([mkExt dirent] , str)))
+  , ("readdir" , (ReadDir , mkTHArrow [mkExt dirp] (mkTHTuple $ TyGround <$> [[boolL] , [mkExt dirp] , [mkExt str]] )))
+  , ("isdir"   , (IsDir   , mkTHArrow [mkExt str] boolL))
 
 --, ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , b) ))
   , ("le"      , (NumInstr (PredInstr LECmp ) , mkTHArrow [iTy , iTy]    boolL))

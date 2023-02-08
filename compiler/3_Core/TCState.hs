@@ -25,7 +25,6 @@ data TCEnvState s = TCEnvState {
 
  -- Biunification state
  , _bruijnArgVars :: V.Vector Int    -- bruijn arg -> TVar map
- , _bindWIP       :: ((Int , IName) , Bool)     -- to identify recursion and mutuals (Bool indicates recursion)
  , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen          :: Int                -- cursor for bis which may have spare space
  , _bis           :: MV.MVector s BiSub -- typeVars

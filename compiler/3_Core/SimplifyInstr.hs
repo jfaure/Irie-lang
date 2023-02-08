@@ -3,6 +3,9 @@ import CoreSyn
 import Prim
 import Builtins
 import Data.Bits
+import qualified Data.Vector as V
+import qualified System.Directory as Dir
+import System.IO.Unsafe
 
 interpretBinaryIntInstr = \case
   Add  -> (+)
@@ -11,9 +14,11 @@ interpretBinaryIntInstr = \case
   SDiv -> div
   SRem -> mod
   IPow -> (^)
+  _ -> _
 interpretUnaryIntInsrt = \case
  Neg -> \x -> - x
  AbsVal -> abs
+ _ -> _
 interpretBinaryPredInstr = \case
   EQCmp  -> (==)
   NEQCmp -> (/=)
@@ -21,14 +26,17 @@ interpretBinaryPredInstr = \case
   GTCmp  -> (> )
   LECmp  -> (<=)
   GECmp  -> (>=)
+  _ -> _
 interpretUnaryBitInsrt = \case
   Not -> not
   Complement -> complement
-interpretBinaryBitInstr :: (Num i , Bits i) => _ -> i -> i -> i
+  _ -> _
+interpretBinaryBitInstr :: (Num i , Bits i) => BitInstrs -> i -> i -> i
 interpretBinaryBitInstr = \case
   Prim.And -> (.&.)
   Or  -> (.|.)
   Prim.Xor -> xor
+  _ -> _
 --BitRev ->
 --ByteSwap ->
 -- vv Explicitly require Ints
@@ -54,7 +62,8 @@ simpleInstr i args = let
   IfThenE | [cond , a , b] <- args
           , App pred [Lit (Int x) , Lit (Int y)] <- cond
           , Instr (NumInstr (PredInstr p)) <- pred ->
-      if case p of { EQCmp-> x == y ; NEQCmp-> x /= y ; GECmp-> x > y ; GTCmp-> x >= y ; LECmp-> x <= y ; LTCmp-> x < y }
+      if case p of { EQCmp-> x == y ; NEQCmp-> x /= y ; GECmp-> x > y ; GTCmp-> x >= y
+                   ; LECmp-> x <= y ; LTCmp-> x < y ; _ -> _ }
       then a else b
   GMPInstr j -> simpleGMPInstr j args
   Zext | [Lit (Int i)]   <- args -> Lit (Fin 64 i)
@@ -62,7 +71,15 @@ simpleInstr i args = let
 --NumInstr (IntInstr i)  | [Lit (I32 a) , Lit (I32 b)] <- args ->
   NumInstr (IntInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryIntInstr i a b))
   NumInstr (BitInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryBitInstr i a b))
-  NumInstr (PredInstr p)   | [Lit (Int a) , Lit (Int b)] <- args -> if interpretBinaryPredInstr p a b then builtinTrue else builtinFalse
+  NumInstr (PredInstr p) | [Lit (Int a) , Lit (Int b)] <- args -> if interpretBinaryPredInstr p a b then builtinTrue else builtinFalse
+
+  -- cannot use posix types directly due to hidden constructors preventing deriving Binary for Literal
+  OpenDir | [Lit (String fName)] <- args -> Lit (DirStream (unsafePerformIO (Dir.listDirectory fName)))
+  ReadDir | [Lit (DirStream fs)] <- args -> case fs of
+    []     -> Tuple (V.fromList [builtinFalse , Lit (DirStream []) , Lit (String "")])
+    f : fs -> Tuple (V.fromList [builtinTrue  , Lit (DirStream fs) , Lit (String f)])
+  IsDir   | [Lit (String fName)] <- args -> if unsafePerformIO (Dir.doesDirectoryExist fName) then builtinTrue else builtinFalse
+  Puts    | [Lit (String fName)] <- args -> unsafePerformIO (putStrLn fName) & \_ -> Lit (Int (fromIntegral $ length fName))
   _ -> App (Instr i) args
 
 simpleGMPInstr ∷ NumInstrs -> [Term] -> Term

@@ -10,10 +10,7 @@ nextRet i = \case
   @False => Done
 
 go1 z i =
---nextRet i x = case x of
---  True  => Yield (mul i i) False
---  False => Done
---in ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet) True)
+--ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet i) True)
   case ge i 10 of
     @True  => z
     @False => go2 z (add i 1) (nextRet i) True

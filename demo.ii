@@ -77,9 +77,17 @@
 
 --import SpecialisationTests/SpecPapArg
 --import SpecTests
-import SpecialisationTests/SimpleMutual
+--import SpecialisationTests/SimpleMutual
 --import SpecialisationTests/SumOfSquares
 --import SpecialisationTests/fib
 
 --import list
 --import testBruijns
+--import sumMul
+--import stream
+
+import prelude
+f x = case (if x >? 0 then @Done x 1 else @Done 2 x) of
+  @Done a b => add a b
+
+g = f 9

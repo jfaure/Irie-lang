@@ -15,7 +15,8 @@ data Literal
  | PolyFrac  !Text -- gmp
  | String    [Char]
  | Array [Literal] -- incl. tuples ?
--- | Tuple [Literal]
+ | DirStream [FilePath] -- Unfortunately posix dirstreams are hidden so I cannot derive a binary instance for it
+-- | LitTuple [Literal]
 -- | WildCard      -- errors on evaluation
 
 -----------
