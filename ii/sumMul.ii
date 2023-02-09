@@ -1,5 +1,13 @@
-import prelude
+--import prelude
+ifThenElse cond a b = case cond of
+  @True  => a
+  @False => b
+
 n = 10
 go1 z k = ifThenElse (ge k n) z (go2 z k (add k 1) 1)
 go2 z k k' m = ifThenElse (ge m k) (go1 z k')
   (go2 (add z (mul k m)) k k' (add 1 m))
+
+-- now infers all %i32s, used to infer:
+-- go1 = ∏ A → (%i32 ⊓ A) → %i32 → A
+-- go2 = %i32 → %i32 → %i32 → %i32 → %i32

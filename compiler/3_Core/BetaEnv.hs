@@ -62,17 +62,17 @@ fuse (lvl , env , term) = case term of
 
   LetBlock lets -> inferBlock lets $ \_ -> LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
   LetBinds lets inE -> inferBlock lets $ \v -> do
---  newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
-    newLets <- V.indexed lets `forM` \(i , (lm , bind)) -> simpleBind lvl env bind >>= \b -> (lm , b) <$ MV.write v i b
+    newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
+--  newLets <- V.indexed lets `forM` \(i , (lm , bind)) -> simpleBind lvl env bind >>= \b -> (lm , b) <$ MV.write v i b
     newInE  <- simpleTerm' lvl env inE
     pure $ if lvl == 0 then Left <$> project newInE else LetBindsF newLets (Left newInE)
 
   -- Bruijn manipulations: Any contained debruijns must be diffed with their lvl change
   VBruijn i -> if i >= V.length env then error $ show (i , env) else (env V.! i) & \case
     BruijnSub prevLvl i -> pure $ VBruijnF (lvl - prevLvl + i)
-    TermSub prevLvl argTerm
---    -> pure $ Left <$> project argTerm
-      -> fuse (lvl , V.generate prevLvl (\i -> BruijnSub lvl i) , argTerm) -- adjust levels
+    TermSub prevLvl argTerm -> -- if prevLvl == lvl then pure $ Left <$> project argTerm
+--    {-else-} fuse (lvl , V.generate prevLvl (\i -> BruijnSub lvl i) , argTerm) -- adjust deBruijn levels
+      fuse (lvl , V.drop lvl env , argTerm) -- ?!
   abs | Just (n , body) <- getBruijnAbs abs -> let args = V.generate n (\i -> BruijnSub (lvl + n) i)
     in pure $ BruijnAbsF n 0 $ Right (lvl + n , args <> env , body)
 
@@ -84,22 +84,32 @@ fuse (lvl , env , term) = case term of
 
   App (Var (VLetBind q)) args | lvl == 0 -> inlineLetBind q >>= \inlineF ->
     (simpleTerm' lvl env `mapM` args) >>= \ars -> fuse (lvl , env , App inlineF ars)
+--  fuse (lvl , env , App inlineF args)
 
 --App (Var (VLetBind q)) args -> specApp lvl env q args
 
-  App f args -- TODO clean up arg len calculations
-    | Just (n , body) <- getBruijnAbs f -> mapM (simpleTerm' lvl env) args >>= \ars -> let
-      l      = length args
-      argEnv = V.reverse (V.fromList $ zipWith TermSub [lvl+1..] (take n ars))
+  App f rawArgs
+    | Just (n , body) <- getBruijnAbs f , (ourArgs , remArgs) <- splitAt n rawArgs
+      -> mapM (simpleTerm' lvl env) ourArgs >>= \ars -> let
+      l      = length rawArgs
+--    argEnv = V.reverse (V.fromList $ zipWith TermSub [lvl+1..] ars)
+      argEnv = V.reverse (V.fromList $ TermSub lvl <$> ars)
       in if
       | n == l -> fuse (lvl , argEnv <> env , body)
-      | n < l  -> simpleTerm' lvl (argEnv <> env) body >>=
-          \g -> fuse (lvl , env , App g (drop n args))
-      | True {-n > l-} -> _
+      | n < l  -> simpleTerm' lvl (argEnv <> env) body >>= \g ->
+--      mapM (simpleTerm' lvl env) remArgs >>= \r ->
+        fuse (lvl , env , App g remArgs)
+      | n < l  -> simpleTerm' lvl (argEnv <> env) body >>= \g ->
+--      mapM (simpleTerm' lvl env) remArgs >>= \r ->
+        fuse (lvl , env , App g remArgs)
+
+      | True {-n > l-} -> trace (prettyTermRaw (App f ars)) $
+--      simpleTerm' lvl env f >>= \g -> fuse (lvl , env , App (Forced lvl g) rawArgs)
+        fuse (lvl , env , BruijnAbs l 0 (App f (rawArgs ++ [VBruijn i | i <- [n-l-1 , n-l-2 .. 0]])))
+--      fuse (lvl , env , BruijnAbs l 0 (App f (rawArgs ++ [VBruijn i | i <- [n-l-1 , n-l-2 .. 0]])))
 --    | n > l  -> fuse (lvl , argEnv <> env , BruijnAbs (n - l) 0 body)
 
   Forced prevLvl t -> trace (prettyTermRaw t) $ if prevLvl /= lvl then error "" else pure $ Left <$> project t
-
   x -> pure $ Right . (lvl , env ,) <$> project x
 
 inferBlock lets go = do

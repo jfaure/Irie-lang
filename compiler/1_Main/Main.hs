@@ -186,7 +186,8 @@ simplifyModule (flags , fName , judgedModule , iNames , newResolver , _exts , er
   JudgedModule modI modNm bindNames lMap judgedModTT = judgedModule
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
     && null (errors ^. checkFails) && null (errors ^. typeAppFails)
-  judgedSimple = if not doFuse || noFuse flags || not coreOK then judgedModule else runST $
+  skipFuse = not doFuse || noFuse flags || not coreOK || elem "types" (printPass flags)
+  judgedSimple = if skipFuse then judgedModule else runST $
     BetaEnv.simpleExpr judgedModTT <&> \modTTSimple
       -> JudgedModule modI modNm bindNames lMap modTTSimple
   in (flags , coreOK , errors , srcInfo , fName , iNames , newResolver , judgedSimple)
@@ -194,7 +195,7 @@ simplifyModule (flags , fName , judgedModule , iNames , newResolver , _exts , er
 putResults :: (CmdLine, Bool, Errors, Maybe SrcInfo , FilePath , V.Vector HName , GlobalResolver , JudgedModule)
   -> IO (GlobalResolver, JudgedModule)
 putResults (flags , coreOK , errors , srcInfo , fName , iNamesV , r , j) = let
-  raw = not doFuse || noFuse flags || not coreOK -- TODO same as above
+  raw = not doFuse || noFuse flags || not coreOK || elem "types" (printPass flags) -- TODO same as above
 --testPass p = coreOK && p `elem` printPass flags && not (quiet flags)
   putErrors h = do
     T.IO.hPutStr  h $ T.concat  $ (<> "\n\n") . formatError bindSrc srcInfo <$> (errors ^. biFails)

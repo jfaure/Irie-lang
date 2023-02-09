@@ -24,6 +24,7 @@ data TCEnvState s = TCEnvState {
  , _errors      :: Errors
 
  -- Biunification state
+ , _bindStack     :: [(Int , Int)]
  , _bruijnArgVars :: V.Vector Int    -- bruijn arg -> TVar map
  , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen          :: Int                -- cursor for bis which may have spare space

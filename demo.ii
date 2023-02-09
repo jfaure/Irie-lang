@@ -83,11 +83,36 @@
 
 --import list
 --import testBruijns
---import sumMul
+--import testFuse
+import sumMul
 --import stream
 
+{-
 import prelude
-f x = case (if x >? 0 then @Done x 1 else @Done 2 x) of
-  @Done a b => add a b
+X = (\c z next s => case next s of
+  @Done      => z
+  @Yield x r => c x 1) add 0 (\i => if i >? 5 then @Done else @Yield i (i + 1)) 0
+-}
 
-g = f 9
+--ana next seed = @stream next seed
+--enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
+--foldr c z (@stream next seed) = go c z next seed
+
+--go c z next s = case next s of
+--  @Done      => z
+--  @Yield x r => c x 1 -- (go c z next r)
+--t = go add 0 (\i => if i >? 5 then @Done else @Yield i (i + 1)) 0
+
+--foldr (@stream next seed) = let -- rhylo c a seed
+--  go s = case next s of
+--    @Done      => 0
+--    @Skip r    => go r
+--    @Yield x r => add x (go r)
+--  in go seed
+
+--foldr c z = let -- rhylo c a seed
+--  go s = case (\i => if i >? 10 then @Done else @Yield i (i + 1)) s of
+--    @Done      => z
+--    @Skip r    => go r
+--    @Yield x r => c x (go r)
+--  in go 5

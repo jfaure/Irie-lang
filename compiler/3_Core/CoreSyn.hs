@@ -139,12 +139,11 @@ data ArgShape
 data Bind
  = Queued
  | Guard  { mutuals :: BitSet , tvar :: IName } -- being inferred; if met again, is recursive/mutual
- -- | inferred type waiting for batch generalisation; freeVs used to test if can clear bisubs
- | Mutual { naiveExpr :: Expr , freeVs :: BitSet , tvar :: IName , tyAnn :: Maybe Type }
+ -- generalising mutual types must wait for all tvars to be constrained (all mutual block to be inferred)
+ | Mut    { naiveExpr :: Expr , mutuals :: BitSet , tvar :: IName }
 
  | BindKO -- failed type inference
  | BindOK { optLevel :: OptBind , naiveExpr :: Expr }
--- | BindMutuals (V.Vector Expr)
 
  | WIP -- Fenv
 

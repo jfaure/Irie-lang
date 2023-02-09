@@ -1,3 +1,4 @@
+ifThenElse = ∏ A → [!False | !True] → A → A → A
 n = %i32
-go1 = ∏ A → (%i32 ⊓ A) → %i32 → A
+go1 = %i32 → %i32 → %i32
 go2 = %i32 → %i32 → %i32 → %i32 → %i32

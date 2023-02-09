@@ -21,16 +21,6 @@ import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
 import Data.Functor.Foldable
 
--- Recursion , Mutuality
--- 1 => guard 1 => infer 1
---   2 => guard 2 => infer 2
---     1 => 1 & 2 are mutual ! 1 is guarded
---   2 finish => has stacked mutuals => don't generalise
--- 1 finish => generalise 1
--- 2 finish => generalise 2
--- Need to know if bind is mutual with any prev-binds, in which case don't generalise
--- ?? level mutuality: let a = { f = b.g } ; b = { g = a.f }
-
 judgeModule :: P.Module -> BitSet -> ModuleIName -> p -> V.Vector HName -> Externs.Externs -> p1 -> (JudgedModule , Errors)
 judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
   letBinds' <- MV.new 16
@@ -46,6 +36,7 @@ judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
     , _letNest  = 0
     , _errors   = emptyErrors
     , _bruijnArgVars = mempty
+    , _bindStack = []
 
     , _openModules = importedModules
     , _tmpFails = []
@@ -67,31 +58,52 @@ judgeBind :: Int -> IName -> TCEnv s Expr
 judgeBind letDepth bindINm = let
   inferParsed :: MV.MVector s (Either P.FnDef Bind) -> P.FnDef -> TCEnv s Expr
   inferParsed wip' abs = do
+    bStack <- bindStack <<%= ((letDepth , bindINm) :)
     freeTVars <- V.toList <$> use bruijnArgVars
-    (tvarIdx , jb , ms) <- freshBiSubs 1 >>= \[idx] -> do
-      MV.write wip' bindINm (Right (Guard emptyBitSet idx))
-      expr  <- cata inferF (P._fnRhs abs)
-      Right (Guard ms _tVar) <- MV.read wip' bindINm -- learn which binds had to be inferred as dependencies
-      pure (idx , expr , ms)
-    typeAnn <- getAnnotationType (P._fnSig abs)
-    MV.write wip' bindINm (Right $ Mutual jb (intList2BitSet freeTVars) tvarIdx typeAnn)
+    [tvarIdx] <- freshBiSubs 1
+    MV.write wip' bindINm (Right (Guard emptyBitSet tvarIdx))
+--  traceM $ "inferring: " <> show bindINm
+    expr  <- cata inferF (P._fnRhs abs)
+    bindStack %= drop 1
+    MV.read wip' bindINm >>= \case -- learn which binds had to be inferred as dependencies
+      Right (BindOK _ e) -> pure e
+      Right (Guard ms tVar) -> do
+        typeAnn <- getAnnotationType (P._fnSig abs)
 
-    lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
-    if setNBits (bindINm + 1) .&. ms /= 0 -- minimum (bindINm : ms) /= bindINm
-      then pure jb else fromJust . head <$> generaliseBinds wip' lvl0 ([bindINm]) --  : bitSet2IntList ms) -- <* clearBiSubs 0
+        -- level mutuality: let a = { f = b.g } ; b = { g = a.f }
+        let hasMutual = setNBits bindINm .&. ms /= 0 -- any prev binds mutual with this one at its level
+        if hasMutual
+        then Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvarIdx)
+         <$ MV.write wip' bindINm (Right (Mut expr ms tVar))
+         <* bisub (tyOfExpr expr) (tyVar tvarIdx) -- ! recursive => bisub with -τ (itself)
+        -- can generalise once all mutuals & associated tvars are fully constrained
+        else genExpr wip' expr tvarIdx
 
   -- reference to inference stack (forward ref | recursive | mutual)
-  preInferred :: Bind -> TCEnv s Expr
-  preInferred bind = case bind of
+  preInferred :: MV.MVector s (Either P.FnDef Bind) -> Bind -> TCEnv s Expr
+  preInferred wip bind = case bind of
     BindOK _ e  -> pure e -- don't inline the expr
-    Mutual _e _freeVs tvar _tyAnn -> d_ ("mutual module")
-      $ pure (Core (Var (VQBind $ mkQName letDepth bindINm)) (tyVar tvar))
+    Mut e _ tvar -> genExpr wip e tvar
     -- Stacked bind means this was either Mutual | recursive (also weird recursive: r = { a = r })
-    Guard _mutuals tvar -> pure $ Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvar)
+    Guard mutuals tvar -> do
+      -- mark it as mutual with all bind at its level
+      bStack <- use bindStack
+      let mbs = intList2BitSet $ snd <$> filter ((letDepth == ) . fst) bStack
+      Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvar)
+        <$ MV.write wip bindINm (Right $ Guard (mutuals .|. mbs) tvar)
     b -> error (show b)
 
+  genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> Int -> TCEnv s Expr
+  genExpr wip' (Core t ty) tvarIdx = do
+--  traceM $ "generalising: " <> prettyTermRaw t
+    lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
+    gTy <- generaliseVar lvl0 tvarIdx ty --  checkAnnotation ann gTy
+    let retExpr = Core t gTy
+    retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred retExpr)
+  genExpr wip' retExpr _ = retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred retExpr)
+
   in use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>=
-    (inferParsed wip ||| preInferred)
+    (inferParsed wip ||| preInferred wip) -- >>= \r -> r <$ (use bindStack >>= \bs -> when (null bs) (clearBiSubs 0))
 
 -- Converting user types to Types = Generalise to simplify and normalise the type
 getAnnotationType :: Maybe P.TT -> TCEnv s (Maybe Type)
@@ -112,40 +124,9 @@ generaliseVar lvl0 var ty = do
   _cast <- use bis >>= \v -> (v `MV.read` var) <&> _mSub >>= \case
     TyGround [] -> BiEQ <$ MV.write v var (BiSub ty (TyGround []))
     _t -> bisub ty (tyVar var) -- ! recursive => bisub with -τ (itself)
+  -- bisub ty (tyVar var)
   generalise lvl0 (Left var)
   -- <* when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
-
-generaliseBinds :: MV.MVector s (Either P.FnDef Bind) -> BitSet -> [Int] -> TCEnv s [Expr]
-generaliseBinds wip' lvl0 ms = ms `forM` \m -> MV.read wip' m >>= (error . show ||| genBind m) where
- genBind m = \case
-  BindOK _ e -> pure e -- already handled mutual
-  -- ! The order in which mutuals are generalised is relevant
-  Mutual naiveExpr freeVs recTVar annotation -> do
-    (_ars , inferred) <- case naiveExpr of
-      Core expr coreTy -> (\(ars , ty) -> (ars , Core expr ty)) <$> do -- generalise the type
-        (args , ty , free) <- case expr of
---        Abs (Lam ars free _fnTy , _t) -> pure (ars , coreTy , free) -- ? TODO why not free .|. freeVs
-          _                             -> pure ([] , coreTy , freeVs)
-        -- rec | mutual: if this bind : τ was used within itself then something bisubed with -τ
-        _cast <- use bis >>= \v -> MV.read v recTVar <&> _mSub >>= \case
-          TyGround [] -> BiEQ <$ MV.write v recTVar (BiSub ty (TyGround [])) -- not recursive / mutual
-          _t          -> bisub ty (tyVar recTVar) -- ! recursive | mutual ⇒ bisub with -τ (itself)
-        g       <- generalise lvl0 (Left recTVar)
-        when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
-        pure (intList2BitSet (fst <$> args) , g)
---    Ty t -> pure $ (emptyBitSet,) $ Ty $ if not isRec then t else case t of
---      -- v should µbinder be inside the pi type ?
---      TyPi (Pi ars t)   -> TyPi (Pi ars (TyGround [THMu 0 t]))
---      TySi (Pi ars t) e -> TySi (Pi ars (TyGround [THMu 0 t])) e
---      t -> TyGround [THMu 0 t]
-      t -> pure (emptyBitSet , t)
-
-    done <- case (annotation , inferred) of -- Only Core type annotations are worth replacing inferred ones
-      (Just ann , Core e inferredTy) -> Core e <$> checkAnnotation ann inferredTy
-      _                              -> pure inferred
-    MV.write wip' m (Right (BindOK optInferred done))
-    pure done
-  b -> error (show b)
 
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
 -- ! we may have inferred some missing information in type holes

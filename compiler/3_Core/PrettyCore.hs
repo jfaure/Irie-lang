@@ -196,8 +196,9 @@ pTyHead pos = let
 
 pBind :: HName -> Bool -> Bind -> Doc Annotation
 pBind nm showRhs bind = pretty nm <> " = " <> case bind of
-  Guard m tvar      -> "GUARD : "   <> viaShow m <> viaShow tvar
-  Mutual m _free tvar tyAnn -> "MUTUAL: " <> viaShow m <> viaShow tvar <> viaShow tyAnn
+  Guard m tvar      -> "GUARD : " <> viaShow m <> viaShow tvar
+--Mut e m tvar      -> "Mut : "   <> viaShow m <> viaShow tvar <> " " <> pExpr showRhs e
+--Mutual m _free tvar tyAnn -> "MUTUAL: " <> viaShow m <> viaShow tvar <> viaShow tyAnn
   Queued{} -> "Queued"
   BindOK n {-lbound isRec-} expr -> let
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
