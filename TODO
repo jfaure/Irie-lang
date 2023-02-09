@@ -7,6 +7,8 @@
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
   * cross-module mixfixes broken
   * rewrite μ-roll; esp. for multi-branch μs merge
+  * trim bisubs at some point
+  * half-generalised (escaped vars) types
 ### Linearity ; free variables (type must be known) ; β vs always-inline
   GlobalResolver = { Modules } BitSetMap of modules keyed on INames
   Duplicated lams passed into functions should be generalised

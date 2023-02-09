@@ -13,6 +13,7 @@ import TCState
 import Externs ( typeOfLit, readLabel, readQParseExtern , Externs )
 import Generalise (generalise)
 --import Typer (generalise)
+import PrettyCore
 
 import Control.Lens
 import qualified Data.Vector as V
@@ -58,6 +59,7 @@ judgeBind :: Int -> IName -> TCEnv s Expr
 judgeBind letDepth bindINm = let
   inferParsed :: MV.MVector s (Either P.FnDef Bind) -> P.FnDef -> TCEnv s Expr
   inferParsed wip' abs = do
+    b <- use blen
     bStack <- bindStack <<%= ((letDepth , bindINm) :)
     freeTVars <- V.toList <$> use bruijnArgVars
     [tvarIdx] <- freshBiSubs 1
@@ -68,16 +70,21 @@ judgeBind letDepth bindINm = let
     MV.read wip' bindINm >>= \case -- learn which binds had to be inferred as dependencies
       Right (BindOK _ e) -> pure e
       Right (Guard ms tVar) -> do
+        when (tVar /= tvarIdx) (error $ show (tVar , tvarIdx))
         typeAnn <- getAnnotationType (P._fnSig abs)
 
         -- level mutuality: let a = { f = b.g } ; b = { g = a.f }
-        let hasMutual = setNBits bindINm .&. ms /= 0 -- any prev binds mutual with this one at its level
+        -- check if any prev binds mutual with this one at its level
+--      traceM $ "mut? " <> show bindINm <> " " <> show (bitSet2IntList ms)
+        let refs = setNBits bindINm .&. ms
+        hasMutual <- let isMut i = MV.read wip' i <&> \case { Right (Guard ms _) -> refs .&. ms /= 0 ; _ -> False }
+          in anyM isMut (bitSet2IntList refs)
         if hasMutual
-        then Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvarIdx)
+        then Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tVar)
          <$ MV.write wip' bindINm (Right (Mut expr ms tVar))
-         <* bisub (tyOfExpr expr) (tyVar tvarIdx) -- ! recursive => bisub with -τ (itself)
+         <* bisub (tyOfExpr expr) (tyVar tVar) -- ! recursive => bisub with -τ (itself)
         -- can generalise once all mutuals & associated tvars are fully constrained
-        else genExpr wip' expr tvarIdx
+        else genExpr wip' expr tVar
 
   -- reference to inference stack (forward ref | recursive | mutual)
   preInferred :: MV.MVector s (Either P.FnDef Bind) -> Bind -> TCEnv s Expr
@@ -86,6 +93,7 @@ judgeBind letDepth bindINm = let
     Mut e _ tvar -> genExpr wip e tvar
     -- Stacked bind means this was either Mutual | recursive (also weird recursive: r = { a = r })
     Guard mutuals tvar -> do
+      -- mark as stacked on top of all binds at this lvl
       -- mark it as mutual with all bind at its level
       bStack <- use bindStack
       let mbs = intList2BitSet $ snd <$> filter ((letDepth == ) . fst) bStack
@@ -114,6 +122,7 @@ getAnnotationType ttAnn = case ttAnn of
 --Just t -> tyExpr <$> infer t -- no need to generalise if not Abs since no pi bounds
 
 -- TODO This is slow and repeats work when regeneralisation is not necessary !
+-- further generalise half-generalised (escaped vars) types
 -- regeneralise :: MV.MVector s (Either P.FnDef Bind) -> Int -> TCEnv s ()
 -- regeneralise wip' l = MV.read wip' l >>= \case
 --   Right (BindOK o (Core t ty)) ->
@@ -124,7 +133,6 @@ generaliseVar lvl0 var ty = do
   _cast <- use bis >>= \v -> (v `MV.read` var) <&> _mSub >>= \case
     TyGround [] -> BiEQ <$ MV.write v var (BiSub ty (TyGround []))
     _t -> bisub ty (tyVar var) -- ! recursive => bisub with -τ (itself)
-  -- bisub ty (tyVar var)
   generalise lvl0 (Left var)
   -- <* when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
 

@@ -32,18 +32,18 @@ type Env = V.Vector Sub
 type Seed = (Int , Env , Term)
 data Sub
  = BruijnSub Lvl Int -- can skip a re-traversal (although it would be very cheap anyway)
- | TermSub   Lvl Term deriving Show
+ | TermSub   Int Lvl Term deriving Show
 
 idEnv l e = V.generate (V.length e) (\i -> BruijnSub l i)
 
 -- * weaken: apply a lambda => add arg to env => if arg contains VBruijns, add their index
 -- * quote:  wrap a lambda over a term => recalculate bruijn indices underneath
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
-fuse (lvl , env , term) = case term of
-  abs | Just (n , body) <- getBruijnAbs abs , Just (m , b2) <- getBruijnAbs body
-    -> fuse (lvl , env , BruijnAbs (n + m) 0 b2)
-  App (App g ars)   args -> fuse (lvl , env , App g (ars <> args))
-  App (Label l ars) args -> fuse (lvl , env , Label l (ars <> args))
+fuse (lvl , env , term) = let eLen = V.length env in case term of
+--abs | Just (n , body) <- getBruijnAbs abs , Just (m , b2) <- getBruijnAbs body
+--  -> fuse (lvl , env , BruijnAbs (n + m) 0 b2)
+--App (App g ars)   args -> fuse (lvl , env , App g (ars <> args))
+--App (Label l ars) args -> fuse (lvl , env , Label l (ars <> args))
 
   CaseB scrut retT branches d -> simpleTerm' lvl env scrut >>= \case -- Need to pull out the seed immediately
 -- case-label
@@ -70,16 +70,17 @@ fuse (lvl , env , term) = case term of
   -- Bruijn manipulations: Any contained debruijns must be diffed with their lvl change
   VBruijn i -> if i >= V.length env then error $ show (i , env) else (env V.! i) & \case
     BruijnSub prevLvl i -> pure $ VBruijnF (lvl - prevLvl + i)
-    TermSub prevLvl argTerm -> -- if prevLvl == lvl then pure $ Left <$> project argTerm
+    TermSub envLen prevLvl argTerm -> -- if prevLvl == lvl then pure $ Left <$> project argTerm
 --    {-else-} fuse (lvl , V.generate prevLvl (\i -> BruijnSub lvl i) , argTerm) -- adjust deBruijn levels
-      fuse (lvl , V.drop lvl env , argTerm) -- ?!
+      fuse (lvl , V.drop (eLen - envLen) {-lvl-} env , argTerm) -- ?!
   abs | Just (n , body) <- getBruijnAbs abs -> let args = V.generate n (\i -> BruijnSub (lvl + n) i)
     in pure $ BruijnAbsF n 0 $ Right (lvl + n , args <> env , body)
 
   -- β-reduction & let-bind substitutions may generate more fusion opportunities
   -- TODO avoid retraversal of the args at this lvl
   App (VBruijn i) args | lvl == 0 -> simpleTerm' lvl env (VBruijn i) >>= \case
-    VBruijn j -> pure $ AppF (Left (VBruijn j)) (Right . (lvl,env,) <$> args)
+    VBruijn j -> fuse (lvl , env , App (Forced lvl (VBruijn j)) args)
+    -- pure $ AppF (Left (VBruijn j)) (Right . (lvl,env,) <$> args)
     f -> (simpleTerm' lvl env `mapM` args) >>= \ars -> fuse (lvl , env , App f ars)
 
   App (Var (VLetBind q)) args | lvl == 0 -> inlineLetBind q >>= \inlineF ->
@@ -93,7 +94,7 @@ fuse (lvl , env , term) = case term of
       -> mapM (simpleTerm' lvl env) ourArgs >>= \ars -> let
       l      = length rawArgs
 --    argEnv = V.reverse (V.fromList $ zipWith TermSub [lvl+1..] ars)
-      argEnv = V.reverse (V.fromList $ TermSub lvl <$> ars)
+      argEnv = V.reverse (V.fromList $ TermSub eLen lvl <$> ars)
       in if
       | n == l -> fuse (lvl , argEnv <> env , body)
       | n < l  -> simpleTerm' lvl (argEnv <> env) body >>= \g ->

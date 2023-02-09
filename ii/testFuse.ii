@@ -1,12 +1,12 @@
 import prelude
-f x = case (if x >? 0 then @Done x 1 else @Done 2 x) of
+f1 x = case (if x >? 0 then @Done x 1 else @Done 2 x) of
   @Done a b => add a b
-g = f 9 -- 10
+t1 = f1 9 -- 10
 
-ff x = case (case if x >? 0 then @Done x 1 else @Done 2 x of { @Done s h => if s =? h then @True else @False }) of
+f2 x = case (case if x >? 0 then @Done x 1 else @Done 2 x of { @Done s h => if s =? h then @True else @False }) of
   @True => 1
   @False => 0
-G = ff 1 -- 1
+t2 = f2 1 -- 1
 
 -- trivial let-bind
 foldrLet = let

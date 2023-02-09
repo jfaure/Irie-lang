@@ -95,8 +95,8 @@ readQParseExtern openMods thisModIName (exts :: Externs) modNm iNm = if
       Lit{}   -> e
       Instr{} -> e
       Var{}   -> e -- var indirection (TODO continue maybe inlining?)
---    _ -> e
-      _ -> Core (Var $ VQBind (mkQName modNm iNm)) t
+      _ -> e
+--    _ -> Core (Var $ VQBind (mkQName modNm iNm)) t
     PoisonExpr -> PoisonExpr
     x -> x -- types and sets
   | otherwise -> NotOpened (exts.eModNamesV V.! modNm) (fst (exts.extBinds V.! modNm V.! iNm))

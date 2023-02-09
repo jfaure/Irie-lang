@@ -70,7 +70,7 @@ data VarSub = Remove | Escaped | Generalise | Recursive | SubVar Int | SubTy Typ
 generalise :: BitSet -> Either IName Type -> TCEnv s Type
 generalise lvl0 rawType = do
   when debug_gen (traceM $ "Gen: " <> show rawType)
-  coocLen <- use bis <&> MV.length
+  coocLen <- (+1000) <$> use blen -- space for instantiated tvars
   bis' <- use bis
   bl   <- use blen
   (analysedType , recursives , occurs) <- lift $ do -- re-use same ST state thread to avoid copying bisubs
@@ -86,7 +86,7 @@ generalise lvl0 rawType = do
   nVars  <- use blen
   let tvarSubs = judgeVars nVars lvl0 recursives occurs
       done     = forgetRoll . cata rollType $ runST $ do
-        genMap  <- MV.replicate 100 (complement 0) -- TODO
+        genMap  <- MV.replicate 8000 (complement 0) -- TODO
         (t , s) <- runStateT (cata (doGen tvarSubs recursives) analysedType True) (GState 0 genMap)
         pure $ if s._quants == 0 then t else TyGround [THBi s._quants t]
 
