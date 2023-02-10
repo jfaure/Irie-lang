@@ -1,19 +1,31 @@
 -- (λB(2) (_+_ (_+_ (_+_ (Int 3) (Int 2)) B1) B0))
 f = (\a b c d => add (add (add a b) c) d) 3 2 1 0
 
-ycomb f = (\x => f (x x)) (\x => f (x x))
-ycomb2 f = (\g => g g) (\x => f (x x))
+--ycomb f = (\x => f (x x)) (\x => f (x x))
+--ycomb2 f = (\g => g g) (\x => f (x x))
 rename x y = add x y
 
 fg a w = case w of { @Wrap => add a a } -- i32 → [Wrap] → %i32
 ff a (@Wrap) = add a a -- %i32 → [Wrap] → %i32
 fg a w = case w of { @Wrap => add a a } -- i32 → [Wrap] → %i32
 fh a (@Wrap x) = add x a -- i32 → [Wrap {%i32}] → %i32
-foldr1 f g = case g of
-  @Cons x xs => case xs of
-    @Nil => x
-    @Cons y ys => f x (foldr1 f xs)
+--foldr1 f g = case g of
+--  @Cons x xs => case xs of
+--    @Nil => x
+--    @Cons y ys => f x (foldr1 f xs)
 
 -- free-var debruijn arithmetic
 fv1 a b = (\c => div b a) @True
 fv2 a b = (\c d => add a (div b c)) 0 1
+
+t1 x = add x x
+t2 = (\a b c d => add (add (add a b) c) d) 3 2 1 0
+t3 x = (\a => add a x) 3
+t4 x = (\y => (\z => x) 3) 2
+t5 = \x => ((\b => b) x)
+t6 = (\f x => f x) (\x y => add x y) 3 2
+t7 = \x => (\cond y => y) @Cond (@Done x 1)
+
+-- ycomb bruijn substitution?
+ycomb f = (\x => f (x x)) (\x => f (x x))
+ycomb2 f = (\g => g g) (\x => f (x x))

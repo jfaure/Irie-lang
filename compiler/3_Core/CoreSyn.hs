@@ -41,6 +41,7 @@ data Term -- β-reducable (possibly to a type)
 
 -- ->
  | VBruijn IName
+ | VBruijnLevel Int
  | BruijnAbs Int BitSet Term
  | BruijnAbsTyped Int BitSet Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]    -- IName [Term]

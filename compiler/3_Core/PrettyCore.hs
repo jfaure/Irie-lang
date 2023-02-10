@@ -241,6 +241,7 @@ pTerm showRhs = let
     QuestionF -> " ? "
     VarF     v -> pVName v
     VBruijnF b -> "B" <> viaShow b
+    VBruijnLevelF b -> "BL" <> viaShow b
     LitF     l -> annotate ALiteral $ parens (viaShow l)
     BruijnAbsF n free body -> parens $ "λb(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
     BruijnAbsTypedF n free body argMetas retTy -> parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body

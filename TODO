@@ -4,6 +4,7 @@
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * make lazy arg-sub in BetaEnv
   * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
+  * need to check that lambdas don't have recursive types? to avoid inf β reduction 
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
   * cross-module mixfixes broken
   * rewrite μ-roll; esp. for multi-branch μs merge

@@ -83,13 +83,21 @@
 
 --import list
 --import testBruijns
-import testFuse
+--import testFuse
+
 --import sumMul
 --import stream
+--import prelude
+--f1 x = case (if x >? 0 then @Done x 1 else @Done 2 x) of
+--  @Done a b => add a b
+--t1 = f1 9 -- 10
+
+foldr1 f g = case g of
+  @Cons x xs => case xs of
+    @Nil => x
+    @Cons y ys => f x (foldr1 f xs)
 
 {-
-import prelude
-
 next nextL nextR sr0 x = case x of
   @Left  sa => case nextL sa of
     @Done      => Skip    (Right sr0)
@@ -106,19 +114,21 @@ Sappend (@stream nextL sl0) (@stream nextR sr0) = let
 ana next seed = @stream next seed
 enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
 
-foldr c z (@stream next seed) = let -- rhylo c a seed
-  go s = case next s of
+foldr c z (@stream next seed) = let
+  go c z next s = case next s of
     @Done      => z
-    @Skip r    => go r
-    @Yield x r => c x (go r)
-  in go seed
-
---foldr c z (@stream next seed) = let
---  go c z next s = case next s of
---    @Done      => z
---    @Yield x r => c x (go c z next r)
---  in go c z next seed
+    @Skip    r => go c z next r
+    @Yield x r => c x (go c z next r)
+  in go c z next seed
 
 --t = go add 0 (\i => if i >? 5 then @Done else @Yield i (i + 1)) 0
-test = foldr add 0 (Sappend (enumFromTo 2 3) (enumFromTo 4 5))
+t1 = foldr add 0 (Sappend (enumFromTo 2 3) (enumFromTo 4 5))
+t2 = mainfoldr add 0 (enumFromTo 4 5)
 -}
+
+--mainfoldr c z seed = let -- rhylo c a seed
+--  go s = case (\? => @Done) s of
+--    @Done      => z
+--  in go seed
+--
+--t3 = mainfoldr add 0 3

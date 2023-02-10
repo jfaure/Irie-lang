@@ -26,3 +26,5 @@ go z s0 s1 = case nextConcatMap s0 s1 of
   @Yield x s q => go (z + x) s q
 
 sumAppend n = go 0 n N
+
+t = sumAppend 5

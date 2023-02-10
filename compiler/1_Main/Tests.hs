@@ -145,11 +145,16 @@ mutual   = S.it "mutual sumMul.ii"(goldenInfer "-p types --no-fuse --no-color" "
 tree     = S.it "tree.ii"         (goldenInfer "-p types --no-fuse --no-color" "ii/tree.ii"        "tree")
 intmap   = S.it "intmap.ii"       (goldenInfer "-p types --no-fuse --no-color" "ii/intmap.ii"      "intmap")
 mixfixes = S.it "mixfixTests.ii"  (goldenInfer "-p core  --no-fuse --no-color" "ii/mixfixTests.ii" "mixfixTests")
+testFuse = S.it "testBruijns.ii"  (goldenInfer "-p core  --no-color" "ii/testBruijns.ii" "bruijn fusion")
 
 specialise = S.it "simpleMutual.ii" (goldenInfer "-p simple  --no-color" "ii/SpecialisationTests/SimpleMutual.ii" "simpleMutual")
 
 specTests = S.sydTest $ do
   specialise
+
+-- fusions
+f = S.sydTest $ do
+  testFuse
 
 s = S.sydTest $ do
   sequence_ fTests

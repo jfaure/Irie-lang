@@ -13,7 +13,6 @@ import TCState
 import Externs ( typeOfLit, readLabel, readQParseExtern , Externs )
 import Generalise (generalise)
 --import Typer (generalise)
-import PrettyCore
 
 import Control.Lens
 import qualified Data.Vector as V
@@ -59,9 +58,8 @@ judgeBind :: Int -> IName -> TCEnv s Expr
 judgeBind letDepth bindINm = let
   inferParsed :: MV.MVector s (Either P.FnDef Bind) -> P.FnDef -> TCEnv s Expr
   inferParsed wip' abs = do
-    b <- use blen
-    bStack <- bindStack <<%= ((letDepth , bindINm) :)
-    freeTVars <- V.toList <$> use bruijnArgVars
+    bindStack %= ((letDepth , bindINm) :)
+--  freeTVars <- V.toList <$> use bruijnArgVars
     [tvarIdx] <- freshBiSubs 1
     MV.write wip' bindINm (Right (Guard emptyBitSet tvarIdx))
 --  traceM $ "inferring: " <> show bindINm
@@ -71,7 +69,7 @@ judgeBind letDepth bindINm = let
       Right (BindOK _ e) -> pure e
       Right (Guard ms tVar) -> do
         when (tVar /= tvarIdx) (error $ show (tVar , tvarIdx))
-        typeAnn <- getAnnotationType (P._fnSig abs)
+--      typeAnn <- getAnnotationType (P._fnSig abs)
 
         -- level mutuality: let a = { f = b.g } ; b = { g = a.f }
         -- check if any prev binds mutual with this one at its level

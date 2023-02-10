@@ -2,22 +2,22 @@ import prelude
 f1 x = case (if x >? 0 then @Done x 1 else @Done 2 x) of
   @Done a b => add a b
 t1 = f1 9 -- 10
-
-f2 x = case (case if x >? 0 then @Done x 1 else @Done 2 x of { @Done s h => if s =? h then @True else @False }) of
-  @True => 1
-  @False => 0
-t2 = f2 1 -- 1
-
--- trivial let-bind
-foldrLet = let
-  go s = case (if s >? 10 then @Done else @Yield s (s + 1)){- s-} of
-    @Done      => 0
-    @Yield x r => add x 9 -- (go r)
-  in go 5
-
-g i = if i >? 5 then @Done else @Done
-x = g 3
-
-X = (\c z next s => case next s of
-  @Done      => z
-  @Yield x r => c x 1) add 0 (\i => if i >? 5 then @Done else @Yield i (i + 1)) 0
+--
+--f2 x = case (case if x >? 0 then @Done x 1 else @Done 2 x of { @Done s h => if s =? h then @True else @False }) of
+--  @True => 1
+--  @False => 0
+--t2 = f2 1 -- 1
+--
+---- trivial let-bind
+--foldrLet = let
+--  go s = case (if s >? 10 then @Done else @Yield s (s + 1)){- s-} of
+--    @Done      => 0
+--    @Yield x r => add x 9 -- (go r)
+--  in go 5
+--
+--g i = if i >? 5 then @Done else @Done
+--x = g 3
+--
+--X = (\c z next s => case next s of
+--  @Done      => z
+--  @Yield x r => c x 1) add 0 (\i => if i >? 5 then @Done else @Yield i (i + 1)) 0
