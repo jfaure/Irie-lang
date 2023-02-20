@@ -248,7 +248,7 @@ inferF = let
   P.TupleF ts -> sequence ts <&> \exprs -> let
     tys = tyOfExpr <$> exprs
     ty  = THProduct (BSM.fromListWith mkFieldCol $ zipWith (\nm t -> (qName2Key (mkQName 0 nm) , t)) [0..] tys)
-    lets = zipWith (\i c -> (LetMeta (-1) ("!" <> show i) (-1) , BindOK optInferred c)) [0..] exprs
+    lets = zipWith (\i c -> (LetMeta (qName2Key (mkQName 0 i)) ("!" <> show i) (-1) , BindOK optInferred c)) [0..] exprs
     in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
@@ -290,9 +290,10 @@ inferF = let
     mkExpected :: Type -> Type
     mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton ({-qName2Key-} f) ty)]) dest fields
     in (>>= checkFails o) $ case record of
-    (Core object objTy) -> case maybeSet of
-      P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (tyVar i))
-        <&> \cast -> Core (TTLens (Cast cast object) fields LensGet) (tyVar i)
+    Core object objTy -> case maybeSet of
+      P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (tyVar i)) <&> \case
+        BiEQ -> Core (TTLens object             fields LensGet) (tyVar i)
+        cast -> Core (TTLens (Cast cast object) fields LensGet) (tyVar i)
 
       -- LeafTy -> Record -> Record & { path : LeafTy }
       -- + is right for mergeTypes since this is output

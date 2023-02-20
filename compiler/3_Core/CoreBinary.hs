@@ -1,4 +1,3 @@
-{-# Language FlexibleInstances #-}
 module CoreBinary where
 import MixfixSyn
 import CoreSyn

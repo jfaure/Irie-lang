@@ -25,7 +25,9 @@ t4 x = (\y => (\z => x) 3) 2
 t5 = \x => ((\b => b) x)
 t6 = (\f x => f x) (\x y => add x y) 3 2
 t7 = \x => (\cond y => y) @Cond (@Done x 1)
+t8 i = ((\cond => \a => a) 0) i -- (add i 1)
+t9  = (\a b => (((\x y => @A (@B a x) (@C b y)) 3) 2)) 1 0
 
 -- ycomb bruijn substitution?
-ycomb f = (\x => f (x x)) (\x => f (x x))
-ycomb2 f = (\g => g g) (\x => f (x x))
+--ycomb f = (\x => f (x x)) (\x => f (x x))
+--ycomb2 f = (\g => g g) (\x => f (x x))

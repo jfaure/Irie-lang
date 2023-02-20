@@ -12,6 +12,14 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Map as M
 import Data.List (unzip3)
 
+-- hacky equality test to check if a term simplified
+deriving instance Eq (TermF Int)
+deriving instance Eq VName
+instance Eq BiCast where (==)  = \a b -> True
+instance Eq LetMeta where (==) = \a b -> True
+instance Eq Bind where (==)    = \a b -> True
+instance Eq LensOp where (==)  = \a b -> True
+
 -- TODO β-optimal; precomupte calculations involving free-vars
 debug_fuse = True
 
@@ -34,7 +42,7 @@ simplifiable = \case
   _ -> False
 
 type Lvl = Int
-type Env = (V.Vector Sub , [Term])
+type Env = (V.Vector Sub , [Term] , Int) -- length of argEnv (needs to remain consistent across paps
 type Seed = (Int , Env , Term)
 data Sub = TSub Int Lvl Term deriving Show
 
@@ -43,69 +51,76 @@ data Sub = TSub Int Lvl Term deriving Show
 -- # app abs -> setup β-env
 -- # insert fn -> possibly re-app
 
+mkBruijnArgSubs l n = V.generate n (\i -> TSub 0 {- doesn't matter -} l (VBruijnLevel (l - i - 1)))
+
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
-fuse (lvl , env@(argEnv , trailingArgs) , term) = --trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
+fuse (lvl , env@(argEnv , trailingArgs , tL) , term) = let eLen = V.length argEnv
+ in --trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
  if not (null trailingArgs)
- then case term of
-  Label l ars -> pure $ LabelF l (Right . (lvl , (argEnv , mempty) , ) <$> (ars <> trailingArgs))
+ then let
+  fuseApp = _
+  in case term of
+  Label l ars -> pure $ LabelF l (Right . (lvl , (argEnv , mempty , tL) ,) <$> (ars <> trailingArgs))
 --  ! Can't simplify the args yet in case f contains more bruijnAbs, so delay until they are simplified in context
 --  TODO this may duplicate work if simplified twice at the same lvl; counting on dup nodes + β-optimality to fix this
   f | Just (n , body) <- getBruijnAbs f , (ourArgs , remArgs) <- splitAt n trailingArgs , l <- length ourArgs ->
     case compare n l of
-      GT -> fuse (lvl , (argEnv , ourArgs) , BruijnAbs (n - l) 0 (BruijnAbs l 0 body)) -- let abs case handle PAP
+      GT -> fuse (lvl , (argEnv , ourArgs , tL) , BruijnAbs (n - l) 0 (BruijnAbs l 0 body)) -- let abs case handle PAP
       LT -> error $ show (n , length ourArgs)
-      EQ -> let nextEnv = V.reverse (V.fromList $ TSub (V.length argEnv) lvl <$> ourArgs)
-        in fuse (lvl , (nextEnv <> argEnv , remArgs) , body) -- TODO remArgs eLen will be off by n !
+      EQ -> let nextEnv = V.reverse (V.fromList $ TSub tL lvl <$> ourArgs)
+        in fuse (lvl , (nextEnv <> argEnv , remArgs , tL) , body) -- TODO remArgs eLen will be off by n !
 
-  -- Retry app if f simplifies. TODO track if simplification happened
---f | lvl == 0 && simplifiable f -> simpleTerm' lvl (argEnv , mempty) term >>= \fn -> fuse (lvl , env , fn)
-  Var (VLetBind q) | lvl == 0 -> inlineLetBind q >>= \fn -> fuse (lvl , env , fn)
-  VBruijn i | lvl == 0 -> simpleTerm' lvl (argEnv , mempty) term >>= \case
---  VBruijn j -> _ -- didn't simplify?
-    fn        -> fuse (lvl , env , fn)
-  App{} | lvl == 0 -> simpleTerm' lvl (argEnv , mempty) term >>= \fn -> fuse (lvl , env , fn) -- what if no simplification?!
-  -- TODO check if simplification happened
+  -- retry app if f simplifies. (==) instance is coarse. y-combinators will loop on this
+  f -> simpleTerm' lvl (argEnv , mempty , tL) term >>= \g -> if True || ((==) `on` (((0 :: Int) <$) . project)) f g
+    then pure $ AppF (Left g) $ (Right . (lvl , (argEnv , mempty , tL) ,)) <$> trailingArgs
+    else fuse (lvl , env , g) -- multi-simplification may mess up bruijns !
 
-  f -> pure $ AppF (Right (lvl , (argEnv , mempty) , f))
-                   (Right . (lvl , (argEnv , mempty) ,) <$> trailingArgs)
- else let eLen = V.length argEnv in case term of
+ else case term of
   VBruijnLevel l -> pure $ VBruijnF (lvl - l - 1)
-  -- need to re-lvl any bruijns subbed in
+
   VBruijn i -> if i >= eLen then error $ show (i , env) else
-    -- This may duplicate work if copying args at the same lvl - need β-optimality
+    -- then env contains raw args to simplify, at the new lvl for any bruijns subbed in
+    -- This duplicates work if simplifying the same arg twice at the same lvl - need β-optimality
     argEnv V.! i & \(TSub prevELen prevLvl argTerm) -> let --if lvl /= prevLvl then _ else let
---    prevEnv = V.drop (eLen - prevELen) argEnv -- <&> \(TSub pl p t) -> TSub pl p (Forced lvl t)
       newEnv = V.drop (eLen - prevELen) argEnv -- takeEnd prevELen
-      in -- d_ (lvl , prevLvl , prevELen , eLen , argTerm , argEnv) $
---      d_ (argTerm , env) $ 
-        d_ (i , prevELen , eLen , argTerm , env) $
-        fuse (lvl , (newEnv , mempty) , argTerm)
+      in fuse (lvl , (newEnv , mempty , tL) , argTerm)
 
   abs | Just (n , body) <- getBruijnAbs abs -> case getBruijnAbs body of
     Just (m , b2) -> fuse (lvl , env , BruijnAbs (m + n) 0 b2)
-    _ -> let
-      args = V.generate n (\i -> TSub 0 {- doesn't matter -} (lvl + n) (VBruijnLevel (lvl + n - i - 1)))
-      in pure $ BruijnAbsF n 0 (Right (lvl + n , (args <> argEnv , mempty) , body))
+    _ -> pure $ BruijnAbsF n 0 (Right (lvl + n , (mkBruijnArgSubs (lvl + n) n <> argEnv , mempty , tL) , body))
 
---App f args@[_]   -> fuse (lvl , (argEnv , args) , f)
---App f (a:args)   -> fuse (lvl , env , App (App f [a]) args)
-  App f args   -> fuse (lvl , (argEnv , args) , f)
+  App f args   -> fuse (lvl , (argEnv , args , V.length argEnv) , f)
 --Label l args -> fuse (lvl , (argEnv , args) , Label l [])
+
+  -- This will spoil free-var indexes
+  Var (VLetBind q) | lvl == 0 -> inlineLetBind q >>= \fn -> fuse (lvl , env , fn)
 
   CaseB scrut retT branches d -> simpleTerm' lvl env scrut >>= \case -- Need to pull out the seed immediately
 -- case-label
     Label l params -> case branches BSM.!? qName2Key l <|> d of
       Just body | null params -> fuse (lvl , env , body)
-      -- !! WARNING params are already β-d
-      Just body -> fuse (lvl , env , App body (Forced lvl <$> params))
+      Just body -> fuse (lvl , env , App body (Forced lvl <$> params)) -- params are already β-d at lvl
       Nothing -> error $ "panic: no label: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
 -- case-case: push/copy outer case into each branch, then the inner case fuses with outer case output labels
+-- Everything is forced already except branches and d
     CaseB innerScrut ty2 innerBranches innerDefault -> let
-      pushCase innerBody = CaseB innerBody retT branches d
+      pushCase innerBody = CaseB (Forced lvl innerBody) retT branches d
       optBranches = pushCase <$> innerBranches
       optD        = pushCase <$> innerDefault
-      in fuse (lvl , env , CaseB innerScrut ty2 optBranches optD)
+      in fuse (lvl , env , CaseB (Forced lvl innerScrut) ty2 optBranches optD)
     opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches) (Right . (lvl,env,) <$> d)
+
+  -- TODO try before and after forcing the scrut
+  TTLens scrut [f] LensGet -> simpleTerm' lvl env scrut >>= \case
+    LetBlock l -> case V.find ((==f) . iName . fst) l of
+      Just x -> pure $ Right . (lvl,env,) <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
+    opaque -> pure $ TTLensF (Left opaque) [f] LensGet
+--TTLens (LetBlock l) [f] LensGet -> case 
+--  Just x -> 
+--TTLens (Cast BiEQ (LetBlock l)) [f] LensGet -> case V.find ((==f) . iName . fst) l of
+--  Just x -> pure $ Right . (lvl,env,) <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
+--TTLens (Tuple l) [f] LensGet -> pure $ Right . (lvl , env,) <$> project (l V.! f)
+--TTLens (Cast BiEQ (Tuple l)) [f] LensGet -> pure $ Right . (lvl , env,) <$> project (l V.! f)
 
   LetBlock lets -> inferBlock lets $ \_ -> LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
   LetBinds lets inE -> inferBlock lets $ \v -> do
@@ -114,7 +129,11 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = --trace (show term <> "\nenv: 
     newInE  <- simpleTerm' lvl env inE
     pure $ if lvl == 0 then Left <$> project newInE else LetBindsF newLets (Left newInE)
 
-  Forced prevLvl t -> if prevLvl /= lvl then error "" else pure $ Left <$> project t
+--Cast BiEQ t -> fuse (lvl , env , t)
+  Forced prevLvl t -> if
+    | prevLvl == lvl || prevLvl == 0 -> pure $ Left <$> project t
+--  | prevLvl < lvl -> trace (show prevLvl <> " < " <> show lvl :: Text)
+--      (fuse (lvl , (did_ $ mkBruijnArgSubs lvl prevLvl , mempty , 0) , t))
   x -> pure $ Right . (lvl , env ,) <$> project x
 
 inferBlock lets go = do
@@ -122,11 +141,13 @@ inferBlock lets go = do
   v <- use letBinds >>= \lvl -> V.thaw (snd <$> lets) >>= \v -> MV.write lvl nest v $> v
   go v <* (letNest %= \x -> x - 1) -- <* traceM "decBlock" 
 
+simpleTerm' :: Int -> Env -> Term -> SimplifierEnv s Term
 simpleTerm' lvl env t = hypoM (pure . primF) fuse (lvl , env , t)
 simpleTerm t = do
   letBinds' <- MV.new 64 -- max let-depth
-  simpleTerm' 0 mempty t `evalStateT` FEnv letBinds' 0
+  simpleTerm' 0 (mempty , mempty , 0) t `evalStateT` FEnv letBinds' 0
 
+simpleExpr :: Expr -> ST s Expr
 simpleExpr (Core t ty) = simpleTerm t <&> \t -> Core t ty
 simpleExpr _ = pure PoisonExpr
 

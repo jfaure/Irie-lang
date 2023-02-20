@@ -87,27 +87,12 @@
 
 --import sumMul
 --import stream
---import prelude
 
---enumFromTo lo hi = @stream (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
---ifte = \cond a b => case cond of { @True  => a ; @False => b }
---enumFromTo lo hi = @stream (\i => ifte (i >? hi) @Done (@Yield i (i + 1))) lo
---ifte = (\cond a b => case cond of { @True  => a ; @False => b })
+import prelude
 
---eenumFromTo lo hi = @stream (\i => (\cond a b => case cond of { @True => a ; @False => b }) (gt i hi) @Done (@Yield i (add i 1))) lo
+--f x (a , b) y = @add x a b y
+--t = f 1 (2 , 3) 4
 
-enumFromTo i = ((\cond => \a => a) 0) i -- (add i 1)
-
---abs [bruijn-level]
---
---(\cond a => case cond of { @True => a ; @False => a }) (gt i 7) (@Yield i (add i 1))
---[bruijn-level , (gt i 7) (yield i (add i 1))]
---
---case cond of { @True => a ; @False => a })
-
---t = enumFromTo 3 5 2
-
-{-
 next nextL nextR sr0 x = case x of
   @Left  sa => case nextL sa of
     @Done      => Skip    (Right sr0)
@@ -121,22 +106,31 @@ next nextL nextR sr0 x = case x of
 Sappend (@stream nextL sl0) (@stream nextR sr0) = let
   in ana (next nextL nextR sr0) (@Left sl0)
 
+SconcatMap f (@stream nexta seed) =
+  @stream (nextC f nexta) (seed , None)
+
+nextC f nexta (sa , m) = case m of
+  @None => case nexta sa of
+    @Done      => Done
+    @Skip s    => Skip (s , @None)
+    @Yield a s => Skip (s , @One (f a))
+  @One (@stream nextb sb) => case nextb sb of
+    @Done      => Skip    (sa , @None)
+    @Skip s    => Skip    (sa , @One (stream nextb s))
+    @Yield b s => Yield b (sa , @One (stream nextb s))
+
 ana next seed = @stream next seed
+
 enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
 
 foldr c z (@stream next seed) = let
+  go c z next s = case next s of
+    @Done      => z
+    @Skip    r => go c z next r
+    @Yield x r => c x (go c z next r)
   in go c z next seed
-go c z next s = case next s of
-  @Done      => z                  --x = enumFromTo 4 5
-  @Skip    r => go c z next r      --t = go add 0 (\i => if i >? 5 then @Done else @Yield i (i + 1)) 0
-  @Yield x r => c x (go c z next r)--t1 = foldr add 0 (Sappend (enumFromTo 2 3) (enumFromTo 4 5))
--}
 
---t2 = mainfoldr add 0 (enumFromTo 4 5)
-
---mainfoldr c z seed = let -- rhylo c a seed
---  go s = case (\? => @Done) s of
---    @Done      => z
---  in go seed
---
---t3 = mainfoldr add 0 3
+--t   = foldr add 0 (enumFromTo 0 1)
+--tt  = foldr add 0 (Sappend (enumFromTo 0 3) (enumFromTo 4 5))
+--ttt = SconcatMap (enumFromTo 0) (enumFromTo 0 0)
+ttt = foldr add 0 (SconcatMap (enumFromTo 0) (enumFromTo 0 0))
