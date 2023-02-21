@@ -52,11 +52,8 @@
 --lp17 f = let r x g = { a = g x , b = f x } in { u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
 -- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
 
--- Need to accurately delegate generalisation to first mutual
--- import imports/sumMul
-
 -- lost some μ-bounds
--- import imports/foldr
+-- import foldr
 -- nonEmptySubSequences = \case -- [a] -> [[a]]
 --   @Nil       => Nil
 --   @Cons x xs => let
@@ -80,18 +77,33 @@
 --import SpecialisationTests/SimpleMutual
 --import SpecialisationTests/SumOfSquares
 --import SpecialisationTests/fib
-
 --import list
 --import testBruijns
 --import testFuse
-
 --import sumMul
 --import stream
+--import prelude
+
+--import list
 
 import prelude
 
---f x (a , b) y = @add x a b y
---t = f 1 (2 , 3) 4
+--t = (scanSum 2 Nil)
+scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
+splitAt n xs = if n <=? 0 then (@Nil , xs) else case xs of
+-- KO , inlining '>' messes up free-Vars for the ( , ) LetBlock
+--  @Cons x xs => splitAt (n - 1) xs > \(l , r) => ( @Cons x l , r )
+-- OK
+  @Cons x xs => (\(l , r) => ( @Cons x l , r )) (splitAt (n - 1) xs)
+  @Nil =>  ( @Nil , @Nil )
+
+tt = (scanSum 1 Nil)
+ttt = splitAt 1 (scanSum 1 Nil)
+
+{-
+t = (\x => case (\(f , b) => @One f b) ((add x) , 3) of
+  @One f b => @Two (f b)
+  ) 0
 
 next nextL nextR sr0 x = case x of
   @Left  sa => case nextL sa of
@@ -123,14 +135,14 @@ ana next seed = @stream next seed
 
 enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
 
-foldr c z (@stream next seed) = let
-  go c z next s = case next s of
-    @Done      => z
-    @Skip    r => go c z next r
-    @Yield x r => c x (go c z next r)
-  in go c z next seed
+go c z next s = case next s of
+  @Done      => z
+  @Skip    r => go c z next r
+  @Yield x r => c x (go c z next r)
+foldr c z (@stream next seed) =
+  go c z next seed
 
---t   = foldr add 0 (enumFromTo 0 1)
---tt  = foldr add 0 (Sappend (enumFromTo 0 3) (enumFromTo 4 5))
---ttt = SconcatMap (enumFromTo 0) (enumFromTo 0 0)
+t   = foldr add 0 (enumFromTo 0 1)
+tt  = foldr add 0 (Sappend (enumFromTo 0 3) (enumFromTo 4 5))
 ttt = foldr add 0 (SconcatMap (enumFromTo 0) (enumFromTo 0 0))
+-}

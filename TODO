@@ -23,7 +23,6 @@
 # Mutuality: insane Π = λM[a , b] -> (a , b) => 
   ? mutual functions within separate records =eg. let a = { f = b.g } ; b = { g = a.f }
   Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
-  make lazy-gen marker to indicate fn still needs generalisation later. (also count ungeneralised types for clearBis)
 ## Notes. Let (record) as Bruijn (generalise duplicated arguments & mutual fn args)
   ? export list
   ? Cap field number to 64 for cheaper subtyping with i64 bitset
