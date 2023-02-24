@@ -1,5 +1,6 @@
 {-# Language TemplateHaskell #-}
-module Scope (solveScopesF , initParams , RequiredModules , OpenModules , Params) where
+module Scope (scopeTT , scopeApoF , initParams , RequiredModules , OpenModules , Params) where
+import UnPattern (patternsToCase , Scrut(..))
 import ParseSyntax
 import QName
 import CoreSyn (ExternVar(..)) -- TODO rm
@@ -12,7 +13,6 @@ import Control.Lens
 import PrettyCore
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import UnPattern
 
 -- * within a module, equivalent HNames map to the same IName
 -- * inference of terms needs quick and modular indexing + access to metadata
@@ -22,6 +22,11 @@ import UnPattern
 -- types only need the HNames for pretty printing + don't want to rebind metas etc...
 
 -- replace term (not type) INames with VBruijn and QNames
+
+-- free | dups (↑ occurs ; ↓ tweak abs & rename bruijns)
+-- free: count escaped vars used by binder to inc the Abs; patch up during inference
+-- dups: cata counts uses (except dependent case-splits)
+
 type OpenModules = BitSet
 type RequiredModules = BitSet
 type ScopeAcc = Params -> TT
@@ -38,17 +43,30 @@ data Params = Params
   } deriving Show ; makeLenses ''Params
 
 initParams open required = let
-  extCount = 300 -- TODO use max number of let-bindings (should be less due to bruijn args)
-  in Params open required emptyBitSet emptyBitSet (V.create (MV.new extCount)) 0 (V.create (MV.new extCount)) 0
+  sz = 300 -- TODO max number of let-bindings or bruijnVars
+  in Params open required emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 (V.create (MV.new sz)) 0
 
--- * Track name scopes , free variables and linearity , resolve VExterns to BruijnArg | QName
--- resolution of deBruijns: debruijns are assigned backwards by unpattern, reversed here (deBruijnEnv - b - 1)
-solveScopesF :: Externs -> ModuleIName -> TTF ScopeAcc -> ScopeAcc
-solveScopesF exts thisMod this params = let
-  -- CasePatF overrides the scopeF cata via newtype: patterns contain mixfixes and introduce arguments
-  -- for patterns we need: resolve mixfix externs > solvemixfix > unpattern > solvescopes
+-- TODO don't allow `bind = lonemixfixword`
+-- handleExtern (readParseExtern open mod e i) ||| readQParseExtern :: ExternVar
+handleExtern :: Externs -> Int -> BitSet -> V.Vector QName -> Int -> TT
+handleExtern exts mod open lm i = case readParseExtern open mod exts i of
+  ForwardRef b  -> Var (VLetBind (lm V.! b))
+  Imported e    -> InlineExpr e
+  MixfixyVar m  -> MFExpr m -- TODO if ko, mixfix should report "mixfix word cannot be a binding: "
+  -- (errors . scopeFails %= s)
+  NotOpened m h -> ScopePoison (ScopeNotImported h m)
+  NotInScope  h -> ScopePoison (ScopeError h)
+  AmbiguousBinding h ms -> ScopePoison (AmbigBind h ms)
+  x -> error (show x)
+
+-- * name scope , free variables , dup nodes , resolve VExterns to BruijnArg | QName
+-- unpattern assigns debruijn levels: bl, the debruijn index is lvl - bl - 1
+type Seed = (TT , Params)
+scopeApoF :: Externs -> ModuleIName -> Seed -> TTF (Either TT Seed)
+scopeApoF exts thisMod (this , params) = let
+  -- Cases require different approach: resolve mixfix externs > solvemixfix > unpattern > solvescopes
   -- * insert a pretraversal of *only* patterns under this scope context, then patternsToCase then resume solveScopes
-  doCase :: UnPattern.Scrut -> [(TT, TT)] -> Params -> TT
+  doCase :: UnPattern.Scrut -> [(TT, TT)] -> Params -> Seed
   doCase scrut patBranchPairs params = let
     solvedBranches :: [(TT , TT)]
     solvedBranches = patBranchPairs <&> \(pat' , br) -> let
@@ -64,26 +82,25 @@ solveScopesF exts thisMod this params = let
           -- Only inline mixfixes, nothing else, (? mutually bound mixfixes used in pattern)
           | MixfixyVar m <- readParseExtern params._open thisMod exts i -> MFExpr m -- Only inline possible mixfixes
           | otherwise -> Var (VExtern i)
-        JuxtF _o args -> solveMixfixes args
+        JuxtF _o args -> solveMixfixes args -- TODO need to solveScope the mixfixes first!
         tt -> embed tt
       in (cata clearExtsF pat , br)
     (this , bruijnSubs) = patternsToCase (scrut{- params-}) (params._bruijnCount) solvedBranches
     in case bruijnSubs of
-      [] -> cata (solveScopesF exts thisMod) this params -- proceed with solvescopes using current context
+      [] -> (this , params)
       x  -> error ("non-empty bruijnSubs after case-solve: " <> show x)
 
-  doBruijnAbs :: BruijnAbsF ScopeAcc -> TT -- (BitSet , TT)
+  doBruijnAbs :: BruijnAbsF TT -> TTF (Either TT Seed)
   doBruijnAbs (BruijnAbsF n bruijnSubs _ tt) = let
     argsSet    = intList2BitSet (fst <$> bruijnSubs)
     warnShadows ret = let argShadows = params._args .&. argsSet ; letShadows = params._lets .&. argsSet in if
       | argShadows /= 0 -> ScopeWarn ("λ-binding shadows λ-binding: "   <> show (bitSet2IntList argShadows)) ret
       | letShadows /= 0 -> ScopeWarn ("λ-binding shadows let binding: " <> show (bitSet2IntList letShadows)) ret
       | otherwise -> ret
-    in tt (params
-      & args %~ (.|. argsSet)
-      & bruijnCount %~ (+ n)
-      & bruijnMap %~ V.modify (\v -> bruijnSubs `forM_` \(i , b) -> MV.write v i b)
-      ) & \body -> warnShadows $ BruijnLam (BruijnAbsF n [] params._bruijnCount body)
+    absParams = params & args %~ (.|. argsSet)
+                       & bruijnCount %~ (+ n)
+                       & bruijnMap %~ V.modify (\v -> bruijnSubs `forM_` \(i , b) -> MV.write v i b)
+    in BruijnLamF $ BruijnAbsF n [] params._bruijnCount (Right (warnShadows tt , absParams))
 
   updateLetParams params bindNms = params
     & lets %~ (.|. intList2BitSet bindNms)
@@ -94,38 +111,36 @@ solveScopesF exts thisMod this params = let
     | params._lets `testBit` i -> Var $ VLetBind (params._letMap V.! i)
     | otherwise -> handleExtern exts thisMod params._open params._letMap i
   in case {-d_ (embed $ Question <$ this) $-} this of
-  VarF v -> case v of
-    VBruijnLevel i -> {-(0 `setBit` i ,-} Var (VBruijn $ params._bruijnCount - 1 - i)
-    VBruijn i -> Var (VBruijn i)
-    VExtern i -> resolveExt i
-    VQBind q  -> ScopePoison (ScopeError $ "Var . VQBind " <> showRawQName q)
-    VLetBind _-> Var v
-  AppExtF i args  -> solveMixfixes $ (resolveExt i) : (distribute args params)
-  JuxtF _o args -> solveMixfixes (distribute args params)
-  BruijnLamF b -> doBruijnAbs b
-  LamPatsF (FnMatch args rhs) -> patternsToCase Question (params._bruijnCount) [(args , rhs)]
-    & fst & \t -> cata (solveScopesF exts thisMod) t params
-  LambdaCaseF (CaseSplits' branches) -> BruijnLam $ BruijnAbsF 1 [] 0
-    $ doCase (Var $ VBruijn 0) branches (params & bruijnCount %~ (1+))
-  CasePatF (CaseSplits scrut patBranchPairs) -> doCase scrut patBranchPairs params
+  Var v -> case v of
+    VBruijnLevel i -> VarF (VBruijn $ params._bruijnCount - 1 - i) -- Arg-prod arg name
+    VBruijn 0 -> VarF (VBruijn 0) -- spawned by LambdaCaseF
+    VExtern i -> Left <$> project (resolveExt i)
+    VQBind q  -> ScopePoisonF (ScopeError $ "Var . VQBind " <> showRawQName q)
+    VLetBind _-> VarF v
+  -- TODO Not ideal; shortcircuits the apomorphism (perhaps. should rework cataM inferF)
+  AppExt i args  -> Left <$> project (solveMixfixes $ resolveExt i : (scopeTT exts thisMod params <$> args))
+  Juxt _o args   -> Left <$> project (solveMixfixes $ scopeTT exts thisMod params <$> args)
+  BruijnLam b -> doBruijnAbs b
+  LamPats (FnMatch args rhs) -> patternsToCase Question (params._bruijnCount) [(args , rhs)]
+    & fst & \t -> Right . (, params) <$> project t
+  LambdaCase (CaseSplits' branches) -> BruijnLamF $ BruijnAbsF 1 [] 0
+    $ Right (doCase (Var $ VBruijn 0) branches (params & bruijnCount %~ (1+)))
+  CasePat (CaseSplits scrut patBranchPairs) -> doCase scrut patBranchPairs params
+    & \(tt , seed) -> RawExprF (Right (tt , seed))
 
   -- ? mutual | let | rec scopes
-  LetInF (Block open letType binds) tt -> let
+  LetIn (Block open letType binds) mtt -> let
     letParams = updateLetParams params (toList (binds <&> _fnIName))
     bindsDone :: V.Vector FnDef
-    bindsDone = binds <&> (& fnRhs %~ (\t -> cata (solveScopesF exts thisMod) t letParams))
-    in LetIn (Block open letType bindsDone) (distribute tt letParams)
+    bindsDone = binds <&> (& fnRhs %~ scopeTT exts thisMod letParams)
+    in LetInF (Block open letType bindsDone) (mtt <&> \tt -> Right (tt , letParams))
 
-  tt -> embed (distribute tt params)
+  tt -> Right . (, params) <$> project tt
 
--- TODO don't allow `bind = lonemixfixword`
--- handleExtern (readParseExtern open mod e i) ||| readQParseExtern :: ExternVar
-handleExtern exts mod open lm i = case readParseExtern open mod exts i of
-  ForwardRef b  -> Var (VLetBind (lm V.! b))
-  Imported e    -> InlineExpr e
-  MixfixyVar m  -> MFExpr m -- TODO if ko, mixfix should report "mixfix word cannot be a binding: "
-  -- (errors . scopeFails %= s)
-  NotOpened m h -> ScopePoison (ScopeNotImported h m)
-  NotInScope  h -> ScopePoison (ScopeError h)
-  AmbiguousBinding h ms -> ScopePoison (AmbigBind h ms)
-  x -> error (show x)
+-- ? local MVector to mark occurences
+-- hylo: ↓ replace VExterns
+--       ↑ rename vars , solveMixfixes
+scopeTT :: Externs -> ModuleIName -> Params -> TT -> TT
+scopeTT exts thisMod params tt = apo (scopeApoF exts thisMod) (tt , params)
+
+-- QTT: lets and bruijns have mulitplicity (0 | 1 | ω)

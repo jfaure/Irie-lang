@@ -200,10 +200,10 @@ pBind nm showRhs bind = pretty nm <> " = " <> case bind of
 --Mut e m tvar      -> "Mut : "   <> viaShow m <> viaShow tvar <> " " <> pExpr showRhs e
 --Mutual m _free tvar tyAnn -> "MUTUAL: " <> viaShow m <> viaShow tvar <> viaShow tyAnn
   Queued{} -> "Queued"
-  BindOK n {-lbound isRec-} expr -> let
+  BindOK n free expr -> let
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
     letW  = "" -- if lbound then "let " else ""
-    in letW <> {-viaShow n <+> -} recKW <> pExpr showRhs expr
+    in letW <> {-viaShow n <+> -} recKW <> (if Prelude.null free then "" else viaShow free) <> pExpr showRhs expr
   WIP -> "WIPBind"
   x -> error $ show x -- bindKO
 
@@ -243,8 +243,9 @@ pTerm showRhs = let
     VBruijnF b -> "B" <> viaShow b
     VBruijnLevelF b -> "BL" <> viaShow b
     LitF     l -> annotate ALiteral $ parens (viaShow l)
-    BruijnAbsF n free body -> parens $ "λb(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
-    BruijnAbsTypedF n free body argMetas retTy -> parens $ "λB(" <> viaShow n <> prettyFreeArgs free <> ")" <+> body
+    BruijnAbsF n body -> parens $ "λb(" <> viaShow n <> ")" <+> body
+    BruijnAbsTypedF n body argMetas retTy -> parens $ "λB(" <> viaShow n <> ")" <+> body
+      -- <+> pTyHead True (THTyCon (THArrow (snd <$> argMetas) retTy))
     CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing ts d
     AppF f args    -> parens (f <+> nest 2 (sep args))
     InstrF   p -> annotate AInstr (prettyInstr p)

@@ -2,17 +2,25 @@
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
-  * make lazy arg-sub in BetaEnv
+  * rm Expr / Core in favor of tuple
+  * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
   * need to check that lambdas don't have recursive types? to avoid inf β reduction 
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
   * cross-module mixfixes broken
   * rewrite μ-roll; esp. for multi-branch μs merge
   * trim bisubs at some point
-  * half-generalised (escaped vars) types
 ### Linearity ; free variables (type must be known) ; β vs always-inline
+  Freevars = infer marks all freeVars on letblock entry; free-vars then are reassigned to deBruijn vars in infer monad
+  ! β-opt: Specialise on paps iff dupd (transitive dups?) => extract any functions on the papped arguments
+  ? assume linear
+  * explicit freeVars within lets + dup nodes + type application; also half-generalised (escaped vars) types
+  * dup node: (hangs on global (device / thread ?) scope)
+      f x = x x => f x = let a b = DUP x in a b
+      ! see when lambdas are duplicated (also reduce computations on free-vars when papped)
+
+  Generalise lams passed into functions that duplicate args
   GlobalResolver = { Modules } BitSetMap of modules keyed on INames
-  Duplicated lams passed into functions should be generalised
   Module : (λimportBruijns -> {}) i1..in
   Modules arguments (imports) are themselves λ applied to transitive imports
   ? trans-deps ; open/require ; record-field pattern ; update-spec
@@ -37,15 +45,9 @@
   open / required (also locally) | dependency graph vv
   Transitive deps may require IO / aggressive preloading eg. True, builtins => prelude => import prelude
   record-field patterns ((a , b) = rhs) => (\case { (a , b) => rhs })
-    ? case over whole record or just the field when it is used
+    ? need to case over whole record since lhs is in scope mutually
   ? let-bound labels
   atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
-## FEnv
-  * must identify recons (cons over matches) and rewrite to Lens insert / modify
-  * make dup nodes so MC can assume everything is linear
-  * optimise App of inline functions (make a new Sub type that patches arguments later?)
-  * ShapePoly to indicate shape doesn't matter (stronger than ShapeNone)
-  * identify duplicated paps
 ## ?
   * named arguments (perhaps by subtype from a record arg)
   * shared streams (eg. MUL)
@@ -57,7 +59,6 @@
   * open sum type (default case branch)
   * expand lambda-mixfixes with explicit holes
   * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
-  * make solveScopes an anamorphism (need to delay solvemixfixes to infer)
 ## Parse
   * pat guards
   * lambda case type annotation: \case : scrut -> ret
@@ -65,7 +66,7 @@
   * repl parser: multiline case / let
 ## Types
   * mode to print type-var bounds
-  * Ad-hoc polymorphism: `Int <: [ NumInt Int ]` show (esp for repl JIT)
+  * Ad-hoc polymorphism: `Int <: [ NumInt Int ]` show (esp for repl JIT) (? mempty : Monoid a => a)
   * THFieldCollision
   * Dependent normalisation
   * first class polymorphism: eg. require instantiating with polytypes

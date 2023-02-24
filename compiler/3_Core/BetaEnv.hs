@@ -30,8 +30,8 @@ data FEnv s = FEnv
 type SimplifierEnv s = StateT (FEnv s) (ST s)
 
 getBruijnAbs = \case
-  BruijnAbs n _ body -> Just (n , body)
-  BruijnAbsTyped n _ body _ _ -> Just (n , body)
+  BruijnAbs n body -> Just (n , body)
+  BruijnAbsTyped n body _ _ -> Just (n , body)
   _ -> Nothing
 
 simplifiable = \case
@@ -68,7 +68,7 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let eLen = V.length argEnv
     in if
       | l == n -> let nextEnv = V.reverse (V.fromList $ (\(tL , arg) -> TSub tL lvl arg) <$> ourArgs)
         in fuse (lvl , (nextEnv <> argEnv , remArgs) , body) -- TODO remArgs eLen will be off by n !
-      | l < n  -> fuseApp l (BruijnAbs (n - l) 0 body) trailingArgs
+      | l < n  -> fuseApp l (BruijnAbs (n - l) body) trailingArgs
       | True -> error "impossible"
   in case term of
   Label l ars -> pure $ LabelF l (Right . (lvl , (argEnv , mempty) ,) <$> (ars <> map snd trailingArgs))
@@ -90,8 +90,8 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let eLen = V.length argEnv
       in fuse (lvl , (newEnv , mempty) , argTerm)
 
   abs | Just (n , body) <- getBruijnAbs abs -> case getBruijnAbs body of
-    Just (m , b2) -> fuse (lvl , env , BruijnAbs (m + n) 0 b2)
-    _ -> pure $ BruijnAbsF n 0 (Right (lvl + n , (mkBruijnArgSubs (lvl + n) n <> argEnv , mempty) , body))
+    Just (m , b2) -> fuse (lvl , env , BruijnAbs (m + n) b2)
+    _ -> pure $ BruijnAbsF n (Right (lvl + n , (mkBruijnArgSubs (lvl + n) n <> argEnv , mempty) , body))
 
 --App (App g gs) args -> fuse (lvl , (argEnv , (gs <> args) , V.length argEnv) , g)
   App f args -> fuse (lvl , (argEnv , (V.length argEnv ,) <$> args) , f)
@@ -141,9 +141,9 @@ inferBlock lets go = do
 -- TODO how to avoid duplicate simplifications?
 -- ie. iff no VBruijns to solve: isEnvEmpty
 simpleBind lvl env b = case b of
-  BindOK (OptBind optLvl specs) (Core t ty) -> if isEnvEmpty env && optLvl /= 0 then pure b else do
+  BindOK (OptBind optLvl specs) free (Core t ty) -> if isEnvEmpty env && optLvl /= 0 then pure b else do
     newT <- simpleTerm' lvl env t
-    pure (BindOK (OptBind ({-optLvl +-} 1) specs) (Core newT ty))
+    pure (BindOK (OptBind ({-optLvl +-} 1) specs) free (Core newT ty))
   x -> error $ show x
 
 simpleTerm' :: Int -> Env -> Term -> SimplifierEnv s Term
@@ -158,7 +158,7 @@ simpleExpr _ = pure PoisonExpr
 
 inlineLetBind q = use letBinds >>= \lb -> (lb `MV.read` (modName q))
   >>= \bindVec -> MV.read bindVec (unQName q) <&> \case
-    BindOK _ (Core inlineF _ty) -> inlineF
+    BindOK _ _free (Core inlineF _ty) -> inlineF
     x -> error $ show x
 
 -- * compute instructions
@@ -202,13 +202,13 @@ specApp lvl env q args = let
   (bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
   in -- d_ args $ d_ argShapes $ d_ repackedArgs $ d_ unstructuredArgs $ d_ "" $
   use letBinds >>= \lb -> (lb `MV.read` nest) >>= \bindVec -> MV.read bindVec bindNm >>= \case
-  BindOK o expr@(Core inlineF _ty) | any (/= ShapeNone) argShapes ->
+  BindOK o _free expr@(Core inlineF _ty) | any (/= ShapeNone) argShapes ->
     case bindSpecs o M.!? argShapes of
     Just cachedSpec -> pure $ AppF (Left cachedSpec) (Right . (lvl,env,) <$> unstructuredArgs)
     Nothing -> if all (\case { ShapeNone -> True ; _ -> False }) argShapes then pure noInline else do
       let recGuard = LetSpec q argShapes
-      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) _t)
-        -> BindOK (OptBind oLvl (M.insert argShapes recGuard oSpecs)) expr) bindNm
+      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) free _t)
+        -> BindOK (OptBind oLvl (M.insert argShapes recGuard oSpecs)) free expr) bindNm
 
       -- ! repackedArgs are at lvl, inlineF is at (lvl + bruijnN), so we need to patch the ars
       -- ideally we could skip this traversal of the args with some level manipulation (maybe a new Sub)
@@ -217,14 +217,14 @@ specApp lvl env q args = let
 --    specFn <- simpleTerm' lvl env rawAbs
 
       -- fully simplify the specialised partial application (if it recurses then the spec is extremely valuable)
-      let rawAbs = BruijnAbs bruijnN 0 (App inlineF repackedArgs)
+      let rawAbs = BruijnAbs bruijnN (App inlineF repackedArgs)
       specFn <- simpleTerm' lvl env rawAbs
       when debug_fuse $ do
         traceM $ "raw spec " <> show bindNm <> " " <> show argShapes <> "\n => " <> prettyTermRaw rawAbs <> "\n"
         traceM $ "simple spec " <> prettyTermRaw specFn <> "\n"
 
-      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) _t)
-        -> BindOK (OptBind oLvl (M.insert argShapes specFn oSpecs)) expr) bindNm
+      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) free _t)
+        -> BindOK (OptBind oLvl (M.insert argShapes specFn oSpecs)) free expr) bindNm
 
       let fn = if lvl == 0 then specFn else recGuard
       if null unstructuredArgs then pure $ Left <$> project fn else fuse (lvl , env , App fn unstructuredArgs)

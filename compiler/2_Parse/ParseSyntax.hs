@@ -126,7 +126,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | QVar QName
  | MFExpr CoreSyn.Mixfixy
  | PExprApp Prec QName [TT]
- | RawExpr TT
+ | RawExpr TT -- Skip case for anamorphisms
  | VoidExpr
  | MixfixPoison Text
 

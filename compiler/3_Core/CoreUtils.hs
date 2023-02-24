@@ -100,9 +100,7 @@ expr2Ty e = case e of
  PoisonExpr -> pure $ TyGround [THPoison]
  x -> error $ "raw term cannot be a type: " ++ show x
 
-bind2Expr = \case
-  BindOK _ e -> e
-  x -> error (show x)
+bind2Expr = naiveExpr
 
 ------------------------
 -- Type Manipulations --

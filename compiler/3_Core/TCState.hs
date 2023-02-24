@@ -7,6 +7,7 @@ import Control.Lens ( use, (.=), makeLenses )
 import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write )
 import qualified ParseSyntax as P ( FnDef )
 import qualified Data.Vector as V ( Vector )
+import qualified Data.IntMap as IM
 
 -- Convert QNames to VArgs so bindings can also be beta-reduced optimally
 -- Convert VArgs to Lin by inserting Dups
@@ -25,13 +26,18 @@ data TCEnvState s = TCEnvState {
 
  -- Biunification state
  , _bindStack     :: [(Int , Int)]
- , _bruijnArgVars :: V.Vector Int    -- bruijn arg -> TVar map
+ , _bruijnArgVars :: V.Vector Int       -- bruijn arg -> TVar map
  , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen          :: Int                -- cursor for bis which may have spare space
  , _bis           :: MV.MVector s BiSub -- typeVars
  , _lvls          :: [BitSet] -- tvar let-nest scope (see Generalise.hs)
 
- , _recursives    :: BitSet -- type analysis
+ -- Free vars => any VBruijns from outside the let-binding must be explicitly passed as new VBruijns
+ , _freeLimit :: Int
+ , _freeSubs  :: (Int , IM.IntMap (Int , Int)) -- number of hoisted freeVars & the bruijn translation + tvar
+
+ -- Type analysis
+ , _recursives    :: BitSet
  , _nquants :: Int
  , _genVec  :: MV.MVector s Int
 }; makeLenses ''TCEnvState

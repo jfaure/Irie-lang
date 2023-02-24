@@ -24,7 +24,10 @@ type CaseID    = Int
 -- Debruijn indices vs levels
 -- levels index from the bottom of the stack, eliminating the need to reindex free vars (eg. when weakening context)
 -- indices eliminate the need to reindex bound variables, eg when substituting a closed expression in another context
+-- Both are required for efficient β-reduction
 -- locally nameless = indices for bound vars, global names for free vars.
+
+-- Bruijns vs QBinds => QBinds are mutually in scope & Lens
 data VName
  = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
  | VForeign HName -- opaque name resolved at linktime
@@ -42,8 +45,8 @@ data Term -- β-reducable (possibly to a type)
 -- ->
  | VBruijn IName
  | VBruijnLevel Int
- | BruijnAbs Int BitSet Term
- | BruijnAbsTyped Int BitSet Term [(Int , Type)] Type -- ints index arg metadata
+ | BruijnAbs Int Term
+ | BruijnAbsTyped Int Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]    -- IName [Term]
 
 -- {}
@@ -144,7 +147,7 @@ data Bind
  | Mut    { naiveExpr :: Expr , mutuals :: BitSet , tvar :: IName }
 
  | BindKO -- failed type inference
- | BindOK { optLevel :: OptBind , naiveExpr :: Expr }
+ | BindOK { optLevel :: OptBind , free :: [Int] , naiveExpr :: Expr }
 
  | WIP -- Fenv
 
