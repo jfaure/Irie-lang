@@ -10,8 +10,9 @@
   * cross-module mixfixes broken
   * rewrite μ-roll; esp. for multi-branch μs merge
   * trim bisubs at some point
+
 ### Linearity ; free variables (type must be known) ; β vs always-inline
-  Freevars = infer marks all freeVars on letblock entry; free-vars then are reassigned to deBruijn vars in infer monad
+  freeVars: use bitset to indicate free-vars passed down, betaEnv can rename the vars
   ! β-opt: Specialise on paps iff dupd (transitive dups?) => extract any functions on the papped arguments
   ? assume linear
   * explicit freeVars within lets + dup nodes + type application; also half-generalised (escaped vars) types

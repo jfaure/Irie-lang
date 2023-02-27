@@ -1,1 +1,0 @@
-free f = let g x = add f x in g

@@ -70,6 +70,12 @@
 --  @None => @True
 --  ? => @False
 
+-- parse nested lets
+--f x =
+-- let g y =
+--   let h z = add z (add x y) in h
+-- in g
+
 -- ! returning let-bind outside its scope messes up its name resolution
 
 --import SpecialisationTests/SpecPapArg
@@ -84,15 +90,12 @@
 --import stream
 --import prelude
 
+import letCaptureTests
 --import list
 
 --import prelude
 --lp17 f = let r x g = { a = g x , b = f x } in { u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
 --lp17 f = let r f x g = { a = g x , b = f x } in { u = r f 0 (add 1) , v = r f {t = 1} (\y => y.t)}
-
---f x = x
-free f = let g x = add f x in g
---fromMaybe (@Add x y) = add x y
 
 {-
 --t = (scanSum 2 Nil)

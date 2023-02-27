@@ -1,0 +1,12 @@
+basic x = x
+noCapture x = let g y = add y y in g x
+
+free f = let g x = add f x in g
+free2 f1 f2 f3 = let g x = add f1 (add x f3) in g f2
+
+t1 x = let g y = let h z = add z (add x y) in h in g
+t2 x = let g y = { f1 = x , f2 = y } in 3
+t3 x = let g = { f1 = x , f2 = x } in 3
+
+
+--lp17 f = let r f x g = { a = g x , b = f x } in { u = r f 0 (add 1) , v = r f {t = 1} (\y => y.t)}

@@ -135,6 +135,8 @@ scopeApoF exts thisMod (this , params) = let
     bindsDone = binds <&> (& fnRhs %~ scopeTT exts thisMod letParams)
     in LetInF (Block open letType bindsDone) (mtt <&> \tt -> Right (tt , letParams))
 
+--Tuple xs -> LetInF (Block True Let (V.fromList xs <&> (scopeTT exts thisMod params))) Nothing
+
   tt -> Right . (, params) <$> project tt
 
 -- ? local MVector to mark occurences

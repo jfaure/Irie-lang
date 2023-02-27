@@ -168,7 +168,7 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
     (parsed ^. P.parseDetails . P.hNameMFWords . _2) -- mixfix names
     iNames
     maybeOldModule
-  (judgedModule , errors) = judgeModule parsed (deps modDeps) modIName 0 hNames exts srcInfo
+  (judgedModule , errors) = judgeModule parsed (deps modDeps) modIName hNames exts
 
 -- TODO add all let-binds to resolver?
 --JudgedModule _modIName _modNm bindNames _a _b judgedBinds _specs = judgedModule

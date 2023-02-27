@@ -201,9 +201,9 @@ futuM psi = f where
 hyloM :: (Functor f , Monad m , Traversable f) => (f b -> m b) -> (a -> m (f a)) -> a -> m b
 hyloM f g = h where h = f <=< traverse h <=< g
 
--- cataM . apoM
-hypoM :: (Traversable t, Monad m) => (t b -> m b) -> (c -> m (t (Either b c))) -> c -> m b
-hypoM f g = h where h = f <=< traverse (pure ||| h) <=< g
+-- cata . apoM
+hypoM :: (Traversable t, Monad m) => (t b -> b) -> (c -> m (t (Either b c))) -> c -> m b
+hypoM f g = h where h = fmap f <<< traverse (pure ||| h) <=< g
 
 -- traverse : (a -> f b) -> t a -> f (t b)
 -- anaM psi = a where a = fmap embed . traverse a <=< psi

@@ -144,10 +144,11 @@ data Bind
  = Queued
  | Guard  { mutuals :: BitSet , tvar :: IName } -- being inferred; if met again, is recursive/mutual
  -- generalising mutual types must wait for all tvars to be constrained (all mutual block to be inferred)
- | Mut    { naiveExpr :: Expr , mutuals :: BitSet , tvar :: IName }
+ | Mut    { naiveExpr :: Expr , mutuals :: BitSet , letCaptured :: BitSet , tvar :: IName }
 
  | BindKO -- failed type inference
- | BindOK { optLevel :: OptBind , free :: [Int] , naiveExpr :: Expr }
+ | BindOK { optLevel :: OptBind , free :: BitSet , naiveExpr :: Expr }
+ | BindUnused Text
 
  | WIP -- Fenv
 

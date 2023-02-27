@@ -147,7 +147,7 @@ simpleBind lvl env b = case b of
   x -> error $ show x
 
 simpleTerm' :: Int -> Env -> Term -> SimplifierEnv s Term
-simpleTerm' lvl env t = hypoM (pure . primF) fuse (lvl , env , t)
+simpleTerm' lvl env t = hypoM primF fuse (lvl , env , t)
 simpleTerm t = do
   letBinds' <- MV.new 64 -- max let-depth
   simpleTerm' 0 (mempty , mempty) t `evalStateT` FEnv letBinds' 0

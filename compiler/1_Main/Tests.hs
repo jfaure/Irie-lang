@@ -146,6 +146,7 @@ tree     = S.it "tree.ii"         (goldenInfer "-p types --no-fuse --no-color" "
 intmap   = S.it "intmap.ii"       (goldenInfer "-p types --no-fuse --no-color" "ii/intmap.ii"      "intmap")
 mixfixes = S.it "mixfixTests.ii"  (goldenInfer "-p core  --no-fuse --no-color" "ii/mixfixTests.ii" "mixfixTests")
 testFuse = S.it "testBruijns.ii"  (goldenInfer "-p core  --no-color" "ii/testBruijns.ii" "bruijn fusion")
+testCaptures = S.it "letCaptureTests.ii"  (goldenInfer "-p core  --no-color" "ii/letCaptureTests.ii" "let-capture")
 
 specialise = S.it "simpleMutual.ii" (goldenInfer "-p simple  --no-color" "ii/SpecialisationTests/SimpleMutual.ii" "simpleMutual")
 
@@ -167,6 +168,7 @@ s = S.sydTest $ do
   mutual
   tree
   mixfixes
+  testCaptures
 --intmap
 
 testMixfixes = S.sydTest mixfixes

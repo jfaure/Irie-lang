@@ -10,7 +10,6 @@ import Scope
 import Errors
 import TypeCheck ( check )
 import TCState
-import Mixfix
 import Externs ( typeOfLit, readLabel, readQParseExtern , Externs )
 import Generalise (generalise)
 --import Typer (generalise)
@@ -20,12 +19,11 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
-import qualified Data.IntMap as IM
 import Data.Functor.Foldable
 
-judgeModule :: P.Module -> BitSet -> ModuleIName -> p -> V.Vector HName -> Externs.Externs -> p1 -> (JudgedModule , Errors)
-judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
-  letBinds' <- MV.new 16
+judgeModule :: P.Module -> BitSet -> ModuleIName -> V.Vector HName -> Externs.Externs -> (JudgedModule , Errors)
+judgeModule pm importedModules modIName hNames exts = runST $ do
+  letBinds' <- MV.new 32
   bis'      <- MV.new 0xFFF
   g         <- MV.new 0
   let scopeparams = initParams importedModules emptyBitSet -- open required
@@ -47,7 +45,7 @@ judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
     , _lvls     = []
 
     , _freeLimit = 0
-    , _freeSubs  = (0 , mempty)
+    , _letCaptures = 0
 
     , _recursives = 0
     , _nquants = 0
@@ -60,30 +58,20 @@ judgeModule pm importedModules modIName _nArgs hNames exts _source = runST $ do
 -- This stacks inference of forward references and let-binds and identifies mutual recursion
 judgeBind :: Int -> IName -> TCEnv s Expr
 judgeBind letDepth bindINm = let
-  appFree free t = if null free then t else t & \(Core t ty) -> Core (App t (VBruijn <$> free)) ty
+--appFree free t = if null free then t else t & \(Core t ty) -> Core (App t (VBruijn <$> free)) ty
 
   inferParsed :: MV.MVector s (Either P.FnDef Bind) -> P.FnDef -> TCEnv s Expr
   inferParsed wip' abs = do
     bindStack %= ((letDepth , bindINm) :)
-    fS <- freeSubs <<.= (0 , mempty)
     [tvarIdx] <- freshBiSubs 1
     MV.write wip' bindINm (Right (Guard emptyBitSet tvarIdx))
+    svlc <- letCaptures <<.= 0
 
-    expr'  <- cata inferF (P._fnRhs abs) --  traceM $ "inferring: " <> show bindINm
+    expr <- cata inferF (P._fnRhs abs) --  traceM $ "inferring: " <> show bindINm
 
-    freeVars <- freeSubs <<.= fS -- TODO recover new freeVars & pass them in whenever needed!
+--  lc <- use letCaptures
+    lc <- letCaptures <%= (.|. svlc)
     bindStack %= drop 1
-
-    -- free vars must be passed into the let-binding explicitly (freeVars are solved in a cataM)
-    -- TODO possibly some freeVars come from a higher let-nest
-    fL <- use freeLimit
-    let (free , tvars') = unzip $ IM.toList (snd freeVars)
-        tvars = tyVar . snd <$> tvars'
-        expr = case free of
-          [] -> expr'
-          _  -> expr' & \(Core t ty) -> Core
-            (BruijnAbsTyped (length free) t ((-1,) <$> tvars) ty)
-            (prependArrowArgsTy tvars ty)
 
     MV.read wip' bindINm >>= \case -- learn which binds had to be inferred as dependencies
       Right b@BindOK{} -> pure (bind2Expr b)
@@ -96,36 +84,36 @@ judgeBind letDepth bindINm = let
         let refs = setNBits bindINm .&. ms
         hasMutual <- let isMut i = MV.read wip' i <&> \case { Right (Guard ms _) -> refs .&. ms /= 0 ; _ -> False }
           in anyM isMut (bitSet2IntList refs)
-        appFree free <$> if hasMutual
+        if hasMutual
           then Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tVar)
-           <$ MV.write wip' bindINm (Right (Mut expr ms tVar))
+           <$ MV.write wip' bindINm (Right (Mut expr ms lc tVar))
            <* bisub (tyOfExpr expr) (tyVar tVar) -- ! recursive => bisub with -τ (itself)
           -- can generalise once all mutuals & associated tvars are fully constrained
-          else genExpr wip' expr free tVar
+          else genExpr wip' expr lc tVar
+      b -> error $ "panic: " <> show b
 
   -- reference to inference stack (forward ref | recursive | mutual)
   preInferred :: MV.MVector s (Either P.FnDef Bind) -> Bind -> TCEnv s Expr
   preInferred wip bind = case bind of
-    BindOK _ f e  -> pure $ appFree f e -- don't inline the expr
-    Mut e _ tvar -> genExpr wip e _free tvar
+    BindOK _ _f e  -> pure e -- don't inline the expr
+    Mut e _ms lc tvar -> genExpr wip e lc tvar
     -- Stacked bind means this was either Mutual | recursive (also weird recursive: r = { a = r })
     Guard mutuals tvar -> do
       -- mark as stacked on top of all binds at this lvl
       -- mark it as mutual with all bind at its level
       bStack <- use bindStack
       let mbs = intList2BitSet $ snd <$> filter ((letDepth == ) . fst) bStack
-      appFree _free (Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvar))
+      (Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvar))
         <$ MV.write wip bindINm (Right $ Guard (mutuals .|. mbs) tvar)
     b -> error (show b)
 
-  genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> [Int] -> Int -> TCEnv s Expr
-  genExpr wip' (Core t ty) free tvarIdx = do
---  traceM $ "generalising: " <> prettyTermRaw t
+  genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> BitSet -> Int -> TCEnv s Expr
+  genExpr wip' (Core t ty) letCapture tvarIdx = do
     lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
     gTy <- generaliseVar lvl0 tvarIdx ty --  checkAnnotation ann gTy
     let retExpr = Core t gTy
-    retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred free retExpr)
-  genExpr wip' retExpr free _ = appFree free retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred free retExpr)
+    retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred letCapture retExpr)
+  genExpr wip' retExpr lc _ = retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred lc retExpr)
 
   in use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>=
     (inferParsed wip ||| preInferred wip) -- >>= \r -> r <$ (use bindStack >>= \bs -> when (null bs) (clearBiSubs 0))
@@ -151,7 +139,7 @@ inferF = let
  withBruijnArgTVars :: Int -> TCEnv s a -> TCEnv s ([Type] , a)
  withBruijnArgTVars n go = freshBiSubs n >>= \argTVars -> do
    w <- (\v -> MV.unsafeGrowFront v n) =<< V.unsafeThaw =<< use bruijnArgVars
-   imapM_ (\i n -> MV.write w i n) argTVars
+   imapM_ (MV.write w) argTVars
 
    (bruijnArgVars .=) =<< V.unsafeFreeze w
    (reverse $ map tyVar argTVars , ) <$> go <* (bruijnArgVars %= V.drop n)
@@ -209,7 +197,8 @@ inferF = let
  inferBlock :: P.Block -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
  inferBlock (P.Block _open _letType letBindings) go = do
    nest <- letNest <<%= (1+)
-   fL <- use bruijnArgVars >>= \b -> freeLimit <<.= V.length b
+   fl   <- use bruijnArgVars <&> V.length
+   svFL <- freeLimit <<.= fl
 
    bl <- use blen
 -- lvls %= (setNBits bl :) -- enter lvl all prev vars are escaped => if biunified with new vars must export new vars
@@ -225,14 +214,15 @@ inferF = let
    lvls %= drop 1 -- leave Lvl (TODO .|. head into next lvl?)
 
    -- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
-   -- Why does this need to be above the let here?!
-   r <- maybe (pure PoisonExpr) identity go -- in expr
-
+   -- Why does this need to be above the let assignment here?!
+   r <- fromMaybe (pure PoisonExpr) go -- in expr
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
-     <&> map ((\unused -> BindOK optInferred [] $ PoisonExprWhy ("unused let-bound: " <> show unused)) ||| identity)
+     <&> map (BindUnused . show @P.FnDef ||| identity)
 
    letNest %= \x -> x - 1
-   freeLimit .= fL
+   freeLimit <<.= svFL
+   lc <- letCaptures <%= (`shiftR` (fl - svFL)) -- diff all let-captures
+-- traceShowM (bitSet2IntList lc)
 
    pure (r , V.zipWith (\fn e -> (LetMeta (fn ^. P.fnIName) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
  mkFieldCol a b = TyGround [THFieldCollision a b]
@@ -250,29 +240,30 @@ inferF = let
   P.LetInF b pInTT -> inferBlock b pInTT <&> \(inTT , lets) -> case inTT of
     Core t ty -> Core (LetBinds lets t) ty
     x -> x
-  P.TupleF ts -> sequence ts <&> \exprs -> let
-    tys = tyOfExpr <$> exprs
-    ty  = THProduct (BSM.fromListWith mkFieldCol $ zipWith (\nm t -> (qName2Key (mkQName 0 nm) , t)) [0..] tys)
-    lets = zipWith (\i c -> (LetMeta (qName2Key (mkQName 0 i)) ("!" <> show i) (-1) , BindOK optInferred [] c))
-      [0..] exprs
+
+-- Tuples must also handle captures
+{-
+  P.TupleF ts -> -- (\go -> use letCaptures >>= \sv -> go <* (letCaptures .= sv))
+--  $ traverse (\f -> (letCaptures .= 0) *> ((,) <$> f <*> use letCaptures)) ts <&> \exprs -> let
+    sequence ts <&> \exprs -> let
+    ty  = THProduct (BSM.fromListWith mkFieldCol
+      $ Prelude.imap (\nm t -> (qName2Key (mkQName 0 nm) , t)) (tyOfExpr <$> exprs))
+    lets = Prelude.imap (\i (c) -> let lc = 0 in -- TODO
+      (LetMeta (qName2Key (mkQName 0 i)) ("!" <> show i) (-1) , BindOK optInferred lc c))
+      exprs
     in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
+-}
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
 --  P.VBruijn b  -> use bruijnArgVars <&> \argTVars -> Core (VBruijn b) (tyVar $ argTVars V.! b)
-    -- Unfortunately reassignment of deBruijn free vars must happen in a monadic catamorphism
-    -- Since bruijnAbs <-> bruijnVars trade information
     P.VBruijn b -> do
       argTVars <- use bruijnArgVars
       let lvl = V.length argTVars
       fLimit <- use freeLimit
-      d_ (b , fLimit) $ if b < (lvl - fLimit)
-      then pure $ Core (VBruijn b) (tyVar $ argTVars V.! b)
-      else let lvl = V.length argTVars
-               relativeB = b - (lvl - fLimit) -- VBruijn idx of this free var at the next enclosing letbinding
-        in use freeSubs >>= \(sz , mp) -> case mp IM.!? relativeB of
---        Just (fLvl , t) -> pure $ Core (VBruijn (lvl - fLvl - 1)) (tyVar t)
-          Nothing         -> freshBiSubs 1 >>= \[tvar] -> (freeSubs .= (sz + 1 , IM.insert relativeB (sz , tvar) mp))
-            $> Core (VBruijn (lvl - (fLimit + sz))) (tyVar tvar)
+--    traceShowM (b , fLimit , lvl)
+--    TODO: duplicate tvars here to handle lvl inference
+      when (b >= lvl - fLimit) (letCaptures %= (`setBit` (b + fLimit - lvl))) -- Bruijn idx at the let-binding
+      pure $ Core (VBruijn b) (tyVar $ argTVars V.! b)
     P.VQBind q   -> getQBind q
     P.VLetBind q -> judgeBind (modName q) (unQName q) <&> \case
       Core _t ty -> Core (Var (VLetBind q)) ty
@@ -280,8 +271,8 @@ inferF = let
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 
-  P.ForeignF _isVA i tt -> tt <&> \tExpr ->
-    maybe (PoisonExprWhy ("not a type: " <> show tExpr)) (Core (Var (VForeign i))) (tyExpr tExpr)
+  P.ForeignF _isVA i tt -> tt <&> \tExpr -> maybe (PoisonExprWhy ("not a type: " <> show tExpr))
+    (Core (Var (VForeign i))) (tyExpr tExpr)
 
   P.BruijnLamF (P.BruijnAbsF argCount argMetas _nest rhs) ->
     withBruijnArgTVars argCount rhs <&> \(argTVars , r) -> case r of
@@ -308,14 +299,12 @@ inferF = let
     mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton ({-qName2Key-} f) ty)]) dest fields
     in (>>= checkFails o) $ case record of
     Core object objTy -> case maybeSet of
-      P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (tyVar i)) <&> \case
-        BiEQ -> Core (TTLens object             fields LensGet) (tyVar i)
-        cast -> Core (TTLens (Cast cast object) fields LensGet) (tyVar i)
+      P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (tyVar i)) <&> \cast ->
+        let obj = case cast of { BiEQ -> object ; cast -> Cast cast object }
+        in Core (TTLens obj fields LensGet) (tyVar i)
 
-      -- LeafTy -> Record -> Record & { path : LeafTy }
-      -- + is right for mergeTypes since this is output
+      -- LeafTy -> Record -> Record & { path : LeafTy }  (+ for mergeTypes since this is output)
       P.LensSet x  -> x <&> \case
---      new@(Core _newLeaf newLeafTy) -> Core (TTLens f fields (LensSet new)) (mergeTypes True objTy (mkExpected newLeafTy))
         leaf@(Core _newLeaf newLeafTy) ->  -- freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected tyVar i)
           Core (TTLens object fields (LensSet leaf)) (mergeTypes True objTy (mkExpected newLeafTy))
         _ -> PoisonExpr

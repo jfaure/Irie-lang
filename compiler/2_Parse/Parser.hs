@@ -295,10 +295,6 @@ tt :: Parser TT
    , parensExpr
 -- , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
    ] <?> "ttArg"
-
---piBinder = reserved "Π" *> (many (iden >>= addArgName) >>= \pis -> addPiBound (PiBound pis WildCard))
-  -- Catch potential implicit abstractions at each parens
---parensExpr = parens (choice [{-try piBound ,-} (tt >>= \t -> tuple t <|> typedTT t) , scn $> Prod []] >>= implicitPiBound) >>= catchUnderscoreAbs
   parensExpr = parens ((tt >>= \t -> tuple t <|> typedTT t) <|> scn $> Tuple [])
     >>= catchUnderscoreAbs
   tuple t = (\ts -> Tuple (t:ts)) <$> some (reservedChar ',' *> tt)

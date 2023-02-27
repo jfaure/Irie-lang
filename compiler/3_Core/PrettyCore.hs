@@ -203,7 +203,7 @@ pBind nm showRhs bind = pretty nm <> " = " <> case bind of
   BindOK n free expr -> let
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
     letW  = "" -- if lbound then "let " else ""
-    in letW <> {-viaShow n <+> -} recKW <> (if Prelude.null free then "" else viaShow free) <> pExpr showRhs expr
+    in letW <> {-viaShow n <+> -} recKW <> (if 0 == free then "" else viaShow (bitSet2IntList free)) <> pExpr showRhs expr
   WIP -> "WIPBind"
   x -> error $ show x -- bindKO
 

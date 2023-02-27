@@ -7,7 +7,6 @@ import Control.Lens ( use, (.=), makeLenses )
 import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write )
 import qualified ParseSyntax as P ( FnDef )
 import qualified Data.Vector as V ( Vector )
-import qualified Data.IntMap as IM
 
 -- Convert QNames to VArgs so bindings can also be beta-reduced optimally
 -- Convert VArgs to Lin by inserting Dups
@@ -33,8 +32,8 @@ data TCEnvState s = TCEnvState {
  , _lvls          :: [BitSet] -- tvar let-nest scope (see Generalise.hs)
 
  -- Free vars => any VBruijns from outside the let-binding must be explicitly passed as new VBruijns
- , _freeLimit :: Int
- , _freeSubs  :: (Int , IM.IntMap (Int , Int)) -- number of hoisted freeVars & the bruijn translation + tvar
+ , _freeLimit   :: Int
+ , _letCaptures :: BitSet
 
  -- Type analysis
  , _recursives    :: BitSet
