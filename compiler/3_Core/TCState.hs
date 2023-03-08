@@ -34,6 +34,7 @@ data TCEnvState s = TCEnvState {
  -- Free vars => any VBruijns from outside the let-binding must be explicitly passed as new VBruijns
  , _freeLimit   :: Int
  , _letCaptures :: BitSet
+-- , _capturedTVars :: MV.MVector s Int
 
  -- Type analysis
  , _recursives    :: BitSet

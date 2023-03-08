@@ -5,7 +5,9 @@ free f = let g x = add f x in g
 free2 f1 f2 f3 = let g x = add f1 (add x f3) in g f2
 
 t1 x = let g y = let h z = add z (add x y) in h in g
+
 t2 x = let g y = { f1 = x , f2 = y } in 3
+
 t3 x = let g = { f1 = x , f2 = x } in 3
 
 

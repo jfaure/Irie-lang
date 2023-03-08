@@ -1,7 +1,7 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
 module Infer (judgeModule) where
 import Prim ( PrimInstr(MkPAp) )
-import BiUnify ( bisub )
+import BiUnify ( bisub , biSubTVarTVar)
 import qualified ParseSyntax as P
 import CoreSyn as C
 import CoreUtils
@@ -26,6 +26,7 @@ judgeModule pm importedModules modIName hNames exts = runST $ do
   letBinds' <- MV.new 32
   bis'      <- MV.new 0xFFF
   g         <- MV.new 0
+  ctv       <- MV.new 0
   let scopeparams = initParams importedModules emptyBitSet -- open required
       bindings    = scopeTT exts modIName scopeparams (pm ^. P.bindings)
   (modTT , st) <- runStateT (cata inferF bindings) TCEnvState
@@ -46,6 +47,7 @@ judgeModule pm importedModules modIName hNames exts = runST $ do
 
     , _freeLimit = 0
     , _letCaptures = 0
+--  , _capturedTVars = ctv
 
     , _recursives = 0
     , _nquants = 0
@@ -65,14 +67,21 @@ judgeBind letDepth bindINm = let
     bindStack %= ((letDepth , bindINm) :)
     [tvarIdx] <- freshBiSubs 1
     MV.write wip' bindINm (Right (Guard emptyBitSet tvarIdx))
-    svlc <- letCaptures <<.= 0
+    svlc  <- letCaptures <<.= 0
+--  svArgTVs <- use bruijnArgVars
+--  freshFreeTVs <- freshBiSubs (V.length svArgTVs)
+--  bruijnArgVars .= V.fromList freshFreeTVs
 
     expr <- cata inferF (P._fnRhs abs) --  traceM $ "inferring: " <> show bindINm
 
---  lc <- use letCaptures
-    lc <- letCaptures <%= (.|. svlc)
+    -- bisub free-vars
+--  argTVs <- bruijnArgVars <<.= svArgTVs
+--  V.zipWithM biSubTVarTVar (V.take (V.length svArgTVs) svArgTVs) (V.fromList freshFreeTVs)
+
+    lc <- letCaptures <<%= (.|. svlc)
     bindStack %= drop 1
 
+    -- generalise
     MV.read wip' bindINm >>= \case -- learn which binds had to be inferred as dependencies
       Right b@BindOK{} -> pure (bind2Expr b)
       Right (Guard ms tVar) -> do
@@ -213,6 +222,9 @@ inferF = let
 -- use lvls >>= \ls -> traceM (" <- leave: " <> show (bitSet2IntList <$> ls))
    lvls %= drop 1 -- leave Lvl (TODO .|. head into next lvl?)
 
+   freeLimit <<.= svFL
+   lc <- letCaptures <%= (`shiftR` (fl - svFL)) -- diff all let-captures
+
    -- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
    -- Why does this need to be above the let assignment here?!
    r <- fromMaybe (pure PoisonExpr) go -- in expr
@@ -220,8 +232,6 @@ inferF = let
      <&> map (BindUnused . show @P.FnDef ||| identity)
 
    letNest %= \x -> x - 1
-   freeLimit <<.= svFL
-   lc <- letCaptures <%= (`shiftR` (fl - svFL)) -- diff all let-captures
 -- traceShowM (bitSet2IntList lc)
 
    pure (r , V.zipWith (\fn e -> (LetMeta (fn ^. P.fnIName) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
@@ -241,29 +251,36 @@ inferF = let
     Core t ty -> Core (LetBinds lets t) ty
     x -> x
 
--- Tuples must also handle captures
-{-
-  P.TupleF ts -> -- (\go -> use letCaptures >>= \sv -> go <* (letCaptures .= sv))
---  $ traverse (\f -> (letCaptures .= 0) *> ((,) <$> f <*> use letCaptures)) ts <&> \exprs -> let
-    sequence ts <&> \exprs -> let
+-- TODO Tuples must also handle captures (inferBlock)
+  P.TupleF ts -> sequence ts <&> \exprs -> let
     ty  = THProduct (BSM.fromListWith mkFieldCol
       $ Prelude.imap (\nm t -> (qName2Key (mkQName 0 nm) , t)) (tyOfExpr <$> exprs))
     lets = Prelude.imap (\i (c) -> let lc = 0 in -- TODO
       (LetMeta (qName2Key (mkQName 0 i)) ("!" <> show i) (-1) , BindOK optInferred lc c))
       exprs
     in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
--}
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
 --  P.VBruijn b  -> use bruijnArgVars <&> \argTVars -> Core (VBruijn b) (tyVar $ argTVars V.! b)
     P.VBruijn b -> do
       argTVars <- use bruijnArgVars
-      let lvl = V.length argTVars
       fLimit <- use freeLimit
---    traceShowM (b , fLimit , lvl)
---    TODO: duplicate tvars here to handle lvl inference
-      when (b >= lvl - fLimit) (letCaptures %= (`setBit` (b + fLimit - lvl))) -- Bruijn idx at the let-binding
-      pure $ Core (VBruijn b) (tyVar $ argTVars V.! b)
+      let lvl = V.length argTVars
+          diff = lvl - fLimit
+          bruijnAtBind = b - diff -- Bruijn idx at the let-binding
+          normal = Core (VBruijn b) (tyVar $ argTVars V.! b)
+      if b >= diff
+      then do
+        set <- (`testBit` bruijnAtBind) <$> use letCaptures
+        letCaptures %= (`setBit` bruijnAtBind)
+        pure normal
+--      tvar <- use capturedTVars >>= \v -> if set then MV.read v bruijnAtBind
+--        else freshBiSubs 1 >>= \[t] -> -- traceShowM (b , lvl , fLimit , MV.length v , bruijnAtBind , t) *>
+--          (t <$ MV.write v bruijnAtBind t)
+--      pure $ Core (VBruijn b) (tyVar tvar)
+  ------let freeTVar = argTVars V.! b
+  ------pure $ Core (VBruijn b) (tyVar freeTVar)
+      else pure normal
     P.VQBind q   -> getQBind q
     P.VLetBind q -> judgeBind (modName q) (unQName q) <&> \case
       Core _t ty -> Core (Var (VLetBind q)) ty

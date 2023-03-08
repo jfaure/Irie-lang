@@ -62,7 +62,7 @@ data Term -- β-reducable (possibly to a type)
 -- Simplifier
  | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
  | LetSpec QName [ArgShape]
- | Forced Int Term -- already simplified term - must not re-β-reduce it since that would be incorrect (should re-lvl it?)
+ | Forced Int Int Term -- already simplified term - must not re-β-reduce it since that would be incorrect (should re-lvl it?)
 
 -- lensover needs idx for extracting field (??)
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr

@@ -1,5 +1,5 @@
 -- See presentation/TypeTheory for commentary
-module BiUnify (bisub) where
+module BiUnify (bisub , biSubTVarTVar) where
 import Prim (PrimInstr(..) , PrimType(..))
 import CoreSyn as C
 import Errors ( BiFail(..), TmpBiSubError(TmpBiSubError) )

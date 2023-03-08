@@ -2,17 +2,17 @@
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
-  * rm Expr / Core in favor of tuple
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
-  * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
+  * generalise all lambda types (unless inlineable?)
   * need to check that lambdas don't have recursive types? to avoid inf β reduction 
+  * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
   * cross-module mixfixes broken
   * rewrite μ-roll; esp. for multi-branch μs merge
   * trim bisubs at some point
+  * check if capture free-vars correctly on mutual bindings
 
 ### Linearity ; free variables (type must be known) ; β vs always-inline
-  freeVars: use bitset to indicate free-vars passed down, betaEnv can rename the vars
   ! β-opt: Specialise on paps iff dupd (transitive dups?) => extract any functions on the papped arguments
   ? assume linear
   * explicit freeVars within lets + dup nodes + type application; also half-generalised (escaped vars) types
@@ -85,6 +85,7 @@
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
+  * rm Expr / Core in favor of tuple
   * Completion based on types (Type -> Bind)
   * tabs v spaces
   * Need totality checker, else a Refl type may not terminate and thus proves nothing

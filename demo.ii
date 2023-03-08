@@ -90,26 +90,40 @@
 --import stream
 --import prelude
 
-import letCaptureTests
+--import letCaptureTests
 --import list
 
---import prelude
+--free f = let g x = add f x in g
+--free2 f1 f2 f3 = let g x = add f1 (add x f3) in g f2
+--t1 x = let g y = let h z = add z (add x y) in h in g
+--t2 x = let g y = { f1 = x , f2 = y } in 3
+--t3 x = let g = { f1 = x , f2 = x } in 3
+
+--letGen3 x = let y z = x z in y
+
 --lp17 f = let r x g = { a = g x , b = f x } in { u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
 --lp17 f = let r f x g = { a = g x , b = f x } in { u = r f 0 (add 1) , v = r f {t = 1} (\y => y.t)}
 
-{-
---t = (scanSum 2 Nil)
-scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
-splitAt n xs = if n <=? 0 then (@Nil , xs) else case xs of
--- KO , inlining '>' messes up free-Vars for the ( , ) LetBlock
---  @Cons x xs => splitAt (n - 1) xs > \(l , r) => ( @Cons x l , r )
--- OK
-  @Cons x xs => (\(l , r) => ( @Cons x l , r )) (splitAt (n - 1) xs)
-  @Nil =>  ( @Nil , @Nil )
+-- forces to (App + 2 B0), where B0 is y (3)
+--t = (\f x => f x) (\y => add 2 y) 3
 
-tt = (scanSum 1 Nil)
-ttt = splitAt 1 (scanSum 1 Nil)
+t6 = (\f x => f x) (\x y => add x y) 3 2
+
+{-
+import prelude
+scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
+splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
+-- KO , inlining '>' messes up free-Vars for the ( , ) LetBlock
+  @Cons x xs => splitAt (n - 1) xs > \R => ( { l = @Cons x R.l , r = R.r } )
+-- OK
+--  @Cons x xs => (\(l , r) => ( @Cons x l , r )) (splitAt (n - 1) xs)
+  @Nil =>  { l = @Nil , r = @Nil }
+
+--t0 = (scanSum 1 Nil)
+t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
+--t2 = splitAt 1 (scanSum 2 Nil)
 -}
+
 
 {-
 t = (\x => case (\(f , b) => @One f b) ((add x) , 3) of

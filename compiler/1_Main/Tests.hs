@@ -156,6 +156,8 @@ specTests = S.sydTest $ do
 -- fusions
 f = S.sydTest $ do
   testFuse
+captures = S.sydTest $ do
+  testCaptures
 
 s = S.sydTest $ do
   sequence_ fTests
