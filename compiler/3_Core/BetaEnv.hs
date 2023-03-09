@@ -12,17 +12,7 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Map as M
 import Data.List (unzip3)
 
--- ! Inlining must respect free-var names!
-
--- hacky equality test to check if a term simplified
---deriving instance Eq (TermF Int)
---deriving instance Eq VName
---instance Eq BiCast where (==)  = \a b -> True
---instance Eq LetMeta where (==) = \a b -> True
---instance Eq Bind where (==)    = \a b -> True
---instance Eq LensOp where (==)  = \a b -> True
-
--- TODO β-optimal; precomupte calculations involving free-vars
+-- TODO β-optimal; precomupte calculations involving env
 debug_fuse = True
 
 data FEnv s = FEnv
@@ -36,18 +26,11 @@ getBruijnAbs = \case
   BruijnAbsTyped n body _ _ -> Just (n , body)
   _ -> Nothing
 
---simplifiable = \case
---  VBruijn{} -> True
---  App (VBruijn{}) _ -> True
---  App (Var VLetBind{}) _ -> True
---  Var (VLetBind q)       -> True
---  _ -> False
-
 type Lvl = Int
-data Sub = TSub { sELen :: Int , sLvl :: Lvl , sArg :: Term } deriving Show
+data Sub = TSub Int Lvl Term deriving Show
 type Env = (V.Vector Sub , [Sub]) -- [(Int , Term)]) -- length of argEnv (needs to remain consistent across paps
 isEnvEmpty (subs , tArgs) = V.null subs
-type Seed = (Int , Env , Term)
+type Seed = (Lvl , Env , Int , Term)
 
 -- # abs
 --   +lvl -> inc subbed in vbruijns later
@@ -57,92 +40,102 @@ type Seed = (Int , Env , Term)
 --  ! Can't instantly simplify args to an App in case f contains more bruijnAbs. Also VBruijns may need relevelling
 --  TODO this may duplicate work if simplified twice at the same lvl; counting on dup nodes + β-optimality to fix this
 
+  -- simplifying a raw abs will produce bruijn arg subs
+  -- ?? Need to force but also may need to re-fuse in different β-env later
+  -- simplify then check trailingArgs only if necessary
+--f -> simpleTerm' lvl (argEnv , mempty) term >>= \g -> case getBruijnAbs g of
+--  Just (n , body) -> fuseApp n (Forced eLen lvl $ did_ body) trailingArgs
+--  _ -> pure $ AppF (Left g) (unSub <$> trailingArgs)
+
 mkBruijnArgSubs l n = V.generate n (\i -> TSub 0 {- doesn't matter -} l (VBruijnLevel (l - i - 1)))
 
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
-fuse (lvl , env@(argEnv , trailingArgs) , term) = let
+fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
  eLen = V.length argEnv
- unSub (TSub prevELen prevLvl arg) | prevLvl == lvl = Right (lvl , (V.drop (eLen - prevELen) argEnv , mempty) , arg)
+ unSub (TSub prevELen prevLvl arg) | prevLvl == lvl = Right (lvl , (argEnv , mempty) , prevELen , arg)
+ fuseApp :: Int -> Term -> [Sub] -> SimplifierEnv s (TermF (Either Term Seed))
+ fuseApp n body trailingArgs = let
+   (ourArgs , remArgs) = splitAt n trailingArgs
+   l = length ourArgs
+   in if -- TODO remArgs eLen will be off by n !
+     | l == n -> let nextEnv = V.reverse (V.fromList ourArgs) -- $ (\(tL , arg) -> TSub tL lvl arg) <$> ourArgs)
+       in fuse (lvl , (nextEnv <> argEnv , remArgs) , atLen + V.length nextEnv , body)
+     | l < n  -> fuseApp l (BruijnAbs (n - l) body) trailingArgs
+     | True -> error "impossible"
  in -- trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
- if not (null trailingArgs)
- then let
-  fuseApp n body trailingArgs = let
-    (ourArgs , remArgs) = splitAt n trailingArgs
-    l = length ourArgs
-    in if
-      | l == n -> let nextEnv = V.reverse (V.fromList ourArgs) -- $ (\(tL , arg) -> TSub tL lvl arg) <$> ourArgs)
-        in fuse (lvl , (nextEnv <> argEnv , remArgs) , body) -- TODO remArgs eLen will be off by n !
-      | l < n  -> fuseApp l (BruijnAbs (n - l) body) trailingArgs
-      | True -> error "impossible"
-  in case term of
+ case term of
+ -- if not (null trailingArgs)
 --Label l ars -> pure $ LabelF l (Right . (lvl , (argEnv , mempty) ,) <$> (ars <> map sArg trailingArgs))
   Label l ars -> pure $ LabelF l
-    $  (Right . (lvl , (argEnv , mempty) ,) <$> ars)
+    $  (Right . (lvl , (argEnv , mempty) , atLen ,) <$> ars)
     <> (unSub <$> trailingArgs)
-  f | Just (n , body) <- getBruijnAbs f -> fuseApp n body trailingArgs
 
-  -- simplifying a raw abs will produce bruijn arg subs
-  -- ?? Need to force but also may need to re-fuse in different β-env later
-  f -> simpleTerm' lvl (argEnv , mempty) term >>= \g -> case getBruijnAbs g of
-    Just (n , body) -> fuseApp n (Forced eLen lvl $ did_ body) trailingArgs
-    _ -> pure $ AppF (Left g) (unSub <$> trailingArgs)
+  abs | Just (n , body) <- getBruijnAbs abs -> if null trailingArgs
+    then case getBruijnAbs body of
+      Just (m , b2) -> fuse (lvl , env , atLen , BruijnAbs (m + n) b2)
+      _ -> pure $ BruijnAbsF n (Right (lvl + n , (mkBruijnArgSubs (lvl + n) n <> argEnv , mempty) , atLen + n , body))
+    else fuseApp n body trailingArgs
 
- else case term of
-  VBruijnLevel l -> pure $ VBruijnF (lvl - l - 1)
+  VBruijnLevel l -> pure $ let v = lvl - l - 1
+    in if null trailingArgs then VBruijnF v else AppF (Left (VBruijn v)) (unSub <$> trailingArgs)
 
-  VBruijn i -> if i >= eLen then error $ show (i , env) else
-    -- then env contains raw args to simplify, at the new lvl for any bruijns subbed in
-    -- This duplicates work if simplifying the same arg twice at the same lvl - need β-optimality
-    argEnv V.! i & \(TSub prevELen prevLvl argTerm) -> let --if lvl /= prevLvl then _ else let
-      newEnv = V.drop (eLen - prevELen) argEnv
-      in fuse (lvl , (newEnv , mempty) , argTerm)
+  -- env contains raw args to simplify, at the new lvl for any bruijns subbed in
+  -- This duplicates work if simplifying the same arg twice at the same lvl - need β-optimality
+  VBruijn j -> let i = j + eLen - atLen in if i >= eLen then error $ show (i , env) else
+    argEnv V.! i & \(TSub prevLen prevLvl argTerm) -> let --if lvl /= prevLvl then _ else let
+      -- ! argTerm and trailingArgs have different envs
+      newEnv = argEnv -- V.drop (eLen - prevELen) argEnv
+      in --d_ (i , argTerm , argEnv , trailingArgs) $
+        fuse (lvl , (newEnv , trailingArgs) , prevLen , argTerm)
 
-  abs | Just (n , body) <- getBruijnAbs abs -> case getBruijnAbs body of
-    Just (m , b2) -> fuse (lvl , env , BruijnAbs (m + n) b2)
-    _ -> pure $ BruijnAbsF n (Right (lvl + n , (mkBruijnArgSubs (lvl + n) n <> argEnv , mempty) , body))
+--  App (App g gs) args -> fuse (lvl , (argEnv , (TSub atLen lvl <$> gs <> args)) , atLen , g)
+--  TODO eLen here means this won't work through the bruijnEnv
+  App f args -> fuse (lvl , (argEnv , (TSub eLen lvl <$> args) <> trailingArgs) , eLen , f)
+--App f args -> fuse (lvl , (argEnv , (TSub atLen lvl <$> args) <> trailingArgs) , atLen , f)
 
---App (App g gs) args -> fuse (lvl , (argEnv , (gs <> args) , elen) , g)
-  App f args -> fuse (lvl , (argEnv , (TSub eLen lvl) <$> args) , f)
+  Var (VLetBind q) | lvl == 0 -> inlineLetBind q >>= \fn -> fuse (lvl , env , atLen , fn)
 
-  -- This will spoil free-var indexes, so may as well void the env anyway
-  Var (VLetBind q) | lvl == 0 -> inlineLetBind q >>= \fn -> fuse (lvl , mempty , fn)
-
-  CaseB scrut retT branches d -> simpleTerm' lvl env scrut >>= \case -- Need to pull out the seed immediately
+  CaseB scrut retT branches d -> simpleTerm' lvl env atLen scrut >>= \case -- Need to pull out the seed immediately
 -- case-label
     Label l params -> case branches BSM.!? qName2Key l <|> d of
-      Just body | null params -> fuse (lvl , env , body)
-      Just body -> fuse (lvl , env , App body (Forced eLen lvl <$> params)) -- params are already β-d at lvl
+      Just body | null params -> fuse (lvl , env , atLen , body)
+      Just body -> fuse (lvl , env , atLen , App body (Forced atLen lvl <$> params)) -- params are already β-d at lvl
       Nothing -> error $ "panic: no label: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
 -- case-case: push/copy outer case into each branch, then the inner case fuses with outer case output labels
 -- Everything is forced already except branches and d
     CaseB innerScrut ty2 innerBranches innerDefault -> let
-      pushCase innerBody = CaseB (Forced eLen lvl innerBody) retT branches d
+      pushCase innerBody = CaseB (Forced atLen lvl innerBody) retT branches d
       optBranches = pushCase <$> innerBranches
       optD        = pushCase <$> innerDefault
-      in fuse (lvl , env , CaseB (Forced eLen lvl innerScrut) ty2 optBranches optD)
-    opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches) (Right . (lvl,env,) <$> d)
+      in fuse (lvl , env , atLen , CaseB (Forced atLen lvl innerScrut) ty2 optBranches optD)
+    opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,atLen,) <$> branches)
+                                                         (Right . (lvl,env,atLen,) <$> d)
 
   -- TODO try before and after forcing the scrut
-  TTLens scrut [f] LensGet -> simpleTerm' lvl env scrut >>= \case
-    LetBlock l -> case V.find ((==f) . iName . fst) l of
---    Just x -> pure $ Right . (lvl,env,) <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
-      Just x -> pure $ Left <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
-    opaque -> pure $ TTLensF (Left opaque) [f] LensGet
+  -- TODO trailingArgs
+--TTLens scrut [f] LensGet -> simpleTerm' lvl env scrut >>= \case
+--  LetBlock l -> case V.find ((==f) . iName . fst) l of
+--    Just x -> pure $ Left <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
+--  opaque -> pure $ TTLensF (Left opaque) [f] LensGet
 
-  LetBlock lets -> inferBlock lets $ \_ -> LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
+  LetBlock lets -> unless (null trailingArgs) (error "") *>
+    inferBlock lets (\_ -> LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,)
+      <$> simpleBind lvl (argEnv , mempty) atLen bind)
   LetBinds lets inE -> inferBlock lets $ \v -> do
-    newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl env bind
-    newInE  <- simpleTerm' lvl env inE
+    newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl (argEnv , mempty) atLen bind
+    newInE  <- simpleTerm' lvl env atLen inE
     pure $ if lvl == 0 then Left <$> project newInE else LetBindsF newLets (Left newInE)
 
-  -- This may still need further Simplification if the env changed..
+  -- used for args that are pre-β-d by case-fusion
+--Forced{} -> _
   Forced prevELen prevLvl t -> if
-    | prevELen /= eLen -> if prevLvl /= lvl && False then error $ show (prevLvl , lvl)
-       else fuse (lvl , (V.drop (eLen - prevELen) argEnv , mempty) , t)
-    | prevLvl == lvl || prevLvl == 0 -> pure $ Left <$> project t
+    | prevLvl == lvl || prevLvl == 0 -> when (prevELen /= atLen) (error "") *> pure (
+      if null trailingArgs then Left <$> project t else AppF (Left t) (unSub <$> trailingArgs))
 --  | prevLvl < lvl -> trace (show prevLvl <> " < " <> show lvl :: Text)
 --      (fuse (lvl , (did_ $ mkBruijnArgSubs lvl prevLvl , mempty , 0) , t))
-  x -> pure $ Right . (lvl , env ,) <$> project x
+  x -> pure $ if null trailingArgs
+    then Right . (lvl , env , atLen ,) <$> project x
+    else AppF (Right (lvl , (argEnv , mempty) , atLen , x)) (unSub <$> trailingArgs)
 
 inferBlock lets go = do
   nest <- letNest <<%= (1+)
@@ -151,17 +144,17 @@ inferBlock lets go = do
 
 -- TODO how to avoid duplicate simplifications?
 -- ie. iff no VBruijns to solve: isEnvEmpty
-simpleBind lvl env b = case b of
+simpleBind lvl env eLen b = case b of
   BindOK (OptBind optLvl specs) free (Core t ty) -> if isEnvEmpty env && optLvl /= 0 then pure b else do
-    newT <- simpleTerm' lvl env t
+    newT <- simpleTerm' lvl env eLen t
     pure (BindOK (OptBind ({-optLvl +-} 1) specs) free (Core newT ty))
   x -> error $ show x
 
-simpleTerm' :: Int -> Env -> Term -> SimplifierEnv s Term
-simpleTerm' lvl env t = hypoM primF fuse (lvl , env , t)
+simpleTerm' :: Int -> Env -> Int -> Term -> SimplifierEnv s Term
+simpleTerm' lvl env eLen t = hypoM primF fuse (lvl , env , eLen , t)
 simpleTerm t = do
   letBinds' <- MV.new 64 -- max let-depth
-  simpleTerm' 0 (mempty , mempty) t `evalStateT` FEnv letBinds' 0
+  simpleTerm' 0 (mempty , mempty) 0 t `evalStateT` FEnv letBinds' 0
 
 simpleExpr :: Expr -> ST s Expr
 simpleExpr (Core t ty) = simpleTerm t <&> \t -> Core t ty
@@ -202,6 +195,7 @@ destructureArgs args = let
   in (bruijnN , reverse $ concat unstructuredArgsL , concat repackedArgsL , argShapes)
   -- Need to reverse unstructuredArgs since our deBruijns are assigned in reverse order
 
+{-
 specApp :: forall s. Lvl -> Env -> QName -> [Term] -> SimplifierEnv s (TermF (Either Term Seed))
 specApp lvl env q args = let
   nest = modName q ; bindNm  = unQName q
@@ -236,3 +230,4 @@ specApp lvl env q args = let
       let fn = if lvl == 0 then specFn else recGuard
       if null unstructuredArgs then pure $ Left <$> project fn else fuse (lvl , env , App fn unstructuredArgs)
   _ -> pure noInline
+-}
