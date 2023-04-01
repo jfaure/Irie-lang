@@ -22,7 +22,11 @@
     let
       myOverlay = pkgs.lib.composeManyExtensions [
 #       (import ./overlay.nix { inherit pkgs; })
-        (final: prev: { irie = final.callCabal2nix "irie" ./. { }; })
+        (final: prev: {
+          irie = final.callCabal2nix "irie" ./. { };
+          fresnel = dontCheck (final.callHackage "fresnel" "0.0.0.1" { });
+#         fused-effects = final.callHackage "fused-effects" "1.1.2.1" { dontCheck = ["fused-effects"]; };
+          })
       ];
       legacyPackages = horizon-platform.legacyPackages.${system}.extend myOverlay;
     in {
