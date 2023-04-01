@@ -30,7 +30,7 @@ t9  = (\a b => (((\x y => @A (@B a x) (@C b y)) 3) 2)) 1 0
 t10 = (\(@stream f b) => f b) (@stream (add 2) 3)
 t11 x = (\a f => f a) x (\y => @Add x y)
 t12 = (\f x y => f x y) add 3 2
-t13 = (\f x => f x) (\x y => add x y) 3 2
+--t13 = (\f x => f x) (\x y => add x y) 3 2
 
 -- ycomb bruijn substitution?
 --ycomb f = (\x => f (x x)) (\x => f (x x))

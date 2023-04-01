@@ -12,7 +12,6 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Map as M
 import Data.List (unzip3)
 
--- TODO β-optimal; precomupte calculations involving env
 debug_fuse = True
 
 data FEnv s = FEnv
@@ -32,6 +31,7 @@ type Env = (V.Vector Sub , [Sub]) -- [(Int , Term)]) -- length of argEnv (needs 
 isEnvEmpty (subs , tArgs) = V.null subs
 type Seed = (Lvl , Env , Int , Term)
 
+-- TODO β-optimal; precomupte calculations involving env
 -- # abs
 --   +lvl -> inc subbed in vbruijns later
 -- # app abs -> setup β-env
@@ -47,22 +47,25 @@ type Seed = (Lvl , Env , Int , Term)
 --  Just (n , body) -> fuseApp n (Forced eLen lvl $ did_ body) trailingArgs
 --  _ -> pure $ AppF (Left g) (unSub <$> trailingArgs)
 
-mkBruijnArgSubs l n = V.generate n (\i -> TSub 0 {- doesn't matter -} l (VBruijnLevel (l - i - 1)))
+mkBruijnArgSubs l n = V.generate n (\i -> TSub 5000 {- doesn't matter -} l (VBruijnLevel (l - i - 1)))
 
+-- ! current term and trailingArgs have different envs
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
 fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
  eLen = V.length argEnv
  unSub (TSub prevELen prevLvl arg) | prevLvl == lvl = Right (lvl , (argEnv , mempty) , prevELen , arg)
- fuseApp :: Int -> Term -> [Sub] -> SimplifierEnv s (TermF (Either Term Seed))
- fuseApp n body trailingArgs = let
+ fuseApp :: Int -> Term -> [Sub] -> Int -> SimplifierEnv s (TermF (Either Term Seed))
+ fuseApp n body trailingArgs atLen = let
    (ourArgs , remArgs) = splitAt n trailingArgs
    l = length ourArgs
    in if -- TODO remArgs eLen will be off by n !
-     | l == n -> let nextEnv = V.reverse (V.fromList ourArgs) -- $ (\(tL , arg) -> TSub tL lvl arg) <$> ourArgs)
+     | l == n -> let nextEnv = V.reverse (V.fromList ourArgs) <&> \(TSub _ prevLvl arg) -> TSub (atLen + l) prevLvl arg
        in fuse (lvl , (nextEnv <> argEnv , remArgs) , atLen + V.length nextEnv , body)
-     | l < n  -> fuseApp l (BruijnAbs (n - l) body) trailingArgs
+     | l < n  -> fuseApp l (BruijnAbs (n - l) body) trailingArgs atLen
      | True -> error "impossible"
- in -- trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
+ in trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
+ if eLen > 15 then _ else
+-- d_ (eLen , atLen) $
  case term of
  -- if not (null trailingArgs)
 --Label l ars -> pure $ LabelF l (Right . (lvl , (argEnv , mempty) ,) <$> (ars <> map sArg trailingArgs))
@@ -74,7 +77,7 @@ fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
     then case getBruijnAbs body of
       Just (m , b2) -> fuse (lvl , env , atLen , BruijnAbs (m + n) b2)
       _ -> pure $ BruijnAbsF n (Right (lvl + n , (mkBruijnArgSubs (lvl + n) n <> argEnv , mempty) , atLen + n , body))
-    else fuseApp n body trailingArgs
+    else fuseApp n body trailingArgs atLen
 
   VBruijnLevel l -> pure $ let v = lvl - l - 1
     in if null trailingArgs then VBruijnF v else AppF (Left (VBruijn v)) (unSub <$> trailingArgs)
@@ -83,15 +86,12 @@ fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
   -- This duplicates work if simplifying the same arg twice at the same lvl - need β-optimality
   VBruijn j -> let i = j + eLen - atLen in if i >= eLen then error $ show (i , env) else
     argEnv V.! i & \(TSub prevLen prevLvl argTerm) -> let --if lvl /= prevLvl then _ else let
-      -- ! argTerm and trailingArgs have different envs
-      newEnv = argEnv -- V.drop (eLen - prevELen) argEnv
       in --d_ (i , argTerm , argEnv , trailingArgs) $
-        fuse (lvl , (newEnv , trailingArgs) , prevLen , argTerm)
+        fuse (lvl , (argEnv , trailingArgs) , prevLen , argTerm)
 
 --  App (App g gs) args -> fuse (lvl , (argEnv , (TSub atLen lvl <$> gs <> args)) , atLen , g)
---  TODO eLen here means this won't work through the bruijnEnv
-  App f args -> fuse (lvl , (argEnv , (TSub eLen lvl <$> args) <> trailingArgs) , eLen , f)
---App f args -> fuse (lvl , (argEnv , (TSub atLen lvl <$> args) <> trailingArgs) , atLen , f)
+--  TODO Why does this use eLen here, should be atLen
+  App f args -> fuse (lvl , (argEnv , (TSub atLen lvl <$> args) <> trailingArgs) , atLen , f)
 
   Var (VLetBind q) | lvl == 0 -> inlineLetBind q >>= \fn -> fuse (lvl , env , atLen , fn)
 

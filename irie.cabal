@@ -144,7 +144,7 @@ executable irie-exe
     , raw-strings-qq
     , sydtest
     , temporary
-    , base-unicode-symbols
+--  , base-unicode-symbols
     , recursion-schemes
     , comonad
     , free
@@ -153,13 +153,13 @@ executable irie-exe
     , adjunctions
     , kan-extensions
     , profunctors
+--  , profunctor-optics
 --  , harpy
 --  , lawz
 --  , rings
 --  , magmas
 --  , coapplicative
 --  , connections
---  , profunctor-optics
   default-language: Haskell2010
 
 --test-suite irie-test

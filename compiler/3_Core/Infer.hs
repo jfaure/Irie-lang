@@ -63,9 +63,8 @@ judgeBind letDepth bindINm = let
 --appFree free t = if null free then t else t & \(Core t ty) -> Core (App t (VBruijn <$> free)) ty
 
   inferParsed :: MV.MVector s (Either P.FnDef Bind) -> P.FnDef -> TCEnv s Expr
-  inferParsed wip' abs = do
+  inferParsed wip' abs = freshBiSubs 1 >>= \[tvarIdx] -> do -- [tvarIdx] <- freshBiSubs 1
     bindStack %= ((letDepth , bindINm) :)
-    [tvarIdx] <- freshBiSubs 1
     MV.write wip' bindINm (Right (Guard emptyBitSet tvarIdx))
     svlc  <- letCaptures <<.= 0
 --  svArgTVs <- use bruijnArgVars
@@ -385,7 +384,8 @@ inferF = let
             Nothing          -> THSumTy scrutSum
             Just (_ , defTy) -> THSumOpen scrutSum defTy]
           matchTy = TyGround (mkTyArrow [scrutTy] retTy)
-      (BiEQ , retT) <- biUnifyApp matchTy [gotScrutTy]
+      (b , retT) <- biUnifyApp matchTy [gotScrutTy]
+      case b of { BiEQ -> pure () ; _ -> error "expected bieq" }
       pure $ Core (CaseB scrut retT (BSM.fromList (zip labels alts)) (fst <$> def)) retT
     x -> error $ show x
 
