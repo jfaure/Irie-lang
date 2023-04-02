@@ -26,16 +26,23 @@ getBruijnAbs = \case
   _ -> Nothing
 
 type Lvl = Int
-data Sub = TSub Int Lvl Term deriving Show
+data Sub = TSub Int Lvl Term deriving Show -- eLen lvl term
 type Env = (V.Vector Sub , [Sub]) -- [(Int , Term)]) -- length of argEnv (needs to remain consistent across paps
 isEnvEmpty (subs , tArgs) = V.null subs
-type Seed = (Lvl , Env , Int , Term)
+type Seed = (Lvl , Env , Int , Term) -- expected eLen may be < envlen since tsubs eLen can increase
 
--- TODO β-optimal; precomupte calculations involving env
+-- TODO β-optimal; precomupte calculations involving env ; trim env?
 -- # abs
 --   +lvl -> inc subbed in vbruijns later
 -- # app abs -> setup β-env
 -- # insert fn -> possibly re-app
+
+-- !! VBruijn sub-chain
+-- # sub-ABS
+--   * body VBruijns must skip over already apped trailingArgs (ie. == eLen)
+--   * stacked VBruijn subs may refer again to larger env
+-- # subVBruijn (env contains unsubstituted vbruijns)
+--   = keep subbing and use sub context info
 
 --  ! Can't instantly simplify args to an App in case f contains more bruijnAbs. Also VBruijns may need relevelling
 --  TODO this may duplicate work if simplified twice at the same lvl; counting on dup nodes + β-optimality to fix this
@@ -54,30 +61,33 @@ fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
 fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
  eLen = V.length argEnv
  unSub (TSub prevELen prevLvl arg) | prevLvl == lvl = Right (lvl , (argEnv , mempty) , prevELen , arg)
- fuseApp :: Int -> Term -> [Sub] -> Int -> SimplifierEnv s (TermF (Either Term Seed))
- fuseApp n body trailingArgs atLen = let
-   (ourArgs , remArgs) = splitAt n trailingArgs
-   l = length ourArgs
-   in if -- TODO remArgs eLen will be off by n !
-     | l == n -> let nextEnv = V.reverse (V.fromList ourArgs) <&> \(TSub _ prevLvl arg) -> TSub (atLen + l) prevLvl arg
-       in fuse (lvl , (nextEnv <> argEnv , remArgs) , atLen + V.length nextEnv , body)
-     | l < n  -> fuseApp l (BruijnAbs (n - l) body) trailingArgs atLen
-     | True -> error "impossible"
- in trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
- if eLen > 15 then _ else
--- d_ (eLen , atLen) $
+ in --trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
  case term of
- -- if not (null trailingArgs)
---Label l ars -> pure $ LabelF l (Right . (lvl , (argEnv , mempty) ,) <$> (ars <> map sArg trailingArgs))
-  Label l ars -> pure $ LabelF l
-    $  (Right . (lvl , (argEnv , mempty) , atLen ,) <$> ars)
-    <> (unSub <$> trailingArgs)
+  App f args -> fuse (lvl , (argEnv , (TSub atLen lvl <$> args) <> trailingArgs) , atLen , f)
 
   abs | Just (n , body) <- getBruijnAbs abs -> if null trailingArgs
-    then case getBruijnAbs body of
+    then case getBruijnAbs body of -- not β-reducing => spawn bruijn arg subs
       Just (m , b2) -> fuse (lvl , env , atLen , BruijnAbs (m + n) b2)
       _ -> pure $ BruijnAbsF n (Right (lvl + n , (mkBruijnArgSubs (lvl + n) n <> argEnv , mempty) , atLen + n , body))
-    else fuseApp n body trailingArgs atLen
+    else claimArgs n body trailingArgs atLen where
+      claimArgs :: Int -> Term -> [Sub] -> Int -> SimplifierEnv s (TermF (Either Term Seed))
+      claimArgs n body trailingArgs atLen = let
+         -- ! if body β-reduces into an abs then that abs skips these claimed args
+        (ourArgs , remArgs) = splitAt n trailingArgs
+        l = length ourArgs
+        --overAtLen f (TSub al pl arg) = TSub (f al) pl arg
+        -- patchAbs: captured freevar vs new bruijns => iff arg is a bruijnAbs then atLen skips claimedArgs
+        -- captured = \x => ((\b => b) x)             -- do nothing, x is passed down
+        -- subAbs   = (\f => f) (\x y => add y 2) 3   -- (\x y => _) needs to skip 'f' in env
+        patchAbs l tsub@(TSub al pl arg) = case getBruijnAbs arg of
+          -- TODO is this robust accross multiple functions?
+          Just{} -> TSub (al + length remArgs) pl arg -- + length of remArgs instead of + length of ourArgs
+          _      -> tsub
+        in case compare l n of
+          EQ -> let nextEnv = V.reverse (V.fromList ourArgs) <&> patchAbs l
+            in fuse (lvl , (nextEnv <> argEnv , remArgs) , atLen + V.length nextEnv , body)
+          LT -> claimArgs l (BruijnAbs (n - l) body) trailingArgs atLen
+          GT -> error "impossible"
 
   VBruijnLevel l -> pure $ let v = lvl - l - 1
     in if null trailingArgs then VBruijnF v else AppF (Left (VBruijn v)) (unSub <$> trailingArgs)
@@ -89,11 +99,11 @@ fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
       in --d_ (i , argTerm , argEnv , trailingArgs) $
         fuse (lvl , (argEnv , trailingArgs) , prevLen , argTerm)
 
---  App (App g gs) args -> fuse (lvl , (argEnv , (TSub atLen lvl <$> gs <> args)) , atLen , g)
---  TODO Why does this use eLen here, should be atLen
-  App f args -> fuse (lvl , (argEnv , (TSub atLen lvl <$> args) <> trailingArgs) , atLen , f)
-
   Var (VLetBind q) | lvl == 0 -> inlineLetBind q >>= \fn -> fuse (lvl , env , atLen , fn)
+
+  Label l ars -> pure $ LabelF l
+    $  (Right . (lvl , (argEnv , mempty) , atLen ,) <$> ars)
+    <> (unSub <$> trailingArgs)
 
   CaseB scrut retT branches d -> simpleTerm' lvl env atLen scrut >>= \case -- Need to pull out the seed immediately
 -- case-label

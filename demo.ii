@@ -100,8 +100,10 @@
 
 --t6 = (\f => f) (\x y => add y 2) 3
 
-t11 x = (\a f => f a) x (\y => @Add x y)
---t13 = (\f x => f x) (\x y => add x y) 3 2
+import testBruijns
+
+t11 x = (\a f => f a) x (\y => @Add x y) -- loops
+--t13 = (\f x => f x) (\z y => add z y) 3 2 -- should be 5
 
 {-
 import prelude
