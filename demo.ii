@@ -95,15 +95,8 @@
 
 --letGen3 x = let y z = x z in y
 
---t14 = (\f x => f x) (\fn x y z => x (y z)) 2 (add 2) (add 3) 1
---t = (\f x => f x) (\x y => x y) (add 3)
-
---t6 = (\f => f) (\x y => add y 2) 3
-
-import testBruijns
-
-t11 x = (\a f => f a) x (\y => @Add x y) -- loops
---t13 = (\f x => f x) (\z y => add z y) 3 2 -- should be 5
+--import testBruijns
+t11 x = (\a f => f a) x (\y => @Add x y)
 
 {-
 import prelude

@@ -7,7 +7,6 @@ import CoreSyn (ExternVar(..)) -- TODO rm
 import Mixfix (solveMixfixes)
 import Externs ( readParseExtern, Externs )
 import Errors
-import Data.Distributive
 import Data.Functor.Foldable
 import Control.Lens
 import PrettyCore
@@ -29,7 +28,6 @@ import qualified Data.Vector.Mutable as MV
 
 type OpenModules = BitSet
 type RequiredModules = BitSet
-type ScopeAcc = Params -> TT
 data Params = Params
   { _open        :: OpenModules
   , _req         :: RequiredModules

@@ -1,7 +1,7 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
 module Infer (judgeModule) where
 import Prim ( PrimInstr(MkPAp) )
-import BiUnify ( bisub , biSubTVarTVar)
+import BiUnify ( bisub )-- , biSubTVarTVar)
 import qualified ParseSyntax as P
 import CoreSyn as C
 import CoreUtils
@@ -26,7 +26,7 @@ judgeModule pm importedModules modIName hNames exts = runST $ do
   letBinds' <- MV.new 32
   bis'      <- MV.new 0xFFF
   g         <- MV.new 0
-  ctv       <- MV.new 0
+--ctv       <- MV.new 0
   let scopeparams = initParams importedModules emptyBitSet -- open required
       bindings    = scopeTT exts modIName scopeparams (pm ^. P.bindings)
   (modTT , st) <- runStateT (cata inferF bindings) TCEnvState
@@ -221,8 +221,8 @@ inferF = let
 -- use lvls >>= \ls -> traceM (" <- leave: " <> show (bitSet2IntList <$> ls))
    lvls %= drop 1 -- leave Lvl (TODO .|. head into next lvl?)
 
-   freeLimit <<.= svFL
-   lc <- letCaptures <%= (`shiftR` (fl - svFL)) -- diff all let-captures
+   freeLimit .= svFL
+   _lc <- letCaptures <%= (`shiftR` (fl - svFL)) -- diff all let-captures
 
    -- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
    -- Why does this need to be above the let assignment here?!
@@ -270,7 +270,7 @@ inferF = let
           normal = Core (VBruijn b) (tyVar $ argTVars V.! b)
       if b >= diff
       then do
-        set <- (`testBit` bruijnAtBind) <$> use letCaptures
+        _set <- (`testBit` bruijnAtBind) <$> use letCaptures
         letCaptures %= (`setBit` bruijnAtBind)
         pure normal
 --      tvar <- use capturedTVars >>= \v -> if set then MV.read v bruijnAtBind

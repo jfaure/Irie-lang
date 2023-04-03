@@ -86,13 +86,13 @@ buildCase = let
 
 patternsToCase :: Scrut -> Int -> [(CasePattern , Rhs)] -> (Rhs , BruijnSubs)
 patternsToCase scrut bruijnAcc patBranchPairs = let
-  r :: ([Rhs] , [BruijnSubs])
-  r@(matches , bruijnSubs) = unzip $ patBranchPairs <&> \(pat , rhs) -> buildCase pat scrut bruijnAcc rhs Nothing
+  (matches , bruijnSubs) :: ([Rhs] , [BruijnSubs])
+    = unzip $ patBranchPairs <&> \(pat , rhs) -> buildCase pat scrut bruijnAcc rhs Nothing
 
   mergeCasesF :: NonEmptyF TT TT -> TT
   mergeCasesF (NonEmptyF r Nothing) = r
   mergeCasesF (NonEmptyF case1 (Just case2)) = case (case1 , case2) of
-    (MatchB s1 b1 ko1 , MatchB s2 b2 ko2) {- | s1 == s2-}
+    (MatchB s1 b1 _ko1 , MatchB _s2 b2 ko2) {- | s1 == s2-}
       -> let mergeBranches a b = DesugarPoison $ "redundant pattern match: " <> show a <> show b
          in MatchB s1 (BSM.unionWith mergeBranches b1 b2) ko2 -- second one wins
     _ -> DesugarPoison $ "cannot merge cases " <> show scrut <> " of "<> show case1 <> " <=> " <> show case2

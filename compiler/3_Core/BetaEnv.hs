@@ -9,7 +9,6 @@ import MUnrolls
 import Control.Lens
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import qualified Data.Map as M
 import Data.List (unzip3)
 
 debug_fuse = True
@@ -28,7 +27,7 @@ getBruijnAbs = \case
 type Lvl = Int
 data Sub = TSub Int Lvl Term deriving Show -- eLen lvl term
 type Env = (V.Vector Sub , [Sub]) -- [(Int , Term)]) -- length of argEnv (needs to remain consistent across paps
-isEnvEmpty (subs , tArgs) = V.null subs
+isEnvEmpty (subs , _tArgs) = V.null subs
 type Seed = (Lvl , Env , Int , Term) -- expected eLen may be < envlen since tsubs eLen can increase
 
 -- TODO β-optimal; precomupte calculations involving env ; trim env?
@@ -43,6 +42,8 @@ type Seed = (Lvl , Env , Int , Term) -- expected eLen may be < envlen since tsub
 --   * stacked VBruijn subs may refer again to larger env
 -- # subVBruijn (env contains unsubstituted vbruijns)
 --   = keep subbing and use sub context info
+--
+-- ?? env = remArgs .. ars .. env (free-vars are valid at env, captured vars are valid at al + length remArgs)
 
 --  ! Can't instantly simplify args to an App in case f contains more bruijnAbs. Also VBruijns may need relevelling
 --  TODO this may duplicate work if simplified twice at the same lvl; counting on dup nodes + β-optimality to fix this
@@ -61,6 +62,7 @@ fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
 fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
  eLen = V.length argEnv
  unSub (TSub prevELen prevLvl arg) | prevLvl == lvl = Right (lvl , (argEnv , mempty) , prevELen , arg)
+ unSub _ = _
  in --trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
  case term of
   App f args -> fuse (lvl , (argEnv , (TSub atLen lvl <$> args) <> trailingArgs) , atLen , f)
@@ -79,13 +81,18 @@ fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
         -- patchAbs: captured freevar vs new bruijns => iff arg is a bruijnAbs then atLen skips claimedArgs
         -- captured = \x => ((\b => b) x)             -- do nothing, x is passed down
         -- subAbs   = (\f => f) (\x y => add y 2) 3   -- (\x y => _) needs to skip 'f' in env
-        patchAbs l tsub@(TSub al pl arg) = case getBruijnAbs arg of
-          -- TODO is this robust accross multiple functions?
-          Just{} -> TSub (al + length remArgs) pl arg -- + length of remArgs instead of + length of ourArgs
-          _      -> tsub
+--      patchAbs tsub@(TSub al pl arg) = case getBruijnAbs arg of
+--        Just{} -> TSub (al + length remArgs) pl arg -- + length of remArgs instead of + length of ourArgs
+--        -- TODO: remArgs .. ars .. env (free-vars are valid at env, captured vars are valid at al + length remArgs)
+--        _      -> tsub -- free-vars
         in case compare l n of
-          EQ -> let nextEnv = V.reverse (V.fromList ourArgs) <&> patchAbs l
-            in fuse (lvl , (nextEnv <> argEnv , remArgs) , atLen + V.length nextEnv , body)
+          EQ -> let nextEnv = V.reverse (V.fromList ourArgs) -- <&> patchAbs l
+            -- ! TODO abs args are valid at eLen , but free-vars are valid at atLen
+            -- newArgs .. _atLen@freeVars (can't delete '..' because chainSubs may need the middle)
+            -- Can't trim the env since argSubs may refer to larger env
+            in fuse (lvl , (nextEnv <> argEnv , remArgs) , {-atLen-}eLen + V.length nextEnv , body)
+--          in fuse (lvl , (nextEnv <> V.drop (eLen - atLen) argEnv , remArgs) , (eLen - atLen) + V.length nextEnv , body)
+
           LT -> claimArgs l (BruijnAbs (n - l) body) trailingArgs atLen
           GT -> error "impossible"
 
@@ -94,8 +101,9 @@ fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
 
   -- env contains raw args to simplify, at the new lvl for any bruijns subbed in
   -- This duplicates work if simplifying the same arg twice at the same lvl - need β-optimality
-  VBruijn j -> let i = j + eLen - atLen in if i >= eLen then error $ show (i , env) else
-    argEnv V.! i & \(TSub prevLen prevLvl argTerm) -> let --if lvl /= prevLvl then _ else let
+  VBruijn j -> let i = j + eLen - atLen
+    in if i >= eLen then error $ show (i , eLen , env) else
+    argEnv V.! i & \(TSub prevLen _prevLvl argTerm) -> let --if lvl /= prevLvl then _ else let
       in --d_ (i , argTerm , argEnv , trailingArgs) $
         fuse (lvl , (argEnv , trailingArgs) , prevLen , argTerm)
 
@@ -131,7 +139,7 @@ fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
   LetBlock lets -> unless (null trailingArgs) (error "") *>
     inferBlock lets (\_ -> LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,)
       <$> simpleBind lvl (argEnv , mempty) atLen bind)
-  LetBinds lets inE -> inferBlock lets $ \v -> do
+  LetBinds lets inE -> inferBlock lets $ \_ -> do
     newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl (argEnv , mempty) atLen bind
     newInE  <- simpleTerm' lvl env atLen inE
     pure $ if lvl == 0 then Left <$> project newInE else LetBindsF newLets (Left newInE)
@@ -143,6 +151,7 @@ fuse (lvl , env@(argEnv , trailingArgs) , atLen , term) = let
       if null trailingArgs then Left <$> project t else AppF (Left t) (unSub <$> trailingArgs))
 --  | prevLvl < lvl -> trace (show prevLvl <> " < " <> show lvl :: Text)
 --      (fuse (lvl , (did_ $ mkBruijnArgSubs lvl prevLvl , mempty , 0) , t))
+    | True -> error "todo"
   x -> pure $ if null trailingArgs
     then Right . (lvl , env , atLen ,) <$> project x
     else AppF (Right (lvl , (argEnv , mempty) , atLen , x)) (unSub <$> trailingArgs)
