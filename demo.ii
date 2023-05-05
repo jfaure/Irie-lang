@@ -95,12 +95,15 @@
 
 --letGen3 x = let y z = x z in y
 
+--test-case-case x = case case x of { @F x y => @G x y } of
+--  @G x y => @Add x y
+
 --import testBruijns
-t11 x = (\a f => f a) x (\y => @Add x y)
+--t11 x = (\a f => f a) x (\y => @Add x y)
 
 {-
 import prelude
-scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
+--scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
 splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
 -- KO , inlining '>' messes up free-Vars for the ( , ) LetBlock
   @Cons x xs => splitAt (n - 1) xs > \R => ( { l = @Cons x R.l , r = R.r } )
@@ -113,8 +116,8 @@ t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
 --t2 = splitAt 1 (scanSum 2 Nil)
 -}
 
+import prelude
 
-{-
 t = (\x => case (\(f , b) => @One f b) ((add x) , 3) of
   @One f b => @Two (f b)
   ) 0
@@ -156,7 +159,11 @@ go c z next s = case next s of
 foldr c z (@stream next seed) =
   go c z next seed
 
-t   = foldr add 0 (enumFromTo 0 1)
-tt  = foldr add 0 (Sappend (enumFromTo 0 3) (enumFromTo 4 5))
-ttt = foldr add 0 (SconcatMap (enumFromTo 0) (enumFromTo 0 0))
--}
+t   = foldr add 0 (enumFromTo 0 10)
+tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
+ttt = foldr add 0 (SconcatMap (enumFromTo 0) (enumFromTo 0 2))
+
+--t  = Sappend (@stream (\x => x) @Done) (@stream (\x => x) @Done)
+--tt  = foldr add 0 (Sappend (@stream (\x => x) @Done) (@stream (\x => x) @Done))
+
+f = (case @F 3 of { @F x => \y => y x }) (add 1)

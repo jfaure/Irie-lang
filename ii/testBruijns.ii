@@ -33,7 +33,8 @@ t12 = (\f x y => f x y) add 3 2
 t13 = (\f x => f x) (\x y => add x y) 3 2
 t14 = (\f x y => f (x y)) (\z => add z) (\a => mul a 2) 3 2
 t15 = (\f x => f x) (\fn x y z => x (y z)) 2 (add 2) (add 3) 1 -- 6
-t = (\f x => f x) (\x y => x y) (add 3)
+t16 = (\f x => f x) (\x y => x y) (add 3)
+t17 = (case @F 3 of { @F x => \y => y x }) (add 1)
 
 -- ycomb bruijn substitution?
 --ycomb f = (\x => f (x x)) (\x => f (x x))
@@ -45,4 +46,10 @@ t = (\f x => f x) (\x y => x y) (add 3)
 --t2 x = let g y = { f1 = x , f2 = y } in 3
 --t3 x = let g = { f1 = x , f2 = x } in 3
 
-
+{-
+import prelude
+ff n xs = if n <=? 0 then 5 else case xs of
+  @Cons x xs => ff (n - 1) xs
+  @Nil => 0
+t1 = ff 1 (Cons 0 Nil)
+-}

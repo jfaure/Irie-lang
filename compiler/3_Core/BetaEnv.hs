@@ -33,7 +33,7 @@ type Env = (V.Vector Sub , [Sub]) -- [(Int , Term)]) -- length of argEnv (needs 
 isEnvEmpty (subs , _tArgs) = V.null subs
 type Seed = (Lvl , Env , Term) -- expected eLen may be < envlen since tsubs eLen can increase
 
--- TODO β-optimal; precomupte calculations involving env ; trim env?
+-- TODO β-optimal; precompute calculations involving env ; trim env?
 -- # abs
 --   +lvl -> inc subbed in vbruijns later
 -- # app abs -> setup β-env
@@ -108,35 +108,42 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
     $  (Right . (lvl , (argEnv , mempty) ,) <$> ars)
     <> (unSub <$> trailingArgs)
 
-  CaseB scrut retT branches d -> simpleTerm' lvl env scrut >>= \case -- Need to pull out the seed immediately
--- case-label
-    Label l params -> case branches BSM.!? qName2Key l <|> d of
-      Just body | null params -> fuse (lvl , env , body)
---    Just body -> fuse (lvl , env , App body (Forced argEnv lvl <$> params)) -- params are already β-d at lvl
-      Just body -> fuse (lvl , (mkBruijnArgSubs lvl (V.length $ fst env) , []) , App body params) -- params are already β-d at lvl
-      -- TODO check the trailingArgs
-      Nothing -> error $ "panic: no label: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
--- case-case: push/copy outer case into each branch, then the inner case fuses with outer case output labels
--- Everything is forced already except branches and d
-    CaseB innerScrut ty2 innerBranches innerDefault -> let
-      idSubs = (mkBruijnArgSubs lvl (V.length $ fst env) , []) -- TODO check the trailingArgs
---    pushCase innerBody = CaseB (Forced argEnv lvl innerBody) retT branches d
-      pushCase innerBody = CaseB innerBody retT branches d
-      optBranches = pushCase <$> innerBranches
-      optD        = pushCase <$> innerDefault
---    in fuse (lvl , env , CaseB (Forced argEnv lvl innerScrut) ty2 optBranches optD)
---    TODO the branches and d are not yet β-reduced; so pass the real env there!
---    Also we want to retry the one-step fusion but be careful!
-      in fuse (lvl , idSubs , CaseB innerScrut ty2 optBranches optD)
-    opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches)
-                                                         (Right . (lvl,env,) <$> d)
+  -- ! Needs to pull out the seed immediately, but perhaps fuse multiple case-case
+  CaseB scrut retT branches d -> simpleTerm' lvl env scrut >>= fuseCase retT branches d where
+   idEnv = mkBruijnArgSubs lvl (V.length $ fst env) -- TODO check the trailingArgs!
+-- fuseCase :: Type -> BSM Term -> Maybe Term -> Term -> SimplifierEnv s (TermF (Either Term Seed))
+   fuseCase retT branches d = \case
+  -- case-label
+      Label l params -> case branches BSM.!? qName2Key l <|> d of
+        Just body | null params -> fuse (lvl , env , body)
+        -- v params are already β-d at this lvl, so give them idSubs!
+--      TODO why ignores trailingArgs?!
+        Just body -> when (not (null trailingArgs)) (traceShowM trailingArgs)
+          *> fuse (lvl , (argEnv , {-trailingArgs <>-} (params <&> TSub idEnv lvl)) , body)
+        Nothing -> error $ "panic: no label: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
+  -- case-case: push/copy outer case to each branch, then the inner case output fuses with outer case labels
+  -- Everything is already β-reduced except branches and d
+  -- ! these are label => Fn pairs
+--    CaseB innerScrut ty2 innerBranches innerDefault -> let
+--      -- add the case underneath the output function
+--      pushCase = \case -- this will produce a case-label for each branch
+--        BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT branches d) -- A case-label
+--        BruijnAbsTyped{} -> _
+--        innerOutput -> CaseB innerOutput retT branches d
+--    --pushCase innerOutput = did_ $ CaseB innerOutput retT branches d -- A case-label
+--      optBranches = pushCase <$> innerBranches
+--      optD        = pushCase <$> innerDefault
+--      in fuseCase ty2 optBranches optD innerScrut -- retry one-step fusion without re-βreducing the scrut
+
+      opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches)
+                                                           (Right . (lvl,env,) <$> d)
 
   -- TODO try before and after forcing the scrut
   -- TODO trailingArgs
---TTLens scrut [f] LensGet -> simpleTerm' lvl env scrut >>= \case
---  LetBlock l -> case V.find ((==f) . iName . fst) l of
---    Just x -> pure $ Left <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
---  opaque -> pure $ TTLensF (Left opaque) [f] LensGet
+  TTLens scrut [f] LensGet -> simpleTerm' lvl env scrut >>= \case
+    LetBlock l -> case V.find ((==f) . iName . fst) l of
+      Just x -> pure $ Left <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
+    opaque -> pure $ TTLensF (Left opaque) [f] LensGet
 
   LetBlock lets -> unless (null trailingArgs) (error "") *>
     inferBlock lets (\_ -> LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,)
@@ -146,14 +153,6 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
     newInE  <- simpleTerm' lvl env inE
     pure $ if lvl == 0 then Left <$> project newInE else LetBindsF newLets (Left newInE)
 
-  -- used for args that are pre-β-d by case-fusion
---Forced{} -> _
-  Forced prevELen prevLvl t -> if
-    | prevLvl == lvl || prevLvl == 0 -> pure (
-      if null trailingArgs then Left <$> project t else AppF (Left t) (unSub <$> trailingArgs))
---  | prevLvl < lvl -> trace (show prevLvl <> " < " <> show lvl :: Text)
---      (fuse (lvl , (did_ $ mkBruijnArgSubs lvl prevLvl , mempty , 0) , t))
-    | True -> error "todo"
   x -> pure $ if null trailingArgs
     then Right . (lvl , env ,) <$> project x
     else AppF (Right (lvl , (argEnv , mempty) , x)) (unSub <$> trailingArgs)

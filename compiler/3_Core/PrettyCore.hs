@@ -268,7 +268,7 @@ pTerm showRhs = let
       <> hardline <> "in" <+> t
     LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
-    ForcedF e l t -> "F" <> viaShow e <> " lvl" <> viaShow l <> t
+--  ForcedF e l t -> "F" <> viaShow e <> " lvl" <> viaShow l <> t
 
   parensApp f args = parens $ parens f <+> nest 2 (sep args)
   in para $ \case
