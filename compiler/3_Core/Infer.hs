@@ -71,13 +71,14 @@ judgeBind letDepth bindINm = let
 --  freshFreeTVs <- freshBiSubs (V.length svArgTVs)
 --  bruijnArgVars .= V.fromList freshFreeTVs
 
+    atLen <- V.length <$> use bruijnArgVars -- all capturable vars (reference where the letCaptures are valid bruijns)
     expr <- cata inferF (P._fnRhs abs) --  traceM $ "inferring: " <> show bindINm
 
     -- bisub free-vars
 --  argTVs <- bruijnArgVars <<.= svArgTVs
 --  V.zipWithM biSubTVarTVar (V.take (V.length svArgTVs) svArgTVs) (V.fromList freshFreeTVs)
 
-    lc <- letCaptures <<%= (.|. svlc)
+    lc <- fmap (atLen ,) $ letCaptures <<%= (.|. svlc)
     bindStack %= drop 1
 
     -- generalise
@@ -115,13 +116,14 @@ judgeBind letDepth bindINm = let
         <$ MV.write wip bindINm (Right $ Guard (mutuals .|. mbs) tvar)
     b -> error (show b)
 
-  genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> BitSet -> Int -> TCEnv s Expr
-  genExpr wip' (Core t ty) letCapture tvarIdx = do
-    lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
-    gTy <- generaliseVar lvl0 tvarIdx ty --  checkAnnotation ann gTy
-    let retExpr = Core t gTy
-    retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred letCapture retExpr)
-  genExpr wip' retExpr lc _ = retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred lc retExpr)
+  genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> (Int , BitSet) -> Int -> TCEnv s Expr
+  genExpr wip' retExpr letCapture tvarIdx = case retExpr of
+    Core t ty -> do
+      lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
+      gTy <- generaliseVar lvl0 tvarIdx ty --  checkAnnotation ann gTy
+      let retExpr = Core t gTy
+      retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred letCapture retExpr)
+    _ -> retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred letCapture retExpr)
 
   in use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>=
     (inferParsed wip ||| preInferred wip) -- >>= \r -> r <$ (use bindStack >>= \bs -> when (null bs) (clearBiSubs 0))
@@ -231,7 +233,6 @@ inferF = let
      <&> map (BindUnused . show @P.FnDef ||| identity)
 
    letNest %= \x -> x - 1
--- traceShowM (bitSet2IntList lc)
 
    pure (r , V.zipWith (\fn e -> (LetMeta (fn ^. P.fnIName) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
  mkFieldCol a b = TyGround [THFieldCollision a b]
@@ -254,7 +255,7 @@ inferF = let
   P.TupleF ts -> sequence ts <&> \exprs -> let
     ty  = THProduct (BSM.fromListWith mkFieldCol
       $ Prelude.imap (\nm t -> (qName2Key (mkQName 0 nm) , t)) (tyOfExpr <$> exprs))
-    lets = Prelude.imap (\i (c) -> let lc = 0 in -- TODO
+    lets = Prelude.imap (\i c -> let lc = (0,0) in -- TODO
       (LetMeta (qName2Key (mkQName 0 i)) ("!" <> show i) (-1) , BindOK optInferred lc c))
       exprs
     in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])

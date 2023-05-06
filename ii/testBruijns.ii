@@ -35,6 +35,12 @@ t14 = (\f x y => f (x y)) (\z => add z) (\a => mul a 2) 3 2
 t15 = (\f x => f x) (\fn x y z => x (y z)) 2 (add 2) (add 3) 1 -- 6
 t16 = (\f x => f x) (\x y => x y) (add 3)
 t17 = (case @F 3 of { @F x => \y => y x }) (add 1)
+t18 = (\x => case (\(f , b) => @One f b) ((add x) , 3) of
+  @One f b => @Two (f b)
+  ) 0
+
+--test-case-case x = case case x of { @F x y => @G x y } of
+--  @G x y => @Add x y
 
 -- ycomb bruijn substitution?
 --ycomb f = (\x => f (x x)) (\x => f (x x))

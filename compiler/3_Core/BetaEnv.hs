@@ -47,6 +47,10 @@ type Seed = (Lvl , Env , Term) -- expected eLen may be < envlen since tsubs eLen
 --   = keep subbing and use sub context info
 --
 -- ?? env = remArgs .. ars .. env (free-vars are valid at env, captured vars are valid at al + length remArgs)
+-- ! if body β-reduces into an abs then that abs skips these claimed args
+-- ! abs args are valid at eLen , but free-vars are valid at atLen
+-- newArgs .. _atLen@freeVars (can't delete '..' because chainSubs may need the middle)
+-- Can't trim the env since argSubs may refer to larger env
 
 --  ! Can't instantly simplify args to an App in case f contains more bruijnAbs. Also VBruijns may need relevelling
 --  TODO this may duplicate work if simplified twice at the same lvl; counting on dup nodes + β-optimality to fix this
@@ -63,11 +67,11 @@ mkBruijnArgSubs l n = V.generate n (\i -> TSub mempty {- doesn't matter -} l (VB
 -- ! current term and trailingArgs have different envs
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
 fuse (lvl , env@(argEnv , trailingArgs) , term) = let
- eLen = V.length argEnv
- unSub (TSub prevArgEnv prevLvl arg) | prevLvl == lvl = Right (lvl , (prevArgEnv , mempty) , arg)
- unSub _ = _
- in --trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
- case term of
+  eLen = V.length argEnv
+  unSub (TSub prevArgEnv prevLvl arg) | prevLvl == lvl = Right (lvl , (prevArgEnv , mempty) , arg)
+ -- unSub (TSub prevArgEnv prevLvl arg) = traceShow (prevLvl , lvl) $ Right (lvl , (prevArgEnv , mempty) , arg)
+  in --trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
+  case term of
   App f args -> fuse (lvl , (argEnv , (TSub argEnv lvl <$> args) <> trailingArgs) , f)
 
   abs | Just (n , body) <- getBruijnAbs abs -> if null trailingArgs
@@ -77,17 +81,11 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
     else claimArgs n body trailingArgs where
       claimArgs :: Int -> Term -> [Sub] -> SimplifierEnv s (TermF (Either Term Seed))
       claimArgs n body trailingArgs = let
-         -- ! if body β-reduces into an abs then that abs skips these claimed args
         (ourArgs , remArgs) = splitAt n trailingArgs
         l = length ourArgs
         in case compare l n of
           EQ -> let nextEnv = V.reverse (V.fromList ourArgs) -- <&> patchAbs l
-            -- ! TODO abs args are valid at eLen , but free-vars are valid at atLen
-            -- newArgs .. _atLen@freeVars (can't delete '..' because chainSubs may need the middle)
-            -- Can't trim the env since argSubs may refer to larger env
---          in fuse (lvl , (nextEnv <> argEnv , remArgs) , {-atLen-}eLen + V.length nextEnv , body)
             in fuse (lvl , (nextEnv <> argEnv , remArgs) , body)
-
           LT -> claimArgs l (BruijnAbs (n - l) body) trailingArgs
           GT -> error "impossible"
 
@@ -96,20 +94,25 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
 
   -- env contains raw args to simplify, at the new lvl for any bruijns subbed in
   -- This duplicates work if simplifying the same arg twice at the same lvl - need β-optimality
-  VBruijn i -> -- let i = j + eLen - atLen in
-    if i >= eLen then error $ show (i , eLen , env) else
-    argEnv V.! i & \(TSub prevEnv _prevLvl argTerm) -> let --if lvl /= prevLvl then _ else let
-      in --d_ (i , argTerm , argEnv , trailingArgs) $
-        fuse (lvl , (prevEnv , trailingArgs) , argTerm)
+  VBruijn i -> if i >= eLen then error $ show (i , eLen , env) else
+    argEnv V.! i & \(TSub prevEnv prevLvl argTerm) -> -- if lvl /= prevLvl then error $ show (lvl , prevLvl) else
+      fuse (lvl , (prevEnv , trailingArgs) , argTerm)
 
-  Var (VLetBind q) | lvl == 0 -> inlineLetBind q >>= \fn -> fuse (lvl , env , fn)
+  -- inlineLetBind: lvl == 0 means this fully reduces (won't produce a function)
+  Var (VLetBind q) | lvl == 0 -> use letBinds >>= \lb -> (lb `MV.read` (modName q))
+    >>= \bindVec -> MV.read bindVec (unQName q) >>= \case
+      BindOK _ (nL , letCapture) (Core inlineF _ty) -> let
+        env' = (V.drop (V.length argEnv - nL) argEnv , trailingArgs)
+        in fuse (lvl , env' , inlineF)
+      x -> error $ show x
 
   Label l ars -> pure $ LabelF l
     $  (Right . (lvl , (argEnv , mempty) ,) <$> ars)
     <> (unSub <$> trailingArgs)
 
   -- ! Needs to pull out the seed immediately, but perhaps fuse multiple case-case
-  CaseB scrut retT branches d -> simpleTerm' lvl env scrut >>= fuseCase retT branches d where
+  CaseB scrut retT branches d -> simpleTerm' lvl (argEnv , []) {-scrut has no trailingArgsenv-} scrut
+    >>= fuseCase retT branches d where
    idEnv = mkBruijnArgSubs lvl (V.length $ fst env) -- TODO check the trailingArgs!
 -- fuseCase :: Type -> BSM Term -> Maybe Term -> Term -> SimplifierEnv s (TermF (Either Term Seed))
    fuseCase retT branches d = \case
@@ -117,19 +120,18 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
       Label l params -> case branches BSM.!? qName2Key l <|> d of
         Just body | null params -> fuse (lvl , env , body)
         -- v params are already β-d at this lvl, so give them idSubs!
---      TODO why ignores trailingArgs?!
-        Just body -> when (not (null trailingArgs)) (traceShowM trailingArgs)
-          *> fuse (lvl , (argEnv , {-trailingArgs <>-} (params <&> TSub idEnv lvl)) , body)
+        Just body -> fuse (lvl , (argEnv , (params <&> TSub idEnv lvl) <> trailingArgs) , body)
         Nothing -> error $ "panic: no label: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
   -- case-case: push/copy outer case to each branch, then the inner case output fuses with outer case labels
   -- Everything is already β-reduced except branches and d
   -- ! these are label => Fn pairs
+  -- TODO (?) need to inc args within the pushed case (normally case-Abs are distinct, but now we're stacking them)
 --    CaseB innerScrut ty2 innerBranches innerDefault -> let
---      -- add the case underneath the output function
 --      pushCase = \case -- this will produce a case-label for each branch
 --        BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT branches d) -- A case-label
 --        BruijnAbsTyped{} -> _
---        innerOutput -> CaseB innerOutput retT branches d
+--        innerOutput@Label{} -> CaseB innerOutput retT branches d
+--        innerOutput -> _
 --    --pushCase innerOutput = did_ $ CaseB innerOutput retT branches d -- A case-label
 --      optBranches = pushCase <$> innerBranches
 --      optD        = pushCase <$> innerDefault
@@ -138,19 +140,20 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
       opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches)
                                                            (Right . (lvl,env,) <$> d)
 
-  -- TODO try before and after forcing the scrut
-  -- TODO trailingArgs
-  TTLens scrut [f] LensGet -> simpleTerm' lvl env scrut >>= \case
+  -- Try before and after forcing the scrut
+  -- TODO other lenses ; trailingArgs
+  TTLens scrut [f] LensGet | null trailingArgs -> simpleTerm' lvl env scrut >>= \case
     LetBlock l -> case V.find ((==f) . iName . fst) l of
       Just x -> pure $ Left <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
     opaque -> pure $ TTLensF (Left opaque) [f] LensGet
 
-  LetBlock lets -> unless (null trailingArgs) (error "") *>
+  LetBlock lets | not (null trailingArgs) -> error $ show trailingArgs -- TODO Why
+  LetBlock lets | null trailingArgs ->
     inferBlock lets (\_ -> LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,)
       <$> simpleBind lvl (argEnv , mempty) bind)
   LetBinds lets inE -> inferBlock lets $ \_ -> do
     newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl (argEnv , mempty) bind
-    newInE  <- simpleTerm' lvl env inE
+    newInE  <- simpleTerm' lvl env inE -- incl trailingArgs
     pure $ if lvl == 0 then Left <$> project newInE else LetBindsF newLets (Left newInE)
 
   x -> pure $ if null trailingArgs
@@ -179,11 +182,6 @@ simpleTerm t = do
 simpleExpr :: Expr -> ST s Expr
 simpleExpr (Core t ty) = simpleTerm t <&> \t -> Core t ty
 simpleExpr _ = pure PoisonExpr
-
-inlineLetBind q = use letBinds >>= \lb -> (lb `MV.read` (modName q))
-  >>= \bindVec -> MV.read bindVec (unQName q) <&> \case
-    BindOK _ _free (Core inlineF _ty) -> inlineF
-    x -> error $ show x
 
 primF :: TermF Term -> Term
 primF = \case

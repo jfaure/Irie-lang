@@ -140,13 +140,13 @@ data ArgShape
  deriving (Ord , Eq , Show , Generic)
 
 data Bind
- = Queued
+ = Queued -- Infer
  | Guard  { mutuals :: BitSet , tvar :: IName } -- being inferred; if met again, is recursive/mutual
  -- generalising mutual types must wait for all tvars to be constrained (all mutual block to be inferred)
- | Mut    { naiveExpr :: Expr , mutuals :: BitSet , letCaptured :: BitSet , tvar :: IName }
+ | Mut    { naiveExpr :: Expr , mutuals :: BitSet , letCaptured :: (Int , BitSet) , tvar :: IName }
 
- | BindKO -- failed type inference
- | BindOK { optLevel :: OptBind , free :: BitSet , naiveExpr :: Expr }
+ -- free has the atLen of all capturable vars: the reference for where the bitset bruijns are valid
+ | BindOK { optLevel :: OptBind , free :: (Int , BitSet) , naiveExpr :: Expr }
  | BindUnused Text
 
  | WIP -- Fenv

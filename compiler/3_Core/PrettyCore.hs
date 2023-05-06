@@ -200,12 +200,11 @@ pBind nm showRhs bind = pretty nm <> " = " <> case bind of
 --Mut e m tvar      -> "Mut : "   <> viaShow m <> viaShow tvar <> " " <> pExpr showRhs e
 --Mutual m _free tvar tyAnn -> "MUTUAL: " <> viaShow m <> viaShow tvar <> viaShow tyAnn
   Queued{} -> "Queued"
-  BindOK n free expr -> let
+  BindOK n (nFree , free) expr -> let
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
     letW  = "" -- if lbound then "let " else ""
-    in letW <> {-viaShow n <+> -} recKW <> (if 0 == free then "" else viaShow (bitSet2IntList free)) <> pExpr showRhs expr
+    in letW <> {-viaShow n <+> -} recKW <> (if 0 == free then "" else viaShow (nFree , bitSet2IntList free)) <> pExpr showRhs expr
   WIP -> "WIPBind"
-  x -> error $ show x -- bindKO
 
 -- want to print the top-level let-block without {} or = record
 pTopExpr showRhs = \case

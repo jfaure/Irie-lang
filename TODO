@@ -1,6 +1,10 @@
 ## meta
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
+## Fix
+  * captures: @def; @inline need to reset (captures may have been pushed out by new βs)
+  * case-case: inverted λ
+  * lvl diffs
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * generalise all lambda types (unless inlineable?)

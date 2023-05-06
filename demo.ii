@@ -118,52 +118,54 @@ t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
 
 import prelude
 
-t = (\x => case (\(f , b) => @One f b) ((add x) , 3) of
-  @One f b => @Two (f b)
-  ) 0
-
-next nextL nextR sr0 x = case x of
-  @Left  sa => case nextL sa of
-    @Done      => Skip    (Right sr0)
-    @Skip s    => Skip    (Left s)
-    @Yield x s => Yield x (Left s)
-  @Right sb => case nextR sb of
-    @Done      => Done
-    @Skip s    => Skip    (Right s)
-    @Yield x s => Yield x (Right s)
-
 Sappend (@stream nextL sl0) (@stream nextR sr0) = let
-  in ana (next nextL nextR sr0) (@Left sl0)
+  next = \case
+    @Left  sa => case nextL sa of
+      @Done      => Skip    (Right sr0)
+      @Skip s    => Skip    (Left s)
+      @Yield x s => Yield x (Left s)
+    @Right sb => case nextR sb of
+      @Done      => Done
+      @Skip s    => Skip    (Right s)
+      @Yield x s => Yield x (Right s)
+  in ana next (@Left sl0)
 
-SconcatMap f (@stream nexta seed) =
-  @stream (nextC f nexta) (seed , None)
-
-nextC f nexta (sa , m) = case m of
-  @None => case nexta sa of
-    @Done      => Done
-    @Skip s    => Skip (s , @None)
-    @Yield a s => Skip (s , @One (f a))
-  @One (@stream nextb sb) => case nextb sb of
-    @Done      => Skip    (sa , @None)
-    @Skip s    => Skip    (sa , @One (stream nextb s))
-    @Yield b s => Yield b (sa , @One (stream nextb s))
+SconcatMap f (@stream nexta seed) = let
+  nextC (sa , m) = case m of
+    @None => case nexta sa of
+      @Done      => Done
+      @Skip s    => Skip (s , @None)
+      @Yield a s => Skip (s , @One (f a))
+    @One (@stream nextb sb) => case nextb sb of
+      @Done      => Skip    (sa , @None)
+      @Skip s    => Skip    (sa , @One (stream nextb s))
+      @Yield b s => Yield b (sa , @One (stream nextb s))
+  in @stream nextC (seed , None)
 
 ana next seed = @stream next seed
 
 enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
 
-go c z next s = case next s of
-  @Done      => z
-  @Skip    r => go c z next r
-  @Yield x r => c x (go c z next r)
-foldr c z (@stream next seed) =
-  go c z next seed
+--foldr c z (@stream next seed) = let -- rhylo c a seed
+--  go c z next s = case next s of
+--    @Done      => z
+--    @Skip r    => go c z next r
+--    @Yield x r => c x (go c z next r)
+--  in go c z next seed
+
+foldr c z (@stream next seed) = let -- rhylo c a seed
+  go s = case next s of
+    @Done      => z
+    @Skip r    => go r
+    @Yield x r => c x (go r)
+  in go seed
 
 t   = foldr add 0 (enumFromTo 0 10)
-tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
-ttt = foldr add 0 (SconcatMap (enumFromTo 0) (enumFromTo 0 2))
+--tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
+--ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
 
 --t  = Sappend (@stream (\x => x) @Done) (@stream (\x => x) @Done)
 --tt  = foldr add 0 (Sappend (@stream (\x => x) @Done) (@stream (\x => x) @Done))
 
-f = (case @F 3 of { @F x => \y => y x }) (add 1)
+--test-case-case x = case case x of { @F x y => @G x y } of
+--  @G x y => @Add x y
