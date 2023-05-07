@@ -146,13 +146,6 @@ ana next seed = @stream next seed
 
 enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
 
---foldr c z (@stream next seed) = let -- rhylo c a seed
---  go c z next s = case next s of
---    @Done      => z
---    @Skip r    => go c z next r
---    @Yield x r => c x (go c z next r)
---  in go c z next seed
-
 foldr c z (@stream next seed) = let -- rhylo c a seed
   go s = case next s of
     @Done      => z
@@ -161,11 +154,9 @@ foldr c z (@stream next seed) = let -- rhylo c a seed
   in go seed
 
 t   = foldr add 0 (enumFromTo 0 10)
---tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
---ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
-
---t  = Sappend (@stream (\x => x) @Done) (@stream (\x => x) @Done)
---tt  = foldr add 0 (Sappend (@stream (\x => x) @Done) (@stream (\x => x) @Done))
+tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
+ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
 
 --test-case-case x = case case x of { @F x y => @G x y } of
 --  @G x y => @Add x y
+--f = test-case-case (@F 1 2)

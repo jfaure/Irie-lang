@@ -2,6 +2,8 @@
 Fused subtyping calculus of constructions
 
 ![logo](https://cdn.discordapp.com/attachments/631043990879338496/756673093497520138/logo.png)
+## [Intro (pagedown)](#origin)
+## [Business Value (Non-technical)](BusinessValue.md)
 ## [FAQ](FAQ.md)
 ## [Tutorial (WIP)](tutorial.md)
 ## [Language documentation (WIP)](languageDocumentation.md)

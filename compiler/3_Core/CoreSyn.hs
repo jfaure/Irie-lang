@@ -62,6 +62,10 @@ data Term -- β-reducable (possibly to a type)
 -- Simplifier
  | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
  | LetSpec QName [ArgShape]
+ | CaseBranches (BSM.BitSetMap Term) (Maybe Term) -- CaseB without Scrut
+
+ | Wrap Int Term -- indicates a term was incorrectly wrapped in an abstraction (case-case simplification)
+-- | CType Type -- Need to be able to embed types into some terms (but not the opposite)
 
 -- lensover needs idx for extracting field (??)
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr

@@ -2,13 +2,12 @@
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
 ## Fix
-  * captures: @def; @inline need to reset (captures may have been pushed out by new βs)
-  * case-case: inverted λ
   * lvl diffs
+  * case-case: inverted λ (? this may push free-vars out)
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
+  * type aliases + term/type name scope
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
-  * generalise all lambda types (unless inlineable?)
-  * need to check that lambdas don't have recursive types? to avoid inf β reduction 
+  * generalise all lambda types (unless inlineable?) + check not-recursive (avoid inf β-reduction eg. Y-comb)
   * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
   * cross-module mixfixes broken
@@ -23,6 +22,7 @@
   * dup node: (hangs on global (device / thread ?) scope)
       f x = x x => f x = let a b = DUP x in a b
       ! see when lambdas are duplicated (also reduce computations on free-vars when papped)
+  ? should we compute containement
 
   Generalise lams passed into functions that duplicate args
   GlobalResolver = { Modules } BitSetMap of modules keyed on INames
@@ -53,7 +53,7 @@
     ? need to case over whole record since lhs is in scope mutually
   ? let-bound labels
   atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
-## ?
+## !?
   * named arguments (perhaps by subtype from a record arg)
   * shared streams (eg. MUL)
   * derived streams: splitAt creates 2 streams from 1, but the second is only available after the first
@@ -64,11 +64,12 @@
   * open sum type (default case branch)
   * expand lambda-mixfixes with explicit holes
   * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
-## Parse
+## Parse / Pretty
   * pat guards
   * lambda case type annotation: \case : scrut -> ret
   * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
   * repl parser: multiline case / let
+  * pretty case-case formats wrong
 ## Types
   * mode to print type-var bounds
   * Ad-hoc polymorphism: `Int <: [ NumInt Int ]` show (esp for repl JIT) (? mempty : Monoid a => a)
@@ -89,7 +90,7 @@
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
-  * rm Expr / Core in favor of tuple
+  * rm (Core : Expr) in favor of tuple
   * Completion based on types (Type -> Bind)
   * tabs v spaces
   * Need totality checker, else a Refl type may not terminate and thus proves nothing
@@ -102,7 +103,7 @@
   * switch to codeberg
   * List comprehensions
   * cache version
-  * Allow inspection of papped args
+  * Allow dynamic inspection of papped args
   * Pattern PTT: custom unPat function to support any patterns eg. `fact (<? 2) = 1`
   * error messages via prettyprinter Doc
   * language server

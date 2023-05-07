@@ -266,6 +266,7 @@ pTerm showRhs = let
     LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
       <> hardline <> "in" <+> t
     LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
+    WrapF n t -> "Wrap " <> viaShow n <> " " <> t
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  ForcedF e l t -> "F" <> viaShow e <> " lvl" <> viaShow l <> t
 
@@ -279,6 +280,7 @@ prettyInstr = \case
   NumInstr i -> case i of
     PredInstr GECmp -> "_>_"
     IntInstr Add    -> "_+_"
+    IntInstr Sub    -> "_-_"
     IntInstr Mul    -> "_*_"
     IntInstr SDiv   -> "_//_"
     x -> viaShow x
