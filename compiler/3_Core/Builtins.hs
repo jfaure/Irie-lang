@@ -114,11 +114,15 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 $ TyGround $ mkTHArrow [mkExt set , mkExt set , THBound 0] (THBound 0) ]))
 
    -- (Seed -> (Bool , A , Seed)) -> Seed -> %ptr(A)
-  , ("unfoldString"   , (UnFoldStr , let unfoldRet = (\[x] -> x) $ mkTHArrow [THBound 0] (mkTHTuple $ (\x -> TyGround [x]) <$> [mkExt b , mkExt c , THBound 0])
-      in [THBi 1 $ TyGround $ mkTHArrow [THBound 0 , unfoldRet , THBound 0] (mkExt str)]))
+--, ("unfoldString"   , (UnFoldStr , let unfoldRet = (\[x] -> x) $ mkTHArrow [THBound 0] (mkTHTuple $ (\x -> TyGround [x]) <$> [mkExt b , mkExt c , THBound 0])
+--    in [THBi 1 $ TyGround $ mkTHArrow [THBound 0 , unfoldRet , THBound 0] (mkExt str)]))
 
-  -- %ptr(A) -> (Bool , A , %ptr(A))    == str -> (Bool , char , str)
-  , ("nextElem" , (NextElem , mkTHArrow [mkExt str] (mkTHTuple $ TyGround <$> [[boolL] , [mkExt c] , [mkExt str]]) ))
+---- %ptr(A) -> (Bool , A , %ptr(A))    == str -> (Bool , char , str)
+--, ("nextElem" , (NextElem , mkTHArrow [mkExt str] (mkTHTuple $ TyGround <$> [[boolL] , [mkExt c] , [mkExt str]]) ))
+  , ("nullString" , (NullString , mkTHArrow [mkExt str] boolL)) -- unCons : String -> (Char , String)
+   --unCons : String -> (Char , String)
+  , ("unConsString" , (UnCons , mkTHArrow [mkExt str] (mkTHTuple [TyGround [charTy] , TyGround [mkExt str]])))
+
   , ("toCStruct"       , (ToCStruct       , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (mkExt cstruct)] ))
   , ("toCStructPacked" , (ToCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (mkExt cstruct)] ))
   , ("fromCStruct", (FromCStruct , [THBi 1 $ TyGround $ mkTHArrow [mkExt cstruct] (THBound 0)] ))

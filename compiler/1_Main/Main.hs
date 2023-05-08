@@ -240,7 +240,7 @@ codegen flags input@(_resolver , jm) = let ssaMod = mkSSAModule jm in do
 ----------
 replWith :: forall a. a -> (a -> Text -> IO a) -> IO a
 replWith startState fn = let
-  doLine state = getInputLine "$> " >>= \case
+  doLine state = getInputLine ", " >>= \case
     Nothing -> pure state
     Just l  -> lift (fn state (toS l)) >>= doLine
   in runInputT defaultSettings $ doLine startState

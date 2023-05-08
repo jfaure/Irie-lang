@@ -100,6 +100,8 @@
 --  @G x y => @Add x y
 --f = test-case-case (@F 1 2)
 
+-- * fromString
+-- * tee
 import stream
 
 {-

@@ -80,13 +80,16 @@ SconcatMap f (@stream nexta seed) = let
 -- SsplitAt n onFront = \case
 --   stream nexta seed => 
 
-fromString str = @stream (\(ok , head , tail) => if ok then Yield head (nextElem tail) else Done) (nextElem str)
+--fromStr str = @stream (\(ok , head , tail) => if ok then Yield head (nextElem tail) else Done) (nextElem str)
+stringToStream str = @stream (\str => if nullString str then Done else (unConsString str > \(head , tail) => Yield head tail)) str
 
 -- @Stream -> %Str
 streamToString s = strBufToString (foldl pushStrBuf (allocStrBuf 512) s)
 
 showIntList = streamToString << map (chr << (add 48))
 test = showIntList (enumFromTo 0 9)
+
+x = streamToString (stringToStream "0123")
 
 -- Tests
 --l  = sum < map (add 1) < enumFromTo 5 10

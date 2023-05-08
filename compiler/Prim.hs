@@ -81,6 +81,9 @@ data PrimInstr
  | NextElem  -- %ptr(A) → (A , %ptr(A))
  | ToCStruct | ToCStructPacked | FromCStruct | FromCStructPacked
 
+ | UnCons     -- pop a pointer (should test NullString first)
+ | NullString -- test if str is null
+
  | AllocStrBuf
  | PushStrBuf
  | StrBufToString

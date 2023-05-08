@@ -54,6 +54,10 @@ interpretBinaryBitInstr = \case
   -- complement
   -- BMI1 & 2
 
+boolToLabel :: Bool -> Term -- [True | False]
+boolToLabel b = if b then builtinTrue else builtinFalse
+
+simpleInstr :: PrimInstr -> [Term] -> Term
 simpleInstr i args = let
 --args = args' <&> \case
 --  App (Instr j) ars -> simpleInstr j ars
@@ -73,7 +77,7 @@ simpleInstr i args = let
 --NumInstr (IntInstr i)  | [Lit (I32 a) , Lit (I32 b)] <- args ->
   NumInstr (IntInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryIntInstr i a b))
   NumInstr (BitInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryBitInstr i a b))
-  NumInstr (PredInstr p) | [Lit (Int a) , Lit (Int b)] <- args -> if interpretBinaryPredInstr p a b then builtinTrue else builtinFalse
+  NumInstr (PredInstr p) | [Lit (Int a) , Lit (Int b)] <- args -> boolToLabel (interpretBinaryPredInstr p a b)
 
   -- cannot use posix types directly due to hidden constructors preventing deriving Binary for Literal
   OpenDir | [Lit (String fName)] <- args -> let
@@ -88,9 +92,12 @@ simpleInstr i args = let
   StrBufToString | [Lit (RevString rs)] <- args -> Lit (String (reverse rs)) -- TODO slow
   PushStrBuf | [Lit (RevString rs) , Lit (Char c)] <- args -> Lit (RevString (c : rs))
   AllocStrBuf | [Lit (Int len)] <- args -> Lit (RevString [])
+  NullString | [Lit (String s)] <- args -> boolToLabel (null s)
+  UnCons | [Lit (String s)]     <- args -> fromMaybe (chr 0 , "") (uncons s)
+    & \(head , tail) -> Tuple (V.fromList [Lit (Char head) , Lit (String tail)])
   _ -> App (Instr i) args
 
-simpleGMPInstr ∷ NumInstrs -> [Term] -> Term
+simpleGMPInstr :: NumInstrs -> [Term] -> Term
 simpleGMPInstr i args = let
   mkCmpInstr pred args = App (Instr (NumInstr (PredInstr pred))) args
   in case i of
