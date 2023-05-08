@@ -1,19 +1,20 @@
 -- BigInt = List I64
 -- Knowing signs after sub requires knowing a >? b , which blocks streaming
 
+import prelude
 -- least significant limbs first
 -- for Stream (I64 , I64) -> Stream I64
 SUAddCarry = \case
-  @Yield (a , b) carry => add a b > \x => add x carry > \r
-    => Yield r ((x <? a) .|. (r <? x))
-  @Skip s => Skip s
   @Done   => Done
+  @Skip s => Skip s
+  @Yield (a , b) carry => add a b > \x => add x carry >
+    \r => Yield r ((x <? a) or (r <? x)) -- gmp had bitwise or
 
 SUSubCarry = \case
-  @Yield (a , b) => sub next carry > \x => sub x carry > \r
-    => Yield r ((x >? a) .|. (r >? x))
-  @Skip s => Skip s
   @Done => Done
+  @Skip s => Skip s
+  @Yield (a , b) => sub next carry > \x => sub x carry > \r
+    => Yield r ((x >? a) or (r >? x))
 
 -- TODO align with a sumtype?
 UAdd a b = SAddCarry (alignWith (_ , 0) (0 , _) (_ , _) a b)

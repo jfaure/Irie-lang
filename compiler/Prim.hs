@@ -14,6 +14,7 @@ data Literal
  | PolyInt   !Text -- gmp
  | PolyFrac  !Text -- gmp
  | String    [Char]
+ | RevString [Char]
  | Array [Literal] -- incl. tuples ?
  | DirStream [FilePath] -- Unfortunately posix dirstreams are hidden so I cannot derive a binary instance for it
 -- | LitTuple [Literal]
@@ -34,6 +35,7 @@ data PrimType
  | PrimExtern   [PrimType]
  | PrimExternVA [PrimType]
  | PrimCStruct
+ | PrimStrBuf
  | POSIXTy POSIXType
 
 data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
@@ -74,9 +76,14 @@ data PrimInstr
  | Ptr2Maybe -- glue between ptr/nullptrs and algebraic data (usually Maybe t = [Nothing | Just t])
 
  -- conversion between primitive arrays and ADTs
- | UnFoldArr -- (Seed → (Bool , A , Seed)) → Seed → %ptr(A)
+ -- ? Should Maybe be a builtin type for unfolding purposes
+ | UnFoldStr -- (Seed → (Bool , A , Seed)) → Seed → %ptr(A)
  | NextElem  -- %ptr(A) → (A , %ptr(A))
  | ToCStruct | ToCStructPacked | FromCStruct | FromCStructPacked
+
+ | AllocStrBuf
+ | PushStrBuf
+ | StrBufToString
 
  -- Posix instructions
  | GetCWD
@@ -115,7 +122,7 @@ data TyInstrs
 
 -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
 data Predicates  = EQCmp | NEQCmp | GECmp | GTCmp | LECmp | LTCmp | AND | OR
-data IntInstrs   = Add | Sub | Mul | SDiv | SRem | Neg | AbsVal | IPow
+data IntInstrs   = Add | Sub | Mul | SDiv | SRem | Neg | AbsVal | IPow | Ord | Chr
 data NatInstrs   = UDiv | URem
 data BitInstrs   = And | Or | Not | Complement | Xor | ShL | ShR | BitRev | ByteSwap | PopCount | CTZ | CLZ | FShL | FShR | RotL | RotR | TestBit | SetBit
                  {- BMI1 -} | ANDN | BEXTR | BLSI | BLSMSK | BLSR| CtTZ {- BMI2 -} | BZHI | MULX | PDEP | PEXT
@@ -188,6 +195,7 @@ prettyPrimType = toS . \case
   PrimExternVA tys -> "%externVA(" <> show tys <> ")"
   POSIXTy t -> case t of { DirP → "%DIR*" ; DirentP → "%dirent*" }
   PrimCStruct -> "%CStruct" -- (" <> show x <> ")"
+  PrimStrBuf -> "%StrBuf" -- (" <> show x <> ")"
   x -> error $ show x
 
 primSubtypeOf :: PrimType -> PrimType -> Bool

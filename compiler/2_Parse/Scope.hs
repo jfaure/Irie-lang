@@ -80,7 +80,7 @@ scopeApoF exts thisMod (this , params) = let
           -- Only inline mixfixes, nothing else, (? mutually bound mixfixes used in pattern)
           | MixfixyVar m <- readParseExtern params._open thisMod exts i -> MFExpr m -- Only inline possible mixfixes
           | otherwise -> Var (VExtern i)
-        JuxtF _o args -> solveMixfixes args -- TODO need to solveScope the mixfixes first!
+        JuxtF o args -> solveMixfixes o args -- TODO need to solveScope the mixfixes first!
         tt -> embed tt
       in (cata clearExtsF pat , br)
     (this , bruijnSubs) = patternsToCase (scrut{- params-}) (params._bruijnCount) solvedBranches
@@ -116,8 +116,8 @@ scopeApoF exts thisMod (this , params) = let
     VQBind q  -> ScopePoisonF (ScopeError $ "Var . VQBind " <> showRawQName q)
     VLetBind _-> VarF v
   -- TODO Not ideal; shortcircuits the apomorphism (perhaps. should rework cataM inferF)
-  AppExt i args  -> Left <$> project (solveMixfixes $ resolveExt i : (scopeTT exts thisMod params <$> args))
-  Juxt _o args   -> Left <$> project (solveMixfixes $ scopeTT exts thisMod params <$> args)
+  AppExt i args -> Left <$> project (solveMixfixes 0 $ resolveExt i : (scopeTT exts thisMod params <$> args))
+  Juxt o args   -> Left <$> project (solveMixfixes o $ scopeTT exts thisMod params <$> args)
   BruijnLam b -> doBruijnAbs b
   LamPats (FnMatch args rhs) -> patternsToCase Question (params._bruijnCount) [(args , rhs)]
     & fst & \t -> Right . (, params) <$> project t

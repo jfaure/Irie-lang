@@ -4,34 +4,37 @@ import Prelude hiding (sourceLine)
 import QName
 import MixfixSyn
 import ParseSyntax hiding (ParseState)
-import CoreSyn(Mixfixy(..))
+import CoreSyn(Mixfixy(..) , SrcOff)
 import ShowCore()
 import qualified Data.List as DL (last , init)
 import Data.Functor.Foldable
 import Control.Lens
+import Control.Exception
 import MUnrolls (hypoM)
+import Errors
 
 type Expr = TT
 type ExprF = TTF
 data ParseState = ParseState { _stream :: [Expr] }; makeLenses ''ParseState
-type Parser = ExceptT Text (State ParseState) --type P = Prelude.State ParseState
+type Parser = ExceptT Text (State ParseState)
 newtype SubParser = SubParser { unSubParser :: Parser (ExprF (Either Expr SubParser)) }
 
+-- backtracks the stream state if the parse fails
 tryParse :: Parser a -> Parser a
 tryParse p = use stream >>= \s -> catchE p (\e -> (stream .= s) *> throwE e)
 
-solveMixfixes :: [Expr] -> Expr
-solveMixfixes juxt = MixfixPoison ||| identity
-  $ runExceptT (hypoM solveFixities unSubParser parseExpr) `evalState` ParseState juxt
+solveMixfixes :: SrcOff -> [Expr] -> Expr
+solveMixfixes o juxt = (MixfixPoison . MixfixError o) ||| identity
+  $ runExceptT (hypoM (solveFixities o) unSubParser (parseExpr o)) `evalState` ParseState juxt
 
-solveFixities :: ExprF Expr -> Expr
-solveFixities = let
+solveFixities :: SrcOff -> ExprF Expr -> Expr
+solveFixities o = let
   clearVoids = filter (\case {VoidExpr{} -> False ; _ -> True})
   in \case
   PExprAppF precL fL argsL' -> let
     maybeFlipPrec precL fL argsL' = let argsL = clearVoids argsL' in case DL.last argsL of
       PExprApp precR fR argsR'
-        | fR == fL && assoc precR == AssocNone -> MixfixPoison (show fR <> "Is not associative")
+        | fR == fL && assoc precR == AssocNone -> MixfixPoison (MixfixError o (show fR <> "Is not associative"))
         | (midArg : argsR) <- clearVoids argsR'
         , prec precL >= prec precR && (fR /= fL || assoc precR /= AssocRight)
         -- re-assoc: a L (b R c) -> (a L b) R c
@@ -47,19 +50,19 @@ uncons' :: [a] -> (Maybe a , [a])
 uncons' = \case { [] -> (Nothing , []) ; x : xs -> (Just x , xs) }
 
 -- Parser apomorphism
-parseExpr :: SubParser
-parseExpr = SubParser $ let
+parseExpr :: SrcOff -> SubParser
+parseExpr o = SubParser $ let
   isMF = \case { MFExpr{} -> True ; _ -> False }
-  mkApp = \case { [f] -> f ; f : args -> App f args ; [] -> MixfixPoison "impossible" }
+  mkApp = \case { [f] -> f ; f : args -> App f args ; [] -> MixfixPoison (MixfixError o "impossible") }
   mkMFSubParsers :: ModuleIName -> [Maybe IName] -> [SubParser]
   mkMFSubParsers m = let
     parseMFWord q = SubParser $ stream %%= uncons' >>= \case
       Just (MFExpr (Mixfixy _ qs)) | QMFPart q `elem` qs -> pure VoidExprF
       m -> throwE ("Expected QMFPart " <> show q <> " , got: " <> show m)
-    in map $ maybe parseExpr (parseMFWord . mkQName m)
+    in map $ maybe (parseExpr o) (parseMFWord . mkQName m)
   in stream %%= break isMF >>= \case
   []   -> stream %%= uncons' >>= \case -- TODO fix MFSyn: fixity of prefixes doesn't matter
-    Nothing -> throwE "empty Stream"
+    Nothing -> throwE "unexpected end of mixfix stream"
     Just (MFExpr (Mixfixy _ qs)) -> asum $ qs <&> \case
       QStartPrefix (MixfixDef _mb mfws _fixityR) q
         -> pure $ AppF (Left (QVar q)) (Right <$> mkMFSubParsers (modName q) (drop 1 mfws))

@@ -1,4 +1,4 @@
--- Builtins: the interface to compiler primitives is a (hardcoded) standard importable module
+-- Builtins: the interface to compiler primitives is a hardcoded, but otherwise standard importable module
 -- ! the Prelude supplies mixfixes and more convenient access to these primitives
 -- * constructs a vector of primitives
 -- * supplys a (Map HName IName) to resolve names to indexes
@@ -13,23 +13,23 @@ import qualified BitSetMap as BSM
 mkExtTy x  = [mkExt x]
 getPrimIdx = (primMap M.!?)
 
-getPrimTy :: HName → IName
+getPrimTy :: HName -> IName
 getPrimTy nm = case getPrimIdx nm of
-  Nothing → panic $ "panic: badly setup primtables; " <> nm <> " not in scope"
-  Just i  → i
+  Nothing -> panic $ "panic: badly setup primtables; " <> nm <> " not in scope"
+  Just i  -> i
 
-primMap = M.fromList $ zipWith (\(nm,_val) i → (nm,i)) primTable [0..]
+primMap = M.fromList $ zipWith (\(nm,_val) i -> (nm,i)) primTable [0..]
 primBinds :: V.Vector (HName , Expr) = V.fromList primTable
 
 primType2Type x = Ty (TyGround [THPrim x])
 primTable :: [(HName , Expr)]
 primTable = concat
-  [ (\(nm , x)         → (nm , primType2Type x)) <$> V.toList primTys
+  [ (\(nm , x)         -> (nm , primType2Type x)) <$> V.toList primTys
   , boolLabel
   , let tys2TyHead  (args , t) = TyGround $ mkTyArrow (TyGround . mkExtTy <$> args) (TyGround $ mkExtTy t) in
-    (\(nm , (i , tys)) → (nm , Core (Instr i) (tys2TyHead tys)))           <$> primInstrs
-  , (\(nm , (i , t))   → (nm , Core (Instr i) (TyGround t)))               <$> instrs
-  , (\(nm , e)         → (nm , Ty (TyGround [e])))                         <$> tyFns
+    (\(nm , (i , tys)) -> (nm , Core (Instr i) (tys2TyHead tys)))           <$> primInstrs
+  , (\(nm , (i , t))   -> (nm , Core (Instr i) (TyGround t)))               <$> instrs
+  , (\(nm , e)         -> (nm , Ty (TyGround [e])))                         <$> tyFns
 -- , uncurry ExtFn <$> extFnBinds
   ]
 
@@ -73,10 +73,13 @@ primTys :: V.Vector (HName , PrimType) = V.fromList
   , ("DIR*"    , POSIXTy DirP)
   , ("dirent*" , POSIXTy DirentP)
   , ("CStruct" , PrimCStruct)
+  , ("StrBuf"  , PrimStrBuf)
   ]
 
 --b = boolL
-[i, bi, b, f, c, ia, str, set , i64 , dirp , _dirent , cstruct] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64" , "DIR*" , "dirent*" , "CStruct"]
+[i, bi, b, f, c, ia, str, set , i64 , dirp , _dirent , cstruct , strBuf] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64" , "DIR*" , "dirent*" , "CStruct" , "StrBuf"]
+i8 = c
+i32 = i
 
 --substPrimTy i = THPrim $ primTyBinds V.! i
 
@@ -89,7 +92,7 @@ tyFns = [
 --[ ("IntN" , (THPi [(0,(mkExtTy i))] [THInstr MkIntN [0]] M.empty))
 --  ("arrowTycon", (THPi [(0,[THSet 0]),(1,[THSet 0])] [THInstr ArrowTy [0, 1]] M.empty))
     ("Set" , THSet 0)
---  , ("_→_", (ArrowTy , ([set] , set)))
+--  , ("_->_", (ArrowTy , ([set] , set)))
   ]
 
 -- tuples are THProducts in module 0 (builtin module)
@@ -107,19 +110,23 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("ifThenElseInt1", (IfThenE , [THBi 1 $ TyGround $ mkTHArrow [mkExt b, THBound 0, THBound 0] (THBound 0) ]))
   , ("getcwd"        , (GetCWD  , [mkExt str]))
 
-  -- TODO fix type (set → set → A → B)
+  -- TODO fix type (set -> set -> A -> B)
   , ("ptr2maybe"   , (Ptr2Maybe , [THBi 2 $ TyGround $ mkTHArrow [mkExt set , mkExt set , THBound 0] (THBound 0) ]))
 
-   -- (Seed → (Bool , A , Seed)) → Seed → %ptr(A)
-  , ("unfoldArray"   , (UnFoldArr , let unfoldRet = (\[x] → x) $ mkTHArrow [THBound 0] (mkTHTuple $ (\x → TyGround [x]) <$> [mkExt b , mkExt c , THBound 0])
+   -- (Seed -> (Bool , A , Seed)) -> Seed -> %ptr(A)
+  , ("unfoldString"   , (UnFoldStr , let unfoldRet = (\[x] -> x) $ mkTHArrow [THBound 0] (mkTHTuple $ (\x -> TyGround [x]) <$> [mkExt b , mkExt c , THBound 0])
       in [THBi 1 $ TyGround $ mkTHArrow [THBound 0 , unfoldRet , THBound 0] (mkExt str)]))
 
-  -- %ptr(A) → (Bool , A , %ptr(A))    == str → (Bool , char , str)
+  -- %ptr(A) -> (Bool , A , %ptr(A))    == str -> (Bool , char , str)
   , ("nextElem" , (NextElem , mkTHArrow [mkExt str] (mkTHTuple $ TyGround <$> [[boolL] , [mkExt c] , [mkExt str]]) ))
   , ("toCStruct"       , (ToCStruct       , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (mkExt cstruct)] ))
   , ("toCStructPacked" , (ToCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (mkExt cstruct)] ))
   , ("fromCStruct", (FromCStruct , [THBi 1 $ TyGround $ mkTHArrow [mkExt cstruct] (THBound 0)] ))
   , ("fromCStructPacked", (FromCStructPacked , [THBi 1 $ TyGround $ mkTHArrow [mkExt cstruct] (THBound 0)] ))
+
+  , ("allocStrBuf" , (AllocStrBuf , mkTHArrow [iTy] (mkExt strBuf)))
+  , ("pushStrBuf" , (PushStrBuf , mkTHArrow [mkExt strBuf , charTy] (mkExt strBuf)))
+  , ("strBufToString" , (StrBufToString , mkTHArrow [mkExt strBuf] (mkExt str)))
 
   , ("readFile"  , (ReadFile  , mkTHArrow [mkExt str] (mkExt str)))
   , ("writeFile" , (WriteFile , mkTHArrow [mkExt str] (mkExt str)))
@@ -135,10 +142,11 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("gt"      , (NumInstr (PredInstr GTCmp ) , mkTHArrow [iTy , iTy]    boolL))
   , ("eq"      , (NumInstr (PredInstr EQCmp ) , mkTHArrow [iTy , iTy]    boolL))
   , ("ne"      , (NumInstr (PredInstr NEQCmp) , mkTHArrow [iTy , iTy]    boolL))
-  , ("boolOR"  ,  (NumInstr (PredInstr OR )   , mkTHArrow [boolL, boolL] boolL))
+  , ("boolOR"  , (NumInstr (PredInstr OR )   , mkTHArrow [boolL, boolL] boolL))
   , ("boolAND" , (NumInstr (PredInstr AND )   , mkTHArrow [boolL, boolL] boolL))
   ]
 iTy = THPrim (PrimInt 32)
+charTy = THPrim (PrimInt 8)
 
 primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("Arrow" , (TyInstr Arrow  , ([set,set] , set)))
@@ -148,6 +156,8 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("puts"      , (Puts    , ([str] , i)))
   , ("putNumber" , (PutNbr  , ([i] , i)))
   , ("putChar"   , (PutChar , ([c] , c)))
+  , ("ord"       , (NumInstr (IntInstr Ord) , ([i8] , i32)))
+  , ("chr"       , (NumInstr (IntInstr Chr) , ([i32] , i8)))
 
   , ("add64" , (NumInstr (IntInstr Add    ) , ([i64, i64] , i64) ))
   , ("add"   , (NumInstr (IntInstr Add    ) , ([i, i] , i) ))
@@ -193,11 +203,11 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   ]
 
 typeOfLit = \case
-  String{}  → THPrim $ PtrTo (PrimInt 8) --"CharPtr"
-  Array{}   → THPrim $ PtrTo (PrimInt 8) --"CharPtr"
-  PolyInt{} → THPrim PrimBigInt
-  Int 0     → THPrim (PrimInt 1)
-  Int 1     → THPrim (PrimInt 1)
-  Int{}     → THPrim (PrimInt 32)
-  Char{}    → THPrim (PrimInt 8) --mkExt 3
-  x → error $ "don't know type of literal: " <> show x
+  String{}  -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
+  Array{}   -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
+  PolyInt{} -> THPrim PrimBigInt
+  Int 0     -> THPrim (PrimInt 1)
+  Int 1     -> THPrim (PrimInt 1)
+  Int{}     -> THPrim (PrimInt 32)
+  Char{}    -> THPrim (PrimInt 8) --mkExt 3
+  x -> error $ "don't know type of literal: " <> show x

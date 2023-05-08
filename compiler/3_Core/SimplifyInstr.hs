@@ -68,18 +68,26 @@ simpleInstr i args = let
   GMPInstr j -> simpleGMPInstr j args
   Zext | [Lit (Int i)]   <- args -> Lit (Fin 64 i)
        | [Lit (Fin _ i)] <- args -> Lit (Fin 64 i)
+  NumInstr (IntInstr Chr) | [Lit (Int i) ] <- args -> Lit (Char (chr (fromIntegral i)))
+  NumInstr (IntInstr Ord) | [Lit (Char c)] <- args -> Lit (I32  (ord c))
 --NumInstr (IntInstr i)  | [Lit (I32 a) , Lit (I32 b)] <- args ->
   NumInstr (IntInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryIntInstr i a b))
   NumInstr (BitInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryBitInstr i a b))
   NumInstr (PredInstr p) | [Lit (Int a) , Lit (Int b)] <- args -> if interpretBinaryPredInstr p a b then builtinTrue else builtinFalse
 
   -- cannot use posix types directly due to hidden constructors preventing deriving Binary for Literal
-  OpenDir | [Lit (String fName)] <- args -> Lit (DirStream (unsafePerformIO (Dir.listDirectory fName)))
+  OpenDir | [Lit (String fName)] <- args -> let
+    go = Dir.doesDirectoryExist fName >>= \ok -> if ok then Dir.listDirectory fName else pure []
+    in Lit (DirStream (unsafePerformIO go))
   ReadDir | [Lit (DirStream fs)] <- args -> case fs of
     []     -> Tuple (V.fromList [builtinFalse , Lit (DirStream []) , Lit (String "")])
     f : fs -> Tuple (V.fromList [builtinTrue  , Lit (DirStream fs) , Lit (String f)])
   IsDir   | [Lit (String fName)] <- args -> if unsafePerformIO (Dir.doesDirectoryExist fName) then builtinTrue else builtinFalse
-  Puts    | [Lit (String fName)] <- args -> unsafePerformIO (putStrLn fName) & \_ -> Lit (Int (fromIntegral $ length fName))
+  Puts    | [Lit (String fName)] <- args -> trace fName $ Lit (Int (fromIntegral $ length fName))
+
+  StrBufToString | [Lit (RevString rs)] <- args -> Lit (String (reverse rs)) -- TODO slow
+  PushStrBuf | [Lit (RevString rs) , Lit (Char c)] <- args -> Lit (RevString (c : rs))
+  AllocStrBuf | [Lit (Int len)] <- args -> Lit (RevString [])
   _ -> App (Instr i) args
 
 simpleGMPInstr ∷ NumInstrs -> [Term] -> Term

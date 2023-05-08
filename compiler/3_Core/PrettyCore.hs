@@ -262,7 +262,7 @@ pTerm showRhs = let
 --  SpecF q      -> "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
     LetSpecF q sh -> "let-spec: " <> viaShow q <> "(" <> viaShow sh <> ")"
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
-    TupleF    {} -> error "tuple"
+    TupleF ts    -> parens $ hsep $ punctuate " ," (V.toList ts)
     LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
       <> hardline <> "in" <+> t
     LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)

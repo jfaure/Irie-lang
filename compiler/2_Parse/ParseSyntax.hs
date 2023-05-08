@@ -4,7 +4,7 @@ module ParseSyntax where
 import Prim ( Literal )
 import QName ( QName )
 import MixfixSyn ( MFWord, MixfixDef, Prec )
-import Errors (ScopeError)
+import Errors (ScopeError , MixfixError)
 import Text.Megaparsec.Pos ( Pos , mkPos )
 import Control.Lens ( (^.), makeLenses )
 import Data.Functor.Foldable.TH (makeBaseFunctor)
@@ -128,7 +128,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | PExprApp Prec QName [TT]
  | RawExpr TT -- Skip case for anamorphisms
  | VoidExpr
- | MixfixPoison Text
+ | MixfixPoison MixfixError
 
 type Pattern = TT
 

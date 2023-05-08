@@ -304,7 +304,8 @@ inferF = let
   P.AppF fTT argsTT  -> fTT  >>= \f -> sequence argsTT >>= inferApp (-1) f
   P.PExprAppF _prec q argsTT -> getQBind q >>= \f -> sequence argsTT >>= inferApp (-1) f
   P.RawExprF t -> t
-  P.MixfixPoisonF t -> PoisonExpr <$ (tmpFails .= []) <* error (show t) -- (errors . scopeFails %= (e:))
+  P.MixfixPoisonF t -> PoisonExpr <$ (tmpFails .= [])
+    <* (errors . mixfixFails %= (t:))
   P.QVarF q -> getQBind q
 --VoidExpr (QVar QName) (PExprApp p q tts) (MFExpr Mixfixy)
 

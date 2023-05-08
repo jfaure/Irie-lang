@@ -185,7 +185,7 @@ simplifyModule :: (CmdLine, f, JudgedModule, V.Vector HName , GlobalResolver, e,
 simplifyModule (flags , fName , judgedModule , iNames , newResolver , _exts , errors , srcInfo) = let
   JudgedModule modI modNm bindNames lMap judgedModTT = judgedModule
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails)
-    && null (errors ^. checkFails) && null (errors ^. typeAppFails)
+    && null (errors ^. checkFails) && null (errors ^. typeAppFails) && null (errors ^. mixfixFails)
   skipFuse = not doFuse || noFuse flags || not coreOK || elem "types" (printPass flags)
   judgedSimple = if skipFuse then judgedModule else runST $
     BetaEnv.simpleExpr judgedModTT <&> \modTTSimple
@@ -198,7 +198,8 @@ putResults (flags , coreOK , errors , srcInfo , fName , iNamesV , r , j) = let
   raw = not doFuse || noFuse flags || not coreOK || elem "types" (printPass flags) -- TODO same as above
 --testPass p = coreOK && p `elem` printPass flags && not (quiet flags)
   putErrors h = do
-    T.IO.hPutStr  h $ T.concat  $ (<> "\n\n") . formatError bindSrc srcInfo <$> (errors ^. biFails)
+    T.IO.hPutStr  h $ T.concat  $ (<> "\n\n") . formatMixfixError srcInfo        <$> (errors ^. mixfixFails)
+    T.IO.hPutStr  h $ T.concat  $ (<> "\n\n") . formatBisubError bindSrc srcInfo <$> (errors ^. biFails)
     T.IO.hPutStr  h $ T.concat  $ (<> "\n\n") . formatScopeError            <$> (errors ^. scopeFails)
     TL.IO.hPutStr h $ TL.concat $ (<> "\n\n") . formatCheckError bindSrc    <$> (errors ^. checkFails)
     TL.IO.hPutStr h $ TL.concat $ (<> "\n\n") . formatTypeAppError          <$> (errors ^. typeAppFails)
@@ -239,15 +240,19 @@ codegen flags input@(_resolver , jm) = let ssaMod = mkSSAModule jm in do
 ----------
 replWith :: forall a. a -> (a -> Text -> IO a) -> IO a
 replWith startState fn = let
-  doLine state = getInputLine "$ " >>= \case
+  doLine state = getInputLine "$> " >>= \case
     Nothing -> pure state
     Just l  -> lift (fn state (toS l)) >>= doLine
   in runInputT defaultSettings $ doLine startState
 
 replCore :: CmdLine -> IO ()
 replCore cmdLine = let
+  doLineE l = let
+    handler caught = defaultRet <$ maybe (pure ()) (\(ErrorCall msg) -> putStrLn msg) (fromException caught)
+    defaultRet = (primResolver , emptyJudgedModule)
+    in catch (doLine l) handler
   doLine l = text2Core cmdLine Nothing primResolver 0 "<stdin>" l
     >>= putResults . simplifyModule
 --  >>= codegen cmdLine
 --  >>= print . V.last . allBinds . fst
-  in void $ replWith cmdLine $ \cmdLine line -> cmdLine <$ doLine line
+  in void $ replWith cmdLine $ \cmdLine line -> cmdLine <$ doLineE line

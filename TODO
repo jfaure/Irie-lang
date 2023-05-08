@@ -1,11 +1,7 @@
-## meta
-  * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
-  * https://documentation.divio.com/
-## Fix
-  * lvl diffs
-  * case-case: inverted λ (? this may push free-vars out)
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
-  * type aliases + term/type name scope
+  * Fix case-case: inverted λ (? this may push free-vars out)
+  * How to duplicate stream but share computations
+  * type aliases + term/type name scope (global?)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * generalise all lambda types (unless inlineable?) + check not-recursive (avoid inf β-reduction eg. Y-comb)
   * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
@@ -14,7 +10,6 @@
   * rewrite μ-roll; esp. for multi-branch μs merge
   * trim bisubs at some point
   * check if capture free-vars correctly on mutual bindings
-
 ### Linearity ; free variables (type must be known) ; β vs always-inline
   ! β-opt: Specialise on paps iff dupd (transitive dups?) => extract any functions on the papped arguments
   ? assume linear
@@ -23,7 +18,6 @@
       f x = x x => f x = let a b = DUP x in a b
       ! see when lambdas are duplicated (also reduce computations on free-vars when papped)
   ? should we compute containement
-
   Generalise lams passed into functions that duplicate args
   GlobalResolver = { Modules } BitSetMap of modules keyed on INames
   Module : (λimportBruijns -> {}) i1..in
@@ -90,9 +84,10 @@
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
+  * optimise strbuf and literal string/arrays
   * rm (Core : Expr) in favor of tuple
   * Completion based on types (Type -> Bind)
-  * tabs v spaces
+  * tabs vs spaces
   * Need totality checker, else a Refl type may not terminate and thus proves nothing
   * strictly positive recursion
   * underdetermined recursion: https://counterexamples.org/underdetermined-recursion.html
@@ -114,3 +109,5 @@
   * Function = Constructor + rewrite rules ?
   * `typeOf : (t : Type) -> Type` shortcut to access (and alias) an inferred type
   * reinstate ArgProd f97cd9c0d01eddb562a029fa52ddee785e6a47b6
+  * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
+  * https://documentation.divio.com/

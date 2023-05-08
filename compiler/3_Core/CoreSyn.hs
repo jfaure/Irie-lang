@@ -205,6 +205,7 @@ data JudgedModule = JudgedModule {
  , labelNames :: M.Map HName IName
  , moduleTT   :: Expr
 }
+emptyJudgedModule = JudgedModule (-1) "" mempty mempty PoisonExpr -- dodgy (used for repl atm)
 
 data OldCachedModule = OldCachedModule {
    oldModuleIName :: ModuleIName

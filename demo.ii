@@ -1,7 +1,7 @@
 -- let-scope depends on parse
 -- letscopeAfterMixfix y = if y then let x = 3 in x else y
 
--- ? make top-level lambda over entire module to resolve patterns
+-- pattern assignments; ? make mutual λ over whole record
 -- (f , g) = (2 , 3)
 
 -- let-bound mixfix => make VLetBind instead of QName
@@ -11,6 +11,7 @@
 --Recangle = record
 --  f : Int
 --  g : Int
+
 --import prelude
 --import list
 --import list2
@@ -24,17 +25,18 @@
 --import intmap
 
 --import stream
---main = ls "hello"
 --import imports/TreeStream
 
---f = \case { @x b | @y <- b => 1 } -- doesn't parse
+-- parse pattern guards
+--f = \case { @x b | @y <- b => 1 }
 
 -- Merge equations properly, this creates 2 bindings and bugs out inames
 -- Also disallow extra names between the equations (scoped fields?)
 --eq1 (@x) b = 2
 --eq1 a b = 3
 
--- Re-generalise let-binds + Add free-variables into type to codegen let-binds
+-- index out of bounds
+-- g (x a) = a -- no '@', so x uses bind-name not label name
 
 -- Label namespaces + label application
 --f x = label x x -- check if label in scope as label ? or requrie @
@@ -42,13 +44,14 @@
 --g = \case
 --  x => x -- Always label
 
--- import imports/prelude
--- x = True -- Ambiguous binding (@True OK)
+--import prelude
+--x = True -- Ambiguous binding (@True OK)
 
--- g (x a) = a -- no '@', so x uses bind-name not label name
+-- Re-generalise let-binds + Add free-variables into type to codegen let-binds
 
 -- tvars must never refer to deeper let-nest tvars through their bounds
 -- need to save state tvars => only biunify with instantations not the escaped tvar
+-- perhaps should explicitly pass down args straight after scope-check to avoid the annoyance
 --lp17 f = let r x g = { a = g x , b = f x } in { u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
 -- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
 
@@ -70,7 +73,7 @@
 --  @None => @True
 --  ? => @False
 
--- parse nested lets
+-- parse indented nested lets
 --f x =
 -- let g y =
 --   let h z = add z (add x y) in h
@@ -93,13 +96,11 @@
 --import letCaptureTests
 --import list
 
---letGen3 x = let y z = x z in y
-
 --test-case-case x = case case x of { @F x y => @G x y } of
 --  @G x y => @Add x y
+--f = test-case-case (@F 1 2)
 
---import testBruijns
---t11 x = (\a f => f a) x (\y => @Add x y)
+import stream
 
 {-
 import prelude
@@ -116,6 +117,7 @@ t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
 --t2 = splitAt 1 (scanSum 2 Nil)
 -}
 
+{-
 import prelude
 
 Sappend (@stream nextL sl0) (@stream nextR sr0) = let
@@ -156,7 +158,4 @@ foldr c z (@stream next seed) = let -- rhylo c a seed
 t   = foldr add 0 (enumFromTo 0 10)
 tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
 ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
-
---test-case-case x = case case x of { @F x y => @G x y } of
---  @G x y => @Add x y
---f = test-case-case (@F 1 2)
+-}

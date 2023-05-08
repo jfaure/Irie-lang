@@ -117,22 +117,24 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
   -- case-case: push/copy outer case to each branch, then the inner case output fuses with outer case labels
   -- Scrut is pre β-reduced , fuse then β-reduce branches and d (after fusion = a single one)
   -- TODO (?) need to inc args within the pushed case (normally case-Abs are distinct, but now we're stacking them)
-      CaseB innerScrut ty2 innerBranches innerDefault -> trace (prettyTermRaw term <> "\n\n\n" <> prettyTermRaw tt <> "\n----\n\n") $ let
-        pushCase = \case -- this will produce a case-label for each branch
-          -- TODO this bruijnAbs applies to the scrut but NOT the branches/d !
-          -- | make a new fn that separate scrut/branches (not possible with current syntax)
-          -- |*New syntax: case-branches to separate scrut from branches and allow \p1..pn S -> pass in branches
-          -- | force increment all bruijns in branches (complicated when meeting more bruijnAbs)
-          -- | Wrap (blocks pattern matching and too weird)
-          -- | Rewrite case-case to resolve all without returning (inner case usually scruts an arg so irreducable)
-       -- BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT (Wrap n <$> branches) (Wrap n <$> d))
-          BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT branches d) -- A case-label
-       -- BruijnAbs n innerOutput -> BruijnAbs (n + 1) (CaseB (VBruijn n) retT branches d) -- A case-label
-          BruijnAbsTyped{} -> _
-          innerOutput@Label{} -> CaseB innerOutput retT branches d
-          innerOutput -> CaseB innerOutput retT branches d -- error ""
-      --pushCase innerOutput = did_ $ CaseB innerOutput retT branches d -- A case-label
-        in fuseCase ty2 (pushCase <$> innerBranches) (pushCase <$> innerDefault) innerScrut
+--    CaseB innerScrut ty2 innerBranches innerDefault -> trace (prettyTermRaw term <> "\n\n\n" <> prettyTermRaw tt <> "\n----\n\n") $ let
+--      pushCase = \case -- this will produce a case-label for each branch
+--        -- TODO this bruijnAbs applies to the scrut but NOT the branches/d !
+--        -- | make a new fn that separate scrut/branches (not possible with current syntax)
+--        -- | New syntax: case-branches to separate scrut from branches and allow \p1..pn S -> pass in branches
+--        -- | force increment all bruijns in branches (complicated when meeting more bruijnAbs)
+--        -- | Wrap (blocks pattern matching and too weird)
+--        -- | Rewrite case-case to resolve all without returning (inner case usually scruts an arg so irreducable)
+--        -- | Leave the fn in the scrut (Then need to partition trailingArgs to scrut and to branch output)
+--        -- | case-branches are let-binds (ie. have explicit captures)
+--     -- BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT (Wrap n <$> branches) (Wrap n <$> d))
+--     -- BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT branches d) -- A case-label
+--     -- BruijnAbs n innerOutput -> BruijnAbs n (CaseB (VBruijn n) retT branches d) -- A case-label
+--        BruijnAbsTyped{} -> _
+--        innerOutput@Label{} -> CaseB innerOutput retT branches d
+--        innerOutput -> CaseB innerOutput retT branches d -- error ""
+--    --pushCase innerOutput = did_ $ CaseB innerOutput retT branches d -- A case-label
+--      in fuseCase ty2 (pushCase <$> innerBranches) (pushCase <$> innerDefault) innerScrut
         -- retry one-step fusion without re-βreducing the scrut
 
       opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches)
@@ -142,13 +144,16 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
 
   -- Try before and after forcing the scrut
   -- TODO other lenses ; trailingArgs
-  TTLens l@Label{} [f] LensGet -> error $ "Lensing on a label: " <> show (l , f)
-  TTLens (LetBlock l) [f] LensGet -> case V.find ((==f) . iName . fst) l of
-      Just x -> pure $ Right . (lvl,env,) <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
-  TTLens scrut [f] LensGet | null trailingArgs -> simpleTerm' lvl env scrut >>= \case
+  TTLens obj [f] LensGet -> case obj of
+    l@Label{} -> error $ "Lensing on a label: " <> show (l , f)
     LetBlock l -> case V.find ((==f) . iName . fst) l of
-      Just x -> pure $ Left <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
-    opaque -> pure $ TTLensF (Left opaque) [f] LensGet
+      Just x -> pure $ Right . (lvl,env,) <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
+    Tuple l -> pure $ Right . (lvl,env,) <$> project (l V.! unQName (QName f))
+    scrut | null trailingArgs -> simpleTerm' lvl env scrut >>= \case
+      Tuple l -> pure $ Left <$> project (l V.! unQName (QName f))
+      LetBlock l -> case V.find ((==f) . iName . fst) l of
+        Just x -> pure $ Left <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
+      opaque -> pure $ TTLensF (Left opaque) [f] LensGet
 
   LetBlock lets | not (null trailingArgs) -> error $ show trailingArgs -- TODO Why
   LetBlock lets | null trailingArgs ->
@@ -170,6 +175,7 @@ inferBlock lets go = do
 
 -- TODO how to avoid duplicate simplifications? ie. iff no VBruijns to solve: isEnvEmpty
 simpleBind lvl env b = case b of
+--BindOK _ _ PoisonExpr -> pure b
   BindOK (OptBind optLvl specs) free (Core t ty) -> if isEnvEmpty env && optLvl /= 0 then pure b else do
     newT <- simpleTerm' lvl env t
     pure (BindOK (OptBind ({-optLvl +-} 1) specs) free (Core newT ty))
