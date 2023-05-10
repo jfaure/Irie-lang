@@ -58,11 +58,12 @@ data Term -- β-reducable (possibly to a type)
 -- []
  | Label   ILabel [Term]
  | CaseB   Term Type (BSM.BitSetMap Term) (Maybe Term)
+ | CaseSeq Int Term Type (BSM.BitSetMap Term) (Maybe Term)
+ | CaseLam          Type (BSM.BitSetMap Term) (Maybe Term)
 
 -- Simplifier
  | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
  | LetSpec QName [ArgShape]
- | CaseBranches (BSM.BitSetMap Term) (Maybe Term) -- CaseB without Scrut
 
  | Wrap Int Term -- indicates a term was incorrectly wrapped in an abstraction (case-case simplification)
 -- | CType Type -- Need to be able to embed types into some terms (but not the opposite)

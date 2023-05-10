@@ -1,0 +1,13 @@
+test-case-case x z = case case x of { @F x y => @G x y } of
+  @G x y => @Add x y z
+f = test-case-case (@F 1 2)
+
+nextappend ys xs = case case xs of { @Nil => @Done ; @Cons x xs => @Yield x xs } of
+  @Done => @Skip (@Right ys)
+  @Skip xs => @Skip (@Left xs)
+  @Yield x xs => @Yield x (@Left xs)
+
+-- expect
+-- nextappend ys xs = case xs of
+--   Nil       => Skip (Right ys)
+--   Cons x xs => Yield x (Left xs)

@@ -63,6 +63,7 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
   eLen = V.length argEnv
   unSub (TSub prevArgEnv prevLvl arg) | prevLvl == lvl = Right (lvl , (prevArgEnv , mempty) , arg)
  -- unSub (TSub prevArgEnv prevLvl arg) = traceShow (prevLvl , lvl) $ Right (lvl , (prevArgEnv , mempty) , arg)
+
   in --trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
   case term of
   App f args -> fuse (lvl , (argEnv , (TSub argEnv lvl <$> args) <> trailingArgs) , f)
@@ -104,43 +105,17 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
     $  (Right . (lvl , (argEnv , mempty) ,) <$> ars)
     <> (unSub <$> trailingArgs)
 
-  -- ! Needs to pull out the seed immediately, but perhaps fuse multiple case-case
+  -- ? where do params come from if no trailing args here
+  -- TODO what if stacking case-cases
+--CaseSeq n scrut retT branches d -> if not (null trailingArgs) then _ else
+--  simpleTerm' lvl (argEnv , []) (BruijnAbs n scrut)
+--  >>= fuseCase lvl argEnv trailingArgs retT branches d
+  CaseSeq n scrut retT branches d -> if not (null trailingArgs) then _ else
+    simpleTerm' lvl (argEnv , []) scrut
+    >>= fuseCase lvl (V.drop n argEnv) trailingArgs retT branches d -- keep same lvl
+
   CaseB scrut retT branches d -> simpleTerm' lvl (argEnv , []) scrut --scrut has no trailingArgs
-    >>= fuseCase retT branches d where
-   idEnv = mkBruijnArgSubs lvl (V.length $ fst env) -- TODO check the trailingArgs!
--- fuseCase :: Type -> BSM Term -> Maybe Term -> Term -> SimplifierEnv s (TermF (Either Term Seed))
-   fuseCase retT branches d tt = case tt of
-  -- case-label; params are already β-d at this lvl, so idSubs (not ideal solution though)
-      Label l params -> case branches BSM.!? qName2Key l <|> d of
-        Just body -> fuse (lvl , (argEnv , (params <&> TSub idEnv lvl) <> trailingArgs) , body)
-        Nothing -> error $ "panic: no label: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
-  -- case-case: push/copy outer case to each branch, then the inner case output fuses with outer case labels
-  -- Scrut is pre β-reduced , fuse then β-reduce branches and d (after fusion = a single one)
-  -- TODO (?) need to inc args within the pushed case (normally case-Abs are distinct, but now we're stacking them)
---    CaseB innerScrut ty2 innerBranches innerDefault -> trace (prettyTermRaw term <> "\n\n\n" <> prettyTermRaw tt <> "\n----\n\n") $ let
---      pushCase = \case -- this will produce a case-label for each branch
---        -- TODO this bruijnAbs applies to the scrut but NOT the branches/d !
---        -- | make a new fn that separate scrut/branches (not possible with current syntax)
---        -- | New syntax: case-branches to separate scrut from branches and allow \p1..pn S -> pass in branches
---        -- | force increment all bruijns in branches (complicated when meeting more bruijnAbs)
---        -- | Wrap (blocks pattern matching and too weird)
---        -- | Rewrite case-case to resolve all without returning (inner case usually scruts an arg so irreducable)
---        -- | Leave the fn in the scrut (Then need to partition trailingArgs to scrut and to branch output)
---        -- | case-branches are let-binds (ie. have explicit captures)
---     -- BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT (Wrap n <$> branches) (Wrap n <$> d))
---     -- BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT branches d) -- A case-label
---     -- BruijnAbs n innerOutput -> BruijnAbs n (CaseB (VBruijn n) retT branches d) -- A case-label
---        BruijnAbsTyped{} -> _
---        innerOutput@Label{} -> CaseB innerOutput retT branches d
---        innerOutput -> CaseB innerOutput retT branches d -- error ""
---    --pushCase innerOutput = did_ $ CaseB innerOutput retT branches d -- A case-label
---      in fuseCase ty2 (pushCase <$> innerBranches) (pushCase <$> innerDefault) innerScrut
-        -- retry one-step fusion without re-βreducing the scrut
-
-      opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches)
-                                                           (Right . (lvl,env,) <$> d)
-
---Wrap n t -> pure $ Right . (lvl , (V.drop 0 argEnv , trailingArgs) ,) <$> project t
+    >>= fuseCase lvl argEnv trailingArgs retT branches d
 
   -- Try before and after forcing the scrut
   -- TODO other lenses ; trailingArgs
@@ -167,6 +142,50 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
   x -> pure $ if null trailingArgs
     then Right . (lvl , env ,) <$> project x
     else AppF (Right (lvl , (argEnv , mempty) , x)) (unSub <$> trailingArgs)
+
+fuseCase lvl argEnv trailingArgs retT branches d tt = let
+  idEnv = mkBruijnArgSubs lvl (V.length $ fst env)
+  env = (argEnv , trailingArgs)
+  in case tt of
+    -- case-label: params are already β-d at this lvl, so idSubs (not ideal solution though)
+    Label l params -> case branches BSM.!? qName2Key l <|> d of
+      Just body -> fuse (lvl , (argEnv , (params <&> TSub idEnv lvl) <> trailingArgs) , body)
+      Nothing -> error $ "panic: no label: " <> show l <> " : " <> show params <> "\n; " <> show (BSM.keys branches)
+    -- case-case: push(copy) outer case to each branch, then the inner case output fuses with outer case labels
+    CaseB innerScrut ty2 innerBranches innerDefault -> let
+      pushCase = \case -- this will produce a case-label for each branch
+        -- case (\p1..p2 -> scrut) of branches
+        -- (\p1..p2 C -> ) (p1..p2 -> scrut) (\case branches) -- Thus branches aren't touched by params
+        BruijnAbs n innerOutput -> BruijnAbs n (CaseSeq n innerOutput retT branches d)
+--      BruijnAbs n innerOutput -> CaseSeq n innerOutput retT branches d
+        BruijnAbsTyped{} -> _
+--      c@CaseB{} -> error $ show c
+        innerOutput             -> CaseB innerOutput retT branches d
+      in fuseCase lvl argEnv trailingArgs ty2 (pushCase <$> innerBranches) (pushCase <$> innerDefault) innerScrut
+    -- no-fusion
+    CaseSeq n innerScrut ty2 innerBranches innerDefault -> _
+    opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches)
+                                                         (Right . (lvl,env,) <$> d)
+
+-- case-case notes:
+-- case-case: push/copy outer case to each branch, then the inner case output fuses with outer case labels
+-- Scrut is pre β-reduced , fuse then β-reduce branches and d (after fusion = a single one)
+-- TODO (?) need to inc args within the pushed case (normally case-Abs are distinct, but now we're stacking them)
+
+    -- case (\p1..p2 -> scrut) of branches
+    -- => \p1..p2 -> case scrut of branches
+    -- TODO this bruijnAbs applies to the scrut but NOT the branches/d !
+    -- | make a new fn that separate scrut/branches (not possible with current syntax)
+    -- | New syntax: case-branches to separate scrut from branches and allow \p1..pn S -> pass in branches
+    -- | force increment all bruijns in branches (complicated when meeting more bruijnAbs)
+    -- | Wrap (blocks pattern matching and too weird)
+    -- | Rewrite case-case to resolve all without returning (inner case usually scruts an arg so irreducable)
+    -- | Leave the fn in the scrut (Then need to partition trailingArgs to scrut and to branch output)
+    -- | case-branches are let-binds (ie. have explicit captures)
+ -- BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT branches d) -- A case-label
+ -- BruijnAbsTyped{} -> _
+ -- innerOutput -> CaseB innerOutput retT branches d -- error ""
+--pushCase innerOutput = did_ $ CaseB innerOutput retT branches d -- A case-label
 
 inferBlock lets go = do
   nest <- letNest <<%= (1+)

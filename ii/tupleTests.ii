@@ -1,0 +1,6 @@
+swap (a , b) = (b , a)
+g S = add S.a S.b
+
+f (a , b , c) = @Add a c
+
+t = f (1 , 2 , 3)

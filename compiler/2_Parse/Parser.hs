@@ -123,7 +123,7 @@ linefold p = endLine *> scn *> do
 -- Names --
 -----------
 reservedChars = ".@(){};:,\\\""
-reservedNames = S.fromList $ words "let rec in \\case λcase case as over foreign foreignVarArg where of _ import use open require = ? | λ => ⇒"
+reservedNames = S.fromList $ words "let rec in \\case λcase case as over foreign foreignVarArg where of _ import use open require = ? | λ => ⇒ #"
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c = if T.any (==c) reservedChars then lexeme (char c) else lexeme (char c <* notFollowedBy idenChars)
@@ -286,8 +286,9 @@ tt :: Parser TT
 -- , reserved "record" *> tyRecord  -- multiline record decl
    , reserved "case"   *> casePat
    , reserved "data"   *> tySumData -- multiline sumdata decl
+   , reserved "#" *> (LitArray <$> (literalP `sepBy1` sc))
    , con
-   , Lit <$> lexeme (try (literalP <* notFollowedBy iden)) -- must be before Iden parsers
+   , Lit <$> lexeme literalP -- must be before Iden parsers
    , reservedChar '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
    , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x]
    , try $ iden >>= lookupBindName -- holey names used as defined
@@ -298,6 +299,8 @@ tt :: Parser TT
   parensExpr = parens ((tt >>= \t -> tuple t <|> typedTT t) <|> scn $> Tuple [])
     >>= catchUnderscoreAbs
   tuple t = (\ts -> Tuple (t:ts)) <$> some (reservedChar ',' *> tt)
+--tuple t = let mkFnBind i t = FnDef "" i Let Nothing t Nothing
+--  in some (reservedChar ',' *> tt) <&> (\ts -> LetIn (Block False Let (V.imap mkFnBind $ V.fromList (t : ts))) Nothing)
   label i = lookupSLabel i >>= \case
     Nothing -> P.Label <$ reserved "@" <*> newSLabel i <*> many arg
     Just l  -> pure $ P.Label l [] -- <$> many arg (converted in App)
@@ -339,7 +342,7 @@ tt :: Parser TT
 ---------------------
 -- literal parsers --
 ---------------------
-literalP = let
+literalP = try $ (<* notFollowedBy iden) $ let
   signed p = let
     sign :: Bool -> Parser Bool =
       \i -> option i $ single '+' *> sign i <|> single '-' *> sign (not i)

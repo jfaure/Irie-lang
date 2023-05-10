@@ -1,6 +1,7 @@
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
-  * Fix case-case: inverted λ (? this may push free-vars out)
-  * How to duplicate stream but share computations
+  * Tuples must handle let-captures
+  * Tee: shared pointer to cached stream
+  * leaf bicasts
   * type aliases + term/type name scope (global?)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * generalise all lambda types (unless inlineable?) + check not-recursive (avoid inf β-reduction eg. Y-comb)
@@ -11,7 +12,7 @@
   * trim bisubs at some point
   * check if capture free-vars correctly on mutual bindings
 ### Linearity ; free variables (type must be known) ; β vs always-inline
-  ! β-opt: Specialise on paps iff dupd (transitive dups?) => extract any functions on the papped arguments
+  ! β-opt: Specialise on paps iff dupd (or all paps) (transitive dups?) => extract any functions on the papped arguments
   ? assume linear
   * explicit freeVars within lets + dup nodes + type application; also half-generalised (escaped vars) types
   * dup node: (hangs on global (device / thread ?) scope)

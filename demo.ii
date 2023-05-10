@@ -96,13 +96,20 @@
 --import letCaptureTests
 --import list
 
---test-case-case x = case case x of { @F x y => @G x y } of
---  @G x y => @Add x y
---f = test-case-case (@F 1 2)
+--import casecase
+--import tupleTests
+--import stream
 
--- * fromString
--- * tee
-import stream
+-- Tee: shared pointer to cached stream: usage: tee str > \(strL , strR) => ..
+-- ! Vec is a builtin that reallocs itself if push exceeds its bounds
+-- Vec = { size : Int , ptr : Mem }
+-- TODO multi-ref: teeN function
+-- TODO ERA: how to free if stream copy is unused
+--tee (@stream inNext s0) = VecNew > \ptr => let
+--  next (s , n) = case n >= ptr.cached of
+--    True  => Yield (VecRead ptr n) (n + 1)
+--    False => inNext s > \x => VecPush ptr n x (Yield x (n + 1)) -- ! writePtr
+--  in @stream next s0
 
 {-
 import prelude
@@ -119,7 +126,8 @@ t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
 --t2 = splitAt 1 (scanSum 2 Nil)
 -}
 
-{-
+--import stream
+
 import prelude
 
 Sappend (@stream nextL sl0) (@stream nextR sr0) = let
@@ -135,20 +143,21 @@ Sappend (@stream nextL sl0) (@stream nextR sr0) = let
   in ana next (@Left sl0)
 
 SconcatMap f (@stream nexta seed) = let
-  nextC (sa , m) = case m of
-    @None => case nexta sa of
+  nextC S = case S.m of
+    @None => case nexta S.sa of
       @Done      => Done
-      @Skip s    => Skip (s , @None)
-      @Yield a s => Skip (s , @One (f a))
+      @Skip s    => Skip { sa = s , m = @None}
+      @Yield a s => Skip { sa = s , m = @One (f a)}
     @One (@stream nextb sb) => case nextb sb of
-      @Done      => Skip    (sa , @None)
-      @Skip s    => Skip    (sa , @One (stream nextb s))
-      @Yield b s => Yield b (sa , @One (stream nextb s))
-  in @stream nextC (seed , None)
+      @Done      => Skip    {sa = S.sa , m = @None}
+      @Skip s    => Skip    {sa = S.sa , m = @One (stream nextb s)}
+      @Yield b s => Yield b {sa = S.sa , m = @One (stream nextb s)}
+  in @stream nextC {sa = seed , m = None}
 
 ana next seed = @stream next seed
 
 enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
+empty = @stream (\x => x) @Done
 
 foldr c z (@stream next seed) = let -- rhylo c a seed
   go s = case next s of

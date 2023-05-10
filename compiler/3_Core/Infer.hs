@@ -195,7 +195,7 @@ inferF = let
      x          -> error (show x)
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
- getQBind q = {-traceShow q $-} use thisMod >>= \m -> if modName q == m
+ getQBind q = use thisMod >>= \m -> if modName q == m
    then judgeBind 0 (unQName q) <&> \case -- binds at this module are at let-nest 0
      Core _t ty -> Core (Var $ VLetBind q) ty -- don't inline at this stage
      x          -> x -- did_ x
@@ -211,20 +211,18 @@ inferF = let
    svFL <- freeLimit <<.= fl
 
    bl <- use blen
--- lvls %= (setNBits bl :) -- enter lvl all prev vars are escaped => if biunified with new vars must export new vars
+-- enter lvl: all prev vars are escaped => if biunified with new vars must export new vars
    lvls %= \case
      []      -> [setNBits bl]
      l0 : ls -> (setNBits bl .|. l0) : l0 : ls
--- use lvls >>= \ls -> traceM (" -> enter: " <> show (bitSet2IntList <$> ls))
 
    use letBinds >>= \lvl -> V.thaw (Left <$> letBindings) >>= MV.write lvl nest
    judgeBind nest `mapM_` [0 .. V.length letBindings - 1]
 
--- use lvls >>= \ls -> traceM (" <- leave: " <> show (bitSet2IntList <$> ls))
-   lvls %= drop 1 -- leave Lvl (TODO .|. head into next lvl?)
+   lvls %= drop 1 -- leave Lvl (? .|. head into next lvl?)
 
    freeLimit .= svFL
-   _lc <- letCaptures <%= (`shiftR` (fl - svFL)) -- diff all let-captures
+   letCaptures <%= (`shiftR` (fl - svFL)) -- diff all let-captures
 
    -- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
    -- Why does this need to be above the let assignment here?!
@@ -252,35 +250,24 @@ inferF = let
     x -> x
 
 -- TODO Tuples must also handle captures (inferBlock)
+  P.TupleF _ -> error $ "Tuples disabled: TODO handle captures in tuples else weird bugs likely"
   P.TupleF ts -> sequence ts <&> \exprs -> let
     ty  = THProduct (BSM.fromListWith mkFieldCol
       $ Prelude.imap (\nm t -> (qName2Key (mkQName 0 nm) , t)) (tyOfExpr <$> exprs))
-    lets = Prelude.imap (\i c -> let lc = (0,0) in -- TODO
+    lets = Prelude.imap (\i c -> let lc = (0,0) in -- TODO find the right letCaptures
       (LetMeta (qName2Key (mkQName 0 i)) ("!" <> show i) (-1) , BindOK optInferred lc c))
       exprs
     in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
---  P.VBruijn b  -> use bruijnArgVars <&> \argTVars -> Core (VBruijn b) (tyVar $ argTVars V.! b)
     P.VBruijn b -> do
       argTVars <- use bruijnArgVars
       fLimit <- use freeLimit
       let lvl = V.length argTVars
           diff = lvl - fLimit
           bruijnAtBind = b - diff -- Bruijn idx at the let-binding
-          normal = Core (VBruijn b) (tyVar $ argTVars V.! b)
-      if b >= diff
-      then do
-        _set <- (`testBit` bruijnAtBind) <$> use letCaptures
-        letCaptures %= (`setBit` bruijnAtBind)
-        pure normal
---      tvar <- use capturedTVars >>= \v -> if set then MV.read v bruijnAtBind
---        else freshBiSubs 1 >>= \[t] -> -- traceShowM (b , lvl , fLimit , MV.length v , bruijnAtBind , t) *>
---          (t <$ MV.write v bruijnAtBind t)
---      pure $ Core (VBruijn b) (tyVar tvar)
-  ------let freeTVar = argTVars V.! b
-  ------pure $ Core (VBruijn b) (tyVar freeTVar)
-      else pure normal
+      when (b >= diff) (letCaptures %= (`setBit` bruijnAtBind))
+      pure $ Core (VBruijn b) (tyVar $ argTVars V.! b)
     P.VQBind q   -> getQBind q
     P.VLetBind q -> judgeBind (modName q) (unQName q) <&> \case
       Core _t ty -> Core (Var (VLetBind q)) ty

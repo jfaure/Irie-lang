@@ -107,7 +107,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  -- term primitives
  | Lit      Literal
- | LitArray [Literal]
+ | LitArray {-(Maybe Int)-} [Literal] -- maybe size
  | LitEq Literal TT
 
  -- type primitives

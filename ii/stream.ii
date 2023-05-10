@@ -51,29 +51,41 @@ Sappend (@stream nextL sl0) (@stream nextR sr0) = let
       @Yield x s => Yield x (Right s)
   in ana next (@Left sl0)
 
-SzipWith f (@stream nextL sl0) (@stream nextR sr0) = let
-  nxt (sl , sr , maybeST) = case maybeST of
-    @None => case nextL sl of
-      @Done      => Done
-      @Skip s    => Skip (s , sr , None)
-      @Yield x s => Skip (s , sr , One x)
-    @One a => case nextR sr of
-      @Done      => Done
-      @Skip s    => Skip          (sl , s , One a)
-      @Yield x s => Yield (f a x) (sl , s , None)
-  in ana nxt (sl0 , sr0 , None)
+--SzipWith f (@stream nextL sl0) (@stream nextR sr0) = let
+--  nxt (sl , sr , maybeST) = case maybeST of
+--    @None => case nextL sl of
+--      @Done      => Done
+--      @Skip s    => Skip (s , sr , None)
+--      @Yield x s => Skip (s , sr , One x)
+--    @One a => case nextR sr of
+--      @Done      => Done
+--      @Skip s    => Skip          (sl , s , One a)
+--      @Yield x s => Yield (f a x) (sl , s , None)
+--  in ana nxt (sl0 , sr0 , None)
+
+--SconcatMap f (@stream nexta seed) = let
+--  next (sa , m) = case m of
+--    None => case nexta sa of
+--      @Done      => Done
+--      @Skip s    => Skip (s , None)
+--      @Yield a s => Skip (s , One (f a))
+--    One (@stream nextb sb) => case nextb sb of
+--      @Done      => Skip    (sa , None)
+--      @Skip s    => Skip    (sa , One (stream nextb s))
+--      @Yield b s => Yield b (sa , One (stream nextb s))
+--  in @stream next (seed , None)
 
 SconcatMap f (@stream nexta seed) = let
-  next (sa , m) = case m of
-    None => case nexta sa of
+  nextC S = case S.m of
+    @None => case nexta S.sa of
       @Done      => Done
-      @Skip s    => Skip (s , None)
-      @Yield a s => Skip (s , One (f a))
-    One (@stream nextb sb) => case nextb sb of
-      @Done      => Skip    (sa , None)
-      @Skip s    => Skip    (sa , One (stream nextb s))
-      @Yield b s => Yield b (sa , One (stream nextb s))
-  in @stream next (seed , None)
+      @Skip s    => Skip { sa = s , m = @None}
+      @Yield a s => Skip { sa = s , m = @One (f a)}
+    @One (@stream nextb sb) => case nextb sb of
+      @Done      => Skip    {sa = S.sa , m = @None}
+      @Skip s    => Skip    {sa = S.sa , m = @One (stream nextb s)}
+      @Yield b s => Yield b {sa = S.sa , m = @One (stream nextb s)}
+  in @stream nextC {sa = seed , m = None}
 
 -- takes fn to apply to the front of list and returns the back
 -- ?! support having access to both lists
@@ -90,6 +102,11 @@ showIntList = streamToString << map (chr << (add 48))
 test = showIntList (enumFromTo 0 9)
 
 x = streamToString (stringToStream "0123")
+
+-- TODO leaf bicasts; typechecks because %i8 is a subtype of %i32
+--a = stringToStream "0123"
+--b = showIntList
+--c = b a
 
 -- Tests
 --l  = sum < map (add 1) < enumFromTo 5 10

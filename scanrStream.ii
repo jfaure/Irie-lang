@@ -1,0 +1,12 @@
+-- Note. head (scanr f z xs) == foldr f z xs.
+
+--scanr             :: (a -> b -> b) -> b -> [a] -> [b]
+--scanr _ q0 []     =  [q0]
+--scanr f q0 (x:xs) =  f x q : qs
+--                where qs@(q:_) = scanr f q0 xs
+
+--scanr' :: (a -> b -> b) -> b -> [a] -> [b]
+--scanr' f z xs = reverse (ana step (xs, z))
+--  where
+--    step ([], acc) = Nil
+--    step (x:xs, acc) = Cons (f x acc) (xs, f x acc)
