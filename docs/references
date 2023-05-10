@@ -1,3 +1,9 @@
+Idris implementation overview (esp. a term's type is indexed by its scope)
+https://idris2.readthedocs.io/en/latest/implementation/overview.html
+
+A Focused solution to the avoidance problem
+https://www.cs.cmu.edu/~crary/papers/2020/exsig.pdf
+
 Quantitative type theory in practice
 https://arxiv.org/pdf/2104.00480.pdf
 

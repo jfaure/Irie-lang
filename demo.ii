@@ -127,7 +127,9 @@ t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
 -}
 
 --import stream
+import SpecialisationTests/WrappedSimpleMutual
 
+{-
 import prelude
 
 Sappend (@stream nextL sl0) (@stream nextR sr0) = let
@@ -169,4 +171,5 @@ foldr c z (@stream next seed) = let -- rhylo c a seed
 t   = foldr add 0 (enumFromTo 0 10)
 tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
 ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
+
 -}

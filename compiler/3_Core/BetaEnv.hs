@@ -55,19 +55,20 @@ type Seed = (Lvl , Env , Term) -- expected eLen may be < envlen since tsubs eLen
 --  ! Can't instantly simplify args to an App in case f contains more bruijnAbs. Also VBruijns may need relevelling
 --  TODO this may duplicate work if simplified twice at the same lvl; counting on dup nodes + β-optimality to fix this
 
-mkBruijnArgSubs l n = V.generate n (\i -> TSub mempty {- doesn't matter -} l (VBruijnLevel (l - i - 1)))
+mkBruijnArgSubs l n = let env = mempty -- doesn't matter since bruijnLevel terminates
+  in V.generate n (\i -> TSub env l (VBruijnLevel (l - i - 1)))
 
--- ! current term and trailingArgs have different envs
+-- fuse: β-reduce and eliminate as many case-labels as possible (case-case , pap-spec , inline)
+-- ! seed term and trailingArgs may have different envs
+-- ! inlining needs to watch free-vars and VBruijn level differences
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
 fuse (lvl , env@(argEnv , trailingArgs) , term) = let
   eLen = V.length argEnv
   unSub (TSub prevArgEnv prevLvl arg) | prevLvl == lvl = Right (lvl , (prevArgEnv , mempty) , arg)
  -- unSub (TSub prevArgEnv prevLvl arg) = traceShow (prevLvl , lvl) $ Right (lvl , (prevArgEnv , mempty) , arg)
 
-  in --trace (show term <> "\nenv: " <> show argEnv <> "\n---\n" :: Text) $
-  case term of
+  in case term of
   App f args -> fuse (lvl , (argEnv , (TSub argEnv lvl <$> args) <> trailingArgs) , f)
-
   abs | Just (n , body) <- getBruijnAbs abs -> if null trailingArgs
     then case getBruijnAbs body of -- not β-reducing => spawn bruijn arg subs
       Just (m , b2) -> fuse (lvl , env , BruijnAbs (m + n) b2)
@@ -93,13 +94,22 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
       fuse (lvl , (prevEnv , trailingArgs) , argTerm)
 
   -- inlineLetBind: lvl == 0 means this fully reduces (won't produce a function)
-  Var (VLetBind q) | lvl == 0 -> use letBinds >>= \lb -> (lb `MV.read` (modName q))
-    >>= \bindVec -> MV.read bindVec (unQName q) >>= \case
+  Var (VLetBind q) | lvl == 0 -> use letBinds >>= \lb -> (lb `MV.read` modName q)
+    >>= \bindVec -> MV.read bindVec (unQName q) >>= simpleBind lvl (argEnv , []) >>= \b -> case b of
       BindOK _ (nL , letCapture) (Core inlineF _ty) -> let
         env' = (V.drop (V.length argEnv - nL) argEnv , trailingArgs)
-        in fuse (lvl , env' , inlineF)
+        in MV.write bindVec (unQName q) b -- in case this is first time seeing the bind
+          *> fuse (lvl , env' , inlineF)
       x -> error $ show x
---Var (VLetBind q) | not (null trailingArgs) -> specApp lvl env q (unSub <$> trailingArgs)
+
+  Var (VLetBind q) | not (null trailingArgs) -> specApp lvl (argEnv , []) q
+    =<< (trailingArgs `forM` \(TSub e l t) -> simpleTerm' l (e , []) t)
+
+  LetSpec q sh | lvl == 0 -> use letBinds >>= \lb -> (lb `MV.read` modName q)
+    >>= \bindVec -> MV.read bindVec (unQName q) >>= simpleBind lvl (argEnv , []) >>= \b -> MV.write bindVec (unQName q) b *> case b of
+      BindOK (OptBind _ shps) _ _ -> case shps M.!? sh of
+        Nothing -> error $ show (modName q , unQName q) <> ": " <> show shps -- pure (LetSpecF q sh) -- ?! error
+        Just t  -> fuse (lvl , env , t)
 
   Label l ars -> pure $ LabelF l
     $  (Right . (lvl , (argEnv , mempty) ,) <$> ars)
@@ -157,9 +167,9 @@ fuseCase lvl argEnv trailingArgs retT branches d tt = let
         -- case (\p1..p2 -> scrut) of branches
         -- (\p1..p2 C -> ) (p1..p2 -> scrut) (\case branches) -- Thus branches aren't touched by params
         BruijnAbs n innerOutput -> BruijnAbs n (CaseSeq n innerOutput retT branches d)
---      BruijnAbs n innerOutput -> CaseSeq n innerOutput retT branches d
+     -- BruijnAbs n innerOutput -> CaseSeq n innerOutput retT branches d
         BruijnAbsTyped{} -> _
---      c@CaseB{} -> error $ show c
+     -- c@CaseB{} -> error $ show c
         innerOutput             -> CaseB innerOutput retT branches d
       in fuseCase lvl argEnv trailingArgs ty2 (pushCase <$> innerBranches) (pushCase <$> innerDefault) innerScrut
     -- no-fusion
@@ -244,26 +254,22 @@ specApp :: forall s. Lvl -> Env -> QName -> [Term] -> SimplifierEnv s (TermF (Ei
 specApp lvl env q args = let
   nest     = modName q
   bindNm   = unQName q
-  noInline = AppF (Left $ Var (VLetBind q)) (Right . (lvl,env,) <$> args)
+  noInline = Left <$> AppF (Var (VLetBind q)) args
   (bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
   in -- d_ args $ d_ argShapes $ d_ repackedArgs $ d_ unstructuredArgs $ d_ "" $
   use letBinds >>= \lb -> (lb `MV.read` nest) >>= \bindVec -> MV.read bindVec bindNm >>= \case
   BindOK o _free expr@(Core inlineF _ty) | any (/= ShapeNone) argShapes -> case bindSpecs o M.!? argShapes of
-    Just cachedSpec -> pure $ AppF (Left cachedSpec) (Right . (lvl,env,) <$> unstructuredArgs)
+    Just cachedSpec -> pure $ AppF (Left cachedSpec) (Left <$> unstructuredArgs)
     Nothing -> if all (\case { ShapeNone -> True ; _ -> False }) argShapes then pure noInline else do
       let recGuard = LetSpec q argShapes
       MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) free _t)
         -> BindOK (OptBind oLvl (M.insert argShapes recGuard oSpecs)) free expr) bindNm
 
-      -- ! repackedArgs are at lvl, inlineF is at (lvl + bruijnN), so we need to patch the ars
-      -- ideally we could skip this traversal of the args with some level manipulation (maybe a new Sub)
---    ars <- simpleTerm' (lvl + bruijnN) env `mapM` repackedArgs
---    let raw = App inlineF ars ; rawAbs = if bruijnN == 0 then raw else BruijnAbs bruijnN emptyBitSet raw
---    specFn <- simpleTerm' lvl env rawAbs
-
+      -- ! repackedArgs are at lvl, inlineF is at (lvl + bruijnN)
       -- fully simplify the specialised partial application (if it recurses then this spec is extremely valuable)
       let rawAbs = BruijnAbs bruijnN (App inlineF repackedArgs)
-      specFn <- simpleTerm' lvl env rawAbs
+      specFn <- simpleTerm' lvl env rawAbs -- TODO if repackedArgs contains debruijns this may break
+      -- (fst env , TSub (mkBruijnArgSubs lvl (V.length (fst env))) (bruijnN + lvl) <$> repackedArgs) rawAbs
       when debug_fuse $ do
         traceM $ "raw spec " <> show bindNm <> " " <> show argShapes <> "\n => " <> prettyTermRaw rawAbs <> "\n"
         traceM $ "simple spec " <> prettyTermRaw specFn <> "\n"
@@ -272,5 +278,5 @@ specApp lvl env q args = let
         -> BindOK (OptBind oLvl (M.insert argShapes specFn oSpecs)) free expr) bindNm
 
       let fn = if lvl == 0 then specFn else recGuard
-      if null unstructuredArgs then pure $ Left <$> project fn else fuse (lvl , env , App fn unstructuredArgs)
+      pure $ Left <$> if null unstructuredArgs then project fn else AppF fn unstructuredArgs
   _ -> pure noInline

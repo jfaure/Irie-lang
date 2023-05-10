@@ -1,11 +1,12 @@
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
+  * Append module (for repl)
   * Tuples must handle let-captures
-  * Tee: shared pointer to cached stream
   * leaf bicasts
+  * WrappedSimpleMutual.g1 should not have polymorphic type (mutual generalistation)
   * type aliases + term/type name scope (global?)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * generalise all lambda types (unless inlineable?) + check not-recursive (avoid inf β-reduction eg. Y-comb)
-  * ? can remove QBind ? perhaps "module = let imports in" allows writing specialisations for imports
+  * QName: indicates module names were sourced from
   * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
   * cross-module mixfixes broken
   * rewrite μ-roll; esp. for multi-branch μs merge
