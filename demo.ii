@@ -23,6 +23,7 @@
 --import Free
 --import parsec
 --import intmap
+--import shellPipe -- ideas for irie as shell
 
 --import stream
 --import imports/TreeStream
@@ -32,14 +33,15 @@
 
 -- Merge equations properly, this creates 2 bindings and bugs out inames
 -- Also disallow extra names between the equations (scoped fields?)
---eq1 (@x) b = 2
+--eq1 @x b = 2
 --eq1 a b = 3
+-- ? When does a introduce a new name and when must it be checked in case is a label
 
 -- index out of bounds
 -- g (x a) = a -- no '@', so x uses bind-name not label name
 
 -- Label namespaces + label application
---f x = label x x -- check if label in scope as label ? or requrie @
+--f x = label x x -- check if label in scope as label ? or require @
 --f (x a) = a
 --g = \case
 --  x => x -- Always label
@@ -127,7 +129,8 @@ t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
 -}
 
 --import stream
-import SpecialisationTests/WrappedSimpleMutual
+--import SpecialisationTests/SimpleMutual -- type is wrong
+--import mutumorphism -- avoid let-block
 
 {-
 import prelude
@@ -171,5 +174,4 @@ foldr c z (@stream next seed) = let -- rhylo c a seed
 t   = foldr add 0 (enumFromTo 0 10)
 tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
 ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
-
 -}

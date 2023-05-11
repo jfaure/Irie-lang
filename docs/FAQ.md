@@ -1,6 +1,10 @@
 Q: OOP (object oriented) Inheritance vs Subtyping?
 
-A: They are very different. The terminology is unfortunate: in subtyping literature, structural subtyping refers to a subtyping relation that relates only type constructors of the same arity. In OOP literature, structural subtying refers to implicitly formed relations from similar structures. Confusingly, this means structural typing requires non-structural subtyping. Irie's Subtyping always require conversion functions.
+A: Subtyping: B subtypes A if it contains all of A's interface and possibly more. Per Liskov's substitution principle, any context where A is needed, B works also. Inheritance means B specialises A to a particular use (perhaps by overriding)
+
+Q: Structural subtyping ?
+
+A: The terminology is unfortunate: in subtyping literature, structural subtyping refers to a subtyping relation that relates only type constructors of the same arity. In OOP literature, structural subtying refers to implicitly formed relations from similar structures. Confusingly, this means structural typing requires non-structural subtyping. Irie's Subtyping always require conversion functions.
 
 Q: What are ⊤ and ⊥ (top and bottom)?
 

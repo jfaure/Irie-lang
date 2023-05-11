@@ -146,7 +146,7 @@ cgCore wip i nm b = let
   in setTop True *> case b of
 --Core (Abs ((Lam args free _ty) , t)) ty -> emitFunction nm i args t ty
   Core t ty  -> emitFunction nm i [] t ty
-  PoisonExpr -> panic $ "attempted to codegen a poison expr: " <> nm
+--PoisonExpr -> panic $ "attempted to codegen a poison expr: " <> nm
 
 cgBind ∷ Int -> CGEnv s CGWIP
 cgBind i = gets wipBinds >>= \wip -> MV.read wip i >>= \case

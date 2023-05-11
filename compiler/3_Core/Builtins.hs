@@ -21,7 +21,7 @@ getPrimTy nm = case getPrimIdx nm of
 primMap = M.fromList $ zipWith (\(nm,_val) i -> (nm,i)) primTable [0..]
 primBinds :: V.Vector (HName , Expr) = V.fromList primTable
 
-primType2Type x = Ty (TyGround [THPrim x])
+primType2Type x = Core (Ty (TyGround [THPrim x])) (TySet 1)
 primTable :: [(HName , Expr)]
 primTable = concat
   [ (\(nm , x)         -> (nm , primType2Type x)) <$> V.toList primTys
@@ -29,7 +29,8 @@ primTable = concat
   , let tys2TyHead  (args , t) = TyGround $ mkTyArrow (TyGround . mkExtTy <$> args) (TyGround $ mkExtTy t) in
     (\(nm , (i , tys)) -> (nm , Core (Instr i) (tys2TyHead tys)))           <$> primInstrs
   , (\(nm , (i , t))   -> (nm , Core (Instr i) (TyGround t)))               <$> instrs
-  , (\(nm , e)         -> (nm , Ty (TyGround [e])))                         <$> tyFns
+  , [("Set" , Core (Ty (TySet 0)) (TySet 1))]
+-- , (\(nm , e)         -> (nm , Ty (TyGround [e])))                         <$> tyFns
 -- , uncurry ExtFn <$> extFnBinds
   ]
 
@@ -37,7 +38,7 @@ primTable = concat
 -- * Predicates must return labels so if_then_else_ can fuse
 boolLabel :: [(HName , Expr)]
 boolLabel =
-  [ ("BoolL" , Ty (TyGround [boolL]))
+  [ ("BoolL" , ty (TyGround [boolL]))
   , ("True"  , Core (Label builtinTrueQ  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
   , ("False" , Core (Label builtinFalseQ mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
   ]
@@ -91,7 +92,7 @@ mkExt i = THExt i
 tyFns = [
 --[ ("IntN" , (THPi [(0,(mkExtTy i))] [THInstr MkIntN [0]] M.empty))
 --  ("arrowTycon", (THPi [(0,[THSet 0]),(1,[THSet 0])] [THInstr ArrowTy [0, 1]] M.empty))
-    ("Set" , THSet 0)
+--  ("Set" , THSet 0)
 --  , ("_->_", (ArrowTy , ([set] , set)))
   ]
 

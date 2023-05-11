@@ -1,5 +1,28 @@
+# profunctors
+#SML: fn , appendable , searchable , modular , no avoidance problem , module-mutuality , writeable , dep-graph
+  * sealing (effect): module becomes only accessible through its signature
+  ? path-name (relative to top-scope)
+  * local HName+label table
+  * let-scope + extraction
+  * Global-resolver = record + global name-map
+  * cat files = valid multi-module syntax
+  * scope of dup-node (global/device/thread ?)
+  ? mutual functions within separate records =eg. let a = { f = b.g } ; b = { g = a.f }
+  Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
+  * applications of insane functions must be fully applied
+  record-field patterns
+  * mutumorphism: (f1 Δ f2) as input
+  * weak sum (needs to be opened in some scope, existential) vs strong sum (components can be obtained by projection) (- vs + connective)
+  * type/term scope; Idris: (names bound in types are also bound as @-patterns)
+    vlength : {n : Nat} -> Vect n a -> Nat
+    vlength _ = n
+  ## as Lam
+    + common interface for QTT
+    - args cannot be mutually in scope unless elaborated
+    ? functions of each other? ie. [x , y] => (x y) (y x)
+
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
-  * Append module (for repl)
+  * Cannot rm let wrapper iff not all inlined
   * Tuples must handle let-captures
   * leaf bicasts
   * WrappedSimpleMutual.g1 should not have polymorphic type (mutual generalistation)
@@ -87,7 +110,6 @@
   * Literal is out of Int range
 ## Unimportant
   * optimise strbuf and literal string/arrays
-  * rm (Core : Expr) in favor of tuple
   * Completion based on types (Type -> Bind)
   * tabs vs spaces
   * Need totality checker, else a Refl type may not terminate and thus proves nothing
@@ -95,7 +117,7 @@
   * underdetermined recursion: https://counterexamples.org/underdetermined-recursion.html
     equirecursive => A = F[A] ; B = F[B] => A = B (unsound for arbitrary type-level functions F!)
     if multiple solutions for X = F X; eg. F X = X ; A = Int ; B = String
-  * don't assume injectivity!
+  * don't assume injectivity! (or. distinguish between type constructors and type-functions)
   * equality constraints are central to GADTs `Gabriel Scherer and Didier Rémy. GADTs meet subtyping.` `https://okmij.org/ftp/ML/first-class-modules/#GADT`
   * switch to codeberg
   * List comprehensions
@@ -113,3 +135,4 @@
   * reinstate ArgProd f97cd9c0d01eddb562a029fa52ddee785e6a47b6
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
+  * phase distinction: meaning of static expr not dependent on executing dynamic exprs

@@ -97,8 +97,6 @@ readQParseExtern openMods thisModIName (exts :: Externs) modNm iNm = if
       Var{}   -> e -- var indirection (TODO continue maybe inlining?)
       _ -> e
 --    _ -> Core (Var $ VQBind (mkQName modNm iNm)) t
-    PoisonExpr -> PoisonExpr
-    x -> x -- types and sets
   | otherwise -> NotOpened (exts.eModNamesV V.! modNm) (fst (exts.extBinds V.! modNm V.! iNm))
 
 readParseExtern openMods thisModIName exts i = case exts.extNames V.! i of
@@ -213,7 +211,7 @@ addModuleToResolver :: Externs.GlobalResolver -> Int -> V.Vector (HName, CoreSyn
   -> V.Vector HName -> Map HName Int -> p -> Externs.GlobalResolver
 addModuleToResolver (GlobalResolver modCount modNames nameMaps l modNamesV binds lh deps mfResolver)
   modIName newBinds lHNames labelNames _modDeps = let
-    binds' = updateVecIdx (V.singleton ("(Uninitialized)" , PoisonExpr)) binds modIName newBinds
+    binds' = updateVecIdx (V.singleton ("(Uninitialized)" , poisonExpr)) binds modIName newBinds
     lh'    = updateVecIdx (V.singleton "(Uninitialized)") lh    modIName lHNames
 --  deps'  = updateVecIdx (ModDependencies 0 0) deps modIName modDeps
     l' = alignWith (\case { This new -> mkQName modIName new ; That old -> old ; These _new old -> old }) labelNames l

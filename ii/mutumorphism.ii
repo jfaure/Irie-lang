@@ -1,0 +1,15 @@
+ifThenElse cond a b = case cond of { @True  => a ; @False => b }
+
+-- ? How to mark no-substitute
+mut x = (\e o => { l = e e o , r = o e o })
+  (\e o n => ifThenElse (eq n 0) 1 (o e o  (sub n x)))
+   (\e o n => ifThenElse (eq n 0) 0 (e e o (sub n x)))
+
+-- Need special Abs that doesn't substitute negative recursion
+--mut2 n = (\f1 f2 => {l = f1 f1 f2 , r = f2 f1 f2}) (\go1 go2 z k => ifThenElse (ge k n) z (go2 go1 go2 z k (add k 1) 1)) (\go1 go2 z k k' m => ifThenElse (ge m k) (go1 go1 go2 z k') (go2 go1 go2 (add z (mul k m)) k k' (add 1 m)))
+--
+--t = (mut2 10) . r
+
+--ycomb2 f = (\g => g g) (\x => f (x x))
+--f1 = \g => g g -- ∏ A B → µa.(a → B) -- don't sub in g g
+--f2 f = (\x => f (x x)) -- ∏ A B C → (A → B) → µc.(c → A) → B

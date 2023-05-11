@@ -136,10 +136,3 @@ f (a , b) = \(c , d) => \(e , f) => add e (add (add (add a b) c) d)  --   {!0 : 
 g (a , b) (c , d) = add (add (add a b) c) d                          --   {!0 : %i32 , !1 : %i32} → {!0 : %i32 , !1 : %i32} → %i32
 h = \(a , b) (c , d) => add (add (add a b) c) d                      --   {!0 : %i32 , !1 : %i32} → {!0 : %i32 , !1 : %i32} → %i32
 f x = \y => \z => add x (add y z)                                    --   %i32 → %i32 → %i32 → %i32
-
-
-
-
-
-
-

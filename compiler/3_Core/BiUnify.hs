@@ -151,8 +151,8 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
 
 --(THPi (Pi p ty) , y) -> biSub ty [y]
 --(x , THPi (Pi p ty)) -> biSub [x] ty
-  (THSet _u , _) -> pure BiEQ
-  (_ , THSet _u) -> pure BiEQ
+--(THSet _u , _) -> pure BiEQ
+--(_ , THSet _u) -> pure BiEQ
 
   (_ , THTyCon THArrow{}) -> failBiSub (TextMsg "Excess arguments")       (TyGround [p]) (TyGround [m])
   (THTyCon THArrow{} , _) -> failBiSub (TextMsg "Insufficient arguments") (TyGround [p]) (TyGround [m])

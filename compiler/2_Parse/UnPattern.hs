@@ -18,7 +18,7 @@ import qualified BitSetMap as BSM
 -- [ [Pattern , TT] ] -> [ Case ]        2 ^ (nArgs - 1) paps
 -- case on tuples + labeled arg presence for β-optimality?
 
---eqnsToPatterns ∷ [[Term]] -> [Term]
+--eqnsToPatterns :: [[Term]] -> [Term]
 --eqnsToPatterns = map (Tuple . V.fromList)
 
 type CasePattern = TT -- needs to be transformed into a case-tree

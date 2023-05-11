@@ -152,13 +152,11 @@ text2Core flags maybeOldModule resolver' depStack fName progText = do
 inferResolve :: CmdLine -> [Char] -> Int -> GlobalResolver -> ModDependencies -> P.Module -> Text -> Maybe OldCachedModule
   -> (CmdLine , FilePath , JudgedModule , V.Vector HName , GlobalResolver , Externs , Errors , Maybe SrcInfo)
 inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldModule = let
-  hNames     = (parsed ^. P.bindings) & \case
+  hNames     = parsed ^. P.bindings & \case
     P.LetIn (P.Block _ _ binds) Nothing -> P._fnNm <$> binds
     x -> error (show x)
   labelMap   = parsed ^. P.parseDetails . P.labels
   iNames     = parsed ^. P.parseDetails . P.hNamesNoScope
-  labelNames = iMap2Vector labelMap
-  iNamesV    = iMap2Vector iNames
   srcInfo    = Just (SrcInfo progText (VU.reverse $ VU.fromList $ parsed ^. P.parseDetails . P.newLines))
 
   (tmpResolver  , exts) = resolveImports
@@ -168,16 +166,17 @@ inferResolve flags fName modIName modResolver modDeps parsed progText maybeOldMo
     (parsed ^. P.parseDetails . P.hNameMFWords . _2) -- mixfix names
     iNames
     maybeOldModule
-  (judgedModule , errors) = judgeModule parsed (deps modDeps) modIName hNames exts
+
+  (modTT , errors) = judgeModule parsed (deps modDeps) modIName exts
+  judgedModule = JudgedModule modIName (parsed ^. P.moduleName) hNames (parsed ^. P.parseDetails . P.labels) modTT
 
 -- TODO add all let-binds to resolver?
 --JudgedModule _modIName _modNm bindNames _a _b judgedBinds _specs = judgedModule
   bindExprs = moduleTT judgedModule & \case
     Core (LetBlock binds) _ty -> binds <&> \(meta , e) -> (hName meta , bind2Expr e)
     x -> error (show x) -- V.zip bindNames (bind2Expr <$> judgedBinds)
-  newResolver = addModuleToResolver tmpResolver modIName bindExprs labelNames
-    {-(iMap2Vector fieldMap)-} labelMap {-fieldMap-} modDeps
-  in (flags , fName , judgedModule , iNamesV , newResolver , exts , errors , srcInfo)
+  newResolver = addModuleToResolver tmpResolver modIName bindExprs (iMap2Vector labelMap) labelMap modDeps
+  in (flags , fName , judgedModule , (iMap2Vector iNames) , newResolver , exts , errors , srcInfo)
 
 -- TODO half-compiled modules `not coreOK` should also be cached (since their names were pre-added to the resolver)
 simplifyModule :: (CmdLine, f, JudgedModule, V.Vector HName , GlobalResolver, e, Errors, e2)

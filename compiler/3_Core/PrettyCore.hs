@@ -139,6 +139,7 @@ pTy pos = let
   TyIndexed t ars -> pTy' t <+> (hsep $ parens . pExpr False <$> ars)
   TyTerm term ty -> parens $ pTerm True term <+> ":" <+> pTy' ty
   TyPi (Pi args ty) -> "Π" <> parens (hsep $ pPiArg <$> args) <+> pTy' ty
+  TySet n -> ""
 --TySi (Pi args ty) tyIndexes -> _
 
 pTyHeadParens pos t = case t of
@@ -158,7 +159,7 @@ pTyHead pos = let
   THBound    i -> pretty (number2CapLetter i)
   THMuBound  t -> pretty (number2xyz t)
   THExt      i -> case snd (primBinds V.! i) of
-    Ty t -> pTy' t
+    (Core (Ty t) _) -> pTy' t
     x -> "<?? " <> viaShow x <> " ??>"
 
   THTyCon t -> case t of
@@ -190,8 +191,7 @@ pTyHead pos = let
     in gs <> pTy' t
 --THPi pi  -> "∏(" <> viaShow pi <> ")"
 --THSi pi arsMap -> "Σ(" <> viaShow pi <> ") where (" <> viaShow arsMap <> ")"
-
-  THSet   uni -> "Set" <> pretty uni
+--THSet   uni -> "Set" <> pretty uni
   x -> viaShow x
 
 pBind :: HName -> Bool -> Bind -> Doc Annotation
@@ -217,8 +217,8 @@ pExpr showRhs = let pos = True in \case
   Core term@(LetBlock bs) ty -> (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy True ty)
 --  -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
   Core term ty -> (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy pos ty)
-  Ty t         -> "type" <+> annotate AType (pTy pos t)
-  e -> viaShow e
+--Ty t         -> "type" <+> annotate AType (pTy pos t)
+--e -> viaShow e
 
 pTerm :: Bool -> Term -> Doc Annotation
 pTerm showRhs = let
@@ -236,6 +236,7 @@ pTerm showRhs = let
       <> maybe "" (\catchAll -> hardline <> ("_ ⇒ " <> prettyLam catchAll)) d
       )
   ppTermF = \case
+    TyF t -> pTy True t -- TODO polarity
   --Hole -> " _ "
     QuestionF -> " ? "
     VarF     v -> pVName v
@@ -266,7 +267,6 @@ pTerm showRhs = let
     LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
       <> hardline <> "in" <+> t
     LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
-    WrapF n t -> "Wrap " <> viaShow n <> " " <> t
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  ForcedF e l t -> "F" <> viaShow e <> " lvl" <> viaShow l <> t
 

@@ -42,7 +42,11 @@ data Term -- β-reducable (possibly to a type)
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
+ | Ty Type -- Term constructors may contain types, then the whole Term is a type (or Set n)
+
 -- ->
+ | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
+              -- Note if meet this than any contained bruijns | lets must not be unwrapped
  | VBruijn IName
  | VBruijnLevel Int
  | BruijnAbs Int Term
@@ -64,9 +68,6 @@ data Term -- β-reducable (possibly to a type)
 -- Simplifier
  | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
  | LetSpec QName [ArgShape]
-
- | Wrap Int Term -- indicates a term was incorrectly wrapped in an abstraction (case-case simplification)
--- | CType Type -- Need to be able to embed types into some terms (but not the opposite)
 
 -- lensover needs idx for extracting field (??)
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr
@@ -91,6 +92,7 @@ data Type
  | TyPi Pi                  -- dependent functions, implicit args (explicit as: Arg → T)
  | TySi Pi (IM.IntMap Expr) -- Existential: some TT and a function of them (~partial app)
  | TyIndexed Type [Expr]    -- Indexed family (raw Terms can only exist here after normalisation)
+ | TySet Uni
 
 tyVar v = TyVars (setBit 0 v) []
 -- equality of types minus dependent normalisation
@@ -113,7 +115,7 @@ data THead ty
  = THPrim     PrimType
  | THExt      IName -- ix to builtins (use getExprType to get Type from Expr) -- rm
  | THAlias    QName
- | THSet      Uni
+-- | THSet      Uni
  | THPoison         -- marker for inconsistencies found during inference
  | THTop | THBot
 
@@ -128,12 +130,9 @@ data THead ty
  | THMuBound IName  -- µ-bound tvar (must be guarded and covariant)
  deriving (Eq , Functor , Traversable , Foldable)
 
-data Expr
- = Core Term Type
- | Ty   Type
- | Set  !Int Type
- | PoisonExpr
- | PoisonExprWhy Text
+data Expr = Core Term Type
+ty t = Core (Ty t) (TySet 0)
+poisonExpr = Core (Poison "") tyTop -- TODO top or bot? (they're defined the same atm)
 
 data ArgShape
  = ShapeNone
@@ -206,7 +205,7 @@ data JudgedModule = JudgedModule {
  , labelNames :: M.Map HName IName
  , moduleTT   :: Expr
 }
-emptyJudgedModule = JudgedModule (-1) "" mempty mempty PoisonExpr -- dodgy (used for repl atm)
+emptyJudgedModule = JudgedModule (-1) "" mempty mempty poisonExpr -- dodgy (used for repl atm)
 
 data OldCachedModule = OldCachedModule {
    oldModuleIName :: ModuleIName

@@ -43,12 +43,12 @@ defaultCmdLine = CmdLine -- Intended for use from ghci
 printPasses = T.words "args source parseTree types core simple ssa C" :: [Text]
 
 parsePrintPass :: ReadM [Text]
-parsePrintPass = eitherReader $ \str → let
+parsePrintPass = eitherReader $ \str -> let
   passesStr = T.split (==',') (toS str)
   checkAmbiguous s = case Prelude.filter (T.isInfixOf s) printPasses of
-    []  → Left $ "Unrecognized print pass: '" <> str <> "'"
-    [p] → Right p
-    tooMany → Left $ "Ambiguous print pass: '" <> str <> "' : " <> show tooMany
+    []  -> Left $ "Unrecognized print pass: '" <> str <> "'"
+    [p] -> Right p
+    tooMany -> Left $ "Ambiguous print pass: '" <> str <> "' : " <> show tooMany
   in sequence (checkAmbiguous <$> passesStr)
 
 cmdLineDecls :: Parser CmdLine
@@ -112,5 +112,5 @@ cmdLineInfo =
 -- parseCmdLine :: IO CmdLine
 -- parseCmdLine = execParser cmdLineInfo
 -- parseCmdLine = customExecParser (prefs disambiguate) cmdLineInfo
-parseCmdLine :: [String] → IO CmdLine
- = \rawArgs → handleParseResult $ execParserPure (prefs disambiguate) cmdLineInfo rawArgs
+parseCmdLine :: [String] -> IO CmdLine
+ = \rawArgs -> handleParseResult $ execParserPure (prefs disambiguate) cmdLineInfo rawArgs

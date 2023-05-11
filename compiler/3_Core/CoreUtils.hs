@@ -21,12 +21,13 @@ getArgShape = \case
   Var (VQBind q) -> ShapeQBind q
   _ -> ShapeNone
 
-isPoisonExpr :: Expr -> Bool = (\case { PoisonExpr -> True ; _ -> False })
+isPoisonExpr :: Expr -> Bool = (\case { Core (Poison{}) _ -> True ; _ -> False })
 
 partitionType :: Type -> (BitSet , GroundType)
 partitionType = \case
   TyVars vs g -> (vs , g)
   TyGround g  -> (0  , g)
+  TySet n     -> (0 , [])
 --TyVar v     -> (0 `setBit` v , [])
 --pi@TyPi{}   -> (0 , [pi]) -- TODO ok?
 --TyIndexed{} -> _
@@ -74,30 +75,17 @@ isTyCon = \case
  THTyCon{} -> True
  _         -> False
 
-tyOfTy :: Type -> Type
-tyOfTy _ = TyGround [THSet 0]
-
 tyExpr = \case -- get the type from an expr.
-  Ty t     -> Just t
-  Core e t -> Just (TyTerm e t)
+  Core (Ty t) _t -> Just t
+--Core e t -> Just (TyTerm e t)
   _        -> Nothing --error $ "expected type, got: " ++ show expr
 
-tyOfExpr = \case
-  Core _x ty -> ty
-  Ty t       -> tyOfTy t
-  PoisonExpr -> TyGround []
-  _ -> _
+tyOfExpr (Core e ty) = ty
 
 -- expr2Ty :: _ -> Expr -> TCEnv s Type
 -- Expression is a type (eg. untyped lambda calculus is both a valid term and type)
 expr2Ty e = case e of
- Ty x -> pure x
- Core c _ty -> case c of
--- Var (VBind i) -> pure [THRecSi i []]
--- Var (VArg x)  -> pure $ TyVar x --[THVar x] -- TODO ?!
--- App (Var (VBind fName)) args -> pure [THRecSi fName args]
-   _ -> error $ "raw term cannot be a type: " ++ show e
- PoisonExpr -> pure $ TyGround [THPoison]
+ Core (Ty x) (TySet _n) -> pure x
  x -> error $ "raw term cannot be a type: " ++ show x
 
 bind2Expr = naiveExpr
@@ -142,7 +130,6 @@ mergeTyHead pos t1 t2 = -- (\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ "
   in case join of
   [THTop , THTop] -> [THTop]
   [THBot , THBot] -> [THBot]
-  [THSet a , THSet b] -> [THSet $ max a b]
   [THPrim a , THPrim b]  -> if a == b then [t1] else case (a,b) of
 --  (PrimInt x , PrimInt y) -> [THPrim $ PrimInt $ max x y]
     (PrimBigInt , PrimInt _) -> [THPrim $ PrimBigInt]
@@ -197,6 +184,7 @@ mergeTypeGroundType pos a b = mergeTypes pos a (TyGround b)
 mergeTVar v = \case
   TyVars ws g -> TyVars (ws `setBit` v) g
   TyGround g  -> TyVars (0  `setBit` v) g
+  TySet n     -> tyVar v -- TODO ?!
 mergeTypes pos a b = {-d_ (a , b) $-} mergeTypes' pos a b
 mergeTypes' pos (TyGround a) (TyGround b)     = TyGround (mergeTyUnions pos a b)
 mergeTypes' pos (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions pos g1 g2)

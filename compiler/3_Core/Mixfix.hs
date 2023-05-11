@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies , RecordWildCards , TemplateHaskell , FlexibleInstances , TypeSynonymInstances #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Mixfix (solveMixfixes) where
 import Prelude hiding (sourceLine)
 import QName
@@ -9,8 +9,6 @@ import ShowCore()
 import qualified Data.List as DL (last , init)
 import Data.Functor.Foldable
 import Control.Lens
-import Control.Exception
-import MUnrolls (hypoM)
 import Errors
 
 type Expr = TT

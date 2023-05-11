@@ -5,7 +5,6 @@ import Data.Functor.Foldable as RS
 import PrettyCore
 import BitSetMap as BSM
 import SimplifyInstr
-import MUnrolls
 import Control.Lens
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -147,6 +146,7 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
   LetBinds lets inE -> inferBlock lets $ \_ -> do
     newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl (argEnv , mempty) bind
     newInE  <- simpleTerm' lvl env inE -- incl trailingArgs
+    -- TODO Cannot remove the LetBinds iff expr contains a letSpec / reference to this let
     pure $ if lvl == 0 then Left <$> project newInE else LetBindsF newLets (Left newInE)
 
   x -> pure $ if null trailingArgs
@@ -218,7 +218,6 @@ simpleTerm t = do
 
 simpleExpr :: Expr -> ST s Expr
 simpleExpr (Core t ty) = simpleTerm t <&> \t -> Core t ty
-simpleExpr _ = pure PoisonExpr
 
 constFoldF :: TermF Term -> Term
 constFoldF = \case

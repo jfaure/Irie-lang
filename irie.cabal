@@ -36,10 +36,10 @@ executable irie-exe
     , base hiding (Prelude)
   main-is: Main.hs
   other-modules:
+      RootModule
       Name
       MachineCode
       Scope
-      MUnrolls
       BitSetMap
       CmdLine
       Prelude

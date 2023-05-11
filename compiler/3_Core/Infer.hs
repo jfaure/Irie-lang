@@ -21,12 +21,11 @@ import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
 import Data.Functor.Foldable
 
-judgeModule :: P.Module -> BitSet -> ModuleIName -> V.Vector HName -> Externs.Externs -> (JudgedModule , Errors)
-judgeModule pm importedModules modIName hNames exts = runST $ do
+judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> (Expr , Errors)
+judgeModule pm importedModules modIName exts = runST $ do
   letBinds' <- MV.new 32
   bis'      <- MV.new 0xFFF
   g         <- MV.new 0
---ctv       <- MV.new 0
   let scopeparams = initParams importedModules emptyBitSet -- open required
       bindings    = scopeTT exts modIName scopeparams (pm ^. P.bindings)
   (modTT , st) <- runStateT (cata inferF bindings) TCEnvState
@@ -47,14 +46,12 @@ judgeModule pm importedModules modIName hNames exts = runST $ do
 
     , _freeLimit = 0
     , _letCaptures = 0
---  , _capturedTVars = ctv
 
     , _recursives = 0
     , _nquants = 0
     , _genVec = g
     }
-  pure (JudgedModule modIName (pm ^. P.moduleName) hNames
-    (pm ^. P.parseDetails . P.labels) modTT , st ^. errors)
+  pure (modTT , st ^. errors)
 
 -- infer >> generalise >> check annotation
 -- This stacks inference of forward references and let-binds and identifies mutual recursion
@@ -162,7 +159,7 @@ inferF = let
 
  checkFails srcOff x = use tmpFails >>= \case
    [] -> pure x
-   x  -> PoisonExpr <$ (tmpFails .= []) <* (errors . biFails %= (map (BiSubError srcOff) x ++))
+   x  -> poisonExpr <$ (tmpFails .= []) <* (errors . biFails %= (map (BiSubError srcOff) x ++))
 
  inferApp srcOff f args = let
    castRet :: BiCast -> ([Term] -> BiCast -> [Term]) -> Expr -> Expr
@@ -180,19 +177,18 @@ inferF = let
      BiEQ -> args'
      _    -> _
 
-   in if any isPoisonExpr (f : args) then pure PoisonExpr else do
+   in if any isPoisonExpr (f : args) then pure poisonExpr else do
      (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
      use tmpFails >>= \case
        [] -> castRet biret castArgs <$> ttApp retTy (\i -> judgeBind _0 i) f args -- >>= checkRecApp
-       x  -> PoisonExpr <$ -- trace ("problem fn: " <> show f :: Text)
+       x  -> poisonExpr <$ -- trace ("problem fn: " <> show f :: Text)
          ((tmpFails .= []) *> (errors . biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
 
  judgeLabel qNameL exprs = let
    labTy = TyGround [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
    es = exprs <&> \case
+     Core (Poison _) _ -> Question -- TODO why question
      Core t _ty -> t
-     PoisonExpr -> Question
-     x          -> error (show x)
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  getQBind q = use thisMod >>= \m -> if modName q == m
@@ -222,11 +218,11 @@ inferF = let
    lvls %= drop 1 -- leave Lvl (? .|. head into next lvl?)
 
    freeLimit .= svFL
-   letCaptures <%= (`shiftR` (fl - svFL)) -- diff all let-captures
+   letCaptures %= (`shiftR` (fl - svFL)) -- diff all let-captures
 
    -- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
    -- Why does this need to be above the let assignment here?!
-   r <- fromMaybe (pure PoisonExpr) go -- in expr
+   r <- fromMaybe (pure poisonExpr) go -- in expr
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
      <&> map (BindUnused . show @P.FnDef ||| identity)
 
@@ -251,13 +247,13 @@ inferF = let
 
 -- TODO Tuples must also handle captures (inferBlock)
   P.TupleF _ -> error $ "Tuples disabled: TODO handle captures in tuples else weird bugs likely"
-  P.TupleF ts -> sequence ts <&> \exprs -> let
-    ty  = THProduct (BSM.fromListWith mkFieldCol
-      $ Prelude.imap (\nm t -> (qName2Key (mkQName 0 nm) , t)) (tyOfExpr <$> exprs))
-    lets = Prelude.imap (\i c -> let lc = (0,0) in -- TODO find the right letCaptures
-      (LetMeta (qName2Key (mkQName 0 i)) ("!" <> show i) (-1) , BindOK optInferred lc c))
-      exprs
-    in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
+--P.TupleF ts -> sequence ts <&> \exprs -> let
+--  ty  = THProduct (BSM.fromListWith mkFieldCol
+--    $ Prelude.imap (\nm t -> (qName2Key (mkQName 0 nm) , t)) (tyOfExpr <$> exprs))
+--  lets = Prelude.imap (\i c -> let lc = (0,0) in -- TODO find the right letCaptures
+--    (LetMeta (qName2Key (mkQName 0 i)) ("!" <> show i) (-1) , BindOK optInferred lc c))
+--    exprs
+--  in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
     P.VBruijn b -> do
@@ -275,7 +271,7 @@ inferF = let
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 
-  P.ForeignF _isVA i tt -> tt <&> \tExpr -> maybe (PoisonExprWhy ("not a type: " <> show tExpr))
+  P.ForeignF _isVA i tt -> tt <&> \tExpr -> maybe (Core (Poison ("not a type: " <> show tExpr)) tyBot)
     (Core (Var (VForeign i))) (tyExpr tExpr)
 
   P.BruijnLamF (P.BruijnAbsF argCount argMetas _nest rhs) ->
@@ -291,7 +287,7 @@ inferF = let
   P.AppF fTT argsTT  -> fTT  >>= \f -> sequence argsTT >>= inferApp (-1) f
   P.PExprAppF _prec q argsTT -> getQBind q >>= \f -> sequence argsTT >>= inferApp (-1) f
   P.RawExprF t -> t
-  P.MixfixPoisonF t -> PoisonExpr <$ (tmpFails .= [])
+  P.MixfixPoisonF t -> poisonExpr <$ (tmpFails .= [])
     <* (errors . mixfixFails %= (t:))
   P.QVarF q -> getQBind q
 --VoidExpr (QVar QName) (PExprApp p q tts) (MFExpr Mixfixy)
@@ -302,7 +298,7 @@ inferF = let
     recordTy = tyOfExpr record
     mkExpected :: Type -> Type
     mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton ({-qName2Key-} f) ty)]) dest fields
-    in (>>= checkFails o) $ case record of
+    in checkFails o =<< case record of
     Core object objTy -> case maybeSet of
       P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (tyVar i)) <&> \cast ->
         let obj = case cast of { BiEQ -> object ; cast -> Cast cast object }
@@ -312,7 +308,7 @@ inferF = let
       P.LensSet x  -> x <&> \case
         leaf@(Core _newLeaf newLeafTy) ->  -- freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected tyVar i)
           Core (TTLens object fields (LensSet leaf)) (mergeTypes True objTy (mkExpected newLeafTy))
-        _ -> PoisonExpr
+        _ -> poisonExpr
 
       P.LensOver x -> x >>= \fn -> do
          (ac , rc , outT , rT) <- freshBiSubs 3 >>= \[inI , outI , rI] -> let
@@ -332,8 +328,6 @@ inferF = let
                _ -> error $ "expected CastProduct: " <> show rc
 
          pure $ Core lensOverCast (mergeTVar rT (mkExpected outT))
-
-    PoisonExpr -> pure PoisonExpr
     t -> error $ "record type must be a term: " <> show t
 
   P.LabelF localL tts -> use externs >>= \ext -> sequence tts <&> judgeLabel (readLabel ext localL)
@@ -345,16 +339,14 @@ inferF = let
     sumArgsMap <- alts `forM` \(l , tyParams , _gadtSig@Nothing) -> do
       params <- tyParams `forM` \t -> getTy <$> t
       pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
-    pure $ Ty $ TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap]
+    pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
 
   P.MatchBF pscrut caseSplits catchAll -> use externs >>= \ext -> pscrut >>= \case
-    PoisonExpr -> pure PoisonExpr
+    c@(Core (Poison _) _) -> pure c
     Core scrut gotScrutTy -> do
       let convAbs :: Expr -> (Term , Type) = \case
+            Core p@Poison{} ty    -> (p , tyBot)
             Core t ty         -> (t , ty)
-            PoisonExprWhy why -> (Poison why , tyBot)
-            PoisonExpr        -> (Poison "" , tyBot)
-            x                 -> error (show x)
       (ls , elems) <- sequenceA caseSplits <&> unzip . BSM.toList . fmap convAbs
       -- Note we can't use the retTy of fn types in branchFnTys in case the alt returns a function
       let (alts , _branchFnTys) = unzip elems :: ([Term] , [Type])
@@ -380,7 +372,7 @@ inferF = let
 
   P.InlineExprF e -> pure e
   P.LitF l           -> pure $ Core (Lit l) (TyGround [typeOfLit l])
-  P.ScopePoisonF e   -> PoisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))
+  P.ScopePoisonF e   -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))
   P.DesugarPoisonF t -> pure $ Core (Poison t) tyBot
   P.ScopeWarnF w t   -> trace w t
   x -> error $ "not implemented: inference of: " <> show (embed $ P.Question <$ x)

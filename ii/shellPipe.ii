@@ -1,0 +1,6 @@
+-- Shell = monad enabling pretty-printing and failure
+-- * nameParse mode requiring '$'
+-- * parse names ending in / as FileName (text)
+
+--fd '\.hs' compiler -X wc | sort -n
+fd "\.hs" "compiler/" >>= mapM wc <&> sort -n
