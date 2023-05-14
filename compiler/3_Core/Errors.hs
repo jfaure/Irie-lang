@@ -72,9 +72,10 @@ formatBisubError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)
   <> "\n      " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } got)
   <> "\n  <:? " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } exp)
 
+formatCheckError :: _ -> _ -> Text
 formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annotation: "
-  <>  "\n  inferred: " <> clGreen (prettyTy (ansiRender { bindSource = Just bindSrc }) inferredTy)
-  <>  "\n  expected: " <> clGreen (prettyTy (ansiRender { bindSource = Just bindSrc }) annTy)
+  <>  "\n  inferred: " <> clGreen (TL.toStrict $ prettyTy (ansiRender { bindSource = Just bindSrc }) inferredTy)
+  <>  "\n  expected: " <> clGreen (TL.toStrict $ prettyTy (ansiRender { bindSource = Just bindSrc }) annTy)
 
 formatScopeError = \case
   ScopeError h -> clRed "Not in scope: "      <> h
@@ -84,7 +85,7 @@ formatScopeError = \case
   AmbigBind h many -> clRed "Ambiguous binding: " <> h <> show many
 
 formatTypeAppError = \case
-  BadTypeApp f args -> clRed "Cannot normalise type operator application: "
+  BadTypeApp f args -> TL.toStrict $ clRed "Cannot normalise type operator application: "
     <> "\n    " <> prettyTy ansiRender f
     <> "\n  < " <> TL.intercalate "\n < " (prettyExpr ansiRender <$> args)
 

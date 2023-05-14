@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , fromRevListN , hypoM)
+ , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , fromRevListN , anaM , hypoM)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -18,6 +18,7 @@ import Data.Align
 import Data.These
 import Text.Printf
 import Control.Arrow ((|||) , (&&&) , (***) , (>>>) , (<<<))
+import Data.Functor.Foldable
 
 type BitSet = Integer
 type String = [Char]
@@ -57,9 +58,8 @@ argSort hmap = let v = VU.fromList (M.elems hmap) in VU.unsafeBackpermute v v
 
 imap f l = zipWith f ([0..] :: [Int]) l
 
-iMap2Vector mp = V.create $ do
-  v <- MV.unsafeNew (M.size mp)
-  v <$ (\nm idx -> MV.write v idx nm) `M.traverseWithKey` mp
+iMap2Vector mp = V.create $ MV.unsafeNew (M.size mp)
+  >>= \v -> v <$ (\nm idx -> MV.write v idx nm) `M.traverseWithKey` mp
 
 d_ x   = let --if not global_debug then identity else let
   clYellow  x = "\x1b[33m" ++ x ++ "\x1b[0m"
@@ -76,6 +76,9 @@ allM :: Monad m => (a -> m Bool) -> [a] -> m Bool
 allM f = \case
   []   -> pure True
   b:bs -> f b >>= \bv -> if bv then allM f bs else pure False
+
+anaM :: (Corecursive t, Traversable (Base t), Monad m) => (a -> m (Base t a)) -> a -> m t
+anaM psi = a where a = fmap embed . traverse a <=< psi
 
 hypoM :: (Traversable t, Monad m) => (t b -> b) -> (c -> m (t (Either b c))) -> c -> m b
 hypoM f g = h where h = fmap f <<< traverse (pure ||| h) <=< g

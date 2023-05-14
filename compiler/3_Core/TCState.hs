@@ -8,9 +8,7 @@ import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write )
 import qualified ParseSyntax as P ( FnDef )
 import qualified Data.Vector as V ( Vector )
 
--- Convert QNames to VArgs so bindings can also be beta-reduced optimally
--- Convert VArgs to Lin by inserting Dups
--- this produces an "import signature" for the module
+-- inference uses a cataM
 type TCEnv s a = StateT (TCEnvState s) (ST s) a
 data TCEnvState s = TCEnvState {
  -- in

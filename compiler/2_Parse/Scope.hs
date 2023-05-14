@@ -113,7 +113,6 @@ scopeApoF exts thisMod (this , params) = let
     VBruijnLevel i -> VarF (VBruijn $ params._bruijnCount - 1 - i) -- Arg-prod arg name
     VBruijn 0 -> VarF (VBruijn 0) -- spawned by LambdaCaseF
     VExtern i -> Left <$> project (resolveExt i)
-    VQBind q  -> ScopePoisonF (ScopeError $ "Var . VQBind " <> showRawQName q)
     VLetBind _-> VarF v
   -- TODO Not ideal; shortcircuits the apomorphism (perhaps. should rework cataM inferF)
   AppExt i args -> Left <$> project (solveMixfixes 0 $ resolveExt i : (scopeTT exts thisMod params <$> args))

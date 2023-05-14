@@ -52,7 +52,6 @@ data TTName
  = VBruijnLevel IName
  | VBruijn  IName
  | VExtern  IName
- | VQBind   QName
  | VLetBind QName -- let-block nesting depth and IName
 
 data LensOp a = LensGet | LensSet a | LensOver a deriving (Show , Functor , Foldable , Traversable)

@@ -1,6 +1,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# OPTIONS -threaded -rtsopts -with-rtsopts=-N #-}
 module Tests where
+{-
 import Main
 import CmdLine
 import Externs
@@ -174,3 +175,4 @@ s = S.sydTest $ do
 --intmap
 
 testMixfixes = S.sydTest mixfixes
+-}

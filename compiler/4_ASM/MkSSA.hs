@@ -3,8 +3,6 @@ import SSA
 import Prim
 import CoreSyn hiding (Type , Expr)
 import qualified CoreSyn
-import Memory
---import CoreUtils
 import ShowCore()
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V

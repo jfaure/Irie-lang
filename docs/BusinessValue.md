@@ -7,7 +7,7 @@
 * lazy clone instead of copying, faster and avoids uneccessary work
 ## Subtyping
 * More precise types means more precise memory management
-* enables auto SIMD (instruction paralellisation)
+* enables auto SIMD (instruction parallelisation)
 
 # Fast (compilation speed)
 ## Small compiler (<6000 lines)

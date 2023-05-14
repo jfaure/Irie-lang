@@ -19,9 +19,13 @@ data CmdLine = CmdLine
   , quiet          :: Bool
   , outFile        :: Maybe FilePath
   , strings        :: String -- work on text from the commandline (as opposed to reading it from a file)
+--  , searchPath     :: [String]
+--  , objDirName     :: String
+--  , objPath        :: [String]
   , files          :: [FilePath]
   } deriving (Show)
 
+defaultObjDirName = ".irie-obj/"
 defaultCmdLine = CmdLine -- Intended for use from ghci
   { printPass      = []
   , interpret      = False
@@ -37,6 +41,9 @@ defaultCmdLine = CmdLine -- Intended for use from ghci
   , quiet          = False
   , outFile        = Nothing
   , strings        = []
+--  , searchPath     = ["./" , "ii/"]
+--  , objDirName     = defaultObjDirName
+--  , objPath        = ["./"]
   , files          = []
   }
 
@@ -92,6 +99,13 @@ cmdLineDecls = CmdLine
   <*> switch
       (             long "quiet"
       <> help "print less to stdout")
+--  <*> ((\x->[x]) . strOption) (
+--      (long "search-path")
+--      <> help "Search path for irie modules")
+--  <*> strOption (
+--      long "obj-dir-name"
+--      <> help "Dir to use for irie compilation artefacts")
+--      <> _value defaultObjDirName
   <*> (optional . strOption) (
       (short 'o')
       <> help "Write output to FILE")
@@ -109,8 +123,5 @@ cmdLineInfo =
         <> progDesc progDescription
   in info (helper <*> cmdLineDecls) description
 
--- parseCmdLine :: IO CmdLine
--- parseCmdLine = execParser cmdLineInfo
--- parseCmdLine = customExecParser (prefs disambiguate) cmdLineInfo
 parseCmdLine :: [String] -> IO CmdLine
  = \rawArgs -> handleParseResult $ execParserPure (prefs disambiguate) cmdLineInfo rawArgs

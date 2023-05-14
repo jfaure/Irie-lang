@@ -131,6 +131,8 @@ t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
 --import stream
 --import SpecialisationTests/SimpleMutual -- type is wrong
 --import mutumorphism -- avoid let-block
+--import stream
+--import sumMul
 
 {-
 import prelude
@@ -175,3 +177,6 @@ t   = foldr add 0 (enumFromTo 0 10)
 tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
 ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
 -}
+
+import prelude
+f = ifThenElse

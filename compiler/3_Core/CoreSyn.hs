@@ -38,7 +38,6 @@ data Term -- β-reducable (possibly to a type)
  | Lit     !Literal
  | Question      -- attempt to infer this TT
  | Poison  !Text -- typecheck inconsistency
-
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
@@ -137,7 +136,7 @@ poisonExpr = Core (Poison "") tyTop -- TODO top or bot? (they're defined the sam
 data ArgShape
  = ShapeNone
  | ShapeLabel ILabel [ArgShape]
--- | ShapeLiteral
+-- | ShapeLiteral Literal
  | ShapeQBind QName
  | ShapeLetBind QName
  | ShapePAPLet QName [ArgShape] -- even if fully applied, it makes little difference
@@ -198,11 +197,15 @@ data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTup
  deriving (Eq , Ord)
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)
+
+-- Each module has its own convention for numbering HNames - this must be resolved when importing binds
+-- thus QName indicates which modules HName->IName convention is in use
+-- TODO ? : add ImportList : [HName] to fix externs order of evaluation
 data JudgedModule = JudgedModule {
    modIName   :: IName
  , modHName   :: HName
- , bindNames  :: V.Vector HName
- , labelNames :: M.Map HName IName
+ , bindNames  :: V.Vector HName -- bindings
+ , labelNames :: V.Vector HName -- M.Map HName IName -- parseDetails . labels
  , moduleTT   :: Expr
 }
 emptyJudgedModule = JudgedModule (-1) "" mempty mempty poisonExpr -- dodgy (used for repl atm)

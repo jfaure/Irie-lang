@@ -10,7 +10,7 @@ import Scope
 import Errors
 import TypeCheck ( check )
 import TCState
-import Externs ( typeOfLit, readLabel, readQParseExtern , Externs )
+import Externs ( typeOfLit , Externs )
 import Generalise (generalise)
 --import Typer (generalise)
 
@@ -191,14 +191,16 @@ inferF = let
      Core t _ty -> t
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
+ -- Note. this is only called on mixfix QNames
  getQBind q = use thisMod >>= \m -> if modName q == m
    then judgeBind 0 (unQName q) <&> \case -- binds at this module are at let-nest 0
      Core _t ty -> Core (Var $ VLetBind q) ty -- don't inline at this stage
      x          -> x -- did_ x
    else use openModules >>= \openMods -> use externs >>= \exts ->
-     case readQParseExtern openMods m exts (modName q) (unQName q) of
-       Imported e -> pure e
-       x -> error $ show x
+     error "getQBind attempting to import"
+--   case readQParseExtern openMods m exts (modName q) (unQName q) of
+--     Imported e -> pure e
+--     x -> error $ show x
 
  inferBlock :: P.Block -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
  inferBlock (P.Block _open _letType letBindings) go = do
@@ -264,7 +266,6 @@ inferF = let
           bruijnAtBind = b - diff -- Bruijn idx at the let-binding
       when (b >= diff) (letCaptures %= (`setBit` bruijnAtBind))
       pure $ Core (VBruijn b) (tyVar $ argTVars V.! b)
-    P.VQBind q   -> getQBind q
     P.VLetBind q -> judgeBind (modName q) (unQName q) <&> \case
       Core _t ty -> Core (Var (VLetBind q)) ty
       x          -> x
@@ -330,16 +331,18 @@ inferF = let
          pure $ Core lensOverCast (mergeTVar rT (mkExpected outT))
     t -> error $ "record type must be a term: " <> show t
 
-  P.LabelF localL tts -> use externs >>= \ext -> sequence tts <&> judgeLabel (readLabel ext localL)
+  -- TODO when to force introduce local label vs check if imported
+  P.LabelF localL tts -> use thisMod >>= \thisM -> sequence tts 
+    <&> judgeLabel (mkQName thisM localL) -- (readLabel ext localL)
 
   -- Sumtype declaration
-  P.GadtF alts -> use externs >>= \ext -> do
-    let getTy = fromMaybe (TyGround [THPoison]) . tyExpr
-        mkLabelCol a b = TyGround [THLabelCollision a b]
-    sumArgsMap <- alts `forM` \(l , tyParams , _gadtSig@Nothing) -> do
-      params <- tyParams `forM` \t -> getTy <$> t
-      pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
-    pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
+--P.GadtF alts -> use externs >>= \ext -> do
+--  let getTy = fromMaybe (TyGround [THPoison]) . tyExpr
+--      mkLabelCol a b = TyGround [THLabelCollision a b]
+--  sumArgsMap <- alts `forM` \(l , tyParams , _gadtSig@Nothing) -> do
+--    params <- tyParams `forM` \t -> getTy <$> t
+--    pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
+--  pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
 
   P.MatchBF pscrut caseSplits catchAll -> use externs >>= \ext -> pscrut >>= \case
     c@(Core (Poison _) _) -> pure c
@@ -348,9 +351,10 @@ inferF = let
             Core p@Poison{} ty    -> (p , tyBot)
             Core t ty         -> (t , ty)
       (ls , elems) <- sequenceA caseSplits <&> unzip . BSM.toList . fmap convAbs
+      thisM <- use thisMod
       -- Note we can't use the retTy of fn types in branchFnTys in case the alt returns a function
       let (alts , _branchFnTys) = unzip elems :: ([Term] , [Type])
-          labels = qName2Key . readLabel ext <$> ls
+          labels = qName2Key . {-readLabel ext-} mkQName thisM <$> ls
 --        labels = ls -- TODO labels are raw INames to maintain 1:1 HName correspondence
           branchTys = elems <&> \case
             (BruijnAbsTyped _ _ _ retTy , _) -> retTy

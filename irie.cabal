@@ -36,9 +36,7 @@ executable irie-exe
     , base hiding (Prelude)
   main-is: Main.hs
   other-modules:
-      RootModule
-      Name
-      MachineCode
+      Registry
       Scope
       BitSetMap
       CmdLine
@@ -71,7 +69,6 @@ executable irie-exe
       TypeCheck
       MkSSA
       SSA
-      Memory
       C
       X86
       X86JIT
@@ -144,7 +141,6 @@ executable irie-exe
     , raw-strings-qq
     , sydtest
     , temporary
---  , base-unicode-symbols
     , recursion-schemes
     , comonad
     , free
@@ -153,15 +149,12 @@ executable irie-exe
     , adjunctions
     , kan-extensions
     , profunctors
+    , time
 --  , profunctor-optics
     , fresnel
+    , filelock
+    , repline
 --  , fused-effects
---  , harpy
---  , lawz
---  , rings
---  , magmas
---  , coapplicative
---  , connections
   default-language: Haskell2010
 
 --test-suite irie-test
