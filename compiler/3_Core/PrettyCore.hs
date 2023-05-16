@@ -5,7 +5,6 @@ import CoreSyn
 import ShowCore()
 import qualified Data.Vector as V
 import qualified Data.Text as T
-import qualified Data.List as DL
 import qualified BitSetMap as BSM
 import Data.Text.Lazy as TL
 import Data.Text.Lazy.Builder as TLB
@@ -52,8 +51,6 @@ prettyJudgedModule showRhs flags j = render flags . layoutPretty defaultLayoutOp
 
 pJM showRhs (JudgedModule _mI _mH _bindNms _lNms modTT) = pTopExpr showRhs $ modTT
 
-showRawQName q = show (modName q) <> "." <> show (unQName q)
-
 --------------
 -- Renderer --
 --------------
@@ -69,9 +66,11 @@ render flags = let
     STAnn ann contents -> doAnn prevAnn ann (renderTree ann contents)
     STConcat contents  -> foldMap (renderTree prevAnn) contents
 
-  prettyQName :: Maybe (V.Vector (V.Vector HName)) -> QName -> T.Text
+--prettyQName :: Maybe (V.Vector (V.Vector HName)) -> QName -> T.Text
+  prettyQName :: Maybe (ModIName -> IName -> Maybe HName) -> QName -> T.Text
   prettyQName names q = let
-    showText q names = toS $ (names V.! modName q) V.! unQName q
+    -- (names V.! modName q) V.! unQName q
+    showText q nameFn = toS $ fromMaybe (showRawQName q) $ nameFn (modName q) (unQName q)
     -- a "fieldName"; a tuple index since its in the Builtins module
 --  in if modName q == 0 then "!" <> show (unQName q) else maybe (showRawQName q) (showText q) names
     in (if modName q == 0 then "!" else "") <> maybe (showRawQName q) (showText q) names
@@ -88,15 +87,18 @@ render flags = let
     AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
     AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
     AQRawName   q -> addColor (getColor a) $ fromText (showRawQName q)
-    AQBindName  q -> addColor (getColor a) $ case allNames <$> bindSource flags of
+    AQBindName  q -> addColor (getColor a) $ case srcBindNames <$> bindSource flags of
       Nothing  -> "π(" <> (fromText (showRawQName q)) <> ")"
-      Just nms -> fromText (fst (nms V.! modName q V.! unQName q))
+      Just fn -> fromText (fromMaybe (showRawQName q) $ fn (modName q) (unQName q))
+      -- (fst (nms V.! modName q V.! unQName q))
     AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcLabelNames <$> bindSource flags) q)
 --  AQFieldName q -> fromText (showRawQName q)
 --  AQFieldName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
     AQFieldName q -> if modName q == 0 then "!" <> fromText (show (unQName q))
-      else let getHName = (V.! qName2Key q) . srcExtNames <$> bindSource flags
-      in {-addColor ansiCLYellow $-} b <> fromText (fromMaybe (showRawQName q) getHName)
+      -- TODO get the right fName
+      else let getHName = _ -- (V.! qName2Key q) . srcINames <$> bindSource flags
+      -- TODO
+      in {-addColor ansiCLYellow $-} b <> fromText (prettyQName (Nothing {-srcLabelNames <$> bindSource flags-}) q)
     ARawFieldName q -> fromText q
     ARawLabelName q -> fromText q
     ALiteral      -> addColor (getColor a) b

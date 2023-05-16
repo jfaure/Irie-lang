@@ -3,7 +3,7 @@ import CmdLine
 import Registry (Registry , initRegistry , compileFiles , g_noCache)
 import qualified Data.List (words)
 import System.Console.Repline
-import System.Process (callCommand)
+--import System.Process (callCommand)
 
 -- <dead code> for use in ghci
 demoFile   = "demo.ii"
@@ -16,7 +16,7 @@ main = getArgs >>= main'
 main' args = do
   cmdLine <- parseCmdLine args
   reg     <- initRegistry (g_noCache || noCache cmdLine)
-  reg'    <- compileFiles cmdLine reg (files cmdLine)
+  compileFiles cmdLine reg (files cmdLine)
   when (repl cmdLine || null (files cmdLine)) (runRepl cmdLine reg)
 
 type Repl = HaskelineT (StateT CmdLine IO)

@@ -1,12 +1,11 @@
 {-# LANGUAGE QuasiQuotes #-}
-{-# OPTIONS -threaded -rtsopts -with-rtsopts=-N #-}
 module Tests where
-{-
 import Main
+import Registry
 import CmdLine
-import Externs
 import PrettyCore
 import CoreSyn(BindSource(..))
+import Externs
 import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy as L
@@ -20,16 +19,27 @@ import Text.RawString.QQ
 import qualified Test.Syd as S
 import qualified GHC.Show
 
-inferTypes s = let
-  cmdLine = defaultCmdLine {noColor = True , printPass = ["types"] , noCache = True , noFuse = True}
-  getResult (_flags , _coreOK , _errors , _srcInfo , _fName , iNames , r , j) =
-    let bindSrc = BindSource mempty mempty iNames (labelHNames r) (allBinds r)
-    in prettyJudgedModule False ansiRender {bindSource = Just bindSrc , ansiColor = False} j
-  in unsafePerformIO $ getResult . Main.simplifyModule <$> text2Core cmdLine Nothing primResolver 0 "testExpr" s
+inferTypes :: Text -> L.Text
+inferTypes txt = let
+  (lm , bindSrc) = unsafePerformIO $ do
+    reg <- initRegistry False
+    lm  <- compileText defaultCmdLine {noColor = True , printPass = ["types"] , noCache = True , noFuse = True} reg txt
+    r   <- readMVar reg
+    pure (lm , BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules))
+  in case lm of
+  Just (JudgeOK _ jm) -> prettyJudgedModule False ansiRender { bindSource = Just bindSrc , ansiColor = False } jm
+  Just x  -> error $ "not judgeOK: " <> toS (showImportCon x)
+  Nothing -> error $ "no module"
 
---inferType ∷ Text → L.Text
+--getResult (_flags , _coreOK , _errors , _srcInfo , _fName , iNames , r , j) =
+--  let bindSrc = BindSource mempty mempty iNames (labelHNames r) (allBinds r)
+--  in prettyJudgedModule False ansiRender {bindSource = Just bindSrc , ansiColor = False} j
+--in unsafePerformIO $ getResult . Main.simplifyModule <$> text2Core cmdLine Nothing primResolver 0 "testExpr" s
+
+--inferType ∷ Text -> L.Text
 --inferType s = fromMaybe "" $ (V.! 0) <$> (inferTypes s)
-inferType = toS . inferTypes
+--inferType = toS . inferTypes
+inferType = inferTypes
 
 newtype UniText = UniText L.Text deriving Eq
 instance Show UniText where show (UniText l) = toS l
@@ -40,8 +50,8 @@ recTests = readTestsFromfile "ii/recTests.ii"
 
 readTestsFromfile fName = let
   ls = filter (/= "") (T.lines (unsafePerformIO (T.IO.readFile fName)))
-    <&> ((\(e,eT) → (e , T.dropAround (== ' ') (T.drop 2 eT))) . T.breakOn "--")
-  in filter (("" /=) . fst) ls <&> \(expr , expectedType) → let
+    <&> ((\(e,eT) -> (e , T.dropAround (== ' ') (T.drop 2 eT))) . T.breakOn "--")
+  in filter (("" /=) . fst) ls <&> \(expr , expectedType) -> let
     name = T.takeWhile (/= ' ') expr
     in S.it (toS expr <> " -- " <> toS expectedType)
       (UniText (inferType expr) `S.shouldBe` UniText (toS (name <> " = " <> expectedType)))
@@ -129,7 +139,7 @@ testPhantomLabel = S.goldenTextFile (goldDir <> "phantomLabel") $ do
 ph = S.sydTest (S.it "phantom label" testPhantomLabel)
 
 --goldenList = S.goldenTextFile "golden/goldenList" $
---  withSystemTempFile "goldenList" $ \tmpFile tmpHandle → do
+--  withSystemTempFile "goldenList" $ \tmpFile tmpHandle -> do
 --    Main.sh ("imports/list.ii -p types --no-fuse -o" <> tmpFile)
 --    readFile tmpFile
 
@@ -175,4 +185,3 @@ s = S.sydTest $ do
 --intmap
 
 testMixfixes = S.sydTest mixfixes
--}

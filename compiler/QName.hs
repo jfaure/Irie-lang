@@ -16,3 +16,5 @@ qName2Key (QName q) = q -- somewhat annoying but Intmap insists
 mkQName m i       = QName ((i `shiftL` moduleBits) .|. m)
 unQName (QName q) = q `shiftR` moduleBits
 modName (QName q) = q .&. complement (complement 0 `shiftL` moduleBits)
+
+showRawQName q = show (modName q) <> "." <> show (unQName q)

@@ -9,19 +9,14 @@ import CoreBinary()
 import PrettyCore
 import Infer(judgeModule)
 import qualified BetaEnv(simpleExpr)
-import Text.Megaparsec (errorBundlePretty , ParseErrorBundle)
+import Text.Megaparsec (errorBundlePretty)
 import ModulePaths
 import Errors
 import MixfixSyn
-import Mixfix
-import Externs hiding (Import)
+import Externs
 import qualified BitSetMap as BSM
-import Data.List (words, isPrefixOf)
-import Data.Tree
 import Data.Time
 import Data.Functor.Base
-import Data.Functor.Foldable
-import Data.Monoid
 import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy as TL
@@ -32,12 +27,10 @@ import qualified Data.Map.Strict as M
 import qualified Data.IntMap as IM
 import qualified Data.Binary as DB
 import Control.Lens
-import Control.Concurrent.MVar
-import Control.Monad.Trans
-import System.Console.Haskeline ( defaultSettings, getInputLine, runInputT )
-import System.Directory ( createDirectoryIfMissing, doesFileExist, getModificationTime )
-import System.FileLock
-import qualified System.IO as SIO (hClose)
+import Control.Concurrent.Async
+import System.Directory ( createDirectoryIfMissing, doesFileExist, getModificationTime, removeFile )
+--import System.FileLock
+--import qualified System.IO as SIO -- (hClose , openTempFile)
 
 searchPath = ["./" , "ii/"]
 objPath    = ["./"]
@@ -46,173 +39,172 @@ g_noCache  = True
 doFuse     = True
 cacheVersion = 0
 registryFName = ""
+doParallel = False
 
--- ## Deps: build dep-tree > parallel judge dep-tree
---   ? Write ↓↑deps to registry
---   ? return a (Tree ModIName)
+-- ## Deps: build dep-tree > parallel judge dep-tree & Write ↓↑deps to registry
 -- ## IConv: Must use registry ModINames (else β for trans imports too complicated)
 --   => Modules depend on Registry modINames and Registry becomes inflexible
 --     * Merge 2 registries requires renaming QNames in all modules in one of them
---     * All deps must be RegINamed before processing (Cannot seal dep-tree)
+--     * All deps must be ModINamed before processing (Cannot seal dep-tree)
 --     * INames (iconv) vs BindNames (module bindVector elements)
 -- ## RegMap : Global bind-lookup (HName -> IMap INames)
 --   * If mod IConv changes; need to also update regMap (use oldHNames to find them)
--- ## resolveImports:
---   ?! ImportedSig: BitSet of imported binds from each module (depends on scope)
---   * Optimiser must wait until all modules judged - to avoid copying the Resolver
 
--- TODO: Registry is MVar; LMV is IOVector ; Register ModIName & init ImportName slot in lmv
--- LMV: readable by resolveName (? MVector read) when not fully initialised
--- Registry Uses
---   >  init , register modules (Parsed / Judged / optimised)
---   <  resolveNames
---   <  search Name / type
---   <> Cache
--- TODO ! need to thread resolver from deps down
---   => Build dep tree and collect leaves
---   => compile leaves and follow dependents (? but only requested ones)
--- TODO print dep-tree
+-- TODO simplifyModule
+-- TODO only print stuff if requested
+-- TODO search(fuzzy?) Registry (hackage edit-distance)
+-- TODO print dep-tree / print Tocompile tree
 -- TODO Append module (for repl) & suspended parse & parse Expr
--- TODO labelHNames : Bitset of INames indicating which bindNames are labels
--- TODO safe against multiple iries using same cache (lockFile)
+-- TODO cache (lockfile) , CachedModule = Import
 -- TODO Import loops: Need to concat parsed modules => _mutMod { open m2Def ; open m2Def }
 --   How to merge IConvs ?!
--- TODO Trans imports: Does β-env need entire Registry?
-
-type Deps = BitSet
-type Dependents = BitSet
-type RegIName = IName -- module IName convention used by current registry (modules have their own local conventions)
+-- TODO mergeRegistries
+-- TODO ImportedSig: BitSet of imported binds from each module (depends on scope)
 
 -- Note. We read builtins directly , this just occupies Module Name 0
 primJM = V.unzip primBinds & \(primHNames , _prims) ->
-  let letBinds = LetBlock mempty -- (\x -> _ :: _) <$> prims
+  let _letBinds = LetBlock mempty -- (\x -> _ :: _) <$> prims
   in JudgedModule 0 "Builtins" primHNames primLabelHNames (Core Question tyBot)
 
--- TODO ? should all have a RegIName
-data Import
- = ImportName Text
- | NoPath  Text
- | NoParse Text (ParseErrorBundle Text Void)
- | ImportLoop BitSet -- All deps known; but the loop must be handled specially
- | ParseOK RegIName P.Module -- P.Module contains the filepath
- | JudgeOK RegIName JudgedModule
- | NoJudge RegIName Errors
--- | Cached  RegIName FilePath
- | IRoot -- For compiling multiple files on cmdline without a root module
-
-data LoadedMod = LoadedMod
-  { _deps :: Deps
-  , _dependents :: Dependents
-  , _loadedImport :: Import }; makeLenses ''LoadedMod
-data Registry = Registry {
+type Registry = MVar PureRegistry
+data PureRegistry = Registry {
 -- 1. A convention for INaming modules at the top-level
 -- 2. Track dependency tree (! Modules know their import-list : [HName] , but not their dependents)
 -- 3. Efficient bind/type lookup through all loaded modules
--- 4. Tracks file freshness and read/writes to cache
+-- 4. QName lookup:
+--   * iNames/labelNames: QName -> HName (fields / Labels)
+--   * allNames:          QName -> HName (module main bind vector)
+-- 5. Tracks file freshness and read/writes to cache
+-- 6. Module edits (Add specialisations , incremental compilation)
    _modNames          :: M.Map HName IName
  , _allNames          :: M.Map HName (IM.IntMap IName) -- HName -> ModIName -> IName
  , _globalMixfixWords :: M.Map HName (IM.IntMap [QMFWord])
  , _loadedModules     :: V.Vector LoadedMod
   -- ! refreshing cache / rewriting old modules may mess up dependents
-}; makeLenses ''Registry
+}; makeLenses ''PureRegistry
 --deriving instance Generic LoadedMod
 --deriving instance Generic Registry
 --instance DB.Binary LoadedMod
 --instance DB.Binary Registry
 
+lookupIName    = lookupJM labelNames
+lookupBindName = lookupJM bindNames
+lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
+  JudgeOK _mI jm -> Just (jmProj jm V.! iName)
+  _ -> Nothing
+
 builtinRegistry = let
-  timeBuiltins = UTCTime (ModifiedJulianDay 0) (getTime_resolution)
+  _timeBuiltins = UTCTime (ModifiedJulianDay 0) (getTime_resolution)
   lBuiltins = LoadedMod 0 0 (JudgeOK 0 primJM)
   in Registry (M.singleton "Builtins" 0) (IM.singleton 0 <$> primMap) mempty (V.singleton lBuiltins)
 
-initRegistry True  = pure builtinRegistry
-initRegistry False = doesFileExist registryFName >>= \case
+-- useCache
+initRegistry False  = newMVar builtinRegistry
+initRegistry True = doesFileExist registryFName >>= \case
   True  -> _ -- DB.decodeFile registryFName
-  False -> pure builtinRegistry
+  False -> newMVar builtinRegistry
 
-compileFiles :: CmdLine -> Registry -> [FilePath] -> IO Registry
--- compileFiles cmdLine reg fs = let rootTree = TreeF Root ((0,)<$>fs)
---in mapM (anaM modImports) rootTree `runStateT` (0 , reg)
-compileFiles cmdLine reg [f] = buildModTree f `runStateT` (0 , reg)
-  >>= \(mT , (_ , reg')) -> reg' <$ judgeTree cmdLine reg' mT
+getLoadedModule :: Registry -> ModIName -> IO LoadedMod
+getLoadedModule reg modIName = readMVar reg <&> \r -> r._loadedModules V.! modIName
+
+-- Left New module ||| Right already registered module
+registerModule :: Registry -> HName -> IO (Either ModIName ModIName)
+registerModule reg' fPath = takeMVar reg' >>= \reg -> let iM = M.size reg._modNames
+  in case M.insertLookupWithKey (\_k _new old -> old) fPath iM reg._modNames of
+    (Just iM , _mp) -> Left iM  <$ putMVar reg' reg -- cached module IName found (it may still need to be recompiled)
+    (Nothing , mp)  -> Right iM <$ putMVar reg'
+      (reg & modNames .~ mp & loadedModules %~ (`V.snoc` (LoadedMod 0 0 (ImportName fPath))))
+
+data InCompile = InText Text | InFilePath (Either FilePath FilePath)
 
 -- Compilation Hylo on Deptree:
 -- 1. anaM => check module loops, assign registry MINames , passdown dependents
 -- 2. cata => register all modules + deps/dependents + parallel judge modules
+compileFiles :: CmdLine -> Registry -> [FilePath] -> IO ()
+compileFiles cmdLine reg = let
+  compFile f = findModule searchPath (toS f) >>= \fPath -> join $
+    hyloM (judgeTree cmdLine reg) (readDeps reg) (0 , InFilePath fPath)
+  in mapConcurrently_ compFile
 
-type PathFound a = Either a a
-type ImportTreeM = StateT (BitSet , Registry) IO
+-- Somewhat a hack (?)
+textModName = "<text>" :: Text -- module Name for text strings; This will be overwritten each time
 
-buildModTree :: FilePath -> ImportTreeM (Tree (Dependents , Import))
-buildModTree fName = liftIO (findModule searchPath (toS fName))
-  >>= \fPath -> anaM modImports (0 , fPath)
+compileText :: CmdLine -> Registry -> Text -> IO (Maybe Import)
+compileText cmdLine reg progText = do
+  void $ join (hyloM (judgeTree cmdLine reg) (readDeps reg) (0 , InText progText))
+  modIName <- readMVar reg <&> (M.! textModName) . _modNames
+  getLoadedModule reg modIName <&> Just . _loadedImport
 
--- Note. Prefer to stage a deptree rather than register it instantly
--- , so deps/ents are known and to avoid incremental appends to the Registry
-type MISeed = (Dependents , PathFound FilePath)
-modImports :: MISeed -> ImportTreeM (TreeF (Dependents , Import) MISeed)
-modImports (ds , iPath) = (pathKO ||| pathOK) iPath where
+type MISeed = (Dependents , InCompile)
+readDeps :: Registry -> MISeed -> IO (TreeF (Dependents , Import) MISeed)
+readDeps reg (ds , input) = let
   pathKO fPath = pure (NodeF (ds , NoPath (T.pack fPath)) [])
-  pathOK :: FilePath -> ImportTreeM (TreeF (Dependents , Import) (MISeed))
-   -- assign a regIName to new modules & check loops
-  pathOK fPath = use (_2 . modNames) >>= \mp -> let iM = M.size mp
-    in case M.insertLookupWithKey (\_k _new old -> old) (T.pack fPath) iM mp of
-      (Just iM , _mp) -> use _1 >>= \iStack -> case iStack `testBit` iM of
-        True  -> pure $ NodeF (ds , ImportLoop iStack) []
-        False -> use (_2 . loadedModules) >>= \lms -> (lms V.! iM) & \loaded ->
-          case True of -- is cached file fresh?
-            True  -> pure $ NodeF (ds , loaded._loadedImport) [] -- []: deps already registered
-            False -> importOK iM fPath
-      (Nothing , mp) -> (_2 . modNames .= mp) *> (_1 %= (`setBit` iM)) *> importOK iM fPath
-  importOK :: IName -> FilePath -> ImportTreeM (TreeF (Dependents , Import) MISeed)
-  importOK iM fPath = liftIO (T.IO.readFile fPath) <&> parseModule fPath >>= \case
+  -- assign a regIName to new modules & check loops
+  pathOK :: FilePath -> IO (TreeF (Dependents , Import) MISeed)
+  pathOK fPath = let
+    newModule iM   = parseFileImports iM fPath
+    knownModule iM = if ds `testBit` iM
+      then pure $ NodeF (ds , ImportLoop ds) []
+      else getLoadedModule reg iM >>= \loaded ->
+        case True of -- is the cached module fresh?
+          True  -> pure $ NodeF (ds , loaded._loadedImport) [] -- []: deps already registered
+          False -> parseFileImports iM fPath
+    in registerModule reg (T.pack fPath) >>= knownModule ||| newModule
+
+  parseFileImports :: IName -> FilePath -> IO (TreeF (Dependents , Import) MISeed)
+  parseFileImports iM fPath = T.IO.readFile fPath >>= inText iM fPath
+
+  inText :: IName -> FilePath -> Text -> IO (TreeF (Dependents , Import) MISeed)
+  inText iM fPath txt = case parseModule fPath txt of
     Left parseKO -> pure (NodeF (ds , NoParse (T.pack fPath) parseKO) [])
-    Right p -> (liftIO ((findModule searchPath . toS) `mapM` (p ^. P.imports)))
-      <&> \imports -> NodeF (ds , ParseOK iM p) ((ds , ) <$> imports)
+    Right p -> ((fmap InFilePath . findModule searchPath . toS) `mapM` (p ^. P.imports))
+      <&> \imports -> NodeF (ds , ParseOK iM p) ((setBit ds iM , ) <$> imports)
+  in case input of
+  InText txt -> registerModule reg textModName
+    >>= \iM -> inText ((identity ||| identity) iM) (T.unpack textModName) txt
+  InFilePath iPath -> (pathKO ||| pathOK) iPath
 
--- cata DepTree => register all modules + deps/dependents + parallel judge modules
--- TODO ! need to thread resolver from deps down
-judgeTree :: CmdLine -> Registry -> Tree (Dependents , Import) -> IO Registry
-judgeTree cmdLine reg modTree = let
-  doParallel = False
-  nMods = M.size reg._modNames
-  -- return the indices (regINames) of updated modules
-  -- TODO return dependencies & (At build: passdown dependents)
-  judgeTreeF :: V.Vector (MVar LoadedMod)
-             -> TreeF (Dependents , Import) (IO (Deps , BitSet))
-             -> IO (Deps , BitSet)
-  judgeTreeF modMVars (NodeF (deps , mod) xs) = (if doParallel then _ else sequence xs) >>= \rets -> 
-    let xsI@(xD , xU) = foldr (\(a,b) (x,y) -> (a.|.x , b.|.y)) (deps , 0) rets :: (Deps , BitSet) in case mod of
-    NoPath fName -> xsI <$ putStrLn ("Not found: \"" <> fName <> "\"")
-    NoParse fName parseError -> xsI <$ putStrLn (errorBundlePretty parseError)
-    JudgeOK mI jm -> pure (xD , setBit xU mI)
-    ParseOK mI pm -> let mV = modMVars V.! mI in isEmptyMVar mV >>= \case -- TODO or fresh
-      True  -> let
-        j = judge cmdLine deps reg (resolveNames reg mI pm) pm mI
-        putMod = putMVar mV . LoadedMod deps xD
-        in (xD , setBit xU mI) <$ case j of
-          Left (errs , _jm) -> putMod (NoJudge mI errs)
-            *> putErrors stdout Nothing errs
-            *> putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")")
-          Right jm -> putMod (JudgeOK mI jm)
-            *> putJudgedModule cmdLine jm
-            *> putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")")
-      False -> pure xsI
-    ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
-    NoJudge mI jm -> pure xsI
-    IRoot -> error "root"
-  in do
-  modMVars <- V.replicateM nMods newEmptyMVar
-  newMods  <- cata (judgeTreeF modMVars) modTree
-  regVM    <- V.thaw reg._loadedModules
-    >>= \regV' -> MV.grow regV' (nMods - MV.length regV')
-  bitSet2IntList (fst newMods) `forM_` \i ->
-    readMVar (modMVars V.! i) >>= MV.write regVM i
-  regV <- V.freeze regVM
-  pure (reg & loadedModules .~ regV)
+-- TODO
+registerDeps reg mI deps dependents = pure () -- takeMVar reg >>= \r -> r & loadedMods %~
 
-putJudgedModule cmdLine jm = let
-  bindSrc = Nothing
+-- Add bindNames to allBinds!
+registerJudgedMod :: Registry -> ModIName -> Either Errors (_ , _ , JudgedModule) -> IO ()
+registerJudgedMod reg mI = let
+  addJM (resolver , mfResolver , jm) = takeMVar reg >>= \r -> putMVar reg (
+    r & loadedModules %~ V.modify (\v -> MV.modify v (\(LoadedMod deps dents _m) -> LoadedMod deps dents (JudgeOK mI jm)) mI)
+      & Registry.allNames .~ resolver
+      & Registry.globalMixfixWords .~ mfResolver
+    )
+  in const (pure ()) ||| addJM
+
+-- cata DepTree => parallel judge modules , register all modules and deps/dependents
+judgeTree :: CmdLine -> Registry -> TreeF (Dependents , Import) (IO Deps) -> IO Deps
+judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identity m_depL
+  >>= \depL -> let deps = foldr (.|.) 0 depL in case mod of
+  NoPath fName -> deps <$ putStrLn ("Not found: \"" <> fName <> "\"")
+  NoParse _fName parseError -> deps <$ putStrLn (errorBundlePretty parseError)
+  JudgeOK mI jm -> setBit dependents mI <$ registerDeps reg mI deps dependents
+  ParseOK mI pm -> readMVar reg >>= \reg' -> deps <$ -- setBit dependents mI
+    let (resolver , mfResolver , exts) = resolveNames reg' mI pm
+        getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
+          BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules)
+    in case judge deps reg' exts mI pm of
+      Left (errs , jm) -> let
+        in registerJudgedMod reg mI (Left errs)
+        *> getBindSrc >>= \bindSrc ->
+        putErrors stdout Nothing bindSrc errs
+        *> putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")")
+      Right jm -> registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
+        *> when ("core" `elem` printPass cmdLine)
+        (getBindSrc >>= \bindSrc ->
+        putJudgedModule cmdLine (Just bindSrc) jm
+        *> putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
+  ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
+  NoJudge _mI _jm -> pure deps
+  IRoot -> error "root"
+  ImportName _ -> error "importName"
+
+putJudgedModule cmdLine bindSrc jm = let
   outHandle = stdout
   putBind = not $ "types" `elem` printPass cmdLine 
   renderOpts = ansiRender { bindSource = bindSrc , ansiColor = not (noColor cmdLine) }
@@ -221,10 +213,12 @@ putJudgedModule cmdLine jm = let
 
 -- * Add bindNames and local labelNames to resolver
 -- * Generate Externs vector
-resolveNames :: Registry -> IName -> P.Module -> Externs
+resolveNames :: PureRegistry -> IName -> P.Module -> (_ , _ , Externs)
 resolveNames reg modIName p = let
+  curAllNames = reg._allNames
+  curMFWords  = reg._globalMixfixWords
+  curMods     = reg._loadedModules
   mixfixHNames = p ^. P.parseDetails . P.hNameMFWords . _2
-  curMFWords = reg._globalMixfixWords
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
 
@@ -235,7 +229,7 @@ resolveNames reg modIName p = let
     labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
     localNames = p ^. P.parseDetails . P.hNameBinds -- all let-bound HNames
     in M.unionsWith IM.union
-      [((\iNms -> IM.singleton modIName iNms) <$> localNames) , reg._allNames , labels]
+      [((\iNms -> IM.singleton modIName iNms) <$> localNames) , curAllNames , labels]
 
   resolveName :: HName -> ExternVar
   resolveName hNm = let
@@ -252,57 +246,37 @@ resolveNames reg modIName p = let
       q = mkQName modNm (clearBit iNm labelBit)
       sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
       in Imported $ Core (Label q []) (TyGround [THTyCon sumTy])
-     | True -> Importable modNm iNm
+     | True -> readQName curMods modNm iNm
     (b , Just mfWords) -> MixfixyVar $ case b of
       Nothing      -> Mixfixy Nothing              (flattenMFMap mfWords)
       Just [(m,i)] -> Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
     (Nothing      , Nothing) -> NotInScope hNm
     (Just many , _)          -> AmbiguousBinding hNm many
 
-  -- convert noScopeNames map to a vector (Map HName IName -> Vector HName)
-  names :: Map HName Int -> V.Vector ExternVar
-  names noScopeNames = V.create $ MV.unsafeNew (M.size noScopeNames)
-    >>= \v -> v <$ (\nm idx -> MV.write v idx $ resolveName nm) `M.traverseWithKey` noScopeNames
-
-  in Externs
-    { extNames = resolveName <$> iMap2Vector (p ^. P.parseDetails . P.hNamesNoScope)
-    -- v The point is local labels may be imported
-    -- ? TODO do we always create a new label if @ used
-    -- parsedLabels = parsed ^. P.parseDetails . P.labels
---  , importLabels = mempty -- : Vector QName ; Rename INames to imported QNames
-    }
-
-registerJudgedModule :: Registry -> JudgedModule -> Registry
-registerJudgedModule reg j = _
+  in (resolver , mfResolver , Externs (resolveName <$> iMap2Vector (p ^. P.parseDetails . P.hNamesNoScope)))
 
 --tryLockFile "/path/to/directory/.lock" >>= maybe (ko) (ok *> unlockFile)
 isCachedFileFresh fName cache =
   (<) <$> getModificationTime fName <*> getModificationTime cache
 
-printDepTree mI = _ -- read deps from flat registry
-
-judge :: CmdLine -> Deps -> Registry -> Externs -> P.Module -> RegIName
+judge :: Deps -> PureRegistry -> Externs -> ModIName -> P.Module
   -> Either (Errors , JudgedModule) JudgedModule
-judge cmdLine deps reg exts p modIName = let
-  bindNames     = p ^. P.bindings & \case
+judge deps reg exts modIName p = let
+  bindNames = p ^. P.bindings & \case
     P.LetIn (P.Block _ _ binds) Nothing -> P._fnNm <$> binds
     x -> error (show x)
   labelHNames = p ^. P.parseDetails . P.labels
-  (modTT , errors) = judgeModule p deps modIName exts
+  (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules
   jm = JudgedModule modIName (p ^. P.moduleName) bindNames (iMap2Vector labelHNames) modTT
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails) && null (errors ^. checkFails)
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails)
   in if coreOK then Right jm else Left (errors , jm)
 
-putErrors :: Handle -> Maybe SrcInfo -> Errors -> IO ()
-putErrors h srcInfo errors = let
-  bindNames = mempty -- V.zip bindNames judgedBinds
-  bindSrc = BindSource mempty bindNames _iNamesV (_labelHNames _r) (__allBinds _r)
+putErrors :: Handle -> Maybe SrcInfo -> BindSource -> Errors -> IO ()
+putErrors h srcInfo bindSrc errors = let
   e = [ formatMixfixError srcInfo        <$> (errors ^. mixfixFails)
       , formatBisubError bindSrc srcInfo <$> (errors ^. biFails)
       , formatScopeError                 <$> (errors ^. scopeFails)
       , formatCheckError bindSrc         <$> (errors ^. checkFails)
       , formatTypeAppError               <$> (errors ^. typeAppFails)]
   in T.IO.hPutStr h (T.unlines $ T.unlines <$> filter (not . null) e)
-
-

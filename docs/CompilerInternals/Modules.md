@@ -10,4 +10,3 @@ SConv = Sorted HName convention on fully qualified names: eg. "Module3.Bind2"
 * searchable (fuzzy search on types , names)
 * writeable (cache)
 * modular (handle HNames + cross-module translations)
-

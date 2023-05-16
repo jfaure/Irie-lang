@@ -8,6 +8,7 @@ import CoreUtils
 import TTCalculus ( ttApp )
 import Scope
 import Errors
+import Externs
 import TypeCheck ( check )
 import TCState
 import Externs ( typeOfLit , Externs )
@@ -21,8 +22,8 @@ import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
 import Data.Functor.Foldable
 
-judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> (Expr , Errors)
-judgeModule pm importedModules modIName exts = runST $ do
+judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (Expr , Errors)
+judgeModule pm importedModules modIName exts loaded = runST $ do
   letBinds' <- MV.new 32
   bis'      <- MV.new 0xFFF
   g         <- MV.new 0
@@ -30,6 +31,7 @@ judgeModule pm importedModules modIName exts = runST $ do
       bindings    = scopeTT exts modIName scopeparams (pm ^. P.bindings)
   (modTT , st) <- runStateT (cata inferF bindings) TCEnvState
     { _externs  = exts
+    , _loadedMs = loaded
     , _thisMod  = modIName
 
     , _letBinds = letBinds'
@@ -196,11 +198,11 @@ inferF = let
    then judgeBind 0 (unQName q) <&> \case -- binds at this module are at let-nest 0
      Core _t ty -> Core (Var $ VLetBind q) ty -- don't inline at this stage
      x          -> x -- did_ x
-   else use openModules >>= \openMods -> use externs >>= \exts ->
-     error "getQBind attempting to import"
+   else use openModules >>= \openMods -> use externs >>= \exts -> use loadedMs >>= \ls ->
 --   case readQParseExtern openMods m exts (modName q) (unQName q) of
---     Imported e -> pure e
---     x -> error $ show x
+     case readQName ls (modName q) (unQName q) of
+       Imported e -> pure e
+       x -> error $ show x
 
  inferBlock :: P.Block -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
  inferBlock (P.Block _open _letType letBindings) go = do

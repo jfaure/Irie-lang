@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , fromRevListN , anaM , hypoM)
+ , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , fromRevListN , anaM , hyloM , hypoM)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -82,6 +82,9 @@ anaM psi = a where a = fmap embed . traverse a <=< psi
 
 hypoM :: (Traversable t, Monad m) => (t b -> b) -> (c -> m (t (Either b c))) -> c -> m b
 hypoM f g = h where h = fmap f <<< traverse (pure ||| h) <=< g
+
+hyloM :: (Functor f , Monad m , Traversable f) => (f b -> b) -> (a -> m (f a)) -> a -> m b
+hyloM f g = h where h = fmap f <<< traverse h <=< g
 
 {-# INLINE imap #-}
 {-# INLINE anyM #-}

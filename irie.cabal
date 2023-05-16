@@ -150,6 +150,7 @@ executable irie-exe
     , kan-extensions
     , profunctors
     , time
+    , async
 --  , profunctor-optics
     , fresnel
     , filelock

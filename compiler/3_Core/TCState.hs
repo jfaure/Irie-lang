@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module TCState where
 import CoreSyn ( tyBot, tyTop, BiSub(BiSub), Bind )
-import Externs ( Externs )
+import Externs
 import Errors ( Errors, TmpBiSubError )
 import Control.Lens ( use, (.=), makeLenses )
 import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write )
@@ -13,6 +13,7 @@ type TCEnv s a = StateT (TCEnvState s) (ST s) a
 data TCEnvState s = TCEnvState {
  -- in
    _externs     :: Externs     -- imported bindings
+ , _loadedMs    :: V.Vector LoadedMod
  , _thisMod     :: ModuleIName -- used to make the QName for local bindings
  , _openModules :: BitSet
 

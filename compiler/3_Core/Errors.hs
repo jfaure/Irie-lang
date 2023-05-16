@@ -56,9 +56,10 @@ formatSrcLoc srcInfo o = case srcInfo of
 formatBisubError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = let
   bindSrc = Just srcNames
   msg = let
-    getName names q = if unQName q < 0
+    getName nameFn q = if unQName q < 0
       then "!" <> show (0 - unQName q)
-      else show (modName q) <> "." <> (names V.! modName q V.! unQName q)
+      else show (modName q) <> "." <> fromMaybe (showRawQName q) (nameFn (modName q) (unQName q))
+      -- (names V.! modName q V.! unQName q)
     in case failType of
     TextMsg m     -> m
     TyConMismatch -> "Type constructor mismatch" <> case (got , exp) of

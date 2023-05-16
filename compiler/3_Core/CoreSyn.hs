@@ -196,33 +196,24 @@ data BiSub = BiSub { _pSub :: Type , _mSub :: Type }; makeLenses ''BiSub
 data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
  deriving (Eq , Ord)
 
-data SrcInfo = SrcInfo Text (VU.Vector Int)
-
 -- Each module has its own convention for numbering HNames - this must be resolved when importing binds
--- thus QName indicates which modules HName->IName convention is in use
--- TODO ? : add ImportList : [HName] to fix externs order of evaluation
+-- thus QName indicates which modules HName->IName convention to use (Also guarantees names are generative)
 data JudgedModule = JudgedModule {
    modIName   :: IName
  , modHName   :: HName
+ -- * JudgedModule saves its own HName list to save the Registry the trouble of maintaining them
  , bindNames  :: V.Vector HName -- bindings
  , labelNames :: V.Vector HName -- M.Map HName IName -- parseDetails . labels
  , moduleTT   :: Expr
 }
 emptyJudgedModule = JudgedModule (-1) "" mempty mempty poisonExpr -- dodgy (used for repl atm)
 
-data OldCachedModule = OldCachedModule {
-   oldModuleIName :: ModuleIName
-   -- TODO preseed parse env with oldbindnames
- , oldBindNames   :: V.Vector HName -- to check if ambiguous names were deleted
-} deriving Show
+data SrcInfo = SrcInfo Text (VU.Vector Int)
 
--- only used by prettyCore functions and the error formatter
+-- Used by prettyCore functions and the error formatter
 data BindSource = BindSource {
-   srcArgNames   :: V.Vector HName
- , srcBindNames  :: V.Vector HName
- , srcExtNames   :: V.Vector HName
- , srcLabelNames :: V.Vector (V.Vector HName)
- , allNames      :: V.Vector (V.Vector (HName , Expr))
+   srcLabelNames :: ModIName -> IName -> Maybe HName
+ , srcBindNames  :: ModIName -> IName -> Maybe HName
 }
 
 makeBaseFunctor ''Expr

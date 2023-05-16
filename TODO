@@ -107,6 +107,7 @@
   * mixfix parser errors & locations
   * Literal is out of Int range
 ## Unimportant
+  * Insta-unwrap/specialise single branch cases
   * optimise strbuf and literal string/arrays
   * Completion based on types (Type -> Bind)
   * tabs vs spaces
