@@ -89,6 +89,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | ArgProd TT -- argument; used only by UnPattern within case expressions
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
+ | QLabel QName
 
  | PatternGuards [TT]
 

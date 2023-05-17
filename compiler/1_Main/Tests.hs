@@ -23,7 +23,7 @@ inferTypes :: Text -> L.Text
 inferTypes txt = let
   (lm , bindSrc) = unsafePerformIO $ do
     reg <- initRegistry False
-    lm  <- compileText defaultCmdLine {noColor = True , printPass = ["types"] , noCache = True , noFuse = True} reg txt
+    lm  <- compileText defaultCmdLine {noColor = True , printPass = [{-"types"-}] , noCache = True , noFuse = True} reg txt
     r   <- readMVar reg
     pure (lm , BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules) (lookupFieldName r._loadedModules))
   in case lm of

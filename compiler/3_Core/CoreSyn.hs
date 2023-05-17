@@ -162,6 +162,7 @@ optInferred = OptBind 0 mempty
 data ExternVar
  = ForwardRef IName -- not extern
  | Imported   Expr  -- Inlined
+ | ImportLabel QName
 
  | NotInScope       HName
  | NotOpened        HName HName

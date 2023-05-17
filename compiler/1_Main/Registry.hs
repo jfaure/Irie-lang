@@ -168,28 +168,28 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
     let (resolver , mfResolver , exts) = resolveNames reg' mI pm
         getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
           BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules) (lookupFieldName r._loadedModules)
+        putModVerdict = False -- TODO should only print at repl?
     in case simplify cmdLine <$> judge deps reg' exts mI pm of
-      Left (errs , _jm) -> let -- TODO have partially OK judged module
-        in registerJudgedMod reg mI (Left errs)
+      -- TODO have partially OK judged module
+      Left (errs , _jm) -> registerJudgedMod reg mI (Left errs)
         *> getBindSrc >>= \bindSrc ->
         putErrors stdout Nothing bindSrc errs
-        *> putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")")
-      Right jm -> registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
-        *> when ("core" `elem` printPass cmdLine)
-        (getBindSrc >>= \bindSrc ->
-        putJudgedModule cmdLine (Just bindSrc) jm
-        *> putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
+        *> when putModVerdict (putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
+      Right jm -> let shouldPutJM = any (`elem` printPass cmdLine) ["core", "opt", "types"]
+        in registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
+        *> when shouldPutJM (getBindSrc >>= \bindSrc -> putJudgedModule cmdLine (Just bindSrc) jm)
+        *> when putModVerdict (putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
   ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
   NoJudge _mI _jm -> pure deps
   IRoot -> error "root"
   ImportName _ -> error "importName"
 
+putJudgedModule :: CmdLine -> Maybe BindSource -> JudgedModule -> IO ()
 putJudgedModule cmdLine bindSrc jm = let
   putBind = not $ "types" `elem` printPass cmdLine 
   renderOpts = ansiRender { bindSource = bindSrc , ansiColor = not (noColor cmdLine) }
-  shouldPutJM = any (`elem` printPass cmdLine) ["core", "opt", "types"]
   putJM outHandle = TL.IO.hPutStrLn outHandle (prettyJudgedModule putBind renderOpts jm)
-  in when shouldPutJM $ case cmdLine.outFile of
+  in case cmdLine.outFile of
     Nothing    -> putJM stdout
     Just fName -> openFile fName WriteMode >>= \h -> putJM h *> SIO.hClose h
 
@@ -206,6 +206,7 @@ resolveNames reg modIName p = let
     zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
 
   -- Note. temporary labelBit allows searching BindNames and labels in 1 Map
+  -- In fact labels are almost bindNames in their own right
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
     labelMap = p ^. P.parseDetails . P.labels
@@ -222,12 +223,10 @@ resolveNames reg modIName p = let
     (Just [] , _)  -> NotInScope hNm -- this name was deleted from (all) modules
     -- inline builtins
     (Just [(modNm , iNm)] , Nothing) -> if
-     | modNm == 0 -> Imported $ snd (primBinds V.! iNm)
-     | testBit iNm labelBit -> let
---   label applications look like normal bindings `n = Nil`
-      q = mkQName modNm (clearBit iNm labelBit)
-      sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
-      in Imported $ Core (Label q []) (TyGround [THTyCon sumTy])
+     | modNm == 0 -> case snd (primBinds V.! iNm) of
+       Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
+       x -> Imported x
+     | testBit iNm labelBit -> ImportLabel (mkQName modNm (clearBit iNm labelBit))
      | True -> readQName curMods modNm iNm
     (b , Just mfWords) -> let flattenMFMap = concatMap snd in MixfixyVar $ case b of
       Nothing      -> Mixfixy Nothing              (flattenMFMap mfWords)

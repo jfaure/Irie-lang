@@ -9,6 +9,9 @@ import PrettyCore
 import Prim
 import qualified BitSetMap as BSM
 
+makeLabel q = let sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
+  in Core (Label q []) (TyGround [THTyCon sumTy])
+
 mkLiteralEquality :: Literal -> Term -> Term
 mkLiteralEquality l x = case l of
   Char _ -> App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]

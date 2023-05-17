@@ -327,6 +327,8 @@ inferF = let
   -- TODO when to force introduce local label vs check if imported
   P.LabelF localL tts -> use thisMod >>= \thisM -> sequence tts 
     <&> judgeLabel (mkQName thisM localL) -- (readLabel ext localL)
+  P.QLabelF q -> {-sequence tts <&>-} pure (judgeLabel q [])
+ -- sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
 
   -- Sumtype declaration
 --P.GadtF alts -> use externs >>= \ext -> do
@@ -347,8 +349,8 @@ inferF = let
       thisM <- use thisMod
       -- Note we can't use the retTy of fn types in branchFnTys in case the alt returns a function
       let (alts , _branchFnTys) = unzip elems :: ([Term] , [Type])
-          labels = qName2Key . {-readLabel ext-} mkQName thisM <$> ls
---        labels = ls -- TODO labels are raw INames to maintain 1:1 HName correspondence
+--        labels = qName2Key . {-readLabel ext-} mkQName thisM <$> ls
+          labels = ls -- already QNamed
           branchTys = elems <&> \case
             (BruijnAbsTyped _ _ _ retTy , _) -> retTy
             (_ , ty) -> ty

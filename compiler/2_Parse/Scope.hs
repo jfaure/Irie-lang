@@ -3,7 +3,8 @@ module Scope (scopeTT , scopeApoF , initParams , RequiredModules , OpenModules ,
 import UnPattern (patternsToCase , Scrut(..))
 import ParseSyntax
 import QName
-import CoreSyn (ExternVar(..)) -- TODO rm
+import CoreSyn (ExternVar(..))
+import qualified CoreSyn
 import Mixfix (solveMixfixes)
 import Externs ( readParseExtern, Externs )
 import Errors
@@ -11,6 +12,7 @@ import Data.Functor.Foldable
 import Control.Lens
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
+import qualified BitSetMap as BSM
 
 -- * within a module, equivalent HNames map to the same IName
 -- * inference of terms needs quick and modular indexing + access to metadata
@@ -54,6 +56,7 @@ handleExtern exts mod open lm i = case readParseExtern open mod exts i of
   NotOpened m h -> ScopePoison (ScopeNotImported h m)
   NotInScope  h -> ScopePoison (ScopeError h)
   AmbiguousBinding h ms -> ScopePoison (AmbigBind h ms)
+  ImportLabel q -> QLabel q
   x -> error (show x)
 
 -- * name scope , free variables , dup nodes , resolve VExterns to BruijnArg | QName
@@ -69,17 +72,19 @@ scopeApoF exts thisMod (this , params) = let
     solvedBranches = patBranchPairs <&> \(pat , br) -> let
       -- Special treatment for Terms in pattern position: we need to find and resolve mixfix labels immediately
       clearExtsF = \case
-        VarF (VExtern i)
+        VarF (VExtern i) ->
           -- overwrites λ-bounds: x = 3 ; f x = x
           -- TODO how to deal with let-bound labels?
 --        | params._lets `testBit` i -> Var $ VLetBind (mkQName thisMod i) -- ?! i
           -- Only inline mixfixes, nothing else, (? mutually bound mixfixes used in pattern)
-          | MixfixyVar m <- readParseExtern params._open thisMod exts i -> MFExpr m -- Only inline possible mixfixes
-          | otherwise -> Var (VExtern i)
+          case readParseExtern params._open thisMod exts i of
+            MixfixyVar m  -> MFExpr m -- Only inline possible mixfixes
+            ImportLabel q -> QLabel q
+            _ -> Var (VExtern i)
         JuxtF o args -> solveMixfixes o args -- TODO need to solveScope the mixfixes first!
         tt -> embed tt
       in (cata clearExtsF pat , br)
-    (this , bruijnSubs) = patternsToCase (scrut{- params-}) (params._bruijnCount) solvedBranches
+    (this , bruijnSubs) = patternsToCase thisMod (scrut{- params-}) (params._bruijnCount) solvedBranches
     in case bruijnSubs of
       [] -> (this , params)
       x  -> error ("non-empty bruijnSubs after case-solve: " <> show x)
@@ -115,7 +120,7 @@ scopeApoF exts thisMod (this , params) = let
   AppExt i args -> Left <$> project (solveMixfixes 0 $ resolveExt i : (scopeTT exts thisMod params <$> args))
   Juxt o args   -> Left <$> project (solveMixfixes o $ scopeTT exts thisMod params <$> args)
   BruijnLam b -> doBruijnAbs b
-  LamPats args rhs -> patternsToCase Question (params._bruijnCount) [(args , rhs)]
+  LamPats args rhs -> patternsToCase thisMod Question (params._bruijnCount) [(args , rhs)]
     & fst & \t -> Right . (, params) <$> project t
   LambdaCase (CaseSplits' branches) -> BruijnLamF $ BruijnAbsF 1 [] 0
     $ Right (doCase (Var $ VBruijn 0) branches (params & bruijnCount %~ (1+)))

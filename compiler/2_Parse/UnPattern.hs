@@ -32,8 +32,8 @@ type CaseAcc = Scrut -> Bruijns -> MatchOK -> MatchKO -> (TT , BruijnSubs)
 -- λ (η a _) => \s0 -> if λ s1 -> if η s2 s3 -> name s2 -> rhs
 -- Note. this assigns debruijn args to subPatterns which must be mapped from VExterns later
 -- bN is number of enclosing deBruijns, since these must be incremented as they are passed down
-buildCase :: CasePattern -> CaseAcc
-buildCase = let
+buildCase :: {-mod-}IName -> CasePattern -> CaseAcc
+buildCase thisMod = let
   mkSubCases :: [CaseAcc] -> Bruijns -> Int -> MatchOK -> MatchKO -> (Rhs , BruijnSubs)
   -- bN = bruijn acc , n = current lambda abstraction
   mkSubCases subPats bN n ok ko = let
@@ -58,10 +58,12 @@ buildCase = let
       n = length subPats
       (rhs , argSubs) = mkSubCases subPats bN n ok ko
       branch = mkBruijnLam (BruijnAbsF n argSubs 0 rhs) -- (η a b) => (\a b ->)
-      in noSubs $ MatchB scrut (BSM.singleton q branch) ko
+      in noSubs $ MatchB scrut (BSM.singleton (qName2Key q) branch) ko
     in case pat of
-    LabelF q subPats  -> goLabel q subPats -- argument was named => need to sub it for its bruijn name !
-    AppExtF q subPats -> goLabel q subPats
+    -- argument was named => need to sub it for its bruijn name !
+    LabelF q subPats  -> goLabel (mkQName thisMod q) subPats
+    QLabelF q -> goLabel q []
+    AppExtF q subPats -> goLabel (QName q) subPats -- TODO ?!
     VarF (VExtern i) -> case scrut of
       Var (VBruijnLevel b) -> (ok , [(i , b)])
       _ -> (DesugarPoison ("Unknown label: Extern " <> show i) , [])
@@ -84,10 +86,10 @@ buildCase = let
     x -> noSubs $ DesugarPoison ("Illegal pattern: " <> show (embed $ x <&> (\x -> fst $ x scrut bN ok ko)))
   in cata go -- scrut matchOK matchKO -> Term
 
-patternsToCase :: Scrut -> Int -> [(CasePattern , Rhs)] -> (Rhs , BruijnSubs)
-patternsToCase scrut bruijnAcc patBranchPairs = let
+patternsToCase :: {-Mod-}IName -> Scrut -> Int -> [(CasePattern , Rhs)] -> (Rhs , BruijnSubs)
+patternsToCase modIName scrut bruijnAcc patBranchPairs = let
   (matches , bruijnSubs) :: ([Rhs] , [BruijnSubs])
-    = unzip $ patBranchPairs <&> \(pat , rhs) -> buildCase pat scrut bruijnAcc rhs Nothing
+    = unzip $ patBranchPairs <&> \(pat , rhs) -> buildCase modIName pat scrut bruijnAcc rhs Nothing
 
   mergeCasesF :: NonEmptyF TT TT -> TT
   mergeCasesF (NonEmptyF r Nothing) = r
