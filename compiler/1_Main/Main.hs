@@ -1,6 +1,7 @@
 module Main where
 import CmdLine
-import Registry (Registry , initRegistry , compileFiles , g_noCache)
+import Externs
+import Registry (initRegistry , compileFiles , g_noCache)
 import qualified Data.List (words)
 import System.Console.Repline
 --import System.Process (callCommand)

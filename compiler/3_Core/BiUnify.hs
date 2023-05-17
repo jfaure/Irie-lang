@@ -15,29 +15,16 @@ import Data.Functor.Foldable
 import Control.Lens ( use, (%=) )
 debug_biunify = global_debug
 
--- First class polymorphism:
--- \i => if (i i) true then true else true
--- i used as:
--- i : (i1 -> i1) -> (i1 -> i1)
--- i : i1 -> i1
--- => Need to consider i may be polymorphic
--- i : a -> a
-
--- inferred type: a & (a -> i1 -> i1) -> i1
--- contravariant recursive type; this only makes sense if a is higher rank polymorphic:
--- a & (a -> i1 -> i1) => (Π B -> B -> B)
-
 failBiSub :: BiFail -> Type -> Type -> TCEnv s BiCast
 failBiSub msg a b = BiEQ <$ (tmpFails %= (TmpBiSubError msg a b:))
 
 leakVars :: Int -> BitSet -> TCEnv s () -- v <=> a -> b => set a and b to lvl of v (they're exported outwards)
 leakVars v export = let
   go [] = []
---go (l : lvs) = (l .|. export) : (if testBit l v then lvs else go lvs)
   go (l : lvs) = if testBit l v
     then (l .|. export) : go lvs -- ! V belongs to higher lvl , add exports until v no longer present (which lvl?) 
     else l : lvs -- OK v is local
-  in {-d_ (v , bitSet2IntList export) $-} lvls %= \case
+  in lvls %= \case
     [] -> error "internal failure to initialise tvar lvls"
     l -> go l
 
@@ -63,7 +50,6 @@ biSubTVarTVar p m = use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
 biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let mMerged = mergeTypes True m m'
   when debug_biunify (traceM ("bisub: " <> prettyTyRaw (tyVar v) <> " <=> " <> prettyTyRaw m))
---live <- checkLvl v
   leakTyVars v m
   MV.write b v (BiSub p' mMerged)
   if mMerged == m' then pure BiEQ -- if merging was noop, this would probably loop
@@ -72,7 +58,6 @@ biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
 biSubTVarM p v = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let pMerged = mergeTypes False p p'
   when debug_biunify (traceM ("bisub: " <> prettyTyRaw p <> " <=> " <> prettyTyRaw (TyVars (setBit 0 v) [])))
---live <- checkLvl v
   leakTyVars v p
   MV.write b v (BiSub pMerged m')
   if pMerged == p' then pure BiEQ -- if merging was noop, this would probably loop
@@ -107,7 +92,7 @@ instantiate pos nb ty = (if nb == 0 then pure mempty else freshBiSubs nb <&> V.f
 instantiateF :: V.Vector Int -> TypeF (Bool -> (BitSet , Type)) -> Bool -> (BitSet , Type)
 instantiateF tvars t pos = let
   instGround :: THead (Bool -> (BitSet , Type)) -> (BitSet , Type)
-  instGround = let thBound i = (0 , TyVars (setBit 0 (tvars V.! i)) []) in \case -- (0 `setBit` (tvars V.! i) , []) in \case
+  instGround = let thBound i = (0 , TyVars (setBit 0 (tvars V.! i)) []) in \case
     THMu m t    -> let mInst = tvars V.! m in -- µx.F(x) is to inference (x & F(x))
       case t pos of
         (rs , TyGround g ) -> (setBit rs m , TyVars (0 `setBit` mInst) g)
@@ -132,28 +117,21 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THBot , _) -> pure (CastInstr MkBot)
   (THPrim p1 , THPrim p2) -> primBiSub p1 p2
   (THExt a , THExt b) | a == b -> pure BiEQ
-  (_ , THExt i) -> biSubType tyP     =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
-  (THExt i , _) -> (`biSubType` tyM) =<< fromJust . tyExpr . (`readPrimExtern` i) <$> use externs
+  (_ , THExt i) -> biSubType tyP     $ fromJust (tyExpr (readPrimExtern i))
+  (THExt i , _) -> (`biSubType` tyM) $ fromJust (tyExpr (readPrimExtern i))
 
   -- Bound vars (removed at +THBi, so should never be encountered during biunification)
   (THBound i , _) -> error $ "unexpected THBound: " <> show i
   (_ , THBound i) -> error $ "unexpected THBound: " <> show i
-  (_ , THBi{}   ) -> error $ "unexpected THBi: "    <> show (p , m)
+  (_ , THBi{}   ) -> error $ "unexpected THBi: "    <> show (p , m) -- shouldn't exist on the right
+  (THBi nb p , _) -> do
+    instantiated <- instantiate True nb p -- TODO polarity ok?
+    biSubType instantiated tyM
   (t@THMu{} , y) -> instantiate True 0 (TyGround [t]) >>= \x -> biSubType x (TyGround [y]) -- TODO not ideal
   (x , t@THMu{}) -> instantiate True 0 (TyGround [t]) >>= \y -> biSubType (TyGround [x]) y   -- printList Nil ⇒ [Nil] <:? µx.[Nil | Cons {%i32 , x}]
 --(x , THMuBound m) -> use muUnrolls >>= \m -> _ -- printList (Cons 3 Nil) ⇒ [Nil] <:? x
 
-  (THBi nb p , _) -> do
-    instantiated <- instantiate True nb p -- TODO polarity ok?
-    biSubType instantiated tyM
-
   (THTyCon t1 , THTyCon t2) -> biSubTyCon p m (t1 , t2)
-
---(THPi (Pi p ty) , y) -> biSub ty [y]
---(x , THPi (Pi p ty)) -> biSub [x] ty
---(THSet _u , _) -> pure BiEQ
---(_ , THSet _u) -> pure BiEQ
-
   (_ , THTyCon THArrow{}) -> failBiSub (TextMsg "Excess arguments")       (TyGround [p]) (TyGround [m])
   (THTyCon THArrow{} , _) -> failBiSub (TextMsg "Insufficient arguments") (TyGround [p]) (TyGround [m])
   (a , b) -> failBiSub (TextMsg "Incompatible types") (TyGround [a]) (TyGround [b])

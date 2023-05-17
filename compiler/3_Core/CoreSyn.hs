@@ -44,8 +44,8 @@ data Term -- β-reducable (possibly to a type)
  | Ty Type -- Term constructors may contain types, then the whole Term is a type (or Set n)
 
 -- ->
- | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
-              -- Note if meet this than any contained bruijns | lets must not be unwrapped
+-- | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
+--              -- Note if meet this than any contained bruijns | lets must not be unwrapped
  | VBruijn IName
  | VBruijnLevel Int
  | BruijnAbs Int Term
@@ -62,7 +62,6 @@ data Term -- β-reducable (possibly to a type)
  | Label   ILabel [Term]
  | CaseB   Term Type (BSM.BitSetMap Term) (Maybe Term)
  | CaseSeq Int Term Type (BSM.BitSetMap Term) (Maybe Term)
- | CaseLam          Type (BSM.BitSetMap Term) (Maybe Term)
 
 -- Simplifier
  | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
@@ -204,9 +203,10 @@ data JudgedModule = JudgedModule {
  -- * JudgedModule saves its own HName list to save the Registry the trouble of maintaining them
  , bindNames  :: V.Vector HName -- bindings
  , labelNames :: V.Vector HName -- M.Map HName IName -- parseDetails . labels
+ , jmINames   :: V.Vector HName -- M.Map HName IName -- parseDetails . labels
  , moduleTT   :: Expr
 }
-emptyJudgedModule = JudgedModule (-1) "" mempty mempty poisonExpr -- dodgy (used for repl atm)
+emptyJudgedModule = JudgedModule (-1) "" mempty mempty mempty poisonExpr -- dodgy (used for repl atm)
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 
@@ -214,6 +214,7 @@ data SrcInfo = SrcInfo Text (VU.Vector Int)
 data BindSource = BindSource {
    srcLabelNames :: ModIName -> IName -> Maybe HName
  , srcBindNames  :: ModIName -> IName -> Maybe HName
+ , srcFieldNames :: ModIName -> IName -> Maybe HName -- INames as parsed by P.unknownNames
 }
 
 makeBaseFunctor ''Expr

@@ -1,6 +1,6 @@
 {-# Language TemplateHaskell #-}
-module Externs (Externs(..) , readPrimExtern , readParseExtern , typeOfLit , LoadedMod(..) , Import(..) , Deps , Dependents , showImportCon , readQName) where
-import Builtins ( primBinds , typeOfLit )
+module Externs where
+import Builtins ( primBinds , primMap , primLabelHNames )
 import CoreSyn
 import ShowCore()
 import CoreUtils(bind2Expr)
@@ -8,9 +8,12 @@ import qualified Data.Vector as V
 import Text.Megaparsec (ParseErrorBundle)
 import qualified ParseSyntax as P
 import Errors
+import MixfixSyn
 import Control.Lens
+import qualified Data.IntMap as IM
+import qualified Data.Map as M
+import Data.Time
 
--- how to substitute P.VExtern during mixfix resolution
 type Deps = BitSet
 type Dependents = BitSet
 
@@ -30,16 +33,43 @@ data LoadedMod = LoadedMod
  { _deps :: Deps
  , _dependents :: Dependents
  , _loadedImport :: Import
- }; makeLenses ''LoadedMod
+ }; -- makeLenses ''LoadedMod
 
 newtype Externs = Externs { extNames :: V.Vector ExternVar } deriving Show
+
+type Registry = MVar PureRegistry
+data PureRegistry = Registry {
+-- 1. A convention for INaming modules at the top-level
+-- 2. Track dependency tree (! Modules know their import-list : [HName] , but not their dependents)
+-- 3. Efficient bind/type lookup through all loaded modules
+-- 4. QName lookup (QName -> HName): main bind vector , fields , labels
+-- 5. Tracks file freshness and read/writes to cache
+-- 6. Module edits (Add specialisations , incremental compilation)
+   _modNames          :: M.Map HName IName
+ , _allNames          :: M.Map HName (IM.IntMap IName) -- HName -> ModIName -> IName
+ , _globalMixfixWords :: M.Map HName (IM.IntMap [QMFWord])
+ , _loadedModules     :: V.Vector LoadedMod
+  -- ! refreshing cache / rewriting old modules may mess up dependents
+}; makeLenses ''PureRegistry
+
+-- Note. We read builtins directly , this just occupies Module Name 0
+primJM = V.unzip primBinds & \(primHNames , _prims) ->
+  let _letBinds = LetBlock mempty -- (\x -> _ :: _) <$> prims
+  in JudgedModule 0 "Builtins" primHNames primLabelHNames mempty (Core Question tyBot)
+
+builtinRegistry = let
+  _timeBuiltins = UTCTime (ModifiedJulianDay 0) (getTime_resolution)
+  lBuiltins = LoadedMod 0 0 (JudgeOK 0 primJM)
+  in Registry (M.singleton "Builtins" 0) (IM.singleton 0 <$> primMap) mempty (V.singleton lBuiltins)
 
 --readLabel {-, readField-} :: Externs -> IName -> QName
 --readLabel exts l = if l < 0 then mkQName 0 (-1 - l) else exts.importLabels V.! l
 
-readPrimExtern e i = snd (primBinds V.! i) -- snd (extBinds e V.! 0 V.! i)
+readPrimExtern :: IName -> Expr
+readPrimExtern i = snd (primBinds V.! i)
 
-readParseExtern :: _ -> ModIName -> Externs -> IName -> ExternVar
+-- TODO rm this
+readParseExtern :: BitSet -> ModIName -> Externs -> IName -> ExternVar
 readParseExtern openMods thisModIName exts i = case exts.extNames V.! i of
   Importable modNm iNm -> if
     | modNm == thisModIName -> ForwardRef iNm
@@ -64,7 +94,7 @@ readParseExtern openMods thisModIName exts i = case exts.extNames V.! i of
 readQName :: V.Vector LoadedMod -> ModIName -> IName -> ExternVar
 readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
   JudgeOK _ jm -> Imported (readJudgedBind jm iNm)
-  s -> Importable modNm iNm
+  _ -> Importable modNm iNm
 
 readJudgedBind :: JudgedModule -> IName -> Expr
 readJudgedBind m iNm = case m.moduleTT of
@@ -73,9 +103,16 @@ readJudgedBind m iNm = case m.moduleTT of
 
 showImportCon :: Import -> Text
 showImportCon = \case
- ImportName{} -> "ImportName"
- NoPath{} -> "NoPath"
- NoParse{} -> "NoParse"
- ImportLoop{} -> "ImportLoop"
- ParseOK{} -> "ParseOK"
- JudgeOK{} -> "JudgeOK"
+  ImportName{} -> "ImportName"
+  NoPath{} -> "NoPath"
+  NoParse{} -> "NoParse"
+  ImportLoop{} -> "ImportLoop"
+  ParseOK{} -> "ParseOK"
+  JudgeOK{} -> "JudgeOK"
+  NoJudge{} -> "NoJudge"
+  IRoot{} -> "IRoot"
+
+--deriving instance Generic LoadedMod
+--deriving instance Generic Registry
+--instance DB.Binary LoadedMod
+--instance DB.Binary Registry

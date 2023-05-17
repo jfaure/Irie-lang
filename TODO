@@ -1,7 +1,6 @@
-#!! let-bound escape ; profunctors
+#!! label-import ; tuple as letblock ; opened modules ; let-bound escape ; profunctors
 #SML: fn , appendable , searchable , modular , (sealable?) , module-mutuality , writeable , dep-graph
   * sealing (effect): module becomes only accessible through its signature
-  ? path-name (relative to top-scope)
   * mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
     Also ensure β-reduction doesn't rm the let-bind wrapper prematurely
   * scope of dup-node (global/device/thread ?)
@@ -26,11 +25,14 @@
   * rewrite μ-roll; esp. for multi-branch μs merge
   * trim bisubs at some point
   * check if capture free-vars correctly on mutual bindings
+## Errors
+  * Ambiguous binding: False[(0,17),(3,8589934593)]
 ## Syntax
+  * Array type ? "## Int" Array = "# a b"
   * import lists: imports / opens keywords
-  * `$ ls -l --reverse`: $ parses a string then runs opt-parse on it
-  ? shorthand for { map : _ , filter : _ }
-  ? implicit args
+  * `$ ls -l --reverse`: $ run opt-parse on a string
+  ? shorthand for { map : _ , filter : _ } =? {{ map , filter }}
+  ? implicit args: {} used already
   ? Sum-of-Record
 ### Linearity ; free variables (type must be known) ; β vs always-inline
   ! β-opt: Specialise on paps iff dupd (or all paps) (transitive dups?) => extract any functions on the papped arguments

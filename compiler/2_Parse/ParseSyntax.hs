@@ -45,8 +45,8 @@ data FnDef = FnDef {
 }
 
 -- single argument match
-data FnMatch = FnMatch TT TT -- TODO rm
-data LetRecT = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show) -- scope of opened records (blocks)
+data LetRecT = LetIDK | Let | Dep | Rec | Mut | LetTuple {- unnamed binds -}
+  deriving (Eq , Show)
 
 data TTName
  = VBruijnLevel IName
@@ -85,6 +85,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  -- tt primitives (sum , product , list)
 -- | Prod   [(FName , TT)] -- can be used to type itself
  | Tuple   [TT] -- Cartesian product
+ | TupleIdx FName TT -- clearer than directly TTLens
  | ArgProd TT -- argument; used only by UnPattern within case expressions
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT]
@@ -96,7 +97,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  -- Since both Unpattern and solveScopes deal with deBruijn naming, they may need to be run this way
  -- LambdaCase is also complicated by requiring renaming of deBruijn vars
  | CasePat CaseSplits -- unsolved patterns
- | LamPats FnMatch
+ | LamPats TT TT
  | LambdaCase CaseSplits'
 
  | MatchB TT (BSM.BitSetMap TT) (Maybe TT) -- solved patterns UnPattern.patternsToCase
@@ -162,7 +163,6 @@ prettyParseDetails p = Prelude.concatMap ("\n  " <>)
 
 deriving instance Show ParseDetails
 deriving instance Show FnDef
-deriving instance Show FnMatch
 deriving instance Show TTName
 deriving instance Show Block
 deriving instance Show TT

@@ -25,7 +25,7 @@ inferTypes txt = let
     reg <- initRegistry False
     lm  <- compileText defaultCmdLine {noColor = True , printPass = ["types"] , noCache = True , noFuse = True} reg txt
     r   <- readMVar reg
-    pure (lm , BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules))
+    pure (lm , BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules) (lookupFieldName r._loadedModules))
   in case lm of
   Just (JudgeOK _ jm) -> prettyJudgedModule False ansiRender { bindSource = Just bindSrc , ansiColor = False } jm
   Just x  -> error $ "not judgeOK: " <> toS (showImportCon x)
@@ -113,26 +113,26 @@ foldr1 f = \case
         `S.shouldBe` UniText "foldr1 = ∏ A B → (A → A → A) → µb.[Cons {A , b} | Nil] → A"
 
 testImports = do
-  (fp1 , h1) ← SIO.openTempFile "/tmp/" "m1"
+  (fp1 , h1) <- SIO.openTempFile "/tmp/" "m1"
   hPutStr h1 $ ("f = 3" ∷ Text)
   SIO.hClose h1
 
-  (fp2 , h2) ← SIO.openTempFile "/tmp/" "m2"
+  (fp2 , h2) <- SIO.openTempFile "/tmp/" "m2"
   hPutStr h2 $ unlines ["import " <> toS fp1 , "g = f"]
   SIO.hClose h2
   Main.sh (fp2 <> " -p types")
 
 testPhantomLabel = S.goldenTextFile (goldDir <> "phantomLabel") $ do
-  _ ← SP.system "mv .irie-obj/* /tmp/"
-  (fp1 , h1) ← SIO.openTempFile "/tmp/" "m1"
+  _ <- SP.system "mv .irie-obj/* /tmp/"
+  (fp1 , h1) <- SIO.openTempFile "/tmp/" "m1"
   hPutStr h1 $ T.unlines ["lol (MyLabel x xs) = x"]
   SIO.hClose h1
   Main.sh (fp1 <> " -p types --no-fuse")
   removeFile fp1
-  h1 ← SIO.openFile fp1 WriteMode
+  h1 <- SIO.openFile fp1 WriteMode
   hPutStr h1 $ ("gg = MyLabel" ∷ Text)
   SIO.hClose h1
-  tmpFile ← (</> "tmp") <$> getCanonicalTemporaryDirectory
+  tmpFile <- (</> "tmp") <$> getCanonicalTemporaryDirectory
   Main.sh (fp1 <> " -p types --no-color  --no-fuse -o" <> tmpFile)
   readFile tmpFile
 
@@ -145,7 +145,7 @@ ph = S.sydTest (S.it "phantom label" testPhantomLabel)
 
 goldDir = "goldenOutput/"
 goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
-  tmpFile ← (</> "tmp" <> takeFileName fName) <$> getCanonicalTemporaryDirectory
+  tmpFile <- getCanonicalTemporaryDirectory <&> (</> "tmp" <> takeFileName fName)
   Main.sh (fName <> " -o" <> tmpFile <> " " <> opts)
   readFile tmpFile
 

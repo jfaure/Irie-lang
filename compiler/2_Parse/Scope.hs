@@ -9,7 +9,6 @@ import Externs ( readParseExtern, Externs )
 import Errors
 import Data.Functor.Foldable
 import Control.Lens
-import PrettyCore
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 
@@ -67,10 +66,7 @@ scopeApoF exts thisMod (this , params) = let
   doCase :: UnPattern.Scrut -> [(TT, TT)] -> Params -> Seed
   doCase scrut patBranchPairs params = let
     solvedBranches :: [(TT , TT)]
-    solvedBranches = patBranchPairs <&> \(pat' , br) -> let
-      pat = case pat' of -- convert lone VExterns here to a Label (ie. assume label not new arg name)
---      Var (VExtern e) -> Label 0 [] -- TODO need to spawn a label name + meta etc..?!
-        _ -> pat'
+    solvedBranches = patBranchPairs <&> \(pat , br) -> let
       -- Special treatment for Terms in pattern position: we need to find and resolve mixfix labels immediately
       clearExtsF = \case
         VarF (VExtern i)
@@ -112,13 +108,14 @@ scopeApoF exts thisMod (this , params) = let
   Var v -> case v of
     VBruijnLevel i -> VarF (VBruijn $ params._bruijnCount - 1 - i) -- Arg-prod arg name
     VBruijn 0 -> VarF (VBruijn 0) -- spawned by LambdaCaseF
+    VBruijn n -> error "VBruijn n/=0 shouldn't be possible"
     VExtern i -> Left <$> project (resolveExt i)
     VLetBind _-> VarF v
   -- TODO Not ideal; shortcircuits the apomorphism (perhaps. should rework cataM inferF)
   AppExt i args -> Left <$> project (solveMixfixes 0 $ resolveExt i : (scopeTT exts thisMod params <$> args))
   Juxt o args   -> Left <$> project (solveMixfixes o $ scopeTT exts thisMod params <$> args)
   BruijnLam b -> doBruijnAbs b
-  LamPats (FnMatch args rhs) -> patternsToCase Question (params._bruijnCount) [(args , rhs)]
+  LamPats args rhs -> patternsToCase Question (params._bruijnCount) [(args , rhs)]
     & fst & \t -> Right . (, params) <$> project t
   LambdaCase (CaseSplits' branches) -> BruijnLamF $ BruijnAbsF 1 [] 0
     $ Right (doCase (Var $ VBruijn 0) branches (params & bruijnCount %~ (1+)))

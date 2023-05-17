@@ -38,8 +38,8 @@ _<_  { r1 } = \f a => f a
 _>_  { a1 } = \a f => f a
 
 ifThenElse cond a b = case cond of
-  @True  => a
-  @False => b
+  True  => a
+  False => b
 
 if_then_else_ { l0 } = ifThenElse
 
@@ -47,7 +47,7 @@ if_then_else_ { l0 } = ifThenElse
 -- identity x = x
 
 fromMaybe a = \case
-  @Nothing => a
-  @Just x  => x
+  Nothing => a
+  Just x  => x
 
 -- <_> = \x => x

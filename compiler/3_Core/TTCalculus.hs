@@ -4,7 +4,6 @@ import CoreSyn
 import Errors()
 import CoreUtils
 import TCState
-import Data.List(span)
 import qualified Data.IntMap as IM
 
 -- Application of TTs (combinations of terms and types)
@@ -20,12 +19,9 @@ ttApp retTy readBind fn args = let --trace (clYellow (show fn <> " $ " <> show a
   ttApp' = ttApp retTy readBind
 
   -- Term application
-  doApp coreFn args = let
-    (termArgs , otherArgs) = span (\case {Core{}->True ; _->False}) args
+  doApp coreFn termArgs = let
     app = App coreFn $ (\(Core t _ty)->t) <$> termArgs -- forget the argument types
-    in pure $ case otherArgs of
-      []  -> Core app retTy
-      tys -> if any isPoisonExpr tys then poisonExpr else error $ "ttApp cannot resolve application: " <> show app <> show tys
+    in pure (Core app retTy)
 
 {- -- Eta reduction of Pi types applied to Exprs (likely result is an indexed type family)
   substituteType :: Maybe (QName , [Expr]) -> IM.IntMap Expr -> Type -> Type
@@ -46,7 +42,7 @@ ttApp retTy readBind fn args = let --trace (clYellow (show fn <> " $ " <> show a
 
   in case fn of
   -- TODO is TySet 0 correct, also below
-  Core (Ty f) tyty -> pure $ Core (Ty (TyIndexed f args)) (TySet 0) -- make no attempt to normalise types at this stage
+  Core (Ty f) tyty -> pure $ Core (Ty (TyIndexed f args)) tyty -- make no attempt to normalise types at this stage
   Core cf _ty -> case cf of
 --  Var (VQBind q) -> getQBind q >>= \e -> case e of
 --    Core (Var (VQBind j)) _ty | j == q -> doApp cf args
@@ -59,7 +55,6 @@ ttApp retTy readBind fn args = let --trace (clYellow (show fn <> " $ " <> show a
       pure $ Core (Ty (TyGround [THPrim (PrimInt $ fromIntegral i)])) (TySet 0)
     Instr (MkPAp _n) | f : args' <- args -> ttApp' f args'
     coreFn -> doApp coreFn args
-  _ -> error $ "ttapp: unexpected 'function': " <> show fn <> " $ " <> show args
 
 -- inline aliases and eta-reduce TyPi applications
 normaliseType :: IM.IntMap Expr -> Type -> TCEnv s Type

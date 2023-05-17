@@ -151,7 +151,6 @@ executable irie-exe
     , profunctors
     , time
     , async
---  , profunctor-optics
     , fresnel
     , filelock
     , repline

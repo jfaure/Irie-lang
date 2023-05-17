@@ -2,7 +2,7 @@
 -- Explicit memory read/writes
 
 -- * Runtime fusion
--- * Reflection: Runtime beta-optimality (pap-reduce) & GPU/distribution ⇒ lib JIT ?
+-- * Reflection: Runtime beta-optimality (pap-reduce) & GPU/distribution => lib JIT ?
 -- * Memory: non-fusible | duped Labels
 -- * Mem-layout , label subtyping
 -- * Clone Lazy-incremental

@@ -64,7 +64,7 @@ buildCase = let
     AppExtF q subPats -> goLabel q subPats
     VarF (VExtern i) -> case scrut of
       Var (VBruijnLevel b) -> (ok , [(i , b)])
-      _ -> (DesugarPoison ("Unknown label: " <> show i) , [])
+      _ -> (DesugarPoison ("Unknown label: Extern " <> show i) , [])
     VarF _              -> noSubs ok
     QuestionF           -> noSubs ok -- unconditional match
     PatternGuardsF pats -> mkSubCases pats bN 0 ok ko
@@ -74,7 +74,7 @@ buildCase = let
 --    (mkBruijnLam (BruijnAbsF n bruijnSubs 0 rhs) , [])
     TupleF subPats -> let -- (DesugarPoison "Unprepared for tuple" , [])
       n = length subPats 
-      unConsArgs = [qName2Key (mkQName 0 i) | i <- [0 .. n-1]] <&> \k -> TTLens (-1) scrut [k] LensGet
+      unConsArgs = [qName2Key (mkQName 0 i) | i <- [0 .. n-1]] <&> \k -> TupleIdx k scrut -- TTLens (-1) scrut [k] LensGet
       (body , argSubs) = mkSubCases subPats bN n ok ko
       in (App (mkBruijnLam (BruijnAbsF n argSubs 0 body)) unConsArgs , argSubs)
     LitF l          -> noSubs $ let

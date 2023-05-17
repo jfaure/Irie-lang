@@ -1,6 +1,7 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
 module Infer (judgeModule) where
 import Prim ( PrimInstr(MkPAp) )
+import Builtins (typeOfLit) -- ? move to Externs
 import BiUnify ( bisub )-- , biSubTVarTVar)
 import qualified ParseSyntax as P
 import CoreSyn as C
@@ -11,16 +12,14 @@ import Errors
 import Externs
 import TypeCheck ( check )
 import TCState
-import Externs ( typeOfLit , Externs )
 import Generalise (generalise)
 --import Typer (generalise)
-
 import Control.Lens
+import Data.Functor.Foldable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
-import Data.Functor.Foldable
 
 judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (Expr , Errors)
 judgeModule pm importedModules modIName exts loaded = runST $ do
@@ -116,13 +115,11 @@ judgeBind letDepth bindINm = let
     b -> error (show b)
 
   genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> (Int , BitSet) -> Int -> TCEnv s Expr
-  genExpr wip' retExpr letCapture tvarIdx = case retExpr of
-    Core t ty -> do
-      lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
-      gTy <- generaliseVar lvl0 tvarIdx ty --  checkAnnotation ann gTy
-      let retExpr = Core t gTy
-      retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred letCapture retExpr)
-    _ -> retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred letCapture retExpr)
+  genExpr wip' (Core t ty) letCapture tvarIdx = do
+    lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
+    gTy  <- generaliseVar lvl0 tvarIdx ty --  checkAnnotation ann gTy
+    let retExpr = Core t gTy
+    retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred letCapture retExpr)
 
   in use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>=
     (inferParsed wip ||| preInferred wip) -- >>= \r -> r <$ (use bindStack >>= \bs -> when (null bs) (clearBiSubs 0))
@@ -157,7 +154,7 @@ inferF = let
  biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
    (, tyVar retV) <$> bisub fTy (prependArrowArgsTy argTys (tyVar retV))
 
- retCast rc tt = case rc of { BiEQ -> tt ; c -> case tt of { Core f ty -> Core (Cast c f) ty ; x -> error (show x) } }
+ retCast rc tt@(Core f ty) = case rc of { BiEQ -> tt ; c -> Core (Cast c f) ty }
 
  checkFails srcOff x = use tmpFails >>= \case
    [] -> pure x
@@ -194,11 +191,9 @@ inferF = let
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  -- Note. this is only called on mixfix QNames
- getQBind q = use thisMod >>= \m -> if modName q == m
-   then judgeBind 0 (unQName q) <&> \case -- binds at this module are at let-nest 0
-     Core _t ty -> Core (Var $ VLetBind q) ty -- don't inline at this stage
-     x          -> x -- did_ x
-   else use openModules >>= \openMods -> use externs >>= \exts -> use loadedMs >>= \ls ->
+ getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
+   then judgeBind 0 (unQName q) <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty -- don't inline at this stage
+   else use openModules >>= \openMods -> use loadedMs >>= \ls ->
 --   case readQParseExtern openMods m exts (modName q) (unQName q) of
      case readQName ls (modName q) (unQName q) of
        Imported e -> pure e
@@ -239,15 +234,13 @@ inferF = let
   P.QuestionF -> pure $ Core Question tyBot
   P.WildCardF -> pure $ Core Question tyBot
   -- letin Nothing = module / record, need to type it
-  P.LetInF b Nothing -> inferBlock b Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
-    nms = lets <&> iName . fst -- [qName2Key (mkQName (ln + 1) i) | i <- [0..]]
+  P.LetInF b Nothing -> use thisMod >>= \mI -> inferBlock b Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
+    nms = lets <&> qName2Key . mkQName mI . iName . fst -- [qName2Key (mkQName (ln + 1) i) | i <- [0..]]
     tys = lets <&> tyOfExpr . bind2Expr . snd
     -- letnames = qualified on let-nests + 
     blockTy = THProduct (BSM.fromListWith mkFieldCol $ V.toList $ V.zip nms tys) -- TODO get the correct INames
     in Core (LetBlock lets) (TyGround [THTyCon blockTy])
-  P.LetInF b pInTT -> inferBlock b pInTT <&> \(inTT , lets) -> case inTT of
-    Core t ty -> Core (LetBinds lets t) ty
-    x -> x
+  P.LetInF b pInTT -> inferBlock b pInTT <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
 
 -- TODO Tuples must also handle captures (inferBlock)
   P.TupleF _ -> error $ "Tuples disabled: TODO handle captures in tuples else weird bugs likely"
@@ -268,9 +261,7 @@ inferF = let
           bruijnAtBind = b - diff -- Bruijn idx at the let-binding
       when (b >= diff) (letCaptures %= (`setBit` bruijnAtBind))
       pure $ Core (VBruijn b) (tyVar $ argTVars V.! b)
-    P.VLetBind q -> judgeBind (modName q) (unQName q) <&> \case
-      Core _t ty -> Core (Var (VLetBind q)) ty
-      x          -> x
+    P.VLetBind q -> judgeBind (modName q) (unQName q) <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 
@@ -278,14 +269,11 @@ inferF = let
     (Core (Var (VForeign i))) (tyExpr tExpr)
 
   P.BruijnLamF (P.BruijnAbsF argCount argMetas _nest rhs) ->
-    withBruijnArgTVars argCount rhs <&> \(argTVars , r) -> case r of
-      Core term retTy -> if argCount == 0 then Core term retTy else
-        let fnTy = prependArrowArgsTy argTVars retTy
-            alignArgs :: These (IName, Int) Type -> (Int, Type)
-            alignArgs = these ((,tyBot) . fst) ((-1,)) (\(i , _) b -> (i , b)) -- TODO argMetas should match argCount
-        in  Core (BruijnAbsTyped argCount term (alignWith alignArgs argMetas argTVars) retTy) fnTy
---    Ty retTy -> Ty $ if argCount == 0 then retTy else TyPi (Pi (zip _args argTVars) retTy)
-      t -> t
+    withBruijnArgTVars argCount rhs <&> \(argTVars , Core term retTy) -> if argCount == 0 then Core term retTy else
+      let fnTy = prependArrowArgsTy argTVars retTy
+          alignArgs :: These (IName, Int) Type -> (Int, Type)
+          alignArgs = these ((,tyBot) . fst) ((-1,)) (\(i , _) b -> (i , b)) -- TODO argMetas should match argCount
+      in  Core (BruijnAbsTyped argCount term (alignWith alignArgs argMetas argTVars) retTy) fnTy
 
   P.AppF fTT argsTT  -> fTT  >>= \f -> sequence argsTT >>= inferApp (-1) f
   P.PExprAppF _prec q argsTT -> getQBind q >>= \f -> sequence argsTT >>= inferApp (-1) f
@@ -296,11 +284,16 @@ inferF = let
 --VoidExpr (QVar QName) (PExprApp p q tts) (MFExpr Mixfixy)
 
   -- ! Fields are let-bound on VLetNames for inference tables , but typed (and codegenned) on INames
-  P.TTLensF o tt fieldsLocal maybeSet -> tt >>= \record -> let
+  P.TupleIdxF f tt -> tt >>= \(Core tuple tupleTy) -> freshBiSubs 1 >>= \[i] -> let
+    expectedTy = TyGround [THTyCon $ THProduct (BSM.singleton f (tyVar i))]
+    in bisub tupleTy expectedTy <&> \cast ->
+      let obj = TTLens tuple [f] LensGet in Core (case cast of { BiEQ -> obj ; cast -> Cast cast obj }) (tyVar i)
+  P.TTLensF o tt fieldsLocal maybeSet -> tt >>= \record -> use thisMod >>= \iM -> let
     fields = fieldsLocal -- readField ext <$> fieldsLocal
     recordTy = tyOfExpr record
     mkExpected :: Type -> Type
-    mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton ({-qName2Key-} f) ty)]) dest fields
+    mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton (qName2Key $ mkQName iM f) ty)]) dest fields
+--  mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton f ty)]) dest fields
     in checkFails o =<< case record of
     Core object objTy -> case maybeSet of
       P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (tyVar i)) <&> \cast ->
@@ -308,10 +301,9 @@ inferF = let
         in Core (TTLens obj fields LensGet) (tyVar i)
 
       -- LeafTy -> Record -> Record & { path : LeafTy }  (+ for mergeTypes since this is output)
-      P.LensSet x  -> x <&> \case
-        leaf@(Core _newLeaf newLeafTy) ->  -- freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected tyVar i)
-          Core (TTLens object fields (LensSet leaf)) (mergeTypes True objTy (mkExpected newLeafTy))
-        _ -> poisonExpr
+      P.LensSet x  -> x <&> \leaf@(Core _newLeaf newLeafTy) ->
+        -- freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected tyVar i)
+        Core (TTLens object fields (LensSet leaf)) (mergeTypes True objTy (mkExpected newLeafTy))
 
       P.LensOver x -> x >>= \fn -> do
          (ac , rc , outT , rT) <- freshBiSubs 3 >>= \[inI , outI , rI] -> let
@@ -331,7 +323,6 @@ inferF = let
                _ -> error $ "expected CastProduct: " <> show rc
 
          pure $ Core lensOverCast (mergeTVar rT (mkExpected outT))
-    t -> error $ "record type must be a term: " <> show t
 
   -- TODO when to force introduce local label vs check if imported
   P.LabelF localL tts -> use thisMod >>= \thisM -> sequence tts 
@@ -346,11 +337,11 @@ inferF = let
 --    pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
 --  pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
 
-  P.MatchBF pscrut caseSplits catchAll -> use externs >>= \ext -> pscrut >>= \case
+  P.MatchBF pscrut caseSplits catchAll -> pscrut >>= \case
     c@(Core (Poison _) _) -> pure c
     Core scrut gotScrutTy -> do
       let convAbs :: Expr -> (Term , Type) = \case
-            Core p@Poison{} ty    -> (p , tyBot)
+            Core p@Poison{} _ty    -> (p , tyBot)
             Core t ty         -> (t , ty)
       (ls , elems) <- sequenceA caseSplits <&> unzip . BSM.toList . fmap convAbs
       thisM <- use thisMod
@@ -374,7 +365,6 @@ inferF = let
       (b , retT) <- biUnifyApp matchTy [gotScrutTy]
       case b of { BiEQ -> pure () ; _ -> error "expected bieq" }
       pure $ Core (CaseB scrut retT (BSM.fromList (zip labels alts)) (fst <$> def)) retT
-    x -> error $ show x
 
   P.InlineExprF e -> pure e
   P.LitF l           -> pure $ Core (Lit l) (TyGround [typeOfLit l])

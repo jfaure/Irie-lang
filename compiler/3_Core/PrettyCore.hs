@@ -49,7 +49,7 @@ prettyBind flags showTerm nm b = render flags . layoutPretty defaultLayoutOption
 prettyJudgedModule :: Bool -> RenderOptions -> JudgedModule -> TL.Text
 prettyJudgedModule showRhs flags j = render flags . layoutPretty defaultLayoutOptions $ pJM showRhs j
 
-pJM showRhs (JudgedModule _mI _mH _bindNms _lNms modTT) = pTopExpr showRhs $ modTT
+pJM showRhs (JudgedModule _mI _mH _bindNms _lNms _ modTT) = pTopExpr showRhs $ modTT
 
 --------------
 -- Renderer --
@@ -66,14 +66,10 @@ render flags = let
     STAnn ann contents -> doAnn prevAnn ann (renderTree ann contents)
     STConcat contents  -> foldMap (renderTree prevAnn) contents
 
---prettyQName :: Maybe (V.Vector (V.Vector HName)) -> QName -> T.Text
   prettyQName :: Maybe (ModIName -> IName -> Maybe HName) -> QName -> T.Text
-  prettyQName names q = let
-    -- (names V.! modName q) V.! unQName q
+  prettyQName names q = let -- (names V.! modName q) V.! unQName q
     showText q nameFn = toS $ fromMaybe (showRawQName q) $ nameFn (modName q) (unQName q)
-    -- a "fieldName"; a tuple index since its in the Builtins module
---  in if modName q == 0 then "!" <> show (unQName q) else maybe (showRawQName q) (showText q) names
-    in (if modName q == 0 then "!" else "") <> maybe (showRawQName q) (showText q) names
+    in (if modName q == 0 then "!" {- builtinmodule -} else "") <> maybe (showRawQName q) (showText q) names
 
   doAnn :: Annotation -> Annotation -> Builder -> Builder
   doAnn prev a b = let
@@ -92,20 +88,15 @@ render flags = let
       Just fn -> fromText (fromMaybe (showRawQName q) $ fn (modName q) (unQName q))
       -- (fst (nms V.! modName q V.! unQName q))
     AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcLabelNames <$> bindSource flags) q)
---  AQFieldName q -> fromText (showRawQName q)
 --  AQFieldName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
     AQFieldName q -> if modName q == 0 then "!" <> fromText (show (unQName q))
-      -- TODO get the right fName
-      else let getHName = _ -- (V.! qName2Key q) . srcINames <$> bindSource flags
-      -- TODO
-      in {-addColor ansiCLYellow $-} b <> fromText (prettyQName (Nothing {-srcLabelNames <$> bindSource flags-}) q)
+      else {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
     ARawFieldName q -> fromText q
     ARawLabelName q -> fromText q
     ALiteral      -> addColor (getColor a) b
     AInstr        -> addColor (getColor a) b
     AAbs          -> addColor (getColor a) b
     AType         -> addColor (getColor a) b
---  AExternType i -> allNames <$>
     AKeyWord      -> addColor (getColor a) b
   in TLB.toLazyText . renderTree ANone . treeForm
 
@@ -134,15 +125,14 @@ pTy pos = let
     ts  -> parens $ hsep (punctuate (" " <> latChar) (pTyHeadParens pos <$> ts))
   in \case
   TyAlias q   -> annotate (AQBindName q) ""
---  TyVar  i    -> "τ" <> viaShow i
   TyVars i [] -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
   TyVars i g  -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> latChar <+> parens (pTyUnion g)
   TyGround u  -> pTyUnion u
   TyIndexed t ars -> pTy' t <+> (hsep $ parens . pExpr False <$> ars)
   TyTerm term ty -> parens $ pTerm True term <+> ":" <+> pTy' ty
   TyPi (Pi args ty) -> "Π" <> parens (hsep $ pPiArg <$> args) <+> pTy' ty
-  TySet n -> ""
---TySi (Pi args ty) tyIndexes -> _
+  TySet n -> "Set" <> viaShow n
+  TySi{} -> "TySi{}"
 
 pTyHeadParens pos t = case t of
   THTyCon THArrow{} -> parens (pTyHead pos t)
@@ -178,14 +168,11 @@ pTyHead pos = let
         _ -> space <> pTy' ty
       in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)) <> viaShow d)
     THProduct l -> let
-      -- ! HACK since top level module is handled weirdly
---    prettyField (f,ty) = annotate (AQRawName (QName f)) "" <> " : " <> pTy' ty
       prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy' ty
       in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> BSM.toList l))
     THTuple  l  -> enclose "{" "}" (hsep $ punctuate " ," (pTy' <$> V.toList l))
 --  THArray    t -> "Array " <> viaShow t
 
---THMu m t -> "µ" <> pretty (number2CapLetter m) <> "." <> parensIfArrow t
   THMu m t -> "µ" <> pretty (number2xyz m) <> "." <> parensIfArrow pos t
   THBi g t -> let
     gs = if g == 0 then "" else "∏ " <> (hsep $ pretty . number2CapLetter <$> [0..g-1]) <> " → "
@@ -199,28 +186,23 @@ pTyHead pos = let
 pBind :: HName -> Bool -> Bind -> Doc Annotation
 pBind nm showRhs bind = pretty nm <> " = " <> case bind of
   Guard m tvar      -> "GUARD : " <> viaShow m <> viaShow tvar
---Mut e m tvar      -> "Mut : "   <> viaShow m <> viaShow tvar <> " " <> pExpr showRhs e
---Mutual m _free tvar tyAnn -> "MUTUAL: " <> viaShow m <> viaShow tvar <> viaShow tyAnn
+  Mut{}             -> "Mut{} "
   Queued{} -> "Queued"
-  BindOK n (nFree , free) expr -> let
+  BindOK _n (nFree , free) expr -> let
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
     letW  = "" -- if lbound then "let " else ""
     in letW <> {-viaShow n <+> -} recKW <> (if 0 == free then "" else viaShow (nFree , bitSet2IntList free)) <> pExpr showRhs expr
+  BindUnused{} -> "BindUnused{}"
   WIP -> "WIPBind"
 
 -- want to print the top-level let-block without {} or = record
-pTopExpr showRhs = \case
-  Core term@(LetBlock bs) ty -> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
---  <+> ":" <+> annotate AType (pTy True ty)
-  e -> pExpr showRhs e
+pTopExpr showRhs (Core (LetBlock bs) _ty) = vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 
 pExpr :: Bool -> Expr -> Doc Annotation
-pExpr showRhs = let pos = True in \case
-  Core term@(LetBlock bs) ty -> (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy True ty)
+pExpr showRhs (Core term ty) = let pos = True in case term of
+  LetBlock{} -> (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy True ty)
 --  -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
-  Core term ty -> (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy pos ty)
---Ty t         -> "type" <+> annotate AType (pTy pos t)
---e -> viaShow e
+  term       -> (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy pos ty)
 
 pTerm :: Bool -> Term -> Doc Annotation
 pTerm showRhs = let
@@ -228,9 +210,8 @@ pTerm showRhs = let
     VQBind q   -> annotate (AQBindName q) ""
     VForeign i -> "foreign " <> viaShow i
     VLetBind q -> "letBound: " <> viaShow (modName q) <> "." <> viaShow (unQName q)
-  prettyFreeArgs x = if x == 0 then "" else enclose " {" "}" (hsep $ viaShow <$> (bitSet2IntList x))
   prettyLabel l = annotate (AQLabelName l) ""
-  prettyField f = annotate (AQFieldName f) ""
+--prettyField f = annotate (AQFieldName f) ""
   prettyMatch prettyLam _caseTy ts d = let
     showLabel l t = prettyLabel (QName l) <+> "=>" <+> prettyLam t
     in brackets $ annotate AKeyWord "\\case " <> nest 2 ( -- (" : " <> annotate AType (pTy caseTy)) <> hardline
@@ -239,7 +220,6 @@ pTerm showRhs = let
       )
   ppTermF = \case
     TyF t -> pTy True t -- TODO polarity
-  --Hole -> " _ "
     QuestionF -> " ? "
     VarF     v -> pVName v
     VBruijnF b -> "B" <> viaShow b
@@ -247,8 +227,8 @@ pTerm showRhs = let
     LitF     l -> annotate ALiteral $ parens (viaShow l)
     BruijnAbsF n body -> parens $ "λb(" <> viaShow n <> ")" <+> body
     BruijnAbsTypedF n body argMetas retTy -> parens $ "λB(" <> viaShow n <> ")" <+> body
-      -- <+> pTyHead True (THTyCon (THArrow (snd <$> argMetas) retTy))
     CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing ts d
+    CaseSeqF _n arg _ty ts d -> arg <+> " caseSeq> " <+> prettyMatch identity Nothing ts d
     AppF f args    -> parens (f <+> nest 2 (sep args))
     InstrF   p -> annotate AInstr (prettyInstr p)
     CastF  i t -> parens (viaShow i) <> enclose "<" ">" (viaShow t)
@@ -262,7 +242,6 @@ pTerm showRhs = let
         LensSet  tt      -> " . set "  <> parens (pExpr showRhs tt)
         LensOver cast tt -> " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr showRhs tt)
       in r <> " . " <> hsep (punctuate "." $ {-prettyField-} viaShow <$> target) <> pLens ammo
---  SpecF q      -> "(Spec:" <+> annotate (AQSpecName q) "" <> ")"
     LetSpecF q sh -> "let-spec: " <> viaShow q <> "(" <> viaShow sh <> ")"
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
     TupleF ts    -> parens $ hsep $ punctuate " ," (V.toList ts)
@@ -270,7 +249,6 @@ pTerm showRhs = let
       <> hardline <> "in" <+> t
     LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
---  ForcedF e l t -> "F" <> viaShow e <> " lvl" <> viaShow l <> t
 
   parensApp f args = parens $ parens f <+> nest 2 (sep args)
   in para $ \case

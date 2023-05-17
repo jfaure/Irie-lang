@@ -30,7 +30,7 @@ int_t = TPrim (PtrTo (PrimInt 32))
 
 setTop t = modify $ \x->x{top = t}
 
-mkSSAModule coreMod@(JudgedModule modIName modName bindNames pLabels _modTT) = let
+mkSSAModule coreMod@(JudgedModule modIName modName bindNames pLabels _ _modTT) = let
   nArgs  = 100 -- TODO !
   nBinds = V.length coreBinds
   wip2Fn = \case

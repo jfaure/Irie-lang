@@ -173,7 +173,7 @@ fuseCase lvl argEnv trailingArgs retT branches d tt = let
         innerOutput             -> CaseB innerOutput retT branches d
       in fuseCase lvl argEnv trailingArgs ty2 (pushCase <$> innerBranches) (pushCase <$> innerDefault) innerScrut
     -- no-fusion
-    CaseSeq n innerScrut ty2 innerBranches innerDefault -> _
+    CaseSeq{} -> error "" -- n innerScrut ty2 innerBranches innerDefault -> _
     opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches)
                                                          (Right . (lvl,env,) <$> d)
 

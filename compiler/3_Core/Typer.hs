@@ -113,5 +113,8 @@ buildType lvl0 bis' varSubs loops pos = let
       GeneraliseVar -> -- if testBit lvl0 v {- escaped variables-} then pure (tyVar v) else
         generaliseVar v <&> \b -> TyGround [THBound b] -- pure $ tyVar v
       DeleteVar     -> pure $ tyBot
+      Recursive _ -> _
+      SubVar _    -> _
+      SubTy _     -> _
     pure $ mergeTypeList pos (TyGround grounds : subs ++ varBounds)
   in go loops . partitionType

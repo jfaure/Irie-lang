@@ -19,7 +19,7 @@ check e inferred gotRaw = let
 
 check' :: Externs -> Type -> Type -> TCEnv s Bool
 check' es (TyGround inferred) (TyGround gotTy) = let
-  readExt x = case readPrimExtern es x of
+  readExt x = case readPrimExtern x of
     Core (Ty t) _ -> t
     c -> error $ "expected type, got: " <> show c
   checkAtomic :: TyHead -> TyHead -> TCEnv s Bool

@@ -1,7 +1,7 @@
 --import prelude
 ifThenElse cond a b = case cond of
-  @True  => a
-  @False => b
+  True  => a
+  False => b
 
 n = 10
 go1 z k = ifThenElse (ge k n) z (go2 z k (add k 1) 1)
