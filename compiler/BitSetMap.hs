@@ -15,7 +15,7 @@ import qualified Data.Vector as V ( Vector, (!), fromList, length, map, singleto
 
 newtype BitSetMap a = BSM { unBSM :: V.Vector (Int , a) }
   deriving (Eq , Generic , Show)
-instance (Binary e) ⇒ Binary (BitSetMap e)
+instance (Binary e) => Binary (BitSetMap e)
 --instance Semialign BitSetMap where
 --  alignWith f = mergeWithKey (\k a b -> f (These a b)) (\k x -> f (This x)) (\k y -> f (That y))
 instance Functor BitSetMap where

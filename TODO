@@ -1,5 +1,6 @@
 # judge bind append
 # opened modules ; let-bound escape ; profunctors
+# β Tuple bug
 #SML: fn , appendable , searchable , modular , (sealable?) , module-mutuality , writeable , dep-graph
   * sealing (effect): module becomes only accessible through its signature
   * mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
@@ -24,6 +25,8 @@
   * rewrite μ-roll; esp. for multi-branch μs merge
   * trim bisubs at some point
   * check if capture free-vars correctly on mutual bindings
+  * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
+  * importing new labels can break code: eg. f a = _ ; then import an 'a' label
 ## Syntax
   * Array type: "# 1 3 2 : Array Int"
   * import lists: imports / opens keywords

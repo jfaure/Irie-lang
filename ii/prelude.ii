@@ -47,7 +47,10 @@ if_then_else_ { l0 } = ifThenElse
 -- identity x = x
 
 fromMaybe a = \case
-  Nothing => a
-  Just x  => x
+  @Nothing => a
+  @Just x  => x
+
+fst (a , b) = a
+snd (a , b) = b
 
 -- <_> = \x => x

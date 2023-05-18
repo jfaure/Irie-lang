@@ -93,7 +93,7 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
       fuse (lvl , (prevEnv , trailingArgs) , argTerm)
 
   -- inlineLetBind: lvl == 0 means this fully reduces (won't produce a function)
-  Var (VLetBind q) | lvl == 0 -> use letBinds >>= \lb -> (lb `MV.read` modName q)
+  Var (VLetBind q) | lvl == 0 && q /= (QName 1) {- HACK -} -> use letBinds >>= \lb -> (lb `MV.read` modName q)
     >>= \bindVec -> MV.read bindVec (unQName q) >>= simpleBind lvl (argEnv , []) >>= \b -> case b of
       BindOK _ (nL , letCapture) (Core inlineF _ty) -> let
         env' = (V.drop (V.length argEnv - nL) argEnv , trailingArgs)
@@ -101,8 +101,8 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
           *> fuse (lvl , env' , inlineF)
       x -> error $ show x
 
-  Var (VLetBind q) | not (null trailingArgs) -> specApp lvl (argEnv , []) q
-    =<< (trailingArgs `forM` \(TSub e l t) -> simpleTerm' l (e , []) t)
+--Var (VLetBind q) | not (null trailingArgs) -> specApp lvl (argEnv , []) q
+--  =<< (trailingArgs `forM` \(TSub e l t) -> simpleTerm' l (e , []) t)
 
   LetSpec q sh | lvl == 0 -> use letBinds >>= \lb -> (lb `MV.read` modName q)
     >>= \bindVec -> MV.read bindVec (unQName q) >>= simpleBind lvl (argEnv , []) >>= \b -> MV.write bindVec (unQName q) b *> case b of
@@ -166,36 +166,15 @@ fuseCase lvl argEnv trailingArgs retT branches d tt = let
       pushCase = \case -- this will produce a case-label for each branch
         -- case (\p1..p2 -> scrut) of branches
         -- (\p1..p2 C -> ) (p1..p2 -> scrut) (\case branches) -- Thus branches aren't touched by params
+        -- CaseSeq knows its branches expect it to rm the first n args of its env
         BruijnAbs n innerOutput -> BruijnAbs n (CaseSeq n innerOutput retT branches d)
-     -- BruijnAbs n innerOutput -> CaseSeq n innerOutput retT branches d
         BruijnAbsTyped{} -> _
-     -- c@CaseB{} -> error $ show c
-        innerOutput             -> CaseB innerOutput retT branches d
+        innerOutput      -> CaseB innerOutput retT branches d
       in fuseCase lvl argEnv trailingArgs ty2 (pushCase <$> innerBranches) (pushCase <$> innerDefault) innerScrut
     -- no-fusion
-    CaseSeq{} -> error "" -- n innerScrut ty2 innerBranches innerDefault -> _
+    CaseSeq{} -> error "" -- CaseSeq should be dealt with almost immediately after spawning
     opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (Right . (lvl,env,) <$> branches)
                                                          (Right . (lvl,env,) <$> d)
-
--- case-case notes:
--- case-case: push/copy outer case to each branch, then the inner case output fuses with outer case labels
--- Scrut is pre β-reduced , fuse then β-reduce branches and d (after fusion = a single one)
--- TODO (?) need to inc args within the pushed case (normally case-Abs are distinct, but now we're stacking them)
-
-    -- case (\p1..p2 -> scrut) of branches
-    -- => \p1..p2 -> case scrut of branches
-    -- TODO this bruijnAbs applies to the scrut but NOT the branches/d !
-    -- | make a new fn that separate scrut/branches (not possible with current syntax)
-    -- | New syntax: case-branches to separate scrut from branches and allow \p1..pn S -> pass in branches
-    -- | force increment all bruijns in branches (complicated when meeting more bruijnAbs)
-    -- | Wrap (blocks pattern matching and too weird)
-    -- | Rewrite case-case to resolve all without returning (inner case usually scruts an arg so irreducable)
-    -- | Leave the fn in the scrut (Then need to partition trailingArgs to scrut and to branch output)
-    -- | case-branches are let-binds (ie. have explicit captures)
- -- BruijnAbs n innerOutput -> BruijnAbs n (CaseB innerOutput retT branches d) -- A case-label
- -- BruijnAbsTyped{} -> _
- -- innerOutput -> CaseB innerOutput retT branches d -- error ""
---pushCase innerOutput = did_ $ CaseB innerOutput retT branches d -- A case-label
 
 inferBlock lets go = do
   nest <- letNest <<%= (1+)
@@ -204,11 +183,10 @@ inferBlock lets go = do
 
 -- TODO how to avoid duplicate simplifications? ie. iff no VBruijns to solve: isEnvEmpty
 simpleBind lvl env b = case b of
---BindOK _ _ PoisonExpr -> pure b
   BindOK (OptBind optLvl specs) free (Core t ty) -> if isEnvEmpty env && optLvl /= 0 then pure b else do
     newT <- simpleTerm' lvl env t
     pure (BindOK (OptBind ({-optLvl +-} 1) specs) free (Core newT ty))
-  x -> error $ show x
+  x -> error (show x)
 
 simpleTerm' :: Int -> Env -> Term -> SimplifierEnv s Term
 simpleTerm' lvl env t = hypoM constFoldF fuse (lvl , env , t)
@@ -217,7 +195,7 @@ simpleTerm t = do
   simpleTerm' 0 (mempty , mempty) t `evalStateT` FEnv letBinds' 0
 
 simpleExpr :: Expr -> ST s Expr
-simpleExpr (Core t ty) = simpleTerm t <&> \t -> Core t ty
+simpleExpr (Core t ty) = simpleTerm t <&> (`Core` ty)
 
 constFoldF :: TermF Term -> Term
 constFoldF = \case

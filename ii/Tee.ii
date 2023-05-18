@@ -1,0 +1,10 @@
+-- Tee: shared pointer to cached stream: usage: tee str > \(strL , strR) => ..
+-- ! Vec is a builtin that reallocs itself if push exceeds its bounds
+-- Vec = { size : Int , ptr : Mem }
+-- TODO multi-ref: teeN function
+-- TODO ERA: how to free if stream copy is unused
+tee (@stream inNext s0) = VecNew > \ptr => let
+  next (s , n) = case n >= ptr.cached of
+    True  => Yield (VecRead ptr n) (n + 1)
+    False => inNext s > \x => VecPush ptr n x (Yield x (n + 1)) -- ! writePtr
+  in @stream next s0

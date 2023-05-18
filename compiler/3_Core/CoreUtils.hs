@@ -78,13 +78,6 @@ isTyCon = \case
  THTyCon{} -> True
  _         -> False
 
-tyExpr = \case -- get the type from an expr.
-  Core (Ty t) _t -> Just t
---Core e t -> Just (TyTerm e t)
-  _        -> Nothing --error $ "expected type, got: " ++ show expr
-
-tyOfExpr (Core e ty) = ty
-
 -- expr2Ty :: _ -> Expr -> TCEnv s Type
 -- Expression is a type (eg. untyped lambda calculus is both a valid term and type)
 expr2Ty e = case e of

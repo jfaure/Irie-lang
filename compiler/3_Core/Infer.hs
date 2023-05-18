@@ -21,6 +21,11 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
 
+import PrettyCore
+import qualified Data.Text as T
+addBind :: Expr -> P.FnDef -> Expr
+addBind jm newDef = jm
+
 judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (Expr , Errors)
 judgeModule pm importedModules modIName exts loaded = runST $ do
   letBinds' <- MV.new 32
@@ -58,8 +63,6 @@ judgeModule pm importedModules modIName exts loaded = runST $ do
 -- This stacks inference of forward references and let-binds and identifies mutual recursion
 judgeBind :: Int -> IName -> TCEnv s Expr
 judgeBind letDepth bindINm = let
---appFree free t = if null free then t else t & \(Core t ty) -> Core (App t (VBruijn <$> free)) ty
-
   inferParsed :: MV.MVector s (Either P.FnDef Bind) -> P.FnDef -> TCEnv s Expr
   inferParsed wip' abs = freshBiSubs 1 >>= \[tvarIdx] -> do -- [tvarIdx] <- freshBiSubs 1
     bindStack %= ((letDepth , bindINm) :)
@@ -94,7 +97,7 @@ judgeBind letDepth bindINm = let
         if hasMutual
           then Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tVar)
            <$ MV.write wip' bindINm (Right (Mut expr ms lc tVar))
-           <* bisub (tyOfExpr expr) (tyVar tVar) -- ! recursive => bisub with -τ (itself)
+           <* bisub (exprType expr) (tyVar tVar) -- ! recursive => bisub with -τ (itself)
           -- can generalise once all mutuals & associated tvars are fully constrained
           else genExpr wip' expr lc tVar
       b -> error $ "panic: " <> show b
@@ -177,14 +180,14 @@ inferF = let
      _    -> _
 
    in if any isPoisonExpr (f : args) then pure poisonExpr else do
-     (biret , retTy) <- biUnifyApp (tyOfExpr f) (tyOfExpr <$> args)
+     (biret , retTy) <- biUnifyApp (exprType f) (exprType <$> args)
      use tmpFails >>= \case
        [] -> castRet biret castArgs <$> ttApp retTy (\i -> judgeBind _0 i) f args -- >>= checkRecApp
        x  -> poisonExpr <$ -- trace ("problem fn: " <> show f :: Text)
          ((tmpFails .= []) *> (errors . biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
 
  judgeLabel qNameL exprs = let
-   labTy = TyGround [THTyCon $ THTuple $ V.fromList (tyOfExpr <$> exprs)]
+   labTy = TyGround [THTyCon $ THTuple $ V.fromList (exprType <$> exprs)]
    es = exprs <&> \(Core t _ty) -> t
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
@@ -241,7 +244,7 @@ inferF = let
     use thisMod >>= \mI -> inferBlock lets Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
     nms = lets <&> qName2Key . letName . fst
 --  nms = lets <&> qName2Key . mkQName mI . iName . fst -- [qName2Key (mkQName (ln + 1) i) | i <- [0..]]
-    tys = lets <&> tyOfExpr . bind2Expr . snd
+    tys = lets <&> exprType . bind2Expr . snd
     -- letnames = qualified on let-nests + 
     blockTy = THProduct (BSM.fromListWith mkFieldCol $ V.toList $ V.zip nms tys) -- TODO get the correct INames
     in Core (LetBlock lets) (TyGround [THTyCon blockTy])
@@ -260,8 +263,8 @@ inferF = let
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 
-  P.ForeignF _isVA i tt -> tt <&> \tExpr -> maybe (Core (Poison ("not a type: " <> show tExpr)) tyBot)
-    (Core (Var (VForeign i))) (tyExpr tExpr)
+  P.ForeignF _isVA i tt -> error "not ready for foreign"
+--  tt <&> \(Core _ttExpr ty) -> Core (Var (VForeign i)) ty
 
   P.BruijnLamF (P.BruijnAbsF argCount argMetas _nest rhs) ->
     withBruijnArgTVars argCount rhs <&> \(argTVars , Core term retTy) -> if argCount == 0 then Core term retTy else
@@ -285,7 +288,7 @@ inferF = let
       let obj = TTLens tuple [qN] LensGet in Core (case cast of { BiEQ -> obj ; cast -> Cast cast obj }) (tyVar i)
   P.TTLensF o tt fieldsLocal maybeSet -> tt >>= \record -> use thisMod >>= \iM -> let
     fields = fieldsLocal -- readField ext <$> fieldsLocal
-    recordTy = tyOfExpr record
+    recordTy = exprType record
     mkExpected :: Type -> Type
     mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton (qName2Key $ mkQName iM f) ty)]) dest fields
 --  mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton f ty)]) dest fields
@@ -304,7 +307,7 @@ inferF = let
          (ac , rc , outT , rT) <- freshBiSubs 3 >>= \[inI , outI , rI] -> let
            inT = tyVar inI ; outT = tyVar outI
            in do -- need 3 fresh TVars since we cannot assume anything about the "fn" or the "record"
-           argCast <- bisub (tyOfExpr fn) (TyGround [THTyCon $ THArrow [inT] outT]) <&> \case
+           argCast <- bisub (exprType fn) (TyGround [THTyCon $ THArrow [inT] outT]) <&> \case
              CastApp [argCast] _pap BiEQ  -> argCast -- pap ?
              BiEQ                         -> BiEQ
              x -> error (show x)
@@ -334,24 +337,16 @@ inferF = let
 --    pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
 --  pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
 
-  P.MatchBF pscrut caseSplits catchAll -> pscrut >>= \case
-    c@(Core (Poison _) _) -> pure c
-    Core scrut gotScrutTy -> do
-      let convAbs :: Expr -> (Term , Type) = \case
-            Core p@Poison{} _ty    -> (p , tyBot)
-            Core t ty         -> (t , ty)
-      (ls , elems) <- sequenceA caseSplits <&> unzip . BSM.toList . fmap convAbs
-      thisM <- use thisMod
-      -- Note we can't use the retTy of fn types in branchFnTys in case the alt returns a function
-      let (alts , _branchFnTys) = unzip elems :: ([Term] , [Type])
---        labels = qName2Key . {-readLabel ext-} mkQName thisM <$> ls
-          labels = ls -- already QNamed
+  P.MatchBF pscrut caseSplits catchAll -> pscrut >>= \(Core scrut gotScrutTy) -> do
+      let convAbs :: Expr -> (Term , Type) = \(Core t ty) -> (t , ty)
+      (labels , elems) <- sequenceA caseSplits <&> unzip . BSM.toList . fmap convAbs
+      def <- sequenceA catchAll <&> fmap convAbs
+      let (alts , _rawAltTs) = unzip elems
           branchTys = elems <&> \case
-            (BruijnAbsTyped _ _ _ retTy , _) -> retTy
+            (BruijnAbsTyped _ _ _ retTy , _) -> retTy -- alts are functions of their label params
             (_ , ty) -> ty
-      def       <- sequenceA catchAll <&> fmap convAbs
-      let retTy    = mergeTypeList False $ maybe branchTys ((: branchTys) . snd) def -- ? TODO why negative merge
-          altTys   = alts <&> \case
+          retTy  = mergeTypeList False $ maybe branchTys ((: branchTys) . snd) def -- ? TODO why negative merge
+          altTys = alts <&> \case
             BruijnAbsTyped _ _t ars _retTy -> TyGround [THTyCon $ THTuple (V.fromList $ snd <$> ars)]
             _x -> TyGround [THTyCon $ THTuple mempty]
           scrutSum = BSM.fromList (zip labels altTys)
@@ -366,6 +361,6 @@ inferF = let
   P.InlineExprF e -> pure e
   P.LitF l           -> pure $ Core (Lit l) (TyGround [typeOfLit l])
   P.ScopePoisonF e   -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))
-  P.DesugarPoisonF t -> pure $ Core (Poison t) tyBot
+  P.DesugarPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (ScopeError t:))
   P.ScopeWarnF w t   -> trace w t
   x -> error $ "not implemented: inference of: " <> show (embed $ P.Question <$ x)

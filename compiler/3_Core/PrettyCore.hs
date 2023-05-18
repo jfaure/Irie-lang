@@ -19,7 +19,7 @@ tr t x = trace (prettyTyRaw t) x
 -- <a href="#Marker></a>
 -- <h1 id="Marker">There's a link to here!</h1>
 data Annotation
- = ANone | AArg IName | ARhs | AQRawName QName | AQBindName QName | AQSpecName QName| AQLabelName QName | AQFieldName QName -- Names
+ = ANone | AArg IName | AQRawName QName | AQBindName QName | AQSpecName QName| AQLabelName QName | AQFieldName QName -- Names
  | ARawFieldName HName | ARawLabelName HName
  | AInstr | ALiteral | AType  | AAbs | AKeyWord
 -- | ASrcLoc -- for clickable html
@@ -83,7 +83,6 @@ render flags = let
       ; AKeyWord -> ansiCLMagenta ; _ -> ansiCLNormal }
     in case a of
     ANone         -> addColor (getColor a) b
-    ARhs          -> b -- if showBind flags then _pTerm t else "" -- probably hack
     AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
     AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
     AQRawName   q -> addColor (getColor a) $ fromText (showRawQName q)

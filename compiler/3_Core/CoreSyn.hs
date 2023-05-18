@@ -44,16 +44,14 @@ data Term -- β-reducable (possibly to a type)
  | Ty Type -- Term constructors may contain types, then the whole Term is a type (or Set n)
 
 -- ->
--- | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
---              -- Note if meet this than any contained bruijns | lets must not be unwrapped
  | VBruijn IName
  | VBruijnLevel Int
  | BruijnAbs Int Term
  | BruijnAbsTyped Int Term [(Int , Type)] Type -- ints index arg metadata
- | App     Term [Term]    -- IName [Term]
+ | App     Term [Term]
 
 -- {}
- | Tuple    (V.Vector Term)      -- Cartesian product
+ | Tuple    (V.Vector Term)      -- Simplifier only: Must not contain any free variables!
  | LetBlock (V.Vector (LetMeta , Bind))
  | LetBinds (V.Vector (LetMeta , Bind)) Term
  | TTLens  Term [IField] LensOp
@@ -66,6 +64,8 @@ data Term -- β-reducable (possibly to a type)
 -- Simplifier
  | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
  | LetSpec QName [ArgShape]
+-- | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
+--              -- Note if meet this than any contained bruijns | lets must not be unwrapped
 
 -- lensover needs idx for extracting field (??)
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr
@@ -128,7 +128,7 @@ data THead ty
  | THMuBound IName  -- µ-bound tvar (must be guarded and covariant)
  deriving (Eq , Functor , Traversable , Foldable)
 
-data Expr = Core Term Type
+data Expr = Core { exprTerm :: Term , exprType :: Type }
 ty t = Core (Ty t) (TySet 0)
 poisonExpr = Core (Poison "") tyTop -- TODO top or bot? (they're defined the same atm)
 

@@ -117,8 +117,8 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THBot , _) -> pure (CastInstr MkBot)
   (THPrim p1 , THPrim p2) -> primBiSub p1 p2
   (THExt a , THExt b) | a == b -> pure BiEQ
-  (_ , THExt i) -> biSubType tyP     $ fromJust (tyExpr (readPrimExtern i))
-  (THExt i , _) -> (`biSubType` tyM) $ fromJust (tyExpr (readPrimExtern i))
+  (_ , THExt i) -> biSubType tyP     $ exprType (readPrimExtern i)
+  (THExt i , _) -> (`biSubType` tyM) $ exprType (readPrimExtern i)
 
   -- Bound vars (removed at +THBi, so should never be encountered during biunification)
   (THBound i , _) -> error $ "unexpected THBound: " <> show i

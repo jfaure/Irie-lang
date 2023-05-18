@@ -23,7 +23,7 @@
 --import Free
 --import parsec
 --import intmap
---import shellPipe -- ideas for irie as shell
+--import irieShell -- ideas for irie as shell
 
 --import stream
 --import imports/TreeStream
@@ -31,25 +31,20 @@
 -- parse pattern guards
 --f = \case { @x b | @y <- b => 1 }
 
--- Merge equations properly, this creates 2 bindings and bugs out inames
--- Also disallow extra names between the equations (scoped fields?)
+--g = \case -- should spawn arg: UnPattern: 69
+--  x => x -- Poison unknown label: Extern 1
+
+-- Wildcard (poison cannot merge cases)
+--null = \case
+--  @None => @True
+--  ? => @False
+
+-- Merge equations properly, this creates 2 bindings
+-- Also disallow extra names between the equations
 --eq1 @x b = 2
 --eq1 a b = 3
--- ? When does a introduce a new name and when must it be checked in case is a label
 
--- index out of bounds
--- g (x a) = a -- no '@', so x uses bind-name not label name
-
--- Label namespaces + label application
---f x = label x x -- check if label in scope as label ? or require @
---f (x a) = a
---g = \case
---  x => x -- Always label
-
---import prelude
---x = True -- Ambiguous binding (@True OK)
-
--- Re-generalise let-binds + Add free-variables into type to codegen let-binds
+-- Re-generalise let-binds ; generalise λs & check μ
 
 -- tvars must never refer to deeper let-nest tvars through their bounds
 -- need to save state tvars => only biunify with instantations not the escaped tvar
@@ -69,11 +64,6 @@
 
 -- multi-branch different μ merging =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
-
--- Wildcard (poison cannot merge cases)
---null = \case
---  @None => @True
---  ? => @False
 
 -- parse indented nested lets
 --f x =
@@ -101,17 +91,7 @@
 --import casecase
 --import tupleTests
 --import stream
-
--- Tee: shared pointer to cached stream: usage: tee str > \(strL , strR) => ..
--- ! Vec is a builtin that reallocs itself if push exceeds its bounds
--- Vec = { size : Int , ptr : Mem }
--- TODO multi-ref: teeN function
--- TODO ERA: how to free if stream copy is unused
---tee (@stream inNext s0) = VecNew > \ptr => let
---  next (s , n) = case n >= ptr.cached of
---    True  => Yield (VecRead ptr n) (n + 1)
---    False => inNext s > \x => VecPush ptr n x (Yield x (n + 1)) -- ! writePtr
---  in @stream next s0
+--import Tee -- duplicate streams
 
 {-
 import prelude
@@ -133,9 +113,6 @@ t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
 --import mutumorphism -- avoid let-block
 --import stream
 
-g (a , b) (c , d) = add (add (add a b) c) d
-
-{-
 import prelude
 
 Sappend (@stream nextL sl0) (@stream nextR sr0) = let
@@ -154,8 +131,8 @@ SconcatMap f (@stream nexta seed) = let
   nextC S = case S.m of
     @None => case nexta S.sa of
       @Done      => Done
-      @Skip s    => Skip { sa = s , m = @None}
-      @Yield a s => Skip { sa = s , m = @One (f a)}
+      @Skip s    => Skip {sa = s , m = @None}
+      @Yield a s => Skip {sa = s , m = @One (f a)}
     @One (@stream nextb sb) => case nextb sb of
       @Done      => Skip    {sa = S.sa , m = @None}
       @Skip s    => Skip    {sa = S.sa , m = @One (stream nextb s)}
@@ -174,7 +151,7 @@ foldr c z (@stream next seed) = let -- rhylo c a seed
     @Yield x r => c x (go r)
   in go seed
 
+-- TODO tt Loops unless specApp
 t   = foldr add 0 (enumFromTo 0 10)
 tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
-ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
--}
+--ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))

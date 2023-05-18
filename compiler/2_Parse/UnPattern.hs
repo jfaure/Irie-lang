@@ -63,9 +63,10 @@ buildCase thisMod = let
     -- argument was named => need to sub it for its bruijn name !
     LabelF q subPats  -> goLabel (mkQName thisMod q) subPats
     QLabelF q -> goLabel q []
-    AppExtF q subPats -> goLabel (QName q) subPats -- TODO ?!
+    AppExtF q subPats -> (DesugarPoison ("Unknown label app: Extern " <> show q) , [])
     VarF (VExtern i) -> case scrut of
       Var (VBruijnLevel b) -> (ok , [(i , b)])
+      -- TODO spawn arg ?
       _ -> (DesugarPoison ("Unknown label: Extern " <> show i) , [])
     VarF _              -> noSubs ok
     QuestionF           -> noSubs ok -- unconditional match

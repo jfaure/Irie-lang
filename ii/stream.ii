@@ -16,19 +16,30 @@ Sfuse next (@stream n0 s0) = @stream (next << n0) s0
 --Scata (@stream n s) = rcata n s
 
 ana next seed = @stream next seed
--- foldr/l = only way to eliminate streams
-foldr c z (@stream next seed) = let -- rhylo c a seed
+-- foldr/l/dfa = only way to eliminate streams
+foldr c z (@stream next seed) = let
   go s = case next s of
     @Done      => z
     @Skip r    => go r
     @Yield x r => c x (go r)
   in go seed
 
-foldl f z (@stream next seed) = let -- rhylo c a seed
+foldl f z (@stream next seed) = let
   go z s = case next s of
     @Done      => z
     @Skip r    => go z r
     @Yield x r => go (f z x) r
+  in go z seed
+
+-- h where h = (identity ||| h) . c
+-- a form of tail-recursion where the dfa may terminate early
+dfa f z (@stream next seed) = let
+  go z s = case next s of
+    @Done      => z
+    @Skip r    => go z r
+    @Yield x r => case f z x of
+      @Left end   => end
+      @Right cont => go cont r
   in go z seed
 
 fmap f = \case
