@@ -28,6 +28,7 @@ data Import
  | NoJudge ModIName Errors
 -- | Cached  ModIName FilePath
  | IRoot -- For compiling multiple files on cmdline without a root module
+ | ImportQueued (MVar ())
 
 data LoadedMod = LoadedMod
  { _deps :: Deps
@@ -111,6 +112,7 @@ showImportCon = \case
   JudgeOK{} -> "JudgeOK"
   NoJudge{} -> "NoJudge"
   IRoot{} -> "IRoot"
+  ImportQueued{} -> "ImportQueued"
 
 --deriving instance Generic LoadedMod
 --deriving instance Generic Registry

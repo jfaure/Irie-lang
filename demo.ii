@@ -88,10 +88,11 @@
 
 -- trans imports: list2 uses list.Nil
 
--- loops for some reason
---import prelude
---import stream
+-- error importName
+import prelude
+import stream
 
+{-
 import prelude
 Sappend (@stream nextL sl0) (@stream nextR sr0) = let
   next = \case
@@ -133,3 +134,4 @@ foldr c z (@stream next seed) = let -- rhylo c a seed
 t   = foldr add 0 (enumFromTo 0 10)
 tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
 ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
+-}

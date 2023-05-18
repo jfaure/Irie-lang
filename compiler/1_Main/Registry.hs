@@ -80,10 +80,11 @@ registerModule :: Registry -> HName -> IO (Either ModIName ModIName)
 registerModule reg' fPath = takeMVar reg' >>= \reg -> let iM = M.size reg._modNames
   in case M.insertLookupWithKey (\_k _new old -> old) fPath iM reg._modNames of
     (Just iM , _mp) -> Left iM  <$ putMVar reg' reg -- cached module IName found (it may still need to be recompiled)
-    (Nothing , mp)  -> Right iM <$ putMVar reg'
-      (reg & modNames .~ mp & loadedModules %~ (`V.snoc` (LoadedMod 0 0 (ImportName fPath))))
+    (Nothing , mp)  -> Right iM <$ do
+      queued <- newEmptyMVar
+      putMVar reg' (reg & modNames .~ mp & loadedModules %~ (`V.snoc` (LoadedMod 0 0 (ImportQueued queued))))
 
-data InCompile = InText Text | InFilePath (Either FilePath FilePath)
+data InCompile = InText Text | InFilePath (Either FilePath FilePath) deriving Show
 
 -- Compilation Hylo on Deptree:
 -- 1. anaM => check module loops, assign registry MINames , passdown dependents
@@ -139,14 +140,18 @@ registerDeps reg mI deps dents = takeMVar reg >>= \r -> let
 
 -- Add bindNames to allBinds!
 --registerJudgedMod :: Registry -> ModIName -> Either Errors (_ , _ , JudgedModule) -> IO ()
-registerJudgedMod reg mI = let
+registerJudgedMod reg mI modOrErrors = let
   addMod jm (LoadedMod deps dents _m) = LoadedMod deps dents (JudgeOK mI jm)
   addJM (resolver , mfResolver , jm) = takeMVar reg >>= \r -> putMVar reg (
     r & loadedModules %~ V.modify (\v -> MV.modify v (addMod jm) mI)
       & Externs.allNames .~ resolver
       & Externs.globalMixfixWords .~ mfResolver
     )
-  in const (pure ()) ||| addJM
+  in do
+    getLoadedModule reg mI <&> _loadedImport >>= \case
+      ImportQueued mvar -> putMVar mvar ()
+      x -> pure ()
+    (const (pure ()) ||| addJM) modOrErrors
 
 simplify :: CmdLine -> JudgedModule -> JudgedModule
 simplify cmdLine jm = if noFuse cmdLine then jm else let
@@ -181,7 +186,8 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
   ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
   NoJudge _mI _jm -> pure deps
   IRoot -> error "root"
-  ImportName _ -> error "importName"
+  ImportQueued m -> readMVar m $> deps
+  -- Wait. IMPORTANT! This will hang if ImportQueued thread fails to putMVar (call registerJudgedMod)
 
 putJudgedModule :: CmdLine -> Maybe BindSource -> JudgedModule -> IO ()
 putJudgedModule cmdLine bindSrc jm = let
