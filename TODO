@@ -1,28 +1,21 @@
+# Effects
 # judge bind append
-# opened modules ; let-bound escape ; profunctors
-# β Tuple bug
+# edit-distance
+# Type aliases
 #SML: fn , appendable , searchable , modular , (sealable?) , module-mutuality , writeable , dep-graph
-  * sealing (effect): module becomes only accessible through its signature
   * mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
     Also ensure β-reduction doesn't rm the let-bind wrapper prematurely
-  ? mutual functions within separate records =eg. let a = { f = b.g } ; b = { g = a.f }
-  * Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
-  * applications of insane functions must be fully applied
-  * record-field patterns
-  * type/term scope; Idris: (names bound in types are also bound as @-patterns)
-    vlength : {n : Nat} -> Vect n a -> Nat
-    vlength _ = n
+  ? opened modules
+  ? Nest QNames (also local modules/namespaces) vs module QNames in types
+  ? Opened name vs projection name
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * Conv non-mut non-rec let-binds straight to fn args
   * leaf bicasts ; subtype tycon trees
   * Case call stream.next to recover nice syntax (? subtype @stream to open top layer)
   * WrappedSimpleMutual.g1 should not have polymorphic type (mutual generalistation)
-  * type aliases + term/type name scope (global?)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * generalise all lambda types (unless inlineable?) + check not-recursive (avoid inf β-reduction eg. Y-comb)
-  * label-scope bug: file-local labels in module2 are considered not-in-scope if cached (new '@' labels vs imported)
   * cross-module mixfixes broken
-  * rewrite μ-roll; esp. for multi-branch μs merge
   * trim bisubs at some point
   * check if capture free-vars correctly on mutual bindings
   * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
@@ -40,7 +33,7 @@
       f x = x x => f x = let a b = DUP x in a b
       ! see when lambdas are duplicated (also reduce computations on free-vars when papped)
   ? should we compute containement
-## Notes. Let (record) as Bruijn (generalise duplicated arguments & mutual fn args)
+## Notes. Modules / records
   ? export list & bind Import list
   Cap field number to 64 (use pdep to mark subtyping frets), large records mk list
   Eraser argument is a form of function subtyping
@@ -53,6 +46,14 @@
     ? need to case over whole record since lhs is in scope mutually
   ? mutual functions within separate records =eg. let a = { f = b.g } ; b = { g = a.f }
   Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
+  * sealing (effect): module becomes only accessible through its signature
+  ? mutual functions within separate records = eg. let a = { f = b.g } ; b = { g = a.f }
+  * Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
+  * applications of insane functions must be fully applied
+  * record-field patterns: ? make mutual λ over whole record -- (f , g) = (2 , 3)
+  * type/term scope; Idris: (names bound in types are also bound as @-patterns)
+    vlength : {n : Nat} -> Vect n a -> Nat
+    vlength _ = n
 ## !?
   * named arguments (perhaps by subtype from a record arg)
   * shared streams (eg. MUL)

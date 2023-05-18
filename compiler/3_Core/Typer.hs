@@ -10,15 +10,6 @@ import qualified Data.Vector as V
 import Data.List (intersect)
 debug_gen = False || global_debug
 
--- generalise: standard rule for polymorphism=
--- good :: forall a . IO (IORef (Maybe a))
--- bad  :: IO (forall a . IORef (Maybe a))
--- ⊥ = ∀α.
--- ⊤ = ∃α. But conversions depend on variance
--- ∃α.(List[α] -> Int)a => List[⊥]->Int (since all uses of α are contravariant) , but not List[⊤]->Int
--- iff expr has a type A mentioning tvar a, and a is only used in A, then it can be reused with different types substituted for a
--- if polymorphic type inferred inside a variable f, f must not mention the polymorphic variable else it escapes its scope
-
 tyVars vs g = if vs == 0 then TyGround g else TyVars vs g
 
 intersectTypes :: Type -> Type -> Type
@@ -29,8 +20,8 @@ type Cooc = (Maybe Type , Maybe Type) -- recursive
 data VarSub = Recursive Type | SubVar Int | SubTy Type | DeleteVar | GeneraliseVar | EscapedVar deriving Show
 
 generalise :: forall s. BitSet -> Either IName Type -> TCEnv s Type
-generalise lvl0 rawType = let startType = ((\x -> TyVars (setBit 0 x) []) ||| identity) rawType
-  in do
+generalise lvl0 rawType = do
+  let startType = (tyVar ||| identity) rawType
   recursives .= 0
   bl    <- use blen
   bis'  <- use bis
@@ -42,23 +33,23 @@ generalise lvl0 rawType = let startType = ((\x -> TyVars (setBit 0 x) []) ||| id
   traceM (prettyTyRaw rawT)
   traceM $ "lvl0: " <> show (bitSet2IntList lvl0)
   traceM $ "recs: " <> show (bitSet2IntList recs)
-  traceShowM (V.indexed varSubs)
+--traceShowM (V.indexed varSubs)
 
-  MV.replicate 100 (complement 0) >>= (genVec .=) -- TODO
+  MV.replicate 500 (complement 0) >>= (genVec .=) -- TODO
   nquants .= 0
   done <- buildType lvl0 bis' varSubs 0 True startType
   use nquants <&> \case { 0 -> done ; n -> TyGround [THBi n done] }
 
 buildVarSubs _bis' coocV recs lvl0 = let
   len = V.length coocV
-  recursiveVar = pure GeneraliseVar
+  recursiveVar = GeneraliseVar
   in do
   varSubs <- MV.new len
-  [0.. len - 1] `forM_` \v -> let cooc = coocV V.! v in traceM (show v <> " => " <> show cooc) *>
-    MV.write varSubs v =<< case cooc of
-      _ | testBit lvl0 v -> pure EscapedVar
-      (Nothing , t) -> if testBit recs v then d_ t $ recursiveVar else pure DeleteVar -- polar variables
-      (t , Nothing) -> if testBit recs v then d_ t $ recursiveVar else pure DeleteVar
+  [0 .. len - 1] `forM_` \v -> let cooc = coocV V.! v in traceM (show v <> " => " <> show cooc) *>
+    MV.write varSubs v $ case cooc of
+      _ | testBit lvl0 v -> EscapedVar
+      (Nothing , t) -> if testBit recs v then recursiveVar else DeleteVar -- polar variables
+      (t , Nothing) -> if testBit recs v then recursiveVar else DeleteVar
 
       -- in v+v- if non-recursive v coocs with w then it always does, so "unify v with w" means "remove v"
       -- but in v+w+ or v-w- no shortcuts: "unify v with w" means "replace occurs of v with w"
@@ -71,7 +62,7 @@ buildVarSubs _bis' coocV recs lvl0 = let
         oppCooc t pol = partitionType t & \(ws , _) ->
           maybe GeneraliseVar (cooc t) . (if pol then fst else snd) . (coocV V.!) <$> bitSet2IntList (complement prevTVs .&. ws)
         bestSub ok next = case ok of { DeleteVar -> ok ; SubTy _ -> ok ; SubVar _ -> ok ; _ko -> next }
-        in pure $ foldl' bestSub (cooc x y) (oppCooc y True ++ oppCooc x False)
+        in foldl' bestSub (cooc x y) (oppCooc y True ++ oppCooc x False)
   V.freeze varSubs
 
 -- build cooc-vector and mark recursive type variables

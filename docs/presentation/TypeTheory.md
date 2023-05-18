@@ -18,6 +18,14 @@ Simplification is incidentally conveniently handled now:
   * unify variables that contain the same upper and lower bound (a<:t and t<:a)`a&int->a|int
   * minimize recursive types that may have been unrolled during biunification
 
+# Notes
+  * good :: forall a . IO (IORef (Maybe a))
+  * bad  :: IO (forall a . IORef (Maybe a))
+  * ⊥ = ∀α. , ⊤ = ∃α. But conversions depend on variance
+  * ∃α.(List[α] -> Int)a => List[⊥]->Int (since all uses of α are contravariant) , but not List[⊤]->Int
+  * iff expr has a type A mentioning tvar a, and a is only used in A, then it can be reused with different types substituted for a
+  * if polymorphic type inferred inside a variable f, f must not mention it else it escapes its scope
+
 # Note. Rank-n polymorphism
 A constraint a <= t- gives a an upper bound ;
 which only affects a when used as an upper bound (negative position)

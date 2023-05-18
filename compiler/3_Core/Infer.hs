@@ -276,8 +276,7 @@ inferF = let
   P.AppF fTT argsTT  -> fTT  >>= \f -> sequence argsTT >>= inferApp (-1) f
   P.PExprAppF _prec q argsTT -> getQBind q >>= \f -> sequence argsTT >>= inferApp (-1) f
   P.RawExprF t -> t
-  P.MixfixPoisonF t -> poisonExpr <$ (tmpFails .= [])
-    <* (errors . mixfixFails %= (t:))
+  P.MixfixPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . mixfixFails %= (t:))
   P.QVarF q -> getQBind q
 --VoidExpr (QVar QName) (PExprApp p q tts) (MFExpr Mixfixy)
 
@@ -361,6 +360,6 @@ inferF = let
   P.InlineExprF e -> pure e
   P.LitF l           -> pure $ Core (Lit l) (TyGround [typeOfLit l])
   P.ScopePoisonF e   -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))
-  P.DesugarPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (ScopeError t:))
+  P.DesugarPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . unpatternFails %= (t:))
   P.ScopeWarnF w t   -> trace w t
   x -> error $ "not implemented: inference of: " <> show (embed $ P.Question <$ x)

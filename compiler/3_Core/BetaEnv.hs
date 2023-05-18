@@ -93,7 +93,7 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
       fuse (lvl , (prevEnv , trailingArgs) , argTerm)
 
   -- inlineLetBind: lvl == 0 means this fully reduces (won't produce a function)
-  Var (VLetBind q) | lvl == 0 && q /= (QName 1) {- HACK -} -> use letBinds >>= \lb -> (lb `MV.read` modName q)
+  Var (VLetBind q) | lvl == 0 {-&& q /= (QName 1)  HACK -} -> use letBinds >>= \lb -> (lb `MV.read` modName q)
     >>= \bindVec -> MV.read bindVec (unQName q) >>= simpleBind lvl (argEnv , []) >>= \b -> case b of
       BindOK _ (nL , letCapture) (Core inlineF _ty) -> let
         env' = (V.drop (V.length argEnv - nL) argEnv , trailingArgs)
@@ -135,8 +135,9 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
     Tuple l -> pure $ Right . (lvl,env,) <$> project (l V.! unQName (QName f))
     scrut | null trailingArgs -> simpleTerm' lvl env scrut >>= \case
       Tuple l -> pure $ Left <$> project (l V.! unQName (QName f))
-      LetBlock l -> case V.find ((==f) . qName2Key . letName . fst) l of
+      LetBlock l -> case V.find ((==f) . {-qName2Key-} unQName . letName . fst) l of-- TODO HACK
         Just x -> pure $ Left <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
+        Nothing -> error $ "No proj: " <> show f <> " in " <> show l
       opaque -> pure $ TTLensF (Left opaque) [f] LensGet
 
   LetBlock lets | not (null trailingArgs) -> error $ show trailingArgs -- TODO Why

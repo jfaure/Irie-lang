@@ -5,6 +5,7 @@ import ParseSyntax
 import QName
 import Builtins (builtinTrueQ , builtinFalseQ)
 import qualified BitSetMap as BSM
+import Errors
 
 -- Invert a TT into a case-tree, so mixfixes and labels are handled uniformly
 -- This assigns deBruijn levels to bound variables, which are converted (reversed) to deBruijn indices by solveScopes
@@ -63,11 +64,11 @@ buildCase thisMod = let
     -- argument was named => need to sub it for its bruijn name !
     LabelF q subPats  -> goLabel (mkQName thisMod q) subPats
     QLabelF q -> goLabel q []
-    AppExtF q subPats -> (DesugarPoison ("Unknown label app: Extern " <> show q) , [])
+    AppExtF q subPats -> (DesugarPoison (UnknownLabelApp q) , [])
     VarF (VExtern i) -> case scrut of
       Var (VBruijnLevel b) -> (ok , [(i , b)])
       -- TODO spawn arg ?
-      _ -> (DesugarPoison ("Unknown label: Extern " <> show i) , [])
+      _ -> (DesugarPoison (UnknownLabelExtern i) , [])
     VarF _              -> noSubs ok
     QuestionF           -> noSubs ok -- unconditional match
     PatternGuardsF pats -> mkSubCases pats bN 0 ok ko
@@ -85,7 +86,7 @@ buildCase thisMod = let
       alts = (qName2Key builtinTrueQ , BruijnLam $ BruijnAbsF 1 [] 0 ok)
         : maybe [] (\falseBranch -> [(qName2Key builtinFalseQ , falseBranch)]) ko
       in MatchB (LitEq l scrut) (BSM.fromList alts) Nothing
-    x -> noSubs $ DesugarPoison ("Illegal pattern: " <> show (embed $ x <&> (\x -> fst $ x scrut bN ok ko)))
+    x -> noSubs $ DesugarPoison (IllegalPattern (show (embed $ x <&> (\x -> fst $ x scrut bN ok ko))))
   in cata go -- scrut matchOK matchKO -> Term
 
 patternsToCase :: {-Mod-}IName -> Scrut -> Int -> [(CasePattern , Rhs)] -> (Rhs , BruijnSubs)
@@ -97,9 +98,9 @@ patternsToCase modIName scrut bruijnAcc patBranchPairs = let
   mergeCasesF (NonEmptyF r Nothing) = r
   mergeCasesF (NonEmptyF case1 (Just case2)) = case (case1 , case2) of
     (MatchB s1 b1 _ko1 , MatchB _s2 b2 ko2) {- | s1 == s2-}
-      -> let mergeBranches a b = DesugarPoison $ "redundant pattern match: " <> show a <> show b
+      -> let mergeBranches a b = DesugarPoison $ RedundantPatternMatch (show a <> show b)
          in MatchB s1 (BSM.unionWith mergeBranches b1 b2) ko2 -- second one wins
-    _ -> DesugarPoison $ "cannot merge cases " <> show scrut <> " of "<> show case1 <> " <=> " <> show case2
+    _ -> DesugarPoison $ NoCaseMerge (show scrut <> " of "<> show case1 <> " <=> " <> show case2)
   in (, concat bruijnSubs) $ case matches of
-    []     -> DesugarPoison "EmptyCase"
+    []     -> DesugarPoison EmptyCase
     x : xs -> cata mergeCasesF (x :| xs)

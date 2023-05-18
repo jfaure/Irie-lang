@@ -1,8 +1,7 @@
+-- use Typer instead of Generalise: printList
+
 -- let-scope depends on parse
 -- letscopeAfterMixfix y = if y then let x = 3 in x else y
-
--- pattern assignments; ? make mutual λ over whole record
--- (f , g) = (2 , 3)
 
 -- let-bound mixfix => make VLetBind instead of QName
 -- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
@@ -12,7 +11,6 @@
 --  f : Int
 --  g : Int
 
---import prelude
 --import list
 --import list2
 --import tree
@@ -78,43 +76,23 @@
 --import SpecialisationTests/SimpleMutual
 --import SpecialisationTests/SumOfSquares
 --import SpecialisationTests/fib
---import list
 --import testBruijns -- β-reduction
 --import testFuse
 --import sumMul
---import stream
---import prelude
-
 --import letCaptureTests
---import list
-
 --import casecase
 --import tupleTests
---import stream
+
+--import mutumorphism -- avoid let-block
 --import Tee -- duplicate streams
 
-{-
-import prelude
---scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
-splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
--- KO , inlining '>' messes up free-Vars for the ( , ) LetBlock
-  @Cons x xs => splitAt (n - 1) xs > \R => ( { l = @Cons x R.l , r = R.r } )
--- OK
---  @Cons x xs => (\(l , r) => ( @Cons x l , r )) (splitAt (n - 1) xs)
-  @Nil =>  { l = @Nil , r = @Nil }
+-- trans imports: list2 uses list.Nil
 
---t0 = (scanSum 1 Nil)
-t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
---t2 = splitAt 1 (scanSum 2 Nil)
--}
-
---import stream
---import SpecialisationTests/SimpleMutual -- type is wrong
---import mutumorphism -- avoid let-block
+-- loops for some reason
+--import prelude
 --import stream
 
 import prelude
-
 Sappend (@stream nextL sl0) (@stream nextR sr0) = let
   next = \case
     @Left  sa => case nextL sa of
@@ -145,13 +123,13 @@ enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
 empty = @stream (\x => x) @Done
 
 foldr c z (@stream next seed) = let -- rhylo c a seed
-  go s = case next s of
+  go next c z s = case next s of
     @Done      => z
-    @Skip r    => go r
-    @Yield x r => c x (go r)
-  in go seed
+    @Skip r    => go next c z r
+    @Yield x r => c x (go next c z r)
+  in go next c z seed
 
--- TODO tt Loops unless specApp
+-- Issue with let-nest QName
 t   = foldr add 0 (enumFromTo 0 10)
 tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
---ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
+ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))

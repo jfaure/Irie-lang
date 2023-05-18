@@ -14,10 +14,11 @@ data Errors = Errors
   , _scopeFails   :: [ScopeError]
   , _typeAppFails :: [TypeAppError]
   , _mixfixFails  :: [MixfixError]
+  , _unpatternFails::[UnPatError] 
 --, _parseFails   :: [Text]
 --  , _tmpFails     :: [TmpBiSubError]
   }
-emptyErrors = Errors [] [] [] [] []
+emptyErrors = Errors [] [] [] [] [] []
 data BiSubError = BiSubError SrcOff TmpBiSubError
 data CheckError = CheckError { inferredType :: Type , annotationType :: Type }
 data ScopeError
@@ -28,6 +29,8 @@ data ScopeError
   deriving Show
 data TypeAppError = BadTypeApp { typeOperator :: Type , typeArgs :: [Expr] }
 data MixfixError  = MixfixError SrcOff Text deriving Show
+data UnPatError   = RedundantPatternMatch Text | NoCaseMerge Text | EmptyCase | IllegalPattern Text
+  | UnknownLabelExtern Int | UnknownLabelApp Int deriving Show
 
 data BiFail
   = TextMsg     Text
@@ -94,3 +97,11 @@ formatMixfixError srcInfo = \case
   MixfixError o msg ->
      "\n" <> clRed ("Mixfix parse failure: " <> msg <> ":")
     <> formatSrcLoc srcInfo o
+
+formatUnPatError = \case
+  RedundantPatternMatch txt -> "RedundantPatternMatch: " <> show txt
+  NoCaseMerge txt -> "No case merge: " <> txt
+  EmptyCase -> "Empty Case"
+  IllegalPattern txt -> "Illegal pattern: " <> txt
+  UnknownLabelExtern i -> "Unknown label extern: " <> show i
+  UnknownLabelApp    q -> "Unknown label app: " <> show q

@@ -62,3 +62,18 @@ ff n xs = if n <=? 0 then 5 else case xs of
   @Nil => 0
 t1 = ff 1 (Cons 0 Nil)
 -}
+
+{-
+import prelude
+--scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
+splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
+-- KO , inlining '>' messes up free-Vars for the ( , ) LetBlock
+  @Cons x xs => splitAt (n - 1) xs > \R => ( { l = @Cons x R.l , r = R.r } )
+-- OK
+--  @Cons x xs => (\(l , r) => ( @Cons x l , r )) (splitAt (n - 1) xs)
+  @Nil =>  { l = @Nil , r = @Nil }
+
+--t0 = (scanSum 1 Nil)
+t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
+--t2 = splitAt 1 (scanSum 2 Nil)
+-}

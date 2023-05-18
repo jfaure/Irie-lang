@@ -10,8 +10,8 @@ import list
 -- prependToAll is more flexible than a -> [a] -> [a]
 -- : ∏ A B C D → A → µc.[Nil | Cons {B , c}] -- → µd.[Nil | Cons {A , [Cons {B , d}]}]
 prependToAll sep = \case
-  @Nil => Nil
-  @Cons x xs => Cons sep (Cons x (prependToAll sep xs))
+  Nil => Nil
+  Cons x xs => Cons sep (Cons x (prependToAll sep xs))
 
 -- [Nil | Cons {B , µe.[Nil | Cons {A , [Cons {C , e}]}]}]
 -- a -> [a] -> [a]

@@ -4,7 +4,7 @@ module ParseSyntax where
 import Prim ( Literal )
 import QName ( QName )
 import MixfixSyn ( MFWord, MixfixDef, Prec )
-import Errors (ScopeError , MixfixError)
+import Errors (ScopeError , MixfixError , UnPatError)
 import Text.Megaparsec.Pos ( Pos , mkPos )
 import Control.Lens ( (^.), makeLenses )
 import Data.Functor.Foldable.TH (makeBaseFunctor)
@@ -118,7 +118,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat =>'
 
  -- desugaring
- | DesugarPoison Text  -- UnPattern errors
+ | DesugarPoison UnPatError
  | ScopeWarn  Text TT -- Scope
  | ScopePoison ScopeError
  | InlineExpr CoreSyn.Expr
