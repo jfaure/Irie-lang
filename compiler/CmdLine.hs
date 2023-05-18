@@ -14,6 +14,7 @@ data CmdLine = CmdLine
   , noPrelude      :: Bool
   , noFuse         :: Bool
   , noCache        :: Bool
+  , putDependents  :: Bool
 --  , reportErrors   :: Bool -- print an error summary (not doing so is probably only useful for the test suite)
   , recompile      :: Bool   -- recompile even if cached
   , quiet          :: Bool
@@ -37,6 +38,7 @@ defaultCmdLine = CmdLine -- Intended for use from ghci
   , noPrelude      = False
   , noFuse         = False
   , noCache        = False
+  , putDependents  = False
   , recompile      = False
   , quiet          = False
   , outFile        = Nothing
@@ -93,6 +95,9 @@ cmdLineDecls = CmdLine
   <*> switch
       (             long "no-cache"
       <> help "Don't save or re-use compiled files")
+  <*> switch
+      (             long "put-dependents"
+      <> help "Should print-pass apply to imported modules")
   <*> switch
       (             long "recompile"
       <> help "recompile even if cached file looks good")

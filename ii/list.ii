@@ -111,7 +111,7 @@ enumFromTo a b = if a >? b then @Nil else @Cons a (enumFromTo (1 + a) b)
 --  in nub l Nil
 
 elemBy eq y = \case
-  Nil => @True
+  Nil => True
   Cons x xs => boolOR (eq x y) (elemBy eq y xs)
 
 {-

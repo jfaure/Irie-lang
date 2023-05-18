@@ -130,12 +130,12 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
   -- TODO other lenses ; trailingArgs
   TTLens obj [f] LensGet -> case obj of
     l@Label{} -> error $ "Lensing on a label: " <> show (l , f)
-    LetBlock l -> case V.find ((==f) . iName . fst) l of
+    LetBlock l -> case V.find ((==f) . qName2Key . letName . fst) l of
       Just x -> pure $ Right . (lvl,env,) <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
     Tuple l -> pure $ Right . (lvl,env,) <$> project (l V.! unQName (QName f))
     scrut | null trailingArgs -> simpleTerm' lvl env scrut >>= \case
       Tuple l -> pure $ Left <$> project (l V.! unQName (QName f))
-      LetBlock l -> case V.find ((==f) . iName . fst) l of
+      LetBlock l -> case V.find ((==f) . qName2Key . letName . fst) l of
         Just x -> pure $ Left <$> (\(Core t _ty) -> project t) (naiveExpr (snd x))
       opaque -> pure $ TTLensF (Left opaque) [f] LensGet
 

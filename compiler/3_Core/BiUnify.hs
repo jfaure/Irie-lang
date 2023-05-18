@@ -167,7 +167,7 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
 --  normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
     normalized = BSM.elems merged -- $ IM.mapKeys (nf VU.!) merged
     go leafCasts normIdx ty = case ty of
-      LOnly _a   {- drop     -} -> pure $ leafCasts --(field : drops , leafCasts)
+      LOnly _a   {- drop     -} -> pure leafCasts --(field : drops , leafCasts)
       ROnly f _a {- no subty -} -> leafCasts <$ failBiSub (AbsentField (QName f)) tyP tyM
       Both  a b  {- leafcast -} -> biSubType a b <&> (\x -> (normIdx , x) : leafCasts) -- leaf bicast
     in V.ifoldM go [] normalized <&> \leafCasts ->

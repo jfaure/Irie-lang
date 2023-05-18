@@ -133,8 +133,9 @@ scopeApoF exts thisMod (this , params) = let
     bindsDone :: V.Vector FnDef
     bindsDone = binds <&> (& fnRhs %~ scopeTT exts thisMod letParams)
     in LetInF (Block open letType bindsDone) (mtt <&> \tt -> Right (tt , letParams))
-
---Tuple xs -> LetInF (Block True Let (V.fromList xs <&> (scopeTT exts thisMod params))) Nothing
+  -- Tuple iNames are thus negative (?)
+  Tuple xs -> let ttToFnDef i e = let j = i {- -1 - i-} in FnDef (show j) j LetTuple Nothing e Nothing
+    in LetInF (Block True Let (V.imap (\i e -> ttToFnDef i $ scopeTT exts thisMod params e) (V.fromList xs))) Nothing
 
   tt -> Right . (, params) <$> project tt
 

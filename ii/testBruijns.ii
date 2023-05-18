@@ -1,5 +1,5 @@
 -- (λB(2) (_+_ (_+_ (_+_ (Int 3) (Int 2)) B1) B0))
-f = (\a b c d => add (add (add a b) c) d) 3 2 1 0
+f1 = (\a b c d => add (add (add a b) c) d) 3 2 1 0
 
 --ycomb f = (\x => f (x x)) (\x => f (x x))
 --ycomb2 f = (\g => g g) (\x => f (x x))

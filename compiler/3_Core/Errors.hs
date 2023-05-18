@@ -65,7 +65,7 @@ formatBisubError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)
     TyConMismatch -> "Type constructor mismatch" <> case (got , exp) of
       (_ , TyGround [THTyCon THArrow{}]) -> " (excess arguments)"
       _ -> ""
-    AbsentField q -> "Absent field '" <> show q <> "'"
+    AbsentField q -> "Absent field '" <> showRawQName q <> "'"
     AbsentLabel q -> "Absent label '" <> getName (srcLabelNames srcNames) q <> "'"
   in
      "\n" <> clRed ("No subtype: " <> msg <> ":")

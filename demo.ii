@@ -132,7 +132,8 @@ t1 = splitAt 1 (Cons 0 Nil) -- ([0] , [1])
 --import SpecialisationTests/SimpleMutual -- type is wrong
 --import mutumorphism -- avoid let-block
 --import stream
-import mixfixTests
+
+g (a , b) (c , d) = add (add (add a b) c) d
 
 {-
 import prelude

@@ -1,8 +1,8 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
 module Infer (judgeModule) where
 import Prim ( PrimInstr(MkPAp) )
-import Builtins (typeOfLit) -- ? move to Externs
-import BiUnify ( bisub )-- , biSubTVarTVar)
+import Builtins (typeOfLit)
+import BiUnify ( bisub )
 import qualified ParseSyntax as P
 import CoreSyn as C
 import CoreUtils
@@ -184,73 +184,68 @@ inferF = let
          ((tmpFails .= []) *> (errors . biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
 
  judgeLabel qNameL exprs = let
-   labTy = TyGround [THTyCon $ THTuple $ V.fromList $ tyOfExpr <$> exprs]
-   es = exprs <&> \case
-     Core (Poison _) _ -> Question -- TODO why question
-     Core t _ty -> t
+   labTy = TyGround [THTyCon $ THTuple $ V.fromList (tyOfExpr <$> exprs)]
+   es = exprs <&> \(Core t _ty) -> t
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
- -- Note. this is only called on mixfix QNames
  getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
    then judgeBind 0 (unQName q) <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty -- don't inline at this stage
    else use openModules >>= \openMods -> use loadedMs >>= \ls ->
---   case readQParseExtern openMods m exts (modName q) (unQName q) of
      case readQName ls (modName q) (unQName q) of
        Imported e -> pure e
-       x -> error $ show x
+       x -> error (show x)
 
- inferBlock :: P.Block -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
- inferBlock (P.Block _open _letType letBindings) go = do
-   nest <- letNest <<%= (1+)
+ -- Setup new freeVars env within a letNest ; should surround this with an inc of letNest, but not the inExpr
+ newFreeVarEnv :: forall s a. TCEnv s a -> TCEnv s a
+ newFreeVarEnv go = do
    fl   <- use bruijnArgVars <&> V.length
    svFL <- freeLimit <<.= fl
-
    bl <- use blen
--- enter lvl: all prev vars are escaped => if biunified with new vars must export new vars
-   lvls %= \case
+   lvls %= \case -- enter lvl: all prev vars are escaped => if biunified with new vars must export new vars
      []      -> [setNBits bl]
      l0 : ls -> (setNBits bl .|. l0) : l0 : ls
 
-   use letBinds >>= \lvl -> V.thaw (Left <$> letBindings) >>= MV.write lvl nest
-   judgeBind nest `mapM_` [0 .. V.length letBindings - 1]
+   r <- go
 
    lvls %= drop 1 -- leave Lvl (? .|. head into next lvl?)
-
    freeLimit .= svFL
    letCaptures %= (`shiftR` (fl - svFL)) -- diff all let-captures
+   pure r
+
+ withLetNest go = letNest <<%= (1+) >>= \nest -> go nest <* (letNest %= \x -> x - 1)
+
+ inferBlock :: V.Vector P.FnDef -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
+ inferBlock letBindings go = withLetNest $ \nest -> do
+   newFreeVarEnv $ do
+     use letBinds >>= \lvl -> V.thaw (Left <$> letBindings) >>= MV.write lvl nest
+     judgeBind nest `mapM_` [0 .. V.length letBindings - 1]
 
    -- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
-   -- Why does this need to be above the let assignment here?!
    r <- fromMaybe (pure poisonExpr) go -- in expr
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
      <&> map (BindUnused . show @P.FnDef ||| identity)
+   mI <- use thisMod
+   pure (r , V.zipWith (\fn e -> (LetMeta (fnINameToQName mI fn) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
 
-   letNest %= \x -> x - 1
+ fnINameToQName mI fnDef = case P._fnRecType fnDef of
+   P.LetTuple -> mkQName 0 (P._fnIName fnDef)
+   _ -> mkQName mI (P._fnIName fnDef)
 
-   pure (r , V.zipWith (\fn e -> (LetMeta (fn ^. P.fnIName) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
  mkFieldCol a b = TyGround [THFieldCollision a b]
 
  in \case
   P.QuestionF -> pure $ Core Question tyBot
   P.WildCardF -> pure $ Core Question tyBot
   -- letin Nothing = module / record, need to type it
-  P.LetInF b Nothing -> use thisMod >>= \mI -> inferBlock b Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
-    nms = lets <&> qName2Key . mkQName mI . iName . fst -- [qName2Key (mkQName (ln + 1) i) | i <- [0..]]
+  P.LetInF (P.Block _ _ lets) Nothing ->
+    use thisMod >>= \mI -> inferBlock lets Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
+    nms = lets <&> qName2Key . letName . fst
+--  nms = lets <&> qName2Key . mkQName mI . iName . fst -- [qName2Key (mkQName (ln + 1) i) | i <- [0..]]
     tys = lets <&> tyOfExpr . bind2Expr . snd
     -- letnames = qualified on let-nests + 
     blockTy = THProduct (BSM.fromListWith mkFieldCol $ V.toList $ V.zip nms tys) -- TODO get the correct INames
     in Core (LetBlock lets) (TyGround [THTyCon blockTy])
-  P.LetInF b pInTT -> inferBlock b pInTT <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
-
--- TODO Tuples must also handle captures (inferBlock)
-  P.TupleF _ -> error $ "Tuples disabled: TODO handle captures in tuples else weird bugs likely"
---P.TupleF ts -> sequence ts <&> \exprs -> let
---  ty  = THProduct (BSM.fromListWith mkFieldCol
---    $ Prelude.imap (\nm t -> (qName2Key (mkQName 0 nm) , t)) (tyOfExpr <$> exprs))
---  lets = Prelude.imap (\i c -> let lc = (0,0) in -- TODO find the right letCaptures
---    (LetMeta (qName2Key (mkQName 0 i)) ("!" <> show i) (-1) , BindOK optInferred lc c))
---    exprs
---  in Core (LetBlock (V.fromList lets)) (TyGround [THTyCon ty])
+  P.LetInF (P.Block _ _ lets) pInTT -> inferBlock lets pInTT <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
     P.VBruijn b -> do
@@ -283,11 +278,11 @@ inferF = let
   P.QVarF q -> getQBind q
 --VoidExpr (QVar QName) (PExprApp p q tts) (MFExpr Mixfixy)
 
-  -- ! Fields are let-bound on VLetNames for inference tables , but typed (and codegenned) on INames
   P.TupleIdxF f tt -> tt >>= \(Core tuple tupleTy) -> freshBiSubs 1 >>= \[i] -> let
-    expectedTy = TyGround [THTyCon $ THProduct (BSM.singleton f (tyVar i))]
+    qN = f -- qName2Key (mkQName 0 f) -- (-1 - f))
+    expectedTy = TyGround [THTyCon $ THProduct (BSM.singleton qN (tyVar i))]
     in bisub tupleTy expectedTy <&> \cast ->
-      let obj = TTLens tuple [f] LensGet in Core (case cast of { BiEQ -> obj ; cast -> Cast cast obj }) (tyVar i)
+      let obj = TTLens tuple [qN] LensGet in Core (case cast of { BiEQ -> obj ; cast -> Cast cast obj }) (tyVar i)
   P.TTLensF o tt fieldsLocal maybeSet -> tt >>= \record -> use thisMod >>= \iM -> let
     fields = fieldsLocal -- readField ext <$> fieldsLocal
     recordTy = tyOfExpr record

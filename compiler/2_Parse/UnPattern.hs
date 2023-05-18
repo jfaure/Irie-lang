@@ -77,6 +77,7 @@ buildCase thisMod = let
     TupleF subPats -> let -- (DesugarPoison "Unprepared for tuple" , [])
       n = length subPats 
       unConsArgs = [qName2Key (mkQName 0 i) | i <- [0 .. n-1]] <&> \k -> TupleIdx k scrut -- TTLens (-1) scrut [k] LensGet
+--    unConsArgs = [qName2Key (mkQName 0 i) | i <- [-1,-2 .. -n]] <&> \k -> TupleIdx k scrut -- TTLens (-1) scrut [k] LensGet
       (body , argSubs) = mkSubCases subPats bN n ok ko
       in (App (mkBruijnLam (BruijnAbsF n argSubs 0 body)) unConsArgs , argSubs)
     LitF l          -> noSubs $ let

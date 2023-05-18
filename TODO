@@ -1,9 +1,9 @@
-#!! label-import ; tuple as letblock ; opened modules ; let-bound escape ; profunctors
+# judge bind append
+# opened modules ; let-bound escape ; profunctors
 #SML: fn , appendable , searchable , modular , (sealable?) , module-mutuality , writeable , dep-graph
   * sealing (effect): module becomes only accessible through its signature
   * mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
     Also ensure β-reduction doesn't rm the let-bind wrapper prematurely
-  * scope of dup-node (global/device/thread ?)
   ? mutual functions within separate records =eg. let a = { f = b.g } ; b = { g = a.f }
   * Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
   * applications of insane functions must be fully applied
@@ -13,8 +13,7 @@
     vlength _ = n
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * Conv non-mut non-rec let-binds straight to fn args
-  * Tuples must handle let-captures
-  * leaf bicasts
+  * leaf bicasts ; subtype tycon trees
   * Case call stream.next to recover nice syntax (? subtype @stream to open top layer)
   * WrappedSimpleMutual.g1 should not have polymorphic type (mutual generalistation)
   * type aliases + term/type name scope (global?)
@@ -25,58 +24,37 @@
   * rewrite μ-roll; esp. for multi-branch μs merge
   * trim bisubs at some point
   * check if capture free-vars correctly on mutual bindings
-## Errors
-  * Ambiguous binding: False[(0,17),(3,8589934593)]
 ## Syntax
-  * Array type ? "## Int" Array = "# a b"
+  * Array type: "# 1 3 2 : Array Int"
   * import lists: imports / opens keywords
   * `$ ls -l --reverse`: $ run opt-parse on a string
-  ? shorthand for { map : _ , filter : _ } =? {{ map , filter }}
+  * record type syntax: { x : Int , y } -- indicates y : _
   ? implicit args: {} used already
   ? Sum-of-Record
 ### Linearity ; free variables (type must be known) ; β vs always-inline
-  ! β-opt: Specialise on paps iff dupd (or all paps) (transitive dups?) => extract any functions on the papped arguments
-  ? assume linear
-  * explicit freeVars within lets + dup nodes + type application; also half-generalised (escaped vars) types
-  * dup node: (hangs on global (device / thread ?) scope)
+  ! β-opt: Specialise on paps iff dupd (or all paps?) (polymorphic functions may miss pap-specs)
+  * dup node scope: global / device / thread ?
       f x = x x => f x = let a b = DUP x in a b
       ! see when lambdas are duplicated (also reduce computations on free-vars when papped)
   ? should we compute containement
-  Generalise lams passed into functions that duplicate args
-  GlobalResolver = { Modules } BitSetMap of modules keyed on INames
-  Module : (λimportBruijns -> {}) i1..in
-  Modules arguments (imports) are themselves λ applied to transitive imports
-  ? trans-deps ; open/require ; record-field pattern ; update-spec
-  LetArg = LetArg { open : Bool , rhs : _ }
-  module is given all its imports as LetArg debruijn arguments
-    solveScopes qualifies all names on LetArg imports (VBruijn x . name) => build bitset of used fields for +VBruijns
-    opened = bruijn name all fields => linearity will show the dep-tree
-# Mutuality: insane Π = λM[a , b] -> (a , b) => 
-  ? mutual functions within separate records =eg. let a = { f = b.g } ; b = { g = a.f }
-  Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
 ## Notes. Let (record) as Bruijn (generalise duplicated arguments & mutual fn args)
-  ? export list
-  ? Cap field number to 64 (use pdep to mark subtyping frets), large records mk list
-  let-App = sv mutual info
-  BruijnSub = Either Int Bind  -- VBruijn typevar | Bind
-  Let-App = BruijnApp 1 Binds  -- Eraser argument is a form of function subtyping
+  ? export list & bind Import list
+  Cap field number to 64 (use pdep to mark subtyping frets), large records mk list
+  Eraser argument is a form of function subtyping
   Generalise top-level & duplicated lambdas (inline the rest)
   new specs for imported binds
   linearity
-  DownName = [nm]; each index capped by bruijn n
   unInline case-branch lambdas
-  open / required (also locally) | dependency graph vv
-  Transitive deps may require IO / aggressive preloading eg. True, builtins => prelude => import prelude
+  open / required (also locally)
   record-field patterns ((a , b) = rhs) => (\case { (a , b) => rhs })
     ? need to case over whole record since lhs is in scope mutually
-  ? let-bound labels
-  atm. AllBinds = QName -> (HName , Bind) ; Externs assumes module = [(HName , Expr)]
+  ? mutual functions within separate records =eg. let a = { f = b.g } ; b = { g = a.f }
+  Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
 ## !?
   * named arguments (perhaps by subtype from a record arg)
   * shared streams (eg. MUL)
   * derived streams: splitAt creates 2 streams from 1, but the second is only available after the first
   * dynamic fuse pap: (+1) << (+1) => (+2)
-  * subtype tycon trees
   * type application (eg. perfect tree) `PTree a = Leaves a | Cons (PTree (a , a))` (μ insufficient here)
   * Sum of record [l : { f : int } | l2 : { f : int }] <: { f : int }
   * open sum type (default case branch)

@@ -19,11 +19,11 @@ import Text.RawString.QQ
 import qualified Test.Syd as S
 import qualified GHC.Show
 
-inferTypes :: Text -> L.Text
-inferTypes txt = let
+inferType :: Text -> L.Text
+inferType txt = let
   (lm , bindSrc) = unsafePerformIO $ do
     reg <- initRegistry False
-    lm  <- compileText defaultCmdLine {noColor = True , printPass = [{-"types"-}] , noCache = True , noFuse = True} reg txt
+    lm  <- compileText defaultCmdLine {noColor = True , printPass = [] , noCache = True , noFuse = True} reg txt
     r   <- readMVar reg
     pure (lm , BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules) (lookupFieldName r._loadedModules))
   in case lm of
@@ -31,16 +31,7 @@ inferTypes txt = let
   Just x  -> error $ "not judgeOK: " <> toS (showImportCon x)
   Nothing -> error $ "no module"
 
---getResult (_flags , _coreOK , _errors , _srcInfo , _fName , iNames , r , j) =
---  let bindSrc = BindSource mempty mempty iNames (labelHNames r) (allBinds r)
---  in prettyJudgedModule False ansiRender {bindSource = Just bindSrc , ansiColor = False} j
---in unsafePerformIO $ getResult . Main.simplifyModule <$> text2Core cmdLine Nothing primResolver 0 "testExpr" s
-
---inferType ∷ Text -> L.Text
---inferType s = fromMaybe "" $ (V.! 0) <$> (inferTypes s)
---inferType = toS . inferTypes
-inferType = inferTypes
-
+-- override how Sydtest shows results
 newtype UniText = UniText L.Text deriving Eq
 instance Show UniText where show (UniText l) = toS l
 
@@ -57,15 +48,15 @@ readTestsFromfile fName = let
       (UniText (inferType expr) `S.shouldBe` UniText (toS (name <> " = " <> expectedType)))
 
 caseTests = do
-  let e ∷ Text = [r|
+  let e :: Text = [r|
 printList l = case l of
-  @Nil ⇒ 2
-  @Cons i ll ⇒ add (putNumber i) (printList ll)
+  @Nil => 2
+  @Cons i ll => add (putNumber i) (printList ll)
 |] in S.describe "printList" $ S.it (toS e) $ UniText (inferType e)
       `S.shouldBe` UniText "printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → %i32"
 
 -- val as a pattern no longer parsed
---   let e ∷ Text = [r|
+--   let e :: Text = [r|
 -- -- need Nil and Cons in scope
 -- unfoldr f b0 = case f b0 of
 --   @Just ({ val as a , seed as b1 }) => @Cons a (unfoldr f b1)
@@ -77,23 +68,23 @@ printList l = case l of
 --       in S.describe "unfoldr" $ S.it (toS e) $ UniText (inferType e)
 --         `S.shouldBe` UniText "unfoldr = ∏ A B C → (A → [Just {{val : B , seed : A}} | Nothing]) → A → µc.[Nil | Cons {B , c}]\n"
 
-  let e ∷ Text = [r|
+  let e :: Text = [r|
 filter pred l = case l of
-  @Nil ⇒ Nil
-  @Cons x xs ⇒ ifThenElseInt1 (pred x) (Cons x (filter pred xs)) (filter pred xs)
+  @Nil => Nil
+  @Cons x xs => ifThenElseInt1 (pred x) (Cons x (filter pred xs)) (filter pred xs)
  |]
       in S.describe "filter" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "filter = ∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]"
 
-  let e ∷ Text = [r|
+  let e :: Text = [r|
 mergeRec = \case
-  @N ⇒ { x = 1 }
-  @C ⇒ { y = 1 }
+  @N => { x = 1 }
+  @C => { y = 1 }
 |]
       in S.describe "mergeRecords" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "mergeRec = [N | C] → {}"
 
-  let e ∷ Text = [r|
+  let e :: Text = [r|
 import prelude
 testParity n = let
   isEven n = ifThenElse (eq n 0) 1 (isOdd  (sub n 1))
@@ -103,7 +94,7 @@ testParity n = let
       in S.describe "let-mutuals" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "testParity = %i32 → %i1"
 
-  let e ∷ Text = [r|
+  let e :: Text = [r|
 foldr1 f = \case
   @Cons x xs => case xs of
     @Nil => x
@@ -114,7 +105,7 @@ foldr1 f = \case
 
 testImports = do
   (fp1 , h1) <- SIO.openTempFile "/tmp/" "m1"
-  hPutStr h1 $ ("f = 3" ∷ Text)
+  hPutStr h1 ("f = 3" :: Text)
   SIO.hClose h1
 
   (fp2 , h2) <- SIO.openTempFile "/tmp/" "m2"
@@ -130,7 +121,7 @@ testPhantomLabel = S.goldenTextFile (goldDir <> "phantomLabel") $ do
   Main.sh (fp1 <> " -p types --no-fuse")
   removeFile fp1
   h1 <- SIO.openFile fp1 WriteMode
-  hPutStr h1 $ ("gg = MyLabel" ∷ Text)
+  hPutStr h1 $ ("gg = MyLabel" :: Text)
   SIO.hClose h1
   tmpFile <- (</> "tmp") <$> getCanonicalTemporaryDirectory
   Main.sh (fp1 <> " -p types --no-color  --no-fuse -o" <> tmpFile)

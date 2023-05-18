@@ -1,4 +1,4 @@
-f = (Int 6) : %i32
+f1 = (Int 6) : %i32
 rename = (λb(2) (_+_ B1 B0)) : %i32 → %i32 → %i32
 fg = (λb(2) B0  >  [\case 
   Wrap => (_+_ B1 B1)]) : %i32 → [Wrap] → %i32

@@ -14,8 +14,6 @@ import ModulePaths
 import Errors
 import MixfixSyn
 import Externs
-import qualified BitSetMap as BSM
-import Data.Time
 import Data.Functor.Base
 import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
@@ -118,7 +116,7 @@ readDeps reg (ds , input) = let
       else getLoadedModule reg iM >>= \loaded ->
         case True of -- is the cached module fresh?
           True  -> pure $ NodeF (ds , loaded._loadedImport) [] -- []: deps already registered
-          False -> parseFileImports iM fPath
+--        False -> parseFileImports iM fPath
     in registerModule reg (T.pack fPath) >>= knownModule ||| newModule
 
   parseFileImports :: IName -> FilePath -> IO (TreeF (Dependents , Import) MISeed)
@@ -175,7 +173,8 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
         *> getBindSrc >>= \bindSrc ->
         putErrors stdout Nothing bindSrc errs
         *> when putModVerdict (putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
-      Right jm -> let shouldPutJM = any (`elem` printPass cmdLine) ["core", "opt", "types"]
+      Right jm -> let shouldPutJM = (dependents == 0 || putDependents cmdLine)
+                       && any (`elem` printPass cmdLine) ["core", "simple", "types"]
         in registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
         *> when shouldPutJM (getBindSrc >>= \bindSrc -> putJudgedModule cmdLine (Just bindSrc) jm)
         *> when putModVerdict (putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
