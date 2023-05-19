@@ -1,6 +1,6 @@
 -- use Typer instead of Generalise: printList
 
--- let-scope depends on parse
+-- let-scope depends on mixfix parse
 -- letscopeAfterMixfix y = if y then let x = 3 in x else y
 
 -- let-bound mixfix => make VLetBind instead of QName
@@ -28,9 +28,6 @@
 
 -- parse pattern guards
 --f = \case { @x b | @y <- b => 1 }
-
---g = \case -- should spawn arg: UnPattern: 69
---  x => x -- Poison unknown label: Extern 1
 
 -- Wildcard (poison cannot merge cases)
 --null = \case
@@ -88,9 +85,9 @@
 
 -- trans imports: list2 uses list.Nil
 
--- error importName
-import prelude
-import stream
+repeat x = let xss = @Cons x xss in xss
+
+f = add 2 3
 
 {-
 import prelude

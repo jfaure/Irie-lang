@@ -11,7 +11,6 @@ import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy as L
 import System.IO.Unsafe
 import System.Directory
-import System.Process as SP
 import System.IO.Temp (getCanonicalTemporaryDirectory)
 import System.FilePath
 import qualified System.IO as SIO
@@ -114,7 +113,6 @@ testImports = do
   Main.sh (fp2 <> " -p types")
 
 testPhantomLabel = S.goldenTextFile (goldDir <> "phantomLabel") $ do
-  _ <- SP.system "mv .irie-obj/* /tmp/"
   (fp1 , h1) <- SIO.openTempFile "/tmp/" "m1"
   hPutStr h1 $ T.unlines ["lol (MyLabel x xs) = x"]
   SIO.hClose h1
@@ -138,7 +136,7 @@ goldDir = "goldenOutput/"
 goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
   tmpFile <- getCanonicalTemporaryDirectory <&> (</> "tmp" <> takeFileName fName)
   Main.sh (fName <> " -o" <> tmpFile <> " " <> opts)
-  readFile tmpFile
+  readFile tmpFile -- If file does not exist, then irie failed before writing to it.
 
 tuple    = S.it "tuple.ii"        (goldenInfer "-p types --no-fuse --no-color" "ii/tuple.ii"       "tuple")
 list1    = S.it "list.ii"         (goldenInfer "-p types --no-fuse --no-color" "ii/list.ii"        "list")

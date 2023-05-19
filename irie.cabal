@@ -58,6 +58,7 @@ executable irie-exe
       BetaEnv
       Generalise
       Typer
+      MuRoll
       Infer
       Mixfix
       MixfixSyn
@@ -70,8 +71,6 @@ executable irie-exe
       MkSSA
       SSA
       C
-      X86
-      X86JIT
       PrettySSA
       Paths_irie
   hs-source-dirs:
@@ -115,7 +114,6 @@ executable irie-exe
     , blaze-builder
     , bytestring
     , containers
-    , deepseq
     , directory
     , filepath
     , haskeline
@@ -123,11 +121,8 @@ executable irie-exe
     , megaparsec >8.0
     , mtl
     , optparse-applicative
-    , parser-combinators
-    , pretty-simple
-    , prettyprinter
     , primitive
-    , process
+    , prettyprinter
     , protolude
     , semialign
     , text
@@ -154,6 +149,7 @@ executable irie-exe
     , fresnel
     , filelock
     , repline
+    , edit-distance
 --  , fused-effects
   default-language: Haskell2010
 

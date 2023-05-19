@@ -19,8 +19,8 @@ type Dependents = BitSet
 
 -- TODO ? should all have a ModIName
 data Import
- = ImportName Text
- | NoPath  Text
+-- = ImportName Text
+ = NoPath  Text
  | NoParse Text (ParseErrorBundle Text Void)
  | ImportLoop BitSet -- All deps known; but the loop must be handled specially
  | ParseOK ModIName P.Module -- P.Module contains the filepath
@@ -104,7 +104,6 @@ readJudgedBind m iNm = case m.moduleTT of
 
 showImportCon :: Import -> Text
 showImportCon = \case
-  ImportName{} -> "ImportName"
   NoPath{} -> "NoPath"
   NoParse{} -> "NoParse"
   ImportLoop{} -> "ImportLoop"

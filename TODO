@@ -1,14 +1,15 @@
 # prelude.ii appears twice at leaves: one of them must wait for the other to solve it?
+# Free-var bug
 # Effects
 # judge bind append
-# edit-distance
 # Type aliases
-#SML: fn , appendable , searchable , modular , (sealable?) , module-mutuality , writeable , dep-graph
+# Let-Ins & lifted functions
   * mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
     Also ensure β-reduction doesn't rm the let-bind wrapper prematurely
   ? opened modules
-  ? Nest QNames (also local modules/namespaces) vs module QNames in types
+  ? Nest QNames (also local modules/namespaces) vs module QNames in types (also let-bound mixfixes)
   ? Opened name vs projection name
+  * letscope depends on mixfix parse
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * Conv non-mut non-rec let-binds straight to fn args
   * leaf bicasts ; subtype tycon trees
@@ -21,6 +22,7 @@
   * check if capture free-vars correctly on mutual bindings
   * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
   * importing new labels can break code: eg. f a = _ ; then import an 'a' label
+  * edit-distance
 ## Syntax
   * Array type: "# 1 3 2 : Array Int"
   * import lists: imports / opens keywords
@@ -68,7 +70,7 @@
 ## Parse / Pretty
   * pat guards
   * lambda case type annotation: \case : scrut -> ret
-  * Parse Intrinsics (eg. getFnName , getSourceLine , getSourceFile etc..)
+  * Parse Intrinsics (eg. readConstFile , getFnName , getSourceLine , getSourceFile etc..)
   * repl parser: multiline case / let
   * pretty case-case formats wrong
 ## Types

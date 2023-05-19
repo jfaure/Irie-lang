@@ -13,7 +13,8 @@ import Prettyprinter.Render.Util.SimpleDocTree
 import Prettyprinter.Internal as P
 import Data.Functor.Foldable
 
-tr t x = trace (prettyTyRaw t) x
+traceTy t x = trace (prettyTyRaw t) x
+traceTerm t x = trace (prettyTermRaw t) x
 
 -- HTML links:
 -- <a href="#Marker></a>

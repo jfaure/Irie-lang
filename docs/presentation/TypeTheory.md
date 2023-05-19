@@ -26,6 +26,40 @@ Simplification is incidentally conveniently handled now:
   * iff expr has a type A mentioning tvar a, and a is only used in A, then it can be reused with different types substituted for a
   * if polymorphic type inferred inside a variable f, f must not mention it else it escapes its scope
 
+# Simplification
+Simplification removes (or unifies with another type) as many tvars as possible
+Generalisation allows polymorphic types to be instantiated with fresh tvars on each use: promote tvar to Π-bound
+Levels: lvlN bitmask = not generalisable at each lvl
+tvars must never refer to deeper let-nest tvars through their bounds
+unify (v <=> a -> b) => export a and b to level of v
+Escaped vars examples:
+* f1 x = let y z = z in y   -- nothing can go wrong
+* f2 x = let y   = x in y   -- if x generalised at y then f2 : a -> b (Wrong)
+* f3 x = let y y = x y in y -- same problem
+Note. because of escaped vars, let-bound types may contain raw tvars, so
+later (eg. for codegen) need to 're'generalise to sub out free/escaped vars once they're resolved
+
+Simplifications (performed just before commiting to generalising a tvar):
+eg. foldr : (A -> (C & B) -> B) -> C -> μx.[Cons : {A , x} | Nil : {}] -> (B & C)
+=>  foldr : (A -> B       -> B) -> B -> μx.[Cons : {A , x} | Nil : {}] -> B
+ * remove polar variables `a&int -> int => int->int` ; `int -> a => int -> bot`
+ * unify inseparable vars (polar co-occurence `a&b -> a|b` and indistinguishables `a -> b -> a|b`)
+ * unify variables that have the same upper and lower bound (a<:t and t<:a) `a&int -> a|int` => int -> int
+ * tighten (roll) recursive types
+ * TODO: Type function subtyping: if A <: F A and F B <: B then A <: B
+ * Interesting case: drop : ∏ A B → %i32 → (µa.[Cons {⊤ , a} | Nil] ⊓ B) → ([Nil] ⊔ B)
+   ie. B <= µa.[Cons {⊤ , a} | Nil] && B >= [Nil]
+   Annotations can restrict this to eg. B = [Nil] or B = µa.[Cons {Integer , a} | Nil]
+
+Generalisation is a 2 pass process
+1 Preparation & Analysis:
+  * read TVar bounds from Bisubs
+  * detect whether tvar cycles are guarded by TyCon (loops and recVars BitSets)
+  * save TVar co-occurences
+  * Co-occurence analysis: attempt to remove or unify tvars
+2. Finalise: Remove, unify or generalise (with possible mu binder) TVars based on co-occurence analysis
+
+
 # Note. Rank-n polymorphism
 A constraint a <= t- gives a an upper bound ;
 which only affects a when used as an upper bound (negative position)

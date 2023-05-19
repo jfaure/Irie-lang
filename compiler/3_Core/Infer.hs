@@ -12,19 +12,18 @@ import Errors
 import Externs
 import TypeCheck ( check )
 import TCState
-import Generalise (generalise)
---import Typer (generalise)
+--import Generalise (generalise)
+import Typer (generalise)
 import Control.Lens
 import Data.Functor.Foldable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
+--import PrettyCore
 
-import PrettyCore
-import qualified Data.Text as T
-addBind :: Expr -> P.FnDef -> Expr
-addBind jm newDef = jm
+--addBind :: Expr -> P.FnDef -> Expr
+--addBind jm newDef = jm
 
 judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (Expr , Errors)
 judgeModule pm importedModules modIName exts loaded = runST $ do
@@ -193,10 +192,9 @@ inferF = let
 
  getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
    then judgeBind 0 (unQName q) <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty -- don't inline at this stage
-   else use openModules >>= \openMods -> use loadedMs >>= \ls ->
-     case readQName ls (modName q) (unQName q) of
-       Imported e -> pure e
-       x -> error (show x)
+   else use loadedMs >>= \ls -> case readQName ls (modName q) (unQName q) of
+     Imported e -> pure e
+     x -> error (show x)
 
  -- Setup new freeVars env within a letNest ; should surround this with an inc of letNest, but not the inExpr
  newFreeVarEnv :: forall s a. TCEnv s a -> TCEnv s a
@@ -263,7 +261,7 @@ inferF = let
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 
-  P.ForeignF _isVA i tt -> error "not ready for foreign"
+  P.ForeignF{} {- isVA i tt-} -> error "not ready for foreign"
 --  tt <&> \(Core _ttExpr ty) -> Core (Var (VForeign i)) ty
 
   P.BruijnLamF (P.BruijnAbsF argCount argMetas _nest rhs) ->

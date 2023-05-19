@@ -119,6 +119,15 @@ linefold p = endLine *> scn *> do
   when (cur <= prev) (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
   p
 
+-- once in a linefold we can parse multiple new lines at the same indent
+linefolds :: Parser a -> Parser [a]
+linefolds p = endLine *> scn *> do
+  prev <- use indent
+  cur  <- svIndent
+  when (cur <= prev) (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
+  args <- indentedItems cur p (fail "")
+  (args ++) <$> (linefolds p <|> pure [])
+
 -----------
 -- Names --
 -----------
@@ -258,9 +267,10 @@ tt :: Parser TT
   anyTT = ({-tySum <|>-} appOrArg) >>= catchUnderscoreAbs >>= typedTT <?> "tt"
    -- lens '.' binds tighter than App
   argOrLens = arg >>= \larg -> option larg (lens larg)
-  lineFoldArgs p = let
+  lineFoldArgs p = try (linefolds p) <|> many p
+  lineFoldArgs2 p = let
     oneLineFold = (:) <$> try (linefold p) <*> many p <* lookAhead (single '\n')
-    in choice [ oneLineFold , (:) <$> p <*> lineFoldArgs p , pure [] ]
+    in choice [ oneLineFold , (:) <$> p <*> lineFoldArgs2 p , pure [] ]
       >>= \ars -> option ars ((ars ++) <$> oneLineFold)
   appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg $ case larg of
 --  Lit l -> LitArray . (l:) <$> some (lexeme $ try (literalP <* notFollowedBy iden)) -- Breaks `5 + 5`

@@ -8,6 +8,7 @@ import ShowCore()
 import PrettyCore
 import Prim
 import qualified BitSetMap as BSM
+import Data.List (union , intersect)
 
 makeLabel q = let sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
   in Core (Label q []) (TyGround [THTyCon sumTy])
@@ -25,6 +26,13 @@ getArgShape = \case
   _ -> ShapeNone
 
 isPoisonExpr :: Expr -> Bool = (\case { Core (Poison{}) _ -> True ; _ -> False })
+
+mapTHeads fn = \case
+  TyVarsF vs g -> TyVarsF vs (fn <$> g)
+  TyGroundF g  -> TyGroundF  (fn <$> g)
+  x -> x
+
+hasTVars = \case { TyVars{} -> True ; _ -> False }
 
 partitionType :: Type -> (BitSet , GroundType)
 partitionType = \case
@@ -103,6 +111,14 @@ kindOf = \case
   THMu{}      -> KRec
   _ -> KAny
 
+intersectTypes :: Type -> Type -> Type
+intersectTypes a b = case (partitionType a , partitionType b) of
+  ((v , g) , (w , f)) -> TyVars (v .&. w) (intersect f g)
+
+unionTypes :: Type -> Type -> Type
+unionTypes a b = case (partitionType a , partitionType b) of
+  ((v , g) , (w , f)) -> TyVars (v .|. w) (union f g)
+
 mergeTyUnions :: Bool -> [TyHead] -> [TyHead] -> [TyHead]
 mergeTyUnions pos l1 l2 = let
   cmp a b = case (a,b) of
@@ -154,6 +170,10 @@ mergeTyHead pos t1 t2 = -- (\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ "
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM (not pos) d1 d2) (mergeTypes pos r1 r2)]
     _ -> join
   _ -> join
+
+getTyVars = \case
+  TyVars vs _ -> vs
+  _ -> 0
 
 nullType = \case
   TyVars 0 [] -> True

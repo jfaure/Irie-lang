@@ -6,8 +6,7 @@ basic2 x = 42            -- ⊤ → %i32
 basic3 x = x             -- ∏ A → A → A
 basic4 x = x 42          -- ∏ A → (%i32 → A) → A
 basic5   = (\x => x) 42  -- %i32
-twice f x = f (f x)      -- ∏ A → (A → A) → A → A
--- ^ mlsub says: (A ∨ B → A) → B → A
+twice f x = f (f x)      -- ∏ A B → ((A ⊔ B) → B) → A → B
 iffy a b c = ifThenElseInt1 a b c -- ∏ A → %i1 → A → A → A
 
 bool4 x y z = ifThenElseInt1 x y z  -- ∏ A → %i1 → A → A → A

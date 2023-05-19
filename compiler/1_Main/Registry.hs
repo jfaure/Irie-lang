@@ -40,6 +40,8 @@ cacheVersion = 0
 registryFName = ""
 doParallel = False
 
+-- Text.EditDistance> levenshteinDistance defaultEditCosts "witch" "kitsch"
+
 -- ## Deps: build dep-tree > parallel judge dep-tree & Write ↓↑deps to registry
 -- ## IConv: Must use registry ModINames (else β for trans imports too complicated)
 --   => Modules depend on Registry modINames and Registry becomes inflexible
@@ -150,7 +152,7 @@ registerJudgedMod reg mI modOrErrors = let
   in do
     getLoadedModule reg mI <&> _loadedImport >>= \case
       ImportQueued mvar -> putMVar mvar ()
-      x -> pure ()
+      _ -> pure ()
     (const (pure ()) ||| addJM) modOrErrors
 
 simplify :: CmdLine -> JudgedModule -> JudgedModule
@@ -187,7 +189,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
   NoJudge _mI _jm -> pure deps
   IRoot -> error "root"
   ImportQueued m -> readMVar m $> deps
-  -- Wait. IMPORTANT! This will hang if ImportQueued thread fails to putMVar (call registerJudgedMod)
+  -- Wait. TODO IMPORTANT! This will hang if ImportQueued thread fails to putMVar (call registerJudgedMod)
 
 putJudgedModule :: CmdLine -> Maybe BindSource -> JudgedModule -> IO ()
 putJudgedModule cmdLine bindSrc jm = let

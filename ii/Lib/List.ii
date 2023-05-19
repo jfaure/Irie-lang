@@ -1,0 +1,1 @@
+List a = Array (ptr a) | ∃s. Stream (s -> Step a s) s
