@@ -28,6 +28,7 @@ type CaseID    = Int
 -- locally nameless = indices for bound vars, global names for free vars.
 
 -- Bruijns vs QBinds => QBinds are mutually in scope & Lens
+-- Note. lifted let binds are appended to the module and become VQBinds
 data VName
  = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
  | VForeign HName -- opaque name resolved at linktime

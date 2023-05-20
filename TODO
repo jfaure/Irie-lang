@@ -1,4 +1,4 @@
-# Lift all Let-Ins
+# Lift all Let-Ins => infer must lift nests
 # Effects
 # judge bind append
 # Type aliases

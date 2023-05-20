@@ -164,8 +164,7 @@ parseMixFixDef :: Text -> Either (ParseErrorBundle Text Void) [Maybe Text]
 ------------
 parseModule :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Module
 parseModule nm txt = let
-  parseModule = scn *> (((\binds -> LetIn binds Nothing) <$> pBlock True True Let)
-    >>= (moduleWIP . bindings .=)) *> eof *> use moduleWIP
+  parseModule = scn *> (parseBinds True >>= (moduleWIP . bindings .=)) *> eof *> use moduleWIP
   in runParserT parseModule nm txt `evalState` emptyParseState (toS (dropExtension (takeFileName nm)))
 
 mixFix2Nm = T.concat . map (\case { Just nm->nm ; Nothing->"_" })
@@ -193,8 +192,11 @@ pImport = choice
  , reserved "use"     <* (iden >>= addImport)
  ]
 
-pBlock :: Bool -> Bool -> LetRecT -> Parser Block
-pBlock isTop isOpen letTy = scn *> use indent >>= \prev -> L.indentLevel >>= \lvl -> Block isOpen letTy <$>
+pBlock :: Bool -> Bool -> LetQual -> Parser Block
+pBlock isTop isOpen letTy = Block isOpen letTy <$> parseBinds isTop
+
+parseBinds :: Bool -> Parser (V.Vector FnDef)
+parseBinds isTop = scn *> use indent >>= \prev -> L.indentLevel >>= \lvl -> 
   parseDecls isTop (eof <|> void (try $ endLine *> scn *> checkIndent prev lvl))
 
 newtype SubParser = SubParser { unSubParser :: Parser (Maybe (FnDef , SubParser)) }
@@ -345,10 +347,18 @@ tt :: Parser TT
   lambdaCase = LambdaCase . CaseSplits' <$> caseSplits
   casePat = (\tt splits -> CasePat (CaseSplits tt splits)) <$> tt <* reserved "of" <*> caseSplits
 
-  letIn = let -- svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
-    pLetQual = choice ((\(txt , l) -> reserved txt $> l) <$> [("let" , Let) , ("rec" , Rec) , ("mut" , Mut)])
-    in pLetQual >>= pBlock False True >>= \block -> LetIn block <$> (reserved "in" *> (Just <$> tt))
+  letIn = do
+    let pLetQual = choice ((\(txt , l) -> reserved txt $> l) <$> [("let" , Let) , ("rec" , Rec) , ("mut" , Mut)])
+    block <- pLetQual >>= pBlock False True
+    (moduleWIP . parseDetails . letBindCount += V.length (binds block))
+    LetIn block <$> (reserved "in" *> (Just <$> tt))
 
+--letIn = let -- svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
+--  pLetQual  = choice ((\(txt , l) -> reserved txt $> l) <$> [("let" , Let) , ("rec" , Rec) , ("mut" , Mut)])
+--  pLetBinds :: Parser Int
+--  pLetBinds = parseBinds False >>= \newBinds -> use (moduleWIP . liftedLets) >>= \(len , letBinds) ->
+--    len <$ (moduleWIP . liftedLets .= (len + 1 , newBinds : letBinds))
+--  in LiftedLets <$> pLetQual <*> pLetBinds <* reserved "in" <*> tt
   typedTT = pure
 
 ---------------------

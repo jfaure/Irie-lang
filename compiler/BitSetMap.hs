@@ -1,8 +1,8 @@
 {-# LANGUAGE DeriveDataTypeable , DeriveFoldable , DeriveTraversable , GeneralizedNewtypeDeriving , InstanceSigs #-}
 -- product | sumtype keys are static lists usually consisting of many neighboring bounded integers
--- insertion is O(n), but all other operations are more space efficient and faster than IntMap
+-- insertion is O(n), but all other operations are more space efficient and slightly faster than IntMap
 -- fromList O(n)
--- (!?) O(1)
+-- (!?) O(log n)
 -- union , intersection , mergeWithKey O(n)
 module BitSetMap (BitSetMap(..) , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , singleton , (!?) , BitSetMap.elems , BitSetMap.keys
   , unionWith , intersectionWith , traverseWithKey , mergeWithKey' , mergeWithKey , mapAccum , mapWithKey) where

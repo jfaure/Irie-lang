@@ -251,9 +251,7 @@ isCachedFileFresh fName cache =
 judge :: Deps -> PureRegistry -> Externs -> ModIName -> P.Module
   -> Either (Errors , JudgedModule) JudgedModule
 judge deps reg exts modIName p = let
-  bindNames = p ^. P.bindings & \case
-    P.LetIn (P.Block _ _ binds) Nothing -> P._fnNm <$> binds
-    x -> error (show x)
+  bindNames   = p ^. P.bindings <&> P._fnNm
   labelHNames = p ^. P.parseDetails . P.labels
   iNames      = p ^. P.parseDetails . P.hNamesNoScope
   iNamesV     = iMap2Vector iNames

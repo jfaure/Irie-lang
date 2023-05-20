@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell , TypeFamilies #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS -funbox-strict-fields #-}
 module ParseSyntax where
 import Prim ( Literal )
@@ -21,11 +21,12 @@ type SourceOffset = Int
 data Module = Module { -- Contents of a File (Module = Function : _ → Record | Record)
    _moduleName   :: HName   -- fileName
  , _imports      :: [HName] -- all imports used at any scope
- , _bindings     :: TT
+ , _bindings     :: V.Vector FnDef -- TT
+-- , _liftedLets   :: (Int , [V.Vector FnDef]) -- revList of let-blocks: letIn blocks are annotated with lifted index
  , _parseDetails :: ParseDetails
 }
 -- To allow the repl to continue
-emptyParsedModule h = Module h [] Question (ParseDetails (0 , mempty) mempty mempty mempty [])
+emptyParsedModule h = Module h [] mempty (ParseDetails (0 , mempty) mempty mempty mempty [] 0)
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
@@ -34,19 +35,18 @@ data ParseDetails = ParseDetails {
  , _hNamesNoScope :: NameMap -- INames (module-local HName equivalents)
  , _labels        :: NameMap
  , _newLines      :: [Int]
+ , _letBindCount  :: Int
 }
 data FnDef = FnDef {
    _fnNm         :: HName
  , _fnIName      :: IName
- , _fnRecType    :: !LetRecT
+ , _fnRecType    :: !LetQual
  , _fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
  , _fnRhs        :: TT
  , _fnSig        :: Maybe TT
 }
 
--- single argument match
-data LetRecT = LetIDK | Let | Dep | Rec | Mut | LetTuple {- unnamed binds -}
-  deriving (Eq , Show)
+data LetQual = LetIDK | Let | Dep | Rec | Mut | LetTuple {- unnamed binds -} deriving (Eq , Show)
 
 data TTName
  = VBruijnLevel IName
@@ -66,7 +66,7 @@ type BruijnAbs = BruijnAbsF TT
 type BruijnSubs = [(IName , Int)] -- Extern -> VBruijn -- TODO can just be a straight list to imap
 data CaseSplits = CaseSplits TT [(TT , TT)] -- deliberately wrapped so unaffected by solveScopes initial cata
 data CaseSplits' = CaseSplits' [(TT , TT)] -- deliberately wrapped so unaffected by solveScopes initial cata
-data Block      = Block { open :: Bool , letType :: LetRecT , binds :: V.Vector FnDef }
+data Block      = Block { open :: Bool , letType :: LetQual , binds :: V.Vector FnDef }
 data TT -- Type | Term; Parser Expressions (types and terms are syntactically equivalent)
  = Var !TTName
  | Lin QName -- modName used to differentiate dups
@@ -105,6 +105,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  | List   [TT]
  | LetIn Block (Maybe TT)
+-- | LiftedLets LetQual Int TT -- Int is index into lifted-let-block vector
 
  -- term primitives
  | Lit      Literal

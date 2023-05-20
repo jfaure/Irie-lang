@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , fromRevListN , anaM , hyloM , hypoM)
+ , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypo)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -76,6 +76,10 @@ allM :: Monad m => (a -> m Bool) -> [a] -> m Bool
 allM f = \case
   []   -> pure True
   b:bs -> f b >>= \bv -> if bv then allM f bs else pure False
+
+-- cata f . apo g
+hypo   :: (Functor f , Base ff ~ f, Recursive ff) => (f expr -> expr) -> (seed -> f (Either ff seed)) -> seed -> expr
+hypo f g = h where h = f <<< fmap (cata f ||| h) <<< g
 
 anaM :: (Corecursive t, Traversable (Base t), Monad m) => (a -> m (Base t a)) -> a -> m t
 anaM psi = a where a = fmap embed . traverse a <=< psi

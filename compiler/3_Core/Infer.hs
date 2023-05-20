@@ -25,13 +25,23 @@ import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
 --addBind jm newDef = jm
 
 judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (Expr , Errors)
-judgeModule pm importedModules modIName exts loaded = runST $ do
+judgeModule pm importedModules modIName exts loaded = let
+  scopeParams = initParams importedModules emptyBitSet -- open required
+  modTT       = P.LetIn (P.Block True P.Let (pm ^. P.bindings)) Nothing
+  bindNms = P._fnIName <$> (pm ^. P.bindings)
+--scopeParams = initParams importedModules emptyBitSet
+--  & lets %~ (.|. intList2BitSet (V.toList bindNms))
+--  & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName 0 i))
+--bindings    = apo (scopeApoF exts modIName) (modTT , scopeParams)
+--doInfer = cata inferF bindings
+  inferTT :: P.TT -> TCEnv s Expr
+  inferTT tt = hypo inferF (scopeApoF exts modIName) (tt , scopeParams)
+--inferBindings = mapM (use P.fnRhs >>= inferTT) (pm ^. P.bindings)
+  in runST $ do
   letBinds' <- MV.new 32
   bis'      <- MV.new 0xFFF
   g         <- MV.new 0
-  let scopeparams = initParams importedModules emptyBitSet -- open required
-      bindings    = scopeTT exts modIName scopeparams (pm ^. P.bindings)
-  (modTT , st) <- runStateT (cata inferF bindings) TCEnvState
+  (_2 %~ (^. errors)) <$> runStateT (inferTT modTT) TCEnvState
     { _externs  = exts
     , _loadedMs = loaded
     , _thisMod  = modIName
@@ -55,7 +65,6 @@ judgeModule pm importedModules modIName exts loaded = runST $ do
     , _nquants = 0
     , _genVec = g
     }
-  pure (modTT , st ^. errors)
 
 -- infer >> generalise >> check annotation
 -- This stacks inference of forward references and let-binds and identifies mutual recursion
@@ -275,7 +284,6 @@ inferF = let
   P.RawExprF t -> t
   P.MixfixPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . mixfixFails %= (t:))
   P.QVarF q -> getQBind q
---VoidExpr (QVar QName) (PExprApp p q tts) (MFExpr Mixfixy)
 
   P.TupleIdxF f tt -> tt >>= \(Core tuple tupleTy) -> freshBiSubs 1 >>= \[i] -> let
     qN = f -- qName2Key (mkQName 0 f) -- (-1 - f))
@@ -334,25 +342,25 @@ inferF = let
 --  pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
 
   P.MatchBF pscrut caseSplits catchAll -> pscrut >>= \(Core scrut gotScrutTy) -> do
-      let convAbs :: Expr -> (Term , Type) = \(Core t ty) -> (t , ty)
-      (labels , elems) <- sequenceA caseSplits <&> unzip . BSM.toList . fmap convAbs
-      def <- sequenceA catchAll <&> fmap convAbs
-      let (alts , _rawAltTs) = unzip elems
-          branchTys = elems <&> \case
-            (BruijnAbsTyped _ _ _ retTy , _) -> retTy -- alts are functions of their label params
-            (_ , ty) -> ty
-          retTy  = mergeTypeList False $ maybe branchTys ((: branchTys) . snd) def -- ? TODO why negative merge
-          altTys = alts <&> \case
-            BruijnAbsTyped _ _t ars _retTy -> TyGround [THTyCon $ THTuple (V.fromList $ snd <$> ars)]
-            _x -> TyGround [THTyCon $ THTuple mempty]
-          scrutSum = BSM.fromList (zip labels altTys)
-          scrutTy  = TyGround [THTyCon $ case def of
-            Nothing          -> THSumTy scrutSum
-            Just (_ , defTy) -> THSumOpen scrutSum defTy]
-          matchTy = TyGround (mkTyArrow [scrutTy] retTy)
-      (b , retT) <- biUnifyApp matchTy [gotScrutTy]
-      case b of { BiEQ -> pure () ; _ -> error "expected bieq" }
-      pure $ Core (CaseB scrut retT (BSM.fromList (zip labels alts)) (fst <$> def)) retT
+    let convAbs :: Expr -> (Term , Type) = \(Core t ty) -> (t , ty)
+    (labels , elems) <- sequenceA caseSplits <&> unzip . BSM.toList . fmap convAbs
+    def <- sequenceA catchAll <&> fmap convAbs
+    let (alts , _rawAltTs) = unzip elems
+        branchTys = elems <&> \case
+          (BruijnAbsTyped _ _ _ retTy , _) -> retTy -- alts are functions of their label params
+          (_ , ty) -> ty
+        retTy  = mergeTypeList False $ maybe branchTys ((: branchTys) . snd) def -- ? TODO why negative merge
+        altTys = alts <&> \case
+          BruijnAbsTyped _ _t ars _retTy -> TyGround [THTyCon $ THTuple (V.fromList $ snd <$> ars)]
+          _x -> TyGround [THTyCon $ THTuple mempty]
+        scrutSum = BSM.fromList (zip labels altTys)
+        scrutTy  = TyGround [THTyCon $ case def of
+          Nothing          -> THSumTy scrutSum
+          Just (_ , defTy) -> THSumOpen scrutSum defTy]
+        matchTy = TyGround (mkTyArrow [scrutTy] retTy)
+    (b , retT) <- biUnifyApp matchTy [gotScrutTy]
+    case b of { BiEQ -> pure () ; _ -> error "expected bieq" }
+    pure $ Core (CaseB scrut retT (BSM.fromList (zip labels alts)) (fst <$> def)) retT
 
   P.InlineExprF e -> pure e
   P.LitF l           -> pure $ Core (Lit l) (TyGround [typeOfLit l])

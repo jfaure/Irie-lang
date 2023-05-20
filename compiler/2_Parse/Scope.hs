@@ -1,5 +1,5 @@
 {-# Language TemplateHaskell #-}
-module Scope (scopeTT , scopeApoF , initParams , RequiredModules , OpenModules , Params) where
+module Scope (scopeTT , scopeApoF , initParams , RequiredModules , OpenModules , Params , letMap , lets) where
 import UnPattern (patternsToCase , Scrut(..))
 import ParseSyntax
 import QName
@@ -81,7 +81,7 @@ scopeApoF exts thisMod (this , params) = let
             _ -> Var (VExtern i)
         JuxtF o args -> solveMixfixes o args -- TODO need to solveScope the mixfixes first!
         tt -> embed tt
-      in (cata clearExtsF pat , br)
+      in (cata clearExtsF pat , br) -- TODO could ana this so it could fuse
     (this , bruijnSubs) = patternsToCase thisMod (scrut{- params-}) (params._bruijnCount) solvedBranches
     in case bruijnSubs of
       [] -> (this , params)

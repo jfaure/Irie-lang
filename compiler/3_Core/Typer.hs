@@ -1,4 +1,4 @@
-module Typer where
+module Typer (generalise) where
 import Control.Lens
 import CoreSyn
 import CoreUtils
@@ -9,9 +9,10 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V
 import Data.Functor.Foldable
 
+-- TODO recursives doesn't account for μ-roll μ-merges
 debug_gen = False || global_debug
 
-type Cooc = (Maybe Type , Maybe Type) -- recursive
+type Cooc = (Maybe Type , Maybe Type)
 data VarSub = Recursive Type | SubVar Int | SubTy Type | DeleteVar | GeneraliseVar | RecursiveVar | EscapedVar deriving (Show , Eq)
 
 generalise :: forall s. BitSet -> Either IName Type -> TCEnv s Type
@@ -25,18 +26,18 @@ generalise lvl0 rawType = do
   recs    <- use recursives
   coocVF  <- V.unsafeFreeze coocV
   let varSubs = buildVarSubs bis' coocVF recs lvl0
-  let recTypes = (\i -> (\(a , b) -> (i , fromMaybe _ (a <|> b))) (coocVF V.! i)) <$> bitSet2IntList recs
   MV.replicate 8000 (complement 0) >>= (genVec .=) -- TODO HACK size
   nquants .= 0
---rTs <- recTypes `forM` \(i , t) -> (i,) <$> buildType bis' varSubs 0 True t
-
---traceM (prettyTyRaw rawT)
---traceM $ "recTypes:\n" <> (unlines $ (\(i , t) -> show i <> ": " <> prettyTyRaw t) <$> recTypes)
---traceM $ "rTs:\n" <> (unlines $ (\(i , t) -> show i <> ": " <> prettyTyRaw t) <$> rTs)
---traceM $ "lvl0: " <> show (bitSet2IntList lvl0)
---traceM $ "recs: " <> show (bitSet2IntList recs)
---traceM (unlines $ V.toList $ show <$> V.indexed coocVF)
---traceM (unlines $ V.toList $ show <$> V.indexed varSubs)
+  when False $ do
+    traceM (prettyTyRaw rawT)
+    --let recTypes = (\i -> (\(a , b) -> (i , fromMaybe _ (a <|> b))) (coocVF V.! i)) <$> bitSet2IntList recs
+    --traceM $ "recTypes:\n" <> (unlines $ (\(i , t) -> show i <> ": " <> prettyTyRaw t) <$> recTypes)
+    --rTs <- recTypes `forM` \(i , t) -> (i,) <$> buildType bis' varSubs 0 True t
+    --traceM $ "rTs:\n" <> (unlines $ (\(i , t) -> show i <> ": " <> prettyTyRaw t) <$> rTs)
+    traceM $ "lvl0: " <> show (bitSet2IntList lvl0)
+    traceM $ "recs: " <> show (bitSet2IntList recs)
+    traceM (unlines $ V.toList $ show <$> V.indexed coocVF)
+    traceM (unlines $ V.toList $ show <$> V.indexed varSubs)
 
   done <- buildType bis' varSubs 0 True startType
 --done <- reconstructType bis' varSubs startType
@@ -55,7 +56,7 @@ buildVarSubs _bis' coocV recs lvl0 = V.constructN (V.length coocV) $ \varSubs ->
     cooc x y = partitionType (intersectTypes x y) & \(vs , ts) -> let
      xx = if clearBit (getTyVars x) v == 0 then getTyVars y else 0
      yy = if clearBit (getTyVars y) v == 0 then getTyVars x else 0
-     canSub v = (varSubs V.! v) & \vs -> vs == GeneraliseVar || vs == RecursiveVar
+     canSub v = (varSubs V.! v) & \vs -> vs == GeneraliseVar || vs == RecursiveVar --nesting SubVars is too complicated
      subCandidates = filter canSub $ bitSet2IntList (clearBit ((vs .|. xx .|. yy) .&. prevTVs) v)
      r = case head subCandidates of
       Just w  -> SubVar w -- Don't sub for polar vars!

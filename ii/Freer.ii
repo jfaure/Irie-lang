@@ -16,7 +16,13 @@ _>>=_ { l1 } = \(Free fx k’) k => Free fx (k’ >=> k)
 ------------------
 -- improve perf --
 ------------------
+-- TreeBuild = (Seq TreeView)
+--TreeView = Leaf | Node (Seq TreeView) (Seq TreeView)
+--FingerTree a = EmptyT | Single a | Deep Int a (FingerTree (Node a)) a
+
 -- Like kan extension: pretend operation is performed, merely accumulate pieces
+fastTCQueue tc a b where
+  RQ : ConsList tc a b -> SnocList tc bc -> ConsList tc x b -> FastQueue tc a c
 type Arr r a b = a -> Eff r b
 type Arrs = FTCQueue (Eff r) a b
 
