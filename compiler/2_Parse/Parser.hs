@@ -27,11 +27,10 @@ type Parser = ParsecT Void Text (Prelude.State ParseState)
 --------------------------
 -- Parsestate functions --
 --------------------------
-addImport i   = moduleWIP . imports  %= (i:)
+addImport i = moduleWIP . imports %= (i:)
 addMFWord h mfw = do
   sz <- moduleWIP . parseDetails . hNameMFWords . _1 <<%= (+1)
-  moduleWIP . parseDetails . hNameMFWords . _2 %= M.insertWith (++) h [mfw sz]
-  pure sz
+  sz <$ (moduleWIP . parseDetails . hNameMFWords . _2 %= M.insertWith (++) h [mfw sz])
 
 -- insertLookup is tricky but saves a log(n) operation
 insertOrRetrieve :: HName -> Map HName Int -> (Either Int Int, Map HName Int)
@@ -85,10 +84,11 @@ lexemen = L.lexeme scn
 symbol :: Text -> Parser Text --verbatim strings
 symbol = L.symbol sc
 
+betweenS = between `on` symbol
 parens, braces, brackets :: Parser a -> Parser a
-parens    = symbol  "(" `between` symbol  ")"
-braces    = symbol  "{" `between` symbol  "}"
-brackets  = symbol  "[" `between` symbol  "]"
+parens    = betweenS "(" ")"
+braces    = betweenS "{" "}"
+brackets  = betweenS "[" "]"
 
 -- ref = reference indent level
 -- lvl = lvl of first indented item (often == pos)
@@ -113,11 +113,11 @@ indentn = use indentType >>= \case
 -- tells linefold and let-ins not to eat our indentedItems
 svIndent = L.indentLevel >>= (indent <.=)
 
-linefold p = endLine *> scn *> do
-  prev <- use indent
-  cur  <- svIndent
-  when (cur <= prev) (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
-  p
+--linefold p = endLine *> scn *> do
+--  prev <- use indent
+--  cur  <- svIndent
+--  when (cur <= prev) (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
+--  p
 
 -- once in a linefold we can parse multiple new lines at the same indent
 linefolds :: Parser a -> Parser [a]
@@ -125,8 +125,8 @@ linefolds p = endLine *> scn *> do
   prev <- use indent
   cur  <- svIndent
   when (cur <= prev) (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
-  args <- indentedItems cur p (fail "")
-  (args ++) <$> (linefolds p <|> pure [])
+  args <- indentedItems cur (some p) (fail "")
+  (concat args ++) <$> (try (linefolds p) <|> pure [])
 
 -----------
 -- Names --
@@ -186,9 +186,11 @@ addMixfixWords m mfdef = let
     _ -> fail "panic: internal parse error with mixfixes"
 
 pImport = choice
- [ reserved "import" *> (iden >>= addImport)
- , reserved "open"   *> (iden >>= addImport)
- , reserved "use"    *> (iden >>= addImport)
+ [ reserved "import"  <* (iden >>= addImport)
+ , reserved "imports" <* some (iden >>= addImport)
+ , reserved "open"    <* (iden >>= addImport)
+ , reserved "opens"   <* some (iden >>= addImport)
+ , reserved "use"     <* (iden >>= addImport)
  ]
 
 pBlock :: Bool -> Bool -> LetRecT -> Parser Block
@@ -238,7 +240,6 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       pure $ Just (FnDef nm iNm Let (Just mfDef) rhs Nothing , subParse)
 
 --lambda = fmap LamPats $ FnMatch <$> many singlePattern <* lexemen (reserved "=>" <|> reserved "⇒" <|> reserved "=") <*> tt
-
 lambda = glambda (reserved "=>" <|> reserved "⇒" <|> reserved "=")
 glambda sep = mkCurriedLambda <$> many singlePattern <* lexemen sep <*> tt
 
@@ -267,11 +268,12 @@ tt :: Parser TT
   anyTT = ({-tySum <|>-} appOrArg) >>= catchUnderscoreAbs >>= typedTT <?> "tt"
    -- lens '.' binds tighter than App
   argOrLens = arg >>= \larg -> option larg (lens larg)
-  lineFoldArgs p = try (linefolds p) <|> many p
-  lineFoldArgs2 p = let
-    oneLineFold = (:) <$> try (linefold p) <*> many p <* lookAhead (single '\n')
-    in choice [ oneLineFold , (:) <$> p <*> lineFoldArgs2 p , pure [] ]
-      >>= \ars -> option ars ((ars ++) <$> oneLineFold)
+  lineFoldArgs p = many p >>= \ars -> (ars ++) <$> (try (linefolds p) <|> pure [])
+--lineFoldArgs p = try (linefolds p) <|> (many p >>= \ars -> (ars ++) <$> lineFoldArgs p) <|> many p
+--lineFoldArgs2 p = let
+--  oneLineFold = (:) <$> try (linefold p) <*> many p <* lookAhead (single '\n')
+--  in choice [ oneLineFold , (:) <$> p <*> lineFoldArgs2 p , pure [] ]
+--    >>= \ars -> option ars ((ars ++) <$> oneLineFold)
   appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg $ case larg of
 --  Lit l -> LitArray . (l:) <$> some (lexeme $ try (literalP <* notFollowedBy iden)) -- Breaks `5 + 5`
     P.Label l [] -> P.Label l <$> lineFoldArgs argOrLens
@@ -296,13 +298,13 @@ tt :: Parser TT
 -- , reserved "record" *> tyRecord  -- multiline record decl
    , reserved "case"   *> casePat
    , reserved "data"   *> tySumData -- multiline sumdata decl
-   , reserved "#" *> (LitArray <$> (literalP `sepBy1` sc))
+   , reserved "#" *> (LitArray <$> lineFoldArgs literalP)
    , con
-   , Lit <$> lexeme literalP -- must be before Iden parsers
+   , lexeme literalP <&> Lit -- must be before Iden parsers
    , reservedChar '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
    , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x]
-   , try $ iden >>= lookupBindName -- holey names used as defined
-   , TyListOf <$> brackets tt
+   , try $ iden >>= lookupBindName -- holey names used as defined (_+_)
+   , brackets tt <&> TyListOf
    , parensExpr
 -- , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
    ] <?> "ttArg"

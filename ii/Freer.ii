@@ -1,0 +1,42 @@
+-- f is the "request signature"
+-- Haskell datatypes are closed unions, Iries are open via subtyping, so no hacks needed on top of this
+data Freer f a where
+  Pure : a -> Free f a
+  Free : f x -> (x -> Freer f a) -> Freer f a
+
+data Reader i x where
+  Get : FReaderWriter i i
+data Writer o x where
+  Put : o -> Writer o ()
+
+-- left-associated list appends is slow;
+-- instead use a "type-aligned sequence"
+_>>=_ { l1 } = \(Free fx k’) k => Free fx (k’ >=> k)
+
+------------------
+-- improve perf --
+------------------
+-- Like kan extension: pretend operation is performed, merely accumulate pieces
+type Arr r a b = a -> Eff r b
+type Arrs = FTCQueue (Eff r) a b
+
+-- compose functions typed a -> m b
+-- O(1) snoc , ++ , unConsEnd
+-- see haskell type-aligned
+type FTCQueue (m : ∗ -> ∗ ) a b
+tsingleton : (a -> m b) -> FTCQueue m a b
+_|>_   : FTCQueue m a x -> (x -> m b) -> FTCQueue m a b -- snoc
+_|><|_ : FTCQueue m a x -> FTCQueue m x b -> FTCQueue m a b -- ++
+data ViewL m a b where
+  TOne :: (a -> m b) -> ViewL m a b
+  (:|) :: (a -> m x) -> (FTCQueue m x b) -> ViewL m a b
+tviewl :: FTCQueue m a b -> ViewL m a b
+
+data Eff r a where
+  Pure : a   -> Eff r a
+  Free : f x -> FTCQueue (Eff r) a b -> Eff r a
+
+instance Monad (Eff r) where
+  return = Pure
+  Pure x   >>= k = k x
+  Free u q >>= k = Impure u (q |> k)

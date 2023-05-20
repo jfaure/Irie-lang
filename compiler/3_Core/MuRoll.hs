@@ -33,14 +33,6 @@ data TypeRoll
  | Rolling   { forgetRoll' :: Type , muR :: Int , roller :: Roller , resetRoll :: Roller }
  deriving Show
 forgetRoll x = {-d_ (rollTy x)-} (forgetRoll' x)
--- forgetRoll but keeps μvar bounds
---dropRoll m = \case
---  BuildRoll uf ms -> mergeTypeList True $ uf : (filter (\(i,_,_) -> i `elem` m) (NE.toList ms) <&> \(_ , _ , t) -> t)
---  x -> forgetRoll x
---rollTy = \case
---  NoRoll{} -> "noroll"
---  BuildRoll{} -> "buildroll"
---  Rolling{} -> "rolling"
 
 mergeTRolls :: [TypeRoll] -> TypeRoll
 mergeTRolls = \case { x : xs -> foldr mergeRolls x xs ; [] -> _ }
@@ -110,7 +102,8 @@ rollType this = let
       [] -> case ms of
         []  -> NoRoll this
         [m] -> BuildRoll (TyGround [THMuBound m]) ((m , [] , this) :| []) -- merge mu-bounds upwards
-        _ -> _ -- merge μs build-build style
+        m:_ -> BuildRoll (TyGround [THMuBound m]) ((m , [] , this) :| []) -- TODO HACK
+--      ms -> error (show ms) _ -- merge μs build-build style
       x : xs -> foldr mergeRolls x xs
 
   -- Compute typeroll from a type merge

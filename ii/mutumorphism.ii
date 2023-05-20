@@ -1,4 +1,4 @@
-ifThenElse cond a b = case cond of { @True  => a ; @False => b }
+ifThenElse cond a b = case cond of { True  => a ; False => b }
 
 -- ? How to mark no-substitute
 mut x = (\e o => { l = e e o , r = o e o })

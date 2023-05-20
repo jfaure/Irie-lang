@@ -34,18 +34,18 @@ lookup k = \case
 
 -- insertLookupWithKey :: (Key -> a -> a -> a) -> Key -> a -> IntMap a -> (Maybe a, IntMap a)
 insertLookupWithKey f k x t = case t of
-  @Bin p m l r => if nomatch k p m then (Nothing , link k (Tip k x) p t)
-    else (\(found , branch) => (found , if zero k m then Bin p m branch r else Bin p m l branch))
-         (insertLookupWithKey f k x r)
+  @Bin p m l r => if nomatch k p m
+    then (Nothing , link k (Tip k x) p t)
+    else insertLookupWithKey f k x r >
+      \(found , branch) => (found , if zero k m then Bin p m branch r else Bin p m l branch)
   @Tip ky y    => if k =? ky then (Just y , Tip k (f k x y)) else (Nothing , link k (Tip k x) ky t)
   @None        => (Nothing , Tip k x)
-
 
 -- insert :: Key -> a -> IntMap a -> IntMap a
 --insert k x t = case t of
 --  @Bin p m l r => if nomatch k p m then link k (Tip k x) p t
 --    else if zero k m then Bin p m (insert k x l) r
---     else                  Bin p m l (insert k x r)
+--    else                  Bin p m l (insert k x r)
 --  @Tip ky y => if k =? ky then Tip k x else link k (Tip k x) ky t
 --  @Nil => Tip k x
 

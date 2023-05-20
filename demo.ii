@@ -1,5 +1,3 @@
--- use Typer instead of Generalise: printList
-
 -- let-scope depends on mixfix parse
 -- letscopeAfterMixfix y = if y then let x = 3 in x else y
 
@@ -26,7 +24,7 @@
 --import stream
 --import imports/TreeStream
 
--- parse pattern guards
+-- pattern guards: parse and unpattern
 --f = \case { @x b | @y <- b => 1 }
 
 -- Wildcard (poison cannot merge cases)
@@ -60,13 +58,11 @@
 -- multi-branch different μ merging =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
--- parse indented nested lets
+-- parse indented nested lets (lets as mixfix?)
 --f x =
 -- let g y =
 --   let h z = add z (add x y) in h
 -- in g
-
--- ! returning let-bind outside its scope messes up its name resolution
 
 --import SpecialisationTests/SpecPapArg
 --import SpecTests

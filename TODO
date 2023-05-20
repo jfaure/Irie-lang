@@ -22,7 +22,6 @@
   * importing new labels can break code: eg. f a = _ ; then import an 'a' label
   * edit-distance
 ## Syntax
-  * Array type: "# 1 3 2 : Array Int"
   * import lists: imports / opens keywords
   * `$ ls -l --reverse`: $ run opt-parse on a string
   * record type syntax: { x : Int , y } -- indicates y : _
