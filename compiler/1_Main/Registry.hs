@@ -256,11 +256,13 @@ judge deps reg exts modIName p = let
     x -> error (show x)
   labelHNames = p ^. P.parseDetails . P.labels
   iNames      = p ^. P.parseDetails . P.hNamesNoScope
+  iNamesV     = iMap2Vector iNames
   (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules
-  jm = JudgedModule modIName (p ^. P.moduleName) bindNames (iMap2Vector labelHNames) (iMap2Vector iNames) modTT
+  jm = JudgedModule modIName (p ^. P.moduleName) bindNames (iMap2Vector labelHNames) iNamesV modTT
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails) && null (errors ^. checkFails)
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails) && null (errors ^. unpatternFails)
-  in if coreOK then Right jm else Left (errors , jm)
+  in trace (unlines $ formatScopeWarnings iNamesV <$> (errors ^. scopeWarnings)) $
+    if coreOK then Right jm else Left (errors , jm)
 
 putErrors :: Handle -> Maybe SrcInfo -> BindSource -> Errors -> IO ()
 putErrors h srcInfo bindSrc errors = let

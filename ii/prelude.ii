@@ -30,8 +30,10 @@ _/=?_{ n5 } = ne
 --¬_   { a5 } = not
 --not_ { a5 } = not
 
-_and_{ a4 } = boolAND
-_or_ { a3 } = boolOR
+-- Short-circuit semantics require case inlining
+-- also boolAND , boolOR
+_and_{ a4 } = \a b => case a of {False => False ; True => b}
+_or_ { a3 } = \a b => case a of {True => True ; False => b }
 
 _->_ { r2 } = Arrow
 _<_  { r1 } = \f a => f a

@@ -91,6 +91,12 @@ fromCString str = let
 --   Cons x xs => (True , x , xs)
 -- in unfoldArray unravel str
 
+-- Note. type was:
+-- ∏ A B → (A → [!False | !True]) → µb.[Nil | Cons {A , b}]
+--      → { l : µb.[Nil | Cons {A , b}]
+--        , r : µb.[Nil | Cons {A , b}]}
+-- ∏ A B → (A → [!False | !True]) → µb.[Nil | Cons {A , b}] → {l : b , r : b}
+-- TODO Should we copy the μ-type ?
 span p xs = case xs of
   Nil => { l = xs , r = xs }
   Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }

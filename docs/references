@@ -1,3 +1,6 @@
+Freer Monads, More Extensible Effects
+https://okmij.org/ftp/Haskell/extensible/more.pdf
+
 Idris implementation overview (esp. a term's type is indexed by its scope)
 https://idris2.readthedocs.io/en/latest/implementation/overview.html
 

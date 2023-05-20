@@ -87,7 +87,8 @@
 
 repeat x = let xss = @Cons x xss in xss
 
-f = add 2 3
+--import stream
+--f = enumFromTo 0 2
 
 {-
 import prelude

@@ -1,6 +1,6 @@
 module MuRoll where
 import CoreSyn
-import ShowCore
+import ShowCore()
 import CoreUtils
 import Data.Functor.Foldable
 import Data.List
@@ -78,13 +78,13 @@ mergeRolls' (Rolling a m _r _z) (BuildRoll a2 ms)
    in BuildRoll (mergeTypeList True (a : a2 : tbounds)) ms -- TODO merged roll + build somehow
 
 rollType :: TypeF TypeRoll -> TypeRoll
-rollType this = let -- ! we may be building | rolling μs out of multiple branches
+rollType this = let
+  -- ! we may be building | rolling μs out of multiple branches
   -- compute typeRolls from a single THead (each sub-branch of tycons).
   getTHeadTypeRoll :: Integer -> [Int] -> THead TypeRoll -> TypeRoll
   getTHeadTypeRoll vs ms th = let
     addMu m t@(TyGround [THMu n _]) = if n == m then t else error "internal error stacked μ"
     addMu m t = TyGround [THMu m t]
---  mkTy tt = if vs == 0 then TyGround [tt] else TyVars vs [tt]
     this = let tt = [forgetRoll <$> th] in if vs == 0 then TyGround tt else TyVars vs tt
     ith = indexed th
     -- if. μ-bound in hole start μ-build
@@ -98,7 +98,8 @@ rollType this = let -- ! we may be building | rolling μs out of multiple branch
       BuildRoll _ty mus -> [mergeRollsNE $ mus <&> \(m , rollFn , b) -> let l = layer i : rollFn
         in if m `elem` ms then let r = reverse l in Rolling (addMu m (mergeTypes True b this)) m r r
            else BuildRoll this ((m , l , b) :| [])]
-      Rolling ty m (r : nextRolls) reset -> {-trace (prettyTyRaw ty <> " <=> " <> prettyTyRaw this)-} if layer i /= r -- TODO check subtype (roughly eq modulo μ and bounds)
+      Rolling ty m (r : nextRolls) reset -> {-trace (prettyTyRaw ty <> " <=> " <> prettyTyRaw this)-}
+        if layer i /= r -- TODO check subtype (roughly eq modulo μ and bounds)
         then [] -- NoRoll this
 --      then NoRoll $ mkTy $ ith <&> \(j , oldT) -> if i == j then trace (prettyTyRaw ty) ty else forgetRoll oldT -- re-insert μ-bounds
         else [Rolling ty m (nextRolls <|> reset) reset]
@@ -128,11 +129,9 @@ rollType this = let -- ! we may be building | rolling μs out of multiple branch
   in case this of
   TyVarsF vs g -> aggregateBranches vs (partitionMus g)
   TyGroundF g  -> aggregateBranches 0  (partitionMus g)
-  _ -> NoRoll (embed $ fmap forgetRoll this)
+  _ -> NoRoll (embed $ forgetRoll <$> this)
 
 deriving instance Show (THead (Maybe Type))
 deriving instance Show (TyCon TypeRoll)
 deriving instance Show (TyCon (Maybe Type))
 deriving instance Show (THead TypeRoll)
-
-

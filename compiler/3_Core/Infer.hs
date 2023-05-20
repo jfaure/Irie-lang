@@ -12,7 +12,6 @@ import Errors
 import Externs
 import TypeCheck ( check )
 import TCState
---import Generalise (generalise)
 import Typer (generalise)
 import Control.Lens
 import Data.Functor.Foldable
@@ -359,5 +358,5 @@ inferF = let
   P.LitF l           -> pure $ Core (Lit l) (TyGround [typeOfLit l])
   P.ScopePoisonF e   -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))
   P.DesugarPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . unpatternFails %= (t:))
-  P.ScopeWarnF w t   -> trace w t
+  P.ScopeWarnF w t   -> (errors . scopeWarnings %= (w:)) *> t
   x -> error $ "not implemented: inference of: " <> show (embed $ P.Question <$ x)

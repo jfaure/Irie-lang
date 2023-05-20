@@ -1,9 +1,7 @@
-# prelude.ii appears twice at leaves: one of them must wait for the other to solve it?
-# Free-var bug
+# Lift all Let-Ins
 # Effects
 # judge bind append
 # Type aliases
-# Let-Ins & lifted functions
   * mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
     Also ensure β-reduction doesn't rm the let-bind wrapper prematurely
   ? opened modules
@@ -58,6 +56,7 @@
     vlength : {n : Nat} -> Vect n a -> Nat
     vlength _ = n
 ## !?
+  * short-circuit fns: _&&_
   * named arguments (perhaps by subtype from a record arg)
   * shared streams (eg. MUL)
   * derived streams: splitAt creates 2 streams from 1, but the second is only available after the first

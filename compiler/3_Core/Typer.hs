@@ -7,11 +7,9 @@ import TCState
 import MuRoll
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector as V
-import Data.List (intersect , union)
 import Data.Functor.Foldable
-debug_gen = False || global_debug
 
-tyVars vs g = if vs == 0 then TyGround g else TyVars vs g
+debug_gen = False || global_debug
 
 type Cooc = (Maybe Type , Maybe Type) -- recursive
 data VarSub = Recursive Type | SubVar Int | SubTy Type | DeleteVar | GeneraliseVar | RecursiveVar | EscapedVar deriving (Show , Eq)
@@ -45,13 +43,14 @@ generalise lvl0 rawType = do
   let rolled = forgetRoll (cata rollType done)
   use nquants <&> \case { 0 -> rolled ; n -> TyGround [THBi n rolled] }
 
-buildVarSubs _bis' coocV recs lvl0 = V.constructN (V.length coocV) $
-  \varSubs -> let v = V.length varSubs in case coocV V.! v of
+buildVarSubs _bis' coocV recs lvl0 = V.constructN (V.length coocV) $ \varSubs -> let
+  v = V.length varSubs
+  prevTVs = setNBits v :: Integer -- don't redo co-occurence on prev-vars
+  in case coocV V.! v of
   _ | testBit lvl0 v -> EscapedVar
   -- in v+v- if non-recursive v coocs with w then it always does, so "unify v with w" means "remove v"
   -- but in v+w+ or v-w- no shortcuts: "unify v with w" means "replace occurs of v with w"
   (Just x , Just y) -> let
-    prevTVs = setNBits v :: Integer -- don't redo co-occurence on prev-vars
     genVar = if testBit recs v then RecursiveVar else GeneraliseVar
     cooc x y = partitionType (intersectTypes x y) & \(vs , ts) -> let
      xx = if clearBit (getTyVars x) v == 0 then getTyVars y else 0
@@ -68,7 +67,9 @@ buildVarSubs _bis' coocV recs lvl0 = V.constructN (V.length coocV) $
       <&> maybe GeneraliseVar (cooc t) . (if pol then fst else snd) . (coocV V.!)
     bestSub ok next = case ok of { DeleteVar -> ok ; SubTy _ -> ok ; SubVar _ -> ok ; _ko -> next }
     in foldl' bestSub (cooc x y) (oppCooc y True ++ oppCooc x False)
-  _polar -> if testBit recs v then RecursiveVar else DeleteVar
+  (polarP , polarN) -> let
+    noMergeRec = 0 == prevTVs .&. recs .&. (fromMaybe 0 ((fst . partitionType) <$> (polarP <|> polarN)))
+    in if testBit recs v && noMergeRec then RecursiveVar else DeleteVar
 
 -- build cooc-vector and mark recursive type variables
 buildCoocs :: forall s. MV.MVector s BiSub -> MV.MVector s Cooc -> BitSet -> Bool -> Type -> TCEnv s Type
@@ -117,7 +118,7 @@ buildType bis' varSubs loops pos = let
     pure $ mergeTypeList pos (TyGround grounds : subs ++ varBounds)
   in readBounds loops . partitionType
 
--- TODO make this work instead of buildType
+-- TODO use this instead of buildType: Need to add escapedVars to loops somehow!
 reconstructType :: forall s. MV.MVector s BiSub -> V.Vector VarSub -> Type -> TCEnv s Type
 reconstructType bis' varSubs ty = let
   readBounds :: (Bool , BitSet , Type) -> TCEnv s (TypeF (Bool , BitSet , Type))
@@ -130,31 +131,16 @@ reconstructType bis' varSubs ty = let
     in do
     varBounds <- bitSet2IntList (vs .&. complement loops) `forM` readVar
     subs <- bitSet2IntList vs `forM` \v -> case varSubs V.! v of
-      EscapedVar -> pure (tyVar v)
+      EscapedVar -> pure (tyVar v) -- TODO Don't keep re-subbing escaped vars!
       DeleteVar  -> pure tyBot
       GeneraliseVar -> generaliseVar v <&> \b -> TyGround [THBound b]
       RecursiveVar  -> generaliseVar v <&> \m -> TyGround [THMuBound m]
       Recursive _ -> _
       SubVar w    -> readVar w
       SubTy ty    -> pure ty
-    -- TODO patch polarity on THArrows
     let r = mergeTypeList pos (TyGround gs : subs ++ varBounds)
         loops2 = loops .|. vs
-    partitionType r & \(vs , gs) -> let nextVars = complement loops2 .&. vs in
-      if nextVars /= 0
-      then readBounds (pos , loops2 , r)
+    partitionType r & \(rvs , rgs) -> if rvs .&. complement loops2 /= 0
+      then readBounds (pos , loops2 , (TyVars (rvs .&. complement loops2) rgs))
       else pure $ negArrows $ (pos , loops2 ,) <$> project r
   in anaM readBounds (True , 0 , ty) -- track strictly positive tvar wraps?
-
--- μ merge; There exists a few tricky cases:
--- | extract and merge μ-var co-occurences into outer binder
--- foldr1 : ∏ A B → (A → A → A) → µb.[Cons {A , µb.[Cons {⊤ , ⊤} | Nil]}] → A
---       => ∏ A B → (A → A → A) → µb.[Cons {A , b} | Nil] → A
--- | merge 2 equivalent variables (a,b) while rolling branches
--- rec1 v = { a = rec1 v , b = rec1 v }
---     ∏ A B → ⊤ → {a : µa.{a : a , b : µb.{a : a , b : b}} , b : µb.{a : µa.{a : a , b : b} , b : b}}
---  => ∏ A B → ⊤ → µa.{a : a , b : a}
--- | interleaved μs
--- flattenTree : ∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → µd.[Nil | Cons {A , d}]
--- This may need to know the polarity, for top/bot and to rm negative recursion
--- muBounds serves to propagate co-occurences of recursive vars upwards

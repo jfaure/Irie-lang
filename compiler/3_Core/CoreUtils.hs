@@ -32,6 +32,7 @@ mapTHeads fn = \case
   TyGroundF g  -> TyGroundF  (fn <$> g)
   x -> x
 
+tyVars vs g = if vs == 0 then TyGround g else TyVars vs g
 hasTVars = \case { TyVars{} -> True ; _ -> False }
 
 partitionType :: Type -> (BitSet , GroundType)

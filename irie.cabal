@@ -56,7 +56,6 @@ executable irie-exe
       Errors
       Externs
       BetaEnv
-      Generalise
       Typer
       MuRoll
       Infer

@@ -15,10 +15,11 @@ data Errors = Errors
   , _typeAppFails :: [TypeAppError]
   , _mixfixFails  :: [MixfixError]
   , _unpatternFails::[UnPatError] 
+  , _scopeWarnings::[ScopeWarning]
 --, _parseFails   :: [Text]
 --  , _tmpFails     :: [TmpBiSubError]
   }
-emptyErrors = Errors [] [] [] [] [] []
+emptyErrors = Errors [] [] [] [] [] [] []
 data BiSubError = BiSubError SrcOff TmpBiSubError
 data CheckError = CheckError { inferredType :: Type , annotationType :: Type }
 data ScopeError
@@ -27,6 +28,9 @@ data ScopeError
   | AmbigBind  Text [(ModIName , IName)]
   | ScopeLetBound IName
   deriving Show
+data ScopeWarning
+  = LetShadows BitSet
+  | LambdaShadows BitSet deriving Show
 data TypeAppError = BadTypeApp { typeOperator :: Type , typeArgs :: [Expr] }
 data MixfixError  = MixfixError SrcOff Text deriving Show
 data UnPatError   = RedundantPatternMatch Text | NoCaseMerge Text | EmptyCase | IllegalPattern Text
@@ -56,14 +60,13 @@ formatSrcLoc srcInfo o = case srcInfo of
        then " <no source info>"
        else "\n" <> show lineIdx <> ":" <> show col <> ": \"" <> T.takeWhile (/= '\n') (T.drop o text) <> "\""
 
+getName nameFn q = if unQName q < 0 -- (names V.! modName q V.! unQName q)
+  then "!" <> show (0 - unQName q)
+  else show (modName q) <> "." <> fromMaybe (showRawQName q) (nameFn (modName q) (unQName q))
+
 formatBisubError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = let
   bindSrc = Just srcNames
-  msg = let
-    getName nameFn q = if unQName q < 0
-      then "!" <> show (0 - unQName q)
-      else show (modName q) <> "." <> fromMaybe (showRawQName q) (nameFn (modName q) (unQName q))
-      -- (names V.! modName q V.! unQName q)
-    in case failType of
+  msg = case failType of
     TextMsg m     -> m
     TyConMismatch -> "Type constructor mismatch" <> case (got , exp) of
       (_ , TyGround [THTyCon THArrow{}]) -> " (excess arguments)"
@@ -76,7 +79,7 @@ formatBisubError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)
   <> "\n      " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } got)
   <> "\n  <:? " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } exp)
 
-formatCheckError :: _ -> _ -> Text
+formatCheckError :: BindSource -> CheckError -> Text
 formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annotation: "
   <>  "\n  inferred: " <> clGreen (TL.toStrict $ prettyTy (ansiRender { bindSource = Just bindSrc }) inferredTy)
   <>  "\n  expected: " <> clGreen (TL.toStrict $ prettyTy (ansiRender { bindSource = Just bindSrc }) annTy)
@@ -105,3 +108,7 @@ formatUnPatError = \case
   IllegalPattern txt -> "Illegal pattern: " <> txt
   UnknownLabelExtern i -> "Unknown label extern: " <> show i
   UnknownLabelApp    q -> "Unknown label app: " <> show q
+
+formatScopeWarnings iNames = \case
+  LetShadows bs -> "Let shadow: " <> T.intercalate " , "  ((iNames V.!) <$> bitSet2IntList bs)
+  LambdaShadows bs -> "λ shadow: " <> T.intercalate " , " ((iNames V.!) <$> bitSet2IntList bs)

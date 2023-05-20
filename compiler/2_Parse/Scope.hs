@@ -3,8 +3,7 @@ module Scope (scopeTT , scopeApoF , initParams , RequiredModules , OpenModules ,
 import UnPattern (patternsToCase , Scrut(..))
 import ParseSyntax
 import QName
-import CoreSyn (ExternVar(..))
-import qualified CoreSyn
+import CoreSyn(ExternVar(..))
 import Mixfix (solveMixfixes)
 import Externs ( readParseExtern, Externs )
 import Errors
@@ -12,7 +11,6 @@ import Data.Functor.Foldable
 import Control.Lens
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import qualified BitSetMap as BSM
 
 -- * within a module, equivalent HNames map to the same IName
 -- * inference of terms needs quick and modular indexing + access to metadata
@@ -93,8 +91,8 @@ scopeApoF exts thisMod (this , params) = let
   doBruijnAbs (BruijnAbsF n bruijnSubs _ tt) = let
     argsSet    = intList2BitSet (fst <$> bruijnSubs)
     warnShadows ret = let argShadows = params._args .&. argsSet ; letShadows = params._lets .&. argsSet in if
-      | argShadows /= 0 -> ScopeWarn ("λ-binding shadows λ-binding: "   <> show (bitSet2IntList argShadows)) ret
-      | letShadows /= 0 -> ScopeWarn ("λ-binding shadows let binding: " <> show (bitSet2IntList letShadows)) ret
+      | argShadows /= 0 -> ScopeWarn (LambdaShadows argShadows) ret
+      | letShadows /= 0 -> ScopeWarn (LetShadows letShadows) ret
       | otherwise -> ret
     absParams = params & args %~ (.|. argsSet)
                        & bruijnCount %~ (+ n)

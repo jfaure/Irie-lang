@@ -104,7 +104,7 @@ SconcatMap f (@stream nexta seed) = let
 --   stream nexta seed => 
 
 --fromStr str = @stream (\(ok , head , tail) => if ok then Yield head (nextElem tail) else Done) (nextElem str)
-stringToStream str = @stream (\str => if nullString str then Done else (unConsString str > \(head , tail) => Yield head tail)) str
+stringToStream string = @stream (\str => if nullString str then Done else (unConsString str > \(head , tail) => Yield head tail)) string
 
 -- @Stream -> %Str
 streamToString s = strBufToString (foldl pushStrBuf (allocStrBuf 512) s)
@@ -112,7 +112,7 @@ streamToString s = strBufToString (foldl pushStrBuf (allocStrBuf 512) s)
 showIntList = streamToString << map (chr << (add 48))
 test = showIntList (enumFromTo 0 9)
 
-x = streamToString (stringToStream "0123")
+isoStringStream = streamToString (stringToStream "0123")
 
 -- TODO leaf bicasts; typechecks because %i8 is a subtype of %i32
 --a = stringToStream "0123"
