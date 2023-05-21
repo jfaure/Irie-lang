@@ -42,12 +42,13 @@ data Term -- β-reducable (possibly to a type)
  | Instr   !PrimInstr
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
- | Ty Type -- Term constructors may contain types, then the whole Term is a type (or Set n)
+ | Ty Type -- to embed (TermF Type): `-> {} [] let-in` may contain types
 
 -- ->
  | VBruijn IName
  | VBruijnLevel Int
  | BruijnAbs Int Term
+ | BruijnAbsEra Int BitSet Term -- Pass in captured variables without needing to rename all VBruijns in term
  | BruijnAbsTyped Int Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]
 
@@ -126,7 +127,7 @@ data THead ty
                -- recursive types must be strictly covariant (avoid curry paradox)
 
  | THBound   IName  -- Π-bound tvar; instantiating Π-binder involves sub with fresh tvars
- | THMuBound IName  -- µ-bound tvar (must be guarded and covariant)
+ | THMuBound IName  -- µ-bound tvar; semantically identical to THBound (must be guarded and covariant)
  deriving (Eq , Functor , Traversable , Foldable)
 
 data Expr = Core { exprTerm :: Term , exprType :: Type }
@@ -143,16 +144,13 @@ data ArgShape
  deriving (Ord , Eq , Show , Generic)
 
 data Bind
- = Queued -- Infer
- | Guard  { mutuals :: BitSet , tvar :: IName } -- being inferred; if met again, is recursive/mutual
+ = Guard  { mutuals :: BitSet , tvar :: IName } -- being inferred; if met again, is recursive/mutual
  -- generalising mutual types must wait for all tvars to be constrained (all mutual block to be inferred)
  | Mut    { naiveExpr :: Expr , mutuals :: BitSet , letCaptured :: (Int , BitSet) , tvar :: IName }
 
  -- free has the atLen of all capturable vars: the reference for where the bitset bruijns are valid
  | BindOK { optLevel :: OptBind , free :: (Int , BitSet) , naiveExpr :: Expr }
  | BindUnused Text
-
- | WIP -- Fenv
 
 data OptBind = OptBind
   { optId :: Int

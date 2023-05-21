@@ -81,8 +81,15 @@
 
 -- trans imports: list2 uses list.Nil
 
-repeat x = let xss = @Cons x xss in xss
+-- ∏ A → A → {a : A , b : %i1}
+--lp1 y = let f x = x in {a = f y , b = f 1}
 
+-- ∏ A → A → {a : A , b : %i1}
+--lp4 y = let f = \x => x y in {a = f (\z => z) , b = f (\z => 1)}
+
+--foldr f s l = case l of
+--  @Cons x xs => f x (foldr f s xs)
+--  @Nil       => s
 --import stream
 --f = enumFromTo 0 2
 

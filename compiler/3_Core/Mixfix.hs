@@ -23,7 +23,7 @@ tryParse p = use stream >>= \s -> catchE p (\e -> (stream .= s) *> throwE e)
 
 solveMixfixes :: SrcOff -> [Expr] -> Expr
 solveMixfixes o juxt = (MixfixPoison . MixfixError o) ||| identity
-  $ runExceptT (hypoM (solveFixities o) unSubParser (parseExpr o)) `evalState` ParseState juxt
+  $ runExceptT (hypoM' (solveFixities o) unSubParser (parseExpr o)) `evalState` ParseState juxt
 
 solveFixities :: SrcOff -> ExprF Expr -> Expr
 solveFixities o = let

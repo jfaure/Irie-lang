@@ -21,11 +21,12 @@
   * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
   * importing new labels can break code: eg. f a = _ ; then import an 'a' label
   * edit-distance
-## Syntax
+  * judge-bind / bindvector breaks the infer.scope hylo
+## Syntax: spare: `~%;
   * import lists: imports / opens keywords
   * `$ ls -l --reverse`: $ run opt-parse on a string
   * record type syntax: { x : Int , y } -- indicates y : _
-  ? implicit args: {} used already
+  * ~_ = implicit arg: ~A -> A -> A
   ? Sum-of-Record
 ### Linearity ; free variables (type must be known) ; β vs always-inline
   ! β-opt: Specialise on paps iff dupd (or all paps?) (polymorphic functions may miss pap-specs)

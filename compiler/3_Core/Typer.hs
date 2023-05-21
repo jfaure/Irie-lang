@@ -13,11 +13,14 @@ import Data.Functor.Foldable
 debug_gen = False || global_debug
 
 type Cooc = (Maybe Type , Maybe Type)
-data VarSub = Recursive Type | SubVar Int | SubTy Type | DeleteVar | GeneraliseVar | RecursiveVar | EscapedVar deriving (Show , Eq)
+data VarSub = SubVar Int | SubTy Type | DeleteVar | GeneraliseVar | RecursiveVar deriving (Show , Eq)
 
-generalise :: forall s. BitSet -> Either IName Type -> TCEnv s Type
-generalise lvl0 rawType = do
-  let startType = (tyVar ||| identity) rawType
+-- Generalising a type unavoidably requires a double pass since simplification must know all co-occurences
+-- 1. recursively read tvar bounds and register coocurrences
+-- 2. re-read all tvar bounds, this time merging according to cooccurence analysis
+-- 3. Finally tighten μ-types (cata, thus can make a hyloM out of 2 and 3)
+generalise :: forall s. Type -> TCEnv s Type
+generalise startType = do
   recursives .= 0
   bl    <- use blen
   bis'  <- use bis
@@ -25,16 +28,17 @@ generalise lvl0 rawType = do
   rawT  <- buildCoocs bis' coocV 0 True startType
   recs    <- use recursives
   coocVF  <- V.unsafeFreeze coocV
-  let varSubs = buildVarSubs bis' coocVF recs lvl0
-  MV.replicate 8000 (complement 0) >>= (genVec .=) -- TODO HACK size
+  let varSubs = buildVarSubs bis' coocVF recs
+  -- TODO len bis' is more than enough space, note. buildCoocs may have to instantiate Π types
+  MV.replicate (MV.length bis') (complement 0) >>= (genVec .=)
   nquants .= 0
+  traceM ("raw-gen: " <> prettyTyRaw rawT)
   when False $ do
     traceM (prettyTyRaw rawT)
     --let recTypes = (\i -> (\(a , b) -> (i , fromMaybe _ (a <|> b))) (coocVF V.! i)) <$> bitSet2IntList recs
     --traceM $ "recTypes:\n" <> (unlines $ (\(i , t) -> show i <> ": " <> prettyTyRaw t) <$> recTypes)
     --rTs <- recTypes `forM` \(i , t) -> (i,) <$> buildType bis' varSubs 0 True t
     --traceM $ "rTs:\n" <> (unlines $ (\(i , t) -> show i <> ": " <> prettyTyRaw t) <$> rTs)
-    traceM $ "lvl0: " <> show (bitSet2IntList lvl0)
     traceM $ "recs: " <> show (bitSet2IntList recs)
     traceM (unlines $ V.toList $ show <$> V.indexed coocVF)
     traceM (unlines $ V.toList $ show <$> V.indexed varSubs)
@@ -44,11 +48,10 @@ generalise lvl0 rawType = do
   let rolled = forgetRoll (cata rollType done)
   use nquants <&> \case { 0 -> rolled ; n -> TyGround [THBi n rolled] }
 
-buildVarSubs _bis' coocV recs lvl0 = V.constructN (V.length coocV) $ \varSubs -> let
-  v = V.length varSubs
+buildVarSubs _bis' coocV recs = V.constructN (V.length coocV) $ \prevSubs -> let
+  v = V.length prevSubs
   prevTVs = setNBits v :: Integer -- don't redo co-occurence on prev-vars
   in case coocV V.! v of
-  _ | testBit lvl0 v -> EscapedVar
   -- in v+v- if non-recursive v coocs with w then it always does, so "unify v with w" means "remove v"
   -- but in v+w+ or v-w- no shortcuts: "unify v with w" means "replace occurs of v with w"
   (Just x , Just y) -> let
@@ -56,7 +59,7 @@ buildVarSubs _bis' coocV recs lvl0 = V.constructN (V.length coocV) $ \varSubs ->
     cooc x y = partitionType (intersectTypes x y) & \(vs , ts) -> let
      xx = if clearBit (getTyVars x) v == 0 then getTyVars y else 0
      yy = if clearBit (getTyVars y) v == 0 then getTyVars x else 0
-     canSub v = (varSubs V.! v) & \vs -> vs == GeneraliseVar || vs == RecursiveVar --nesting SubVars is too complicated
+     canSub v = prevSubs V.! v & \vs -> vs == GeneraliseVar || vs == RecursiveVar --nesting SubVars is too complicated
      subCandidates = filter canSub $ bitSet2IntList (clearBit ((vs .|. xx .|. yy) .&. prevTVs) v)
      r = case head subCandidates of
       Just w  -> SubVar w -- Don't sub for polar vars!
@@ -110,16 +113,13 @@ buildType bis' varSubs loops pos = let
     -- The big question is which vars to drop / sub
     subs <- bitSet2IntList vs `forM` \v -> case varSubs V.! v of
       DeleteVar     -> pure tyBot
-      EscapedVar -> pure (tyVar v)
       GeneraliseVar -> generaliseVar v <&> \b -> TyGround [THBound b]
       RecursiveVar  -> generaliseVar v <&> \m -> TyGround [THMuBound m]
-      Recursive _ -> _
       SubVar w    -> if testBit l w then pure tyTop else readBounds (setBit l w) (setBit 0 w , [])
       SubTy ty    -> pure ty
     pure $ mergeTypeList pos (TyGround grounds : subs ++ varBounds)
   in readBounds loops . partitionType
 
--- TODO use this instead of buildType: Need to add escapedVars to loops somehow!
 reconstructType :: forall s. MV.MVector s BiSub -> V.Vector VarSub -> Type -> TCEnv s Type
 reconstructType bis' varSubs ty = let
   readBounds :: (Bool , BitSet , Type) -> TCEnv s (TypeF (Bool , BitSet , Type))
@@ -132,16 +132,14 @@ reconstructType bis' varSubs ty = let
     in do
     varBounds <- bitSet2IntList (vs .&. complement loops) `forM` readVar
     subs <- bitSet2IntList vs `forM` \v -> case varSubs V.! v of
-      EscapedVar -> pure (tyVar v) -- TODO Don't keep re-subbing escaped vars!
       DeleteVar  -> pure tyBot
       GeneraliseVar -> generaliseVar v <&> \b -> TyGround [THBound b]
       RecursiveVar  -> generaliseVar v <&> \m -> TyGround [THMuBound m]
-      Recursive _ -> _
       SubVar w    -> readVar w
       SubTy ty    -> pure ty
     let r = mergeTypeList pos (TyGround gs : subs ++ varBounds)
         loops2 = loops .|. vs
     partitionType r & \(rvs , rgs) -> if rvs .&. complement loops2 /= 0
-      then readBounds (pos , loops2 , (TyVars (rvs .&. complement loops2) rgs))
+      then readBounds (pos , loops2 , (TyVars (rvs {- .&. complement loops2-}) rgs))
       else pure $ negArrows $ (pos , loops2 ,) <$> project r
   in anaM readBounds (True , 0 , ty) -- track strictly positive tvar wraps?

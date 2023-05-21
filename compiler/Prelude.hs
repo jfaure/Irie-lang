@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypo)
+ , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -84,8 +84,12 @@ hypo f g = h where h = f <<< fmap (cata f ||| h) <<< g
 anaM :: (Corecursive t, Traversable (Base t), Monad m) => (a -> m (Base t a)) -> a -> m t
 anaM psi = a where a = fmap embed . traverse a <=< psi
 
-hypoM :: (Traversable t, Monad m) => (t b -> b) -> (c -> m (t (Either b c))) -> c -> m b
-hypoM f g = h where h = fmap f <<< traverse (pure ||| h) <=< g
+-- There are 2 possible semantics for hypoM: does Left break the hylo or just the apo
+hypoM' :: (Traversable t, Monad m) => (t b -> b) -> (c -> m (t (Either b c))) -> c -> m b
+hypoM' f g = h where h = fmap f <<< traverse (pure ||| h) <=< g
+hypoM :: (Traversable t, Monad m , Base b ~ t, Recursive b)
+  => (t b -> b) -> (c -> m (t (Either b c))) -> c -> m b
+hypoM f g = h where h = fmap f <<< traverse (pure . cata f ||| h) <=< g
 
 hyloM :: (Functor f , Monad m , Traversable f) => (f b -> b) -> (a -> m (f a)) -> a -> m b
 hyloM f g = h where h = fmap f <<< traverse h <=< g

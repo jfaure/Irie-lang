@@ -18,20 +18,6 @@ debug_biunify = global_debug
 failBiSub :: BiFail -> Type -> Type -> TCEnv s BiCast
 failBiSub msg a b = BiEQ <$ (tmpFails %= (TmpBiSubError msg a b:))
 
-leakVars :: Int -> BitSet -> TCEnv s () -- v <=> a -> b => set a and b to lvl of v (they're exported outwards)
-leakVars v export = let
-  go [] = []
-  go (l : lvs) = if testBit l v
-    then (l .|. export) : go lvs -- ! V belongs to higher lvl , add exports until v no longer present (which lvl?) 
-    else l : lvs -- OK v is local
-  in lvls %= \case
-    [] -> error "internal failure to initialise tvar lvls"
-    l -> go l
-
-leakTyVars v t = -- traceM (show v <> " " <> prettyTyRaw t) *>
-  leakVars v (getTVarsType t) -- TODO avoid type traversal?
-checkLvl v = use lvls <&> \(x : _) -> testBit x v
-
 bisub a b = --when debug_biunify (traceM ("bisub: " <> prettyTyRaw a <> " <=> " <> prettyTyRaw b)) *>
   biSubType a b
 
@@ -40,17 +26,13 @@ biSubTVars p m = BiEQ <$ (bitSet2IntList p `forM` \v -> biSubTVarTVar v `mapM` b
 
 biSubTVarTVar p m = use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
   when debug_biunify (traceM ("bisubττ: " <> prettyTyRaw (tyVar p) <> " <=> " <> prettyTyRaw (tyVar m)))
-  live <- checkLvl p
-  leakVars p (0 `setBit` m)
-  leakVars m (0 `setBit` p)
   MV.write v p (BiSub (mergeTVar m p') (mergeTVar m m')) -- TODO is ok? intended to fix recursive type unification
-  unless (hasVar m' m || live) $ void (biSubType p' (TyVars (setBit 0 m) [])) -- Avoid loops
+  unless (hasVar m' m) $ void (biSubType p' (TyVars (setBit 0 m) [])) -- Avoid loops
   pure BiEQ
 
 biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let mMerged = mergeTypes True m m'
   when debug_biunify (traceM ("bisub: " <> prettyTyRaw (tyVar v) <> " <=> " <> prettyTyRaw m))
-  leakTyVars v m
   MV.write b v (BiSub p' mMerged)
   if mMerged == m' then pure BiEQ -- if merging was noop, this would probably loop
   else biSubType p' m
@@ -58,7 +40,6 @@ biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
 biSubTVarM p v = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let pMerged = mergeTypes False p p'
   when debug_biunify (traceM ("bisub: " <> prettyTyRaw p <> " <=> " <> prettyTyRaw (TyVars (setBit 0 v) [])))
-  leakTyVars v p
   MV.write b v (BiSub pMerged m')
   if pMerged == p' then pure BiEQ -- if merging was noop, this would probably loop
   else biSubType p m'

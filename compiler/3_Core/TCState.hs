@@ -23,16 +23,16 @@ data TCEnvState s = TCEnvState {
  , _errors      :: Errors
 
  -- Biunification state
- , _bindStack     :: [(Int , Int)]
+ , _bindStack     :: [(Int , Int)]      -- [(LetDepth , IName)]
  , _bruijnArgVars :: V.Vector Int       -- bruijn arg -> TVar map
  , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen          :: Int                -- cursor for bis which may have spare space
  , _bis           :: MV.MVector s BiSub -- typeVars
- , _lvls          :: [BitSet] -- tvar let-nest scope (see Generalise.hs)
 
  -- Free vars => any VBruijns from outside the let-binding must be explicitly passed as new VBruijns
  , _freeLimit   :: Int
  , _letCaptures :: BitSet
+ , _captureRenames :: MV.MVector s Int -- unset unless letCaptures bit set!
 
  -- Type analysis
  , _recursives :: BitSet

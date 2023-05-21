@@ -191,13 +191,11 @@ pBind :: HName -> Bool -> Bind -> Doc Annotation
 pBind nm showRhs bind = pretty nm <> " = " <> case bind of
   Guard m tvar      -> "GUARD : " <> viaShow m <> viaShow tvar
   Mut{}             -> "Mut{} "
-  Queued{} -> "Queued"
   BindOK _n (nFree , free) expr -> let
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
     letW  = "" -- if lbound then "let " else ""
     in letW <> {-viaShow n <+> -} recKW <> (if 0 == free then "" else viaShow (nFree , bitSet2IntList free)) <> pExpr showRhs expr
   BindUnused{} -> "BindUnused{}"
-  WIP -> "WIPBind"
 
 -- want to print the top-level let-block without {} or = record
 pTopExpr showRhs (Core (LetBlock bs) _ty) = vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)

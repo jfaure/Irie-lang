@@ -2,7 +2,7 @@
 module Infer (judgeModule) where
 import Prim ( PrimInstr(MkPAp) )
 import Builtins (typeOfLit)
-import BiUnify ( bisub )
+import BiUnify
 import qualified ParseSyntax as P
 import CoreSyn as C
 import CoreUtils
@@ -19,7 +19,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
---import PrettyCore
+import PrettyCore
 
 --addBind :: Expr -> P.FnDef -> Expr
 --addBind jm newDef = jm
@@ -33,7 +33,6 @@ judgeModule pm importedModules modIName exts loaded = let
 --  & lets %~ (.|. intList2BitSet (V.toList bindNms))
 --  & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName 0 i))
 --bindings    = apo (scopeApoF exts modIName) (modTT , scopeParams)
---doInfer = cata inferF bindings
   inferTT :: P.TT -> TCEnv s Expr
   inferTT tt = hypo inferF (scopeApoF exts modIName) (tt , scopeParams)
 --inferBindings = mapM (use P.fnRhs >>= inferTT) (pm ^. P.bindings)
@@ -56,10 +55,10 @@ judgeModule pm importedModules modIName exts loaded = let
     , _tmpFails = []
     , _blen     = 0
     , _bis      = bis'
-    , _lvls     = []
 
     , _freeLimit = 0
     , _letCaptures = 0
+    , _captureRenames = g
 
     , _recursives = 0
     , _nquants = 0
@@ -75,19 +74,23 @@ judgeBind letDepth bindINm = let
     bindStack %= ((letDepth , bindINm) :)
     MV.write wip' bindINm (Right (Guard emptyBitSet tvarIdx))
     svlc  <- letCaptures <<.= 0
---  svArgTVs <- use bruijnArgVars
---  freshFreeTVs <- freshBiSubs (V.length svArgTVs)
---  bruijnArgVars .= V.fromList freshFreeTVs
-
+    argVars <- use bruijnArgVars
     atLen <- V.length <$> use bruijnArgVars -- all capturable vars (reference where the letCaptures are valid bruijns)
-    expr <- cata inferF (P._fnRhs abs) --  traceM $ "inferring: " <> show bindINm
+    (captureRenames .=) =<< MV.new atLen
 
-    -- bisub free-vars
---  argTVs <- bruijnArgVars <<.= svArgTVs
---  V.zipWithM biSubTVarTVar (V.take (V.length svArgTVs) svArgTVs) (V.fromList freshFreeTVs)
+    rawExpr <- cata inferF (P._fnRhs abs)
 
-    lc <- fmap (atLen ,) $ letCaptures <<%= (.|. svlc)
     bindStack %= drop 1
+    lcVars <- letCaptures <<%= (.|. svlc)
+    argTVs <- use captureRenames >>= \cr -> bitSet2IntList lcVars `forM` \l -> (argVars V.! l ,) <$> MV.read cr l
+
+--  traceShowM argTVs
+--  mapM (uncurry biSubTVarTVar) argTVs
+
+    let freeVarCopies = snd <$> argTVs -- [Int]
+        lc = (atLen , lcVars)
+        expr = if True || lcVars == 0 then rawExpr else
+          rawExpr & \(Core t ty) -> Core t (prependArrowArgsTy (tyVar <$> freeVarCopies) ty)
 
     -- generalise
     MV.read wip' bindINm >>= \case -- learn which binds had to be inferred as dependencies
@@ -105,41 +108,58 @@ judgeBind letDepth bindINm = let
           then Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tVar)
            <$ MV.write wip' bindINm (Right (Mut expr ms lc tVar))
            <* bisub (exprType expr) (tyVar tVar) -- ! recursive => bisub with -τ (itself)
+           <* when (not (null freeVarCopies)) (error "mutual free vars")
           -- can generalise once all mutuals & associated tvars are fully constrained
-          else genExpr wip' expr lc tVar
+          else genExpr wip' expr freeVarCopies lc tVar
       b -> error $ "panic: " <> show b
 
   -- reference to inference stack (forward ref | recursive | mutual)
   preInferred :: MV.MVector s (Either P.FnDef Bind) -> Bind -> TCEnv s Expr
   preInferred wip bind = case bind of
     BindOK _ _f e  -> pure e -- don't inline the expr
-    Mut e _ms lc tvar -> genExpr wip e lc tvar
-    -- Stacked bind means this was either Mutual | recursive (also weird recursive: r = { a = r })
+    Mut e _ms lc tvar -> genExpr wip e [] lc tvar
+    -- v Stacked bind means this was either Mutual | recursive (also weird recursive: r = { a = r })
     Guard mutuals tvar -> do
       -- mark as stacked on top of all binds at this lvl
       -- mark it as mutual with all bind at its level
       bStack <- use bindStack
       let mbs = intList2BitSet $ snd <$> filter ((letDepth == ) . fst) bStack
-      (Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvar))
+      Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvar)
         <$ MV.write wip bindINm (Right $ Guard (mutuals .|. mbs) tvar)
     b -> error (show b)
 
-  genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> (Int , BitSet) -> Int -> TCEnv s Expr
-  genExpr wip' (Core t ty) letCapture tvarIdx = do
-    lvl0 <- use lvls <&> fromMaybe (error "panic empty lvls") . head
-    gTy  <- generaliseVar lvl0 tvarIdx ty --  checkAnnotation ann gTy
-    let retExpr = Core t gTy
-    retExpr <$ MV.write wip' bindINm (Right $ BindOK optInferred letCapture retExpr)
+  genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> [Int] -> (Int , BitSet) -> Int -> TCEnv s Expr
+  genExpr wip' (Core t ty) freeVarCopies letCapture@(_,freeVars) tvarIdx = do
+    gTy  <- do
+      _cast <- use bis >>= \v -> (v `MV.read` tvarIdx) <&> _mSub >>= \case
+        TyGround [] -> BiEQ <$ MV.write v tvarIdx (BiSub ty (TyGround []))
+        _t -> bisub ty (tyVar tvarIdx) -- ! recursive => bisub with -τ (itself)
+      let copyFreeVarsTy = prependArrowArgsTy (tyVar <$> freeVarCopies) (tyVar tvarIdx)
+      generalise copyFreeVarsTy
+      -- <* when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
+    let retExpr = Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
+           -- TODO Mark eraser args (ie. lazy VBruijn rename for simplifer)
+    retExpr <$ MV.write wip' bindINm (Right (BindOK optInferred letCapture retExpr))
 
   in use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>=
     (inferParsed wip ||| preInferred wip) -- >>= \r -> r <$ (use bindStack >>= \bs -> when (null bs) (clearBiSubs 0))
 
-generaliseVar lvl0 var ty = do
-  _cast <- use bis >>= \v -> (v `MV.read` var) <&> _mSub >>= \case
-    TyGround [] -> BiEQ <$ MV.write v var (BiSub ty (TyGround []))
-    _t -> bisub ty (tyVar var) -- ! recursive => bisub with -τ (itself)
-  generalise lvl0 (Left var)
-  -- <* when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
+-- judgeBind then uninline and add captured variable arguments if necessary
+getBind letDepth bindINm = do
+  expr <- judgeBind letDepth bindINm <&> \(Core _t ty) ->
+    Core (Var (VLetBind (mkQName letDepth bindINm))) ty -- don't inline at this stage
+  use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>= \case
+    Right (b@BindOK{}) -> free b & \(_ld , lc) -> if lc == 0 then pure expr else
+      -- ld doesn't matter since we dont β-reduce
+      expr & \(Core t ty) -> let 
+        bruijnArs = bitSet2IntList lc
+        appFree = App t (VBruijn <$> bruijnArs)
+        in do
+        atvs <- use bruijnArgVars
+        (_cast , appTy) <- biUnifyApp ty (tyVar . (atvs V.!) <$> bruijnArs)
+        pure (Core appFree appTy)
+          -- trace (prettyTermRaw t <> "\n" <> prettyTermRaw (exprTerm c) <> "\n" <> prettyTyRaw ty) c
+    _ -> pure expr -- TODO handle mutuals that capture vars ; ie. spawn mutumorphisms
 
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
 -- ! we may have inferred some missing information in type holes
@@ -150,19 +170,17 @@ checkAnnotation annTy inferredTy =
   then pure annTy
   else inferredTy <$ (errors . checkFails %= (CheckError inferredTy annTy:))
 
+-- App is the only place inference can fail (if an arg doesn't subtype its expected type)
+biUnifyApp :: Type -> [Type] -> TCEnv s (BiCast , Type)
+biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
+  (, tyVar retV) <$> bisub fTy (prependArrowArgsTy argTys (tyVar retV))
+
 inferF :: P.TTF (TCEnv s Expr) -> TCEnv s Expr
 inferF = let
  withBruijnArgTVars :: Int -> TCEnv s a -> TCEnv s ([Type] , a)
  withBruijnArgTVars n go = freshBiSubs n >>= \argTVars -> do
-   w <- (\v -> MV.unsafeGrowFront v n) =<< V.unsafeThaw =<< use bruijnArgVars
-   imapM_ (MV.write w) argTVars
-
-   (bruijnArgVars .=) =<< V.unsafeFreeze w
-   (reverse $ map tyVar argTVars , ) <$> go <* (bruijnArgVars %= V.drop n)
-
-  -- App is the only place typechecking can fail
- biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
-   (, tyVar retV) <$> bisub fTy (prependArrowArgsTy argTys (tyVar retV))
+   (bruijnArgVars %= (V.fromList argTVars <>))
+   (reverse $ tyVar <$> argTVars , ) <$> go <* (bruijnArgVars %= V.drop n)
 
  retCast rc tt@(Core f ty) = case rc of { BiEQ -> tt ; c -> Core (Cast c f) ty }
 
@@ -189,7 +207,7 @@ inferF = let
    in if any isPoisonExpr (f : args) then pure poisonExpr else do
      (biret , retTy) <- biUnifyApp (exprType f) (exprType <$> args)
      use tmpFails >>= \case
-       [] -> castRet biret castArgs <$> ttApp retTy (\i -> judgeBind _0 i) f args -- >>= checkRecApp
+       [] -> castRet biret castArgs <$> ttApp retTy (\i -> _judgeBind _0 i) f args -- >>= checkRecApp
        x  -> poisonExpr <$ -- trace ("problem fn: " <> show f :: Text)
          ((tmpFails .= []) *> (errors . biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
 
@@ -199,7 +217,7 @@ inferF = let
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
-   then judgeBind 0 (unQName q) <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty -- don't inline at this stage
+   then getBind 0 (unQName q) -- <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty -- don't inline at this stage
    else use loadedMs >>= \ls -> case readQName ls (modName q) (unQName q) of
      Imported e -> pure e
      x -> error (show x)
@@ -209,32 +227,24 @@ inferF = let
  newFreeVarEnv go = do
    fl   <- use bruijnArgVars <&> V.length
    svFL <- freeLimit <<.= fl
-   bl <- use blen
-   lvls %= \case -- enter lvl: all prev vars are escaped => if biunified with new vars must export new vars
-     []      -> [setNBits bl]
-     l0 : ls -> (setNBits bl .|. l0) : l0 : ls
-
-   r <- go
-
-   lvls %= drop 1 -- leave Lvl (? .|. head into next lvl?)
-   freeLimit .= svFL
-   letCaptures %= (`shiftR` (fl - svFL)) -- diff all let-captures
-   pure r
+   go <* do
+     freeLimit .= svFL
+     letCaptures %= (`shiftR` (fl - svFL)) -- reset relative to next enclosing let-nest
 
  withLetNest go = letNest <<%= (1+) >>= \nest -> go nest <* (letNest %= \x -> x - 1)
 
  inferBlock :: V.Vector P.FnDef -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
- inferBlock letBindings go = withLetNest $ \nest -> do
+ inferBlock letBindings inExpr = withLetNest $ \nest -> do
    newFreeVarEnv $ do
      use letBinds >>= \lvl -> V.thaw (Left <$> letBindings) >>= MV.write lvl nest
      judgeBind nest `mapM_` [0 .. V.length letBindings - 1]
 
-   -- regeneralise block `mapM_` [0 .. V.length letBindings - 1]
-   r <- fromMaybe (pure poisonExpr) go -- in expr
+   ret <- fromMaybe (pure poisonExpr) inExpr
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
      <&> map (BindUnused . show @P.FnDef ||| identity)
+-- lets <- V.generateM (V.length letBindings - 1) (getBind nest)
    mI <- use thisMod
-   pure (r , V.zipWith (\fn e -> (LetMeta (fnINameToQName mI fn) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
+   pure (ret , V.zipWith (\fn e -> (LetMeta (fnINameToQName mI fn) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
 
  fnINameToQName mI fnDef = case P._fnRecType fnDef of
    P.LetTuple -> mkQName 0 (P._fnIName fnDef)
@@ -257,15 +267,23 @@ inferF = let
   P.LetInF (P.Block _ _ lets) pInTT -> inferBlock lets pInTT <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
+    -- if b is free, insertOrRetrieve its local tvar
     P.VBruijn b -> do
       argTVars <- use bruijnArgVars
       fLimit <- use freeLimit
       let lvl = V.length argTVars
           diff = lvl - fLimit
           bruijnAtBind = b - diff -- Bruijn idx at the let-binding
-      when (b >= diff) (letCaptures %= (`setBit` bruijnAtBind))
-      pure $ Core (VBruijn b) (tyVar $ argTVars V.! b)
-    P.VLetBind q -> judgeBind (modName q) (unQName q) <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty
+      tv <- if b >= diff
+        then (letCaptures <<%= (`setBit` bruijnAtBind)) >>= \oldLc -> use captureRenames >>= \cr -> 
+          if testBit oldLc bruijnAtBind
+          then MV.read cr bruijnAtBind
+          else freshBiSubs 1 >>= \[t] -> t <$ MV.write cr bruijnAtBind t
+        else pure (argTVars V.! b) -- local arg
+--    when (b >= diff) (letCaptures %= (`setBit` bruijnAtBind))
+--    tv <- pure (argTVars V.! b)
+      pure $ Core (VBruijn b) (tyVar tv)
+    P.VLetBind q -> getBind (modName q) (unQName q) -- <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 
