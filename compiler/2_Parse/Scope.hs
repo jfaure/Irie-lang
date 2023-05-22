@@ -11,6 +11,7 @@ import Data.Functor.Foldable
 import Control.Lens
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
+import qualified BitSetMap as BSM
 
 -- * within a module, equivalent HNames map to the same IName
 -- * inference of terms needs quick and modular indexing + access to metadata
@@ -131,9 +132,10 @@ scopeApoF exts thisMod (this , params) = let
     bindsDone :: V.Vector FnDef
     bindsDone = binds <&> (& fnRhs %~ scopeTT exts thisMod letParams)
     in LetInF (Block open letType bindsDone) (mtt <&> \tt -> Right (tt , letParams))
-  -- Tuple iNames are thus negative (?)
-  Tuple xs -> let ttToFnDef i e = let j = i in FnDef (show j) j LetTuple Nothing e Nothing
-    in LetInF (Block True Let (V.imap (\i e -> ttToFnDef i $ scopeTT exts thisMod params e) (V.fromList xs))) Nothing
+
+  Prod xs -> ProdF $ xs <&> \(i , e) -> (qName2Key (mkQName thisMod i) , Right (e , params))
+  Tuple xs -> ProdF $ V.fromList $ Prelude.imap (\i e ->
+    (qName2Key (mkQName 0 i) , Right (e , params))) xs
 
   tt -> Right . (, params) <$> project tt
 

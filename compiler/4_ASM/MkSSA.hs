@@ -30,7 +30,7 @@ int_t = TPrim (PtrTo (PrimInt 32))
 
 setTop t = modify $ \x->x{top = t}
 
-mkSSAModule coreMod@(JudgedModule modIName modName bindNames pLabels _ _modTT) = let
+mkSSAModule coreMod@(JudgedModule modIName modName pLabels _ _ _modTT) = let
   nArgs  = 100 -- TODO !
   nBinds = V.length coreBinds
   wip2Fn = \case
@@ -39,7 +39,7 @@ mkSSAModule coreMod@(JudgedModule modIName modName bindNames pLabels _ _modTT) =
   coreBinds = mempty
   in runST $ do
     at ← MV.new nArgs
-    v  ← V.unsafeThaw (WIPCore <$> V.zip bindNames coreBinds)
+    v  ← V.unsafeThaw (WIPCore <$> V.zip _bindNames coreBinds)
     st ← (cgBind `mapM` [0 .. nBinds-1]) `execStateT` CGState {
       wipBinds    = v
     , typeDef     = 0

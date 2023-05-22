@@ -54,6 +54,7 @@ data Term -- β-reducable (possibly to a type)
 
 -- {}
  | Tuple    (V.Vector Term)      -- Simplifier only: Must not contain any free variables!
+ | Prod     (BSM.BitSetMap Term)
  | LetBlock (V.Vector (LetMeta , Bind))
  | LetBinds (V.Vector (LetMeta , Bind)) Term
  | TTLens  Term [IField] LensOp
@@ -201,19 +202,18 @@ data JudgedModule = JudgedModule {
    modIName   :: IName
  , modHName   :: HName
  -- * JudgedModule saves its own HName list to save the Registry the trouble of maintaining them
- , bindNames  :: V.Vector HName -- bindings
  , labelNames :: V.Vector HName -- M.Map HName IName -- parseDetails . labels
- , jmINames   :: V.Vector HName -- M.Map HName IName -- parseDetails . labels
+ , jmINames   :: V.Vector HName -- M.Map HName IName -- parseDetails . hNamesToINames
+ , topINames  :: BitSet -- These allow QName -> TopBind vec lookup
  , moduleTT   :: Expr
 }
-emptyJudgedModule = JudgedModule (-1) "" mempty mempty mempty poisonExpr -- dodgy (used for repl atm)
+emptyJudgedModule = JudgedModule (-1) "" mempty mempty 0 poisonExpr -- dodgy (used for repl atm)
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 
 -- Used by prettyCore functions and the error formatter
 data BindSource = BindSource {
    srcLabelNames :: ModIName -> IName -> Maybe HName
- , srcBindNames  :: ModIName -> IName -> Maybe HName
  , srcFieldNames :: ModIName -> IName -> Maybe HName -- INames as parsed by P.unknownNames
 }
 

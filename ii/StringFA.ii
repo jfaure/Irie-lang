@@ -1,0 +1,57 @@
+BasicShiftOr :: String -> (Char -> BitSet -> BitSet)
+BasicShiftOr pattern = let
+  shMask : String -> Char -> BitSet
+  -- 0 bit position where char appears in pattern
+  -- shMask "aphp" 'p' = [1..1]0101
+  
+  -- st updates for each input char, if 0 is found at leftmost bit, pattern was matched
+  nextChar x st = (st .<<. 1) .|. shMask 
+  in nextChar
+
+multiStringShiftOr : (n : Int) ~> Vec n String
+multiStringShiftOr pats = let
+-- buckets roughly 1:1 with pats but may group patterns
+-- the k-th n bits of sh-mask(‘x’) encode the bucket ids with ‘x’ at the k-th byte position
+-- set n to 8 so sh-mask byte position == byte position in pattern
+-- ! byte position counted from rightmost byte for SIMD
+-- if. sh-mask byte position longer than bucket, encode bucket id in the padding byte => carry matches along
+
+  -- k: number of chars processed so far mod n
+  -- repeat for n input chars, then check if st has any 0 bits; then verify match
+  -- Use 128-bit sh-mask: need to limit pat length to 8, if longer extract lower 8 bytes
+  nextChar st x = st | (shMask x .<<. k)
+  in nextChar
+
+-- Pattern grouping: low false positives: similar pat lengths
+
+FAComponentMatching = let
+-- bit-based NFA where each bit represents a state
+-- maintian curSet mask that sets bit to 1 if pos matches a current state id
+-- transition span = id difference between 2 states of transition (usually small since states are seq assigned)
+  glushkovNFA = _
+    -- calc successor & reachable sets (State -> [State]) & their intersection
+    -- |  precalculate successor set for all combs (fast but 2**n successor sets)
+    -- |> Successor set-mask for each state, then combine them for every state in current set
+    --   (costs n mem lookups and n ors)
+    --   improve by keeping shift-k masks shared by all relevant states (forward trans of span k)
+    -- *typical ST = span <= Limit (pre-defined shift limit: 7)
+    --   (CurSet .&. ShiftK-mask) .<<. k = all possible suc state span k from CurSet
+    --   typical suc set = combine sucSets for all k
+    -- *Exceptional ST = span > Limit & backward transitions
+    --   Any state with at least 1 exceptional transition keeps its own successor mask
+
+  runNFA : (n : Int) ~> Vec n (Sh , Succ) -> BitSet -> (Char -> StateSet) -> _
+  runNFA masks exMask reach = _
+  -- 1. Succ = combine successor masks possibly reached (typical .| exceptional)
+  -- 2. Next x = reach c .&. succ
+  -- 3. Match if next contains any accept state
+
+  in _
+
+----------------
+-- SubSystems --
+----------------
+-- # Small string-set (<80) matching. shift-or algorithm using the SSSE3 "PSHUFB"
+-- instruction applied over a small number (2-8) of 4-bit regions in the suffix of each string
+-- # Cyclic state: search for transitions out of the cycle
+-- # Small DFA (<16): use shuffle for state transitions

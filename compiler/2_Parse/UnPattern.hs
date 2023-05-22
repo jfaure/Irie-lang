@@ -81,7 +81,8 @@ buildCase thisMod = let
       unConsArgs = [qName2Key (mkQName 0 i) | i <- [0 .. n-1]] <&> \k -> TupleIdx k scrut -- TTLens (-1) scrut [k] LensGet
 --    unConsArgs = [qName2Key (mkQName 0 i) | i <- [-1,-2 .. -n]] <&> \k -> TupleIdx k scrut -- TTLens (-1) scrut [k] LensGet
       (body , argSubs) = mkSubCases subPats bN n ok ko
-      in (App (mkBruijnLam (BruijnAbsF n argSubs 0 body)) unConsArgs , argSubs)
+      in (App (mkBruijnLam (BruijnAbsF n argSubs 0 body)) unConsArgs
+         , argSubs) -- TODO silence scope warnings
     LitF l          -> noSubs $ let
       alts = (qName2Key builtinTrueQ , BruijnLam $ BruijnAbsF 1 [] 0 ok)
         : maybe [] (\falseBranch -> [(qName2Key builtinFalseQ , falseBranch)]) ko

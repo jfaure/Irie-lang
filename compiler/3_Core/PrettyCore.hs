@@ -50,7 +50,7 @@ prettyBind flags showTerm nm b = render flags . layoutPretty defaultLayoutOption
 prettyJudgedModule :: Bool -> RenderOptions -> JudgedModule -> TL.Text
 prettyJudgedModule showRhs flags j = render flags . layoutPretty defaultLayoutOptions $ pJM showRhs j
 
-pJM showRhs (JudgedModule _mI _mH _bindNms _lNms _ modTT) = pTopExpr showRhs $ modTT
+pJM showRhs jm = pTopExpr showRhs (moduleTT jm)
 
 --------------
 -- Renderer --
@@ -87,7 +87,7 @@ render flags = let
     AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
     AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
     AQRawName   q -> addColor (getColor a) $ fromText (showRawQName q)
-    AQBindName  q -> addColor (getColor a) $ case srcBindNames <$> bindSource flags of
+    AQBindName  q -> addColor (getColor a) $ case srcFieldNames <$> bindSource flags of
       Nothing  -> "π(" <> (fromText (showRawQName q)) <> ")"
       Just fn -> fromText (fromMaybe (showRawQName q) $ fn (modName q) (unQName q))
       -- (fst (nms V.! modName q V.! unQName q))
@@ -246,6 +246,7 @@ pTerm showRhs = let
       in r <> " . " <> hsep (punctuate "." $ {-prettyField-} viaShow <$> target) <> pLens ammo
     LetSpecF q sh -> "let-spec: " <> viaShow q <> "(" <> viaShow sh <> ")"
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
+    ProdF ts     -> braces $ hsep $ punctuate " ," (BSM.toList ts <&> \(l , rhs) -> annotate (AQFieldName (QName l)) rhs)
     TupleF ts    -> parens $ hsep $ punctuate " ," (V.toList ts)
     LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
       <> hardline <> "in" <+> t
@@ -260,7 +261,10 @@ pTerm showRhs = let
 
 prettyInstr = \case
   NumInstr i -> case i of
-    PredInstr GECmp -> "_>_"
+    PredInstr GECmp -> "_>=?_"
+    PredInstr GTCmp -> "_>?_"
+    PredInstr LTCmp -> "_<?_"
+    PredInstr LECmp -> "_<=?_"
     IntInstr Add    -> "_+_"
     IntInstr Sub    -> "_-_"
     IntInstr Mul    -> "_*_"

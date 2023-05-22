@@ -62,7 +62,6 @@ doParallel = False
 -- TODO ImportedSig: BitSet of imported binds from each module (depends on scope)
 
 lookupIName     = lookupJM labelNames
-lookupBindName  = lookupJM bindNames
 lookupFieldName = lookupJM jmINames
 lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
   JudgeOK _mI jm -> Just (jmProj jm V.! iName)
@@ -172,7 +171,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
     *> readMVar reg >>= \reg' -> deps <$ -- setBit dependents mI
     let (resolver , mfResolver , exts) = resolveNames reg' mI pm
         getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
-          BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules) (lookupFieldName r._loadedModules)
+          BindSource (lookupIName r._loadedModules) (lookupFieldName r._loadedModules)
         putModVerdict = False -- TODO should only print at repl?
     in case simplify cmdLine <$> judge deps reg' exts mI pm of
       -- TODO have partially OK judged module
@@ -208,7 +207,7 @@ resolveNames reg modIName p = let
   curAllNames = reg._allNames
   curMFWords  = reg._globalMixfixWords
   curMods     = reg._loadedModules
-  mixfixHNames = p ^. P.parseDetails . P.hNameMFWords . _2
+  mixfixHNames = p ^. P.parseDetails . P.hNameMFWords
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
 
@@ -218,9 +217,8 @@ resolveNames reg modIName p = let
   resolver = let
     labelMap = p ^. P.parseDetails . P.labels
     labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
-    localNames = p ^. P.parseDetails . P.hNameBinds -- all let-bound HNames
-    in M.unionsWith IM.union
-      [((\iNms -> IM.singleton modIName iNms) <$> localNames) , curAllNames , labels]
+    exposedNames = M.filter (testBit (p ^. P.parseDetails . P.topINames)) (p ^. P.parseDetails . P.hNamesToINames)
+    in M.unionsWith IM.union [(IM.singleton modIName <$> exposedNames) , curAllNames , labels]
 
   resolveName :: HName -> ExternVar
   resolveName hNm = let
@@ -232,9 +230,9 @@ resolveNames reg modIName p = let
     (Just [(modNm , iNm)] , Nothing) -> if
      | modNm == 0 -> case snd (primBinds V.! iNm) of
        Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
-       x -> Imported x
+       x -> Importable modNm iNm -- Imported x
      | testBit iNm labelBit -> ImportLabel (mkQName modNm (clearBit iNm labelBit))
-     | True -> readQName curMods modNm iNm
+     | True -> maybe (Importable modNm iNm) Imported (readQName curMods modNm iNm)
     (b , Just mfWords) -> let flattenMFMap = concatMap snd in MixfixyVar $ case b of
       Nothing      -> Mixfixy Nothing              (flattenMFMap mfWords)
       Just [(m,i)] -> Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
@@ -242,7 +240,8 @@ resolveNames reg modIName p = let
     (Nothing      , Nothing) -> NotInScope hNm
     (Just many , _)          -> AmbiguousBinding hNm many
 
-  in (resolver , mfResolver , Externs (resolveName <$> iMap2Vector (p ^. P.parseDetails . P.hNamesNoScope)))
+  -- TODO iNamesV calculated twice!
+  in (resolver , mfResolver , Externs (resolveName <$> iMap2Vector (p ^. P.parseDetails . P.hNamesToINames)))
 
 --tryLockFile "/path/to/directory/.lock" >>= maybe (ko) (ok *> unlockFile)
 isCachedFileFresh fName cache =
@@ -251,12 +250,13 @@ isCachedFileFresh fName cache =
 judge :: Deps -> PureRegistry -> Externs -> ModIName -> P.Module
   -> Either (Errors , JudgedModule) JudgedModule
 judge deps reg exts modIName p = let
-  bindNames   = p ^. P.bindings <&> P._fnNm
+--  bindNames   = p ^. P.bindings <&> P._fnNm
   labelHNames = p ^. P.parseDetails . P.labels
-  iNames      = p ^. P.parseDetails . P.hNamesNoScope
+  iNames      = p ^. P.parseDetails . P.hNamesToINames
+  bindINames  = p ^. P.parseDetails . P.topINames
   iNamesV     = iMap2Vector iNames
   (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules
-  jm = JudgedModule modIName (p ^. P.moduleName) bindNames (iMap2Vector labelHNames) iNamesV modTT
+  jm = JudgedModule modIName (p ^. P.moduleName) (iMap2Vector labelHNames) iNamesV bindINames modTT
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails) && null (errors ^. checkFails)
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails) && null (errors ^. unpatternFails)
   in trace (unlines $ formatScopeWarnings iNamesV <$> (errors ^. scopeWarnings)) $

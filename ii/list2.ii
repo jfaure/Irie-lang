@@ -1,13 +1,7 @@
 import list
 -- Tricker to simplify than list.ii
 
--- mu as subtype of outer layer
--- ?! should try roll µd.[Nil | Cons {A , [Cons {B , d}]}]
--- prependToAll sep = \case
---   Nil => Nil
---   Cons x xs => Cons sep (Cons x (prependToAll sep xs))
-
--- prependToAll is more flexible than a -> [a] -> [a]
+-- prependToAll has more flexible type than a -> [a] -> [a]
 -- : ∏ A B C D → A → µc.[Nil | Cons {B , c}] -- → µd.[Nil | Cons {A , [Cons {B , d}]}]
 prependToAll sep = \case
   Nil => Nil

@@ -26,16 +26,17 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
  , _parseDetails :: ParseDetails
 }
 -- To allow the repl to continue
-emptyParsedModule h = Module h [] mempty (ParseDetails (0 , mempty) mempty mempty mempty [] 0)
+emptyParsedModule h = Module h [] mempty (ParseDetails mempty mempty 0 mempty [] 0)
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
-   _hNameMFWords  :: (Int , M.Map HName [MFWord]) -- keep count to handle overloads (bind & mfword)
- , _hNameBinds    :: M.Map HName IName -- top-level and let-bound assignments TODO list is sufficient here
- , _hNamesNoScope :: NameMap -- INames (module-local HName equivalents)
- , _labels        :: NameMap
- , _newLines      :: [Int]
- , _letBindCount  :: Int
+   _hNameMFWords   :: M.Map HName [MFWord] -- keep count to handle overloads (bind & mfword)
+-- , _hNameBinds     :: M.Map HName IName -- top-level and let-bound assignments TODO list is sufficient here
+ , _hNamesToINames :: NameMap -- INames (module-local HName equivalents)
+ , _topINames      :: BitSet -- the fields of the module record
+ , _labels         :: NameMap
+ , _newLines       :: [Int]
+ , _letBindCount   :: Int
 }
 data FnDef = FnDef {
    _fnNm         :: HName
@@ -83,7 +84,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | PiBound [TT] TT -- (a b c : T) introduces pi-bound arguments of type T
 
  -- tt primitives (sum , product , list)
--- | Prod   [(FName , TT)] -- can be used to type itself
+ | Prod   (V.Vector (FName , TT)) -- can be used to type itself
  | Tuple   [TT] -- Cartesian product
  | TupleIdx FName TT -- clearer than directly TTLens
  | ArgProd TT -- argument; used only by UnPattern within case expressions
@@ -104,7 +105,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | MatchB TT (BSM.BitSetMap TT) (Maybe TT) -- solved patterns UnPattern.patternsToCase
 
  | List   [TT]
- | LetIn Block (Maybe TT)
+ | LetIn Block (Maybe TT) -- Nothing only for moduleTT (let-ins are meant to be mutually in scope)
 -- | LiftedLets LetQual Int TT -- Int is index into lifted-let-block vector
 
  -- term primitives
@@ -158,7 +159,7 @@ prettyModule m = show (m^.moduleName) <> " {\n"
     <> "binds:   " <> show (m^.bindings) <> "\n"
     <> show (m^.parseDetails) <> "\n}"
 prettyParseDetails p = Prelude.concatMap ("\n  " <>)
-    [ "names:  "   <> show (p^.hNamesNoScope)
+    [ "names:  "   <> show (p^.hNamesToINames)
     , "labels: "   <> show (p^.labels)
 --  , "newlines: " <> show (p^.newLines)
     ]

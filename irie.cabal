@@ -56,7 +56,6 @@ executable irie-exe
       Errors
       Externs
       BetaEnv
-      Typer
       MuRoll
       Infer
       Mixfix

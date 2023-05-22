@@ -118,7 +118,7 @@ intersectTypes a b = case (partitionType a , partitionType b) of
 
 unionTypes :: Type -> Type -> Type
 unionTypes a b = case (partitionType a , partitionType b) of
-  ((v , g) , (w , f)) -> TyVars (v .|. w) (union f g)
+  ((v , g) , (w , f)) -> TyVars (v .|. w) (union f g) -- TODO mergeTyUnions ?
 
 mergeTyUnions :: Bool -> [TyHead] -> [TyHead] -> [TyHead]
 mergeTyUnions pos l1 l2 = let

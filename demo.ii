@@ -1,8 +1,14 @@
 -- let-scope depends on mixfix parse
 -- letscopeAfterMixfix y = if y then let x = 3 in x else y
 
+-- Says "⊤ → %i1" , which is perhaps even a better type
+--misc0 x = let y = (x x.v) in 0  -- ∏ A → ((A → ⊤) ⊓ {v : A}) → %i1
+
 -- let-bound mixfix => make VLetBind instead of QName
 -- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
+
+-- Don't μ-roll non-positive functions
+--Selfapp3 x y = x x y
 
 --rect (P : Set) : Set = record
 --Recangle = record
@@ -37,23 +43,13 @@
 --eq1 @x b = 2
 --eq1 a b = 3
 
--- Re-generalise let-binds ; generalise λs & check μ
+-- lost some bounds
+--import foldr
+--nonEmptySubSequences = \case -- [a] -> [[a]]
+--  @Nil       => Nil
+--  @Cons x xs => Cons (Cons x Nil) (foldr (\ys r => Cons ys (Cons (Cons x ys) r)) Nil (nonEmptySubSequences xs))
 
--- tvars must never refer to deeper let-nest tvars through their bounds
--- need to save state tvars => only biunify with instantations not the escaped tvar
--- perhaps should explicitly pass down args straight after scope-check to avoid the annoyance
---lp17 f = let r x g = { a = g x , b = f x } in { u = r 0 (add 1) , v = r {t = 1} (\y => y.t)}
--- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
-
--- lost some μ-bounds
--- import foldr
--- nonEmptySubSequences = \case -- [a] -> [[a]]
---   @Nil       => Nil
---   @Cons x xs => let
---     f ys r = Cons ys (Cons (Cons x ys) r)
---     in Cons (Cons x Nil) (foldr f Nil (nonEmptySubSequences xs))
-
---list2.unwords = merge μ-bounds upwards even if layer not equal
+-- list2.unwords = merge μ-bounds upwards even if layer not equal
 
 -- multi-branch different μ merging =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
@@ -81,17 +77,24 @@
 
 -- trans imports: list2 uses list.Nil
 
--- ∏ A → A → {a : A , b : %i1}
---lp1 y = let f x = x in {a = f y , b = f 1}
-
--- ∏ A → A → {a : A , b : %i1}
---lp4 y = let f = \x => x y in {a = f (\z => z) , b = f (\z => 1)}
-
---foldr f s l = case l of
---  @Cons x xs => f x (foldr f s xs)
---  @Nil       => s
 --import stream
 --f = enumFromTo 0 2
+
+--import foldr
+--squish (@Node x ts) xs = Cons x (foldr squish xs ts)
+-- (µe.([Cons {A , (µe.[Cons {A , e}] ⊔ D)}] ⊔ D) ⊔ D)
+-- D always appears with e, but e > D so can't sub..
+
+-- Rewrite buildVarSubs on 4 bitsets + MVector: del , gen , rec , tysubs
+-- b(5) should sub for 6; but then we have bidirectional subvars
+import ifThenElse
+scanSum n l = ifThenElse (lt n 0) l (scanSum (sub n 1) (@Cons n l))
+
+--import prelude
+--span p xs = case xs of
+--  @Nil => { l = xs , r = xs }
+--  -- TODO recursive letin
+--  @Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
 
 {-
 import prelude

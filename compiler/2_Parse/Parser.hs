@@ -28,26 +28,24 @@ type Parser = ParsecT Void Text (Prelude.State ParseState)
 -- Parsestate functions --
 --------------------------
 addImport i = moduleWIP . imports %= (i:)
+addMFWord :: HName -> (Int -> MFWord) -> Parser IName
 addMFWord h mfw = do
-  sz <- moduleWIP . parseDetails . hNameMFWords . _1 <<%= (+1)
-  sz <$ (moduleWIP . parseDetails . hNameMFWords . _2 %= M.insertWith (++) h [mfw sz])
+  sz <- addUnknownName h -- moduleWIP . parseDetails .  hNameMFWords . _1 <<+= 1
+  sz <$ (moduleWIP . parseDetails . hNameMFWords %= M.insertWith (++) h [mfw sz])
 
 -- insertLookup is tricky but saves a log(n) operation
-insertOrRetrieve :: HName -> Map HName Int -> (Either Int Int, Map HName Int)
+insertOrRetrieve :: HName -> Map HName Int -> (IName , Map HName IName)
 insertOrRetrieve h mp = let sz = M.size mp in case M.insertLookupWithKey (\_k _new old -> old) h sz mp of
-  (Just x , mp) -> (Right x  , mp)
-  (_      , mp) -> (Left  sz , mp)
+  (Just x , mp) -> (x  , mp) -- retrieve
+  (_      , mp) -> (sz , mp) -- insert
 
--- indicate name is exposed to global resolver (not brilliant , also duplicates some work with addUknownName)
-addTopName h     = (identity ||| identity) <$> (moduleWIP . parseDetails . hNameBinds %%= insertOrRetrieve h)
-addUnknownName h = (identity ||| identity) <$> (moduleWIP . parseDetails . hNamesNoScope %%= insertOrRetrieve h)
---newFLabel h      = (identity ||| identity) <$> (moduleWIP . parseDetails . fields %%= insertOrRetrieve h)
+addUnknownName :: HName -> Parser IName
+addUnknownName h = moduleWIP . parseDetails . hNamesToINames %%= insertOrRetrieve h
+-- indicate name is exposed to global resolver
+addTopName h     = addUnknownName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames %= \top -> setBit top i)
 newFLabel h      = addUnknownName h
-
-newSLabel h      = (identity ||| identity) <$> (moduleWIP . parseDetails . labels %%= insertOrRetrieve h)
+newSLabel h      = moduleWIP . parseDetails . labels %%= insertOrRetrieve h
 lookupSLabel h   = (M.!? h) <$> use (moduleWIP . parseDetails . labels)
---newSLabel    = addUnknownName
---lookupSLabel = fmap Just . addUnknownName
 
 lookupBindName h = Var . VExtern <$> addUnknownName h
 
@@ -132,7 +130,10 @@ linefolds p = endLine *> scn *> do
 -- Names --
 -----------
 reservedChars = ".@(){};:,\\\""
-reservedNames = S.fromList $ words "let rec in \\case λcase case as over foreign foreignVarArg where of _ import use open require = ? | λ => ⇒ #"
+reservedNamesL = words "let rec in \\case λcase case as over foreign foreignVarArg where of _ import use open require = ? | λ => ⇒ #"
+reservedNames = S.fromList reservedNamesL
+-- Speed up parsing by INaming reserved names also
+reservedINames = zip [maxBound , maxBound - 1 ..] reservedNamesL :: [(IName , Text)]
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c = if T.any (==c) reservedChars then lexeme (char c) else lexeme (char c <* notFollowedBy idenChars)
@@ -224,7 +225,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       <|> some (try (endLine *> fnMatch pMFArgs (reserved "=")))
   in option Nothing $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
     [Just nm] -> let pArgs = many (lexeme singlePattern) in do
-      iNm  <- addUnknownName nm <* when isTop (void $ addTopName nm)
+      iNm <- if isTop then addTopName nm else addUnknownName nm
       eqns <- pEqns pArgs (pName nm *> pArgs)
       let rhs = CasePat $ CaseSplits Question eqns -- PatternGuards eqns
       pure $ Just (FnDef nm iNm Let Nothing rhs Nothing , subParse)
@@ -235,7 +236,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       nm = mixFix2Nm mfDefHNames
       in mdo -- for mfdef
       let mfDef = MixfixDef iNm mfDefINames prec
-      iNm  <- addUnknownName nm <* when isTop (void $ addTopName nm)
+      iNm  <- if isTop then addTopName nm else addUnknownName nm -- <* when isTop (void $ addTopName nm)
       prec <- fromMaybe defaultPrec <$> optional (braces parsePrec)
       mfDefINames <- addMixfixWords mfDefHNames mfDef
       rhs <- CasePat . CaseSplits Question <$> pEqns (pure []) (pMixFixArgs mfDefHNames)
@@ -328,12 +329,13 @@ tt :: Parser TT
 --  ref <- scn *> use indent <* svIndent
 --  indentedItems ref fieldDecl (fail "")
 
+  con :: Parser TT
   con = let
-    multilineAssign = reserved "record" *> pBlock False False Let
-    conBraces = braces (parseDecls False (void $ reservedChar ','))
-    ln b = LetIn b Nothing
+    fieldDecl = (,) <$> (iden >>= newFLabel) <* reservedChar '=' <*> tt <?> "Field assignment"
+    multilineAssign = reserved "record" *> fail "" -- indentedItems ref fieldDecl (fail "")
+    conBraces = braces (fieldDecl `sepBy` reservedChar ',')
     in use indent >>= \sv -> (\r -> r <* (indent .= sv)) $
-      ln <$> multilineAssign <|> (\fields -> ln (Block False Let fields)) <$> conBraces
+      Prod . V.fromList <$> (multilineAssign <|> conBraces)
 
   branchArrow = reserved "=>" <|> reserved "⇒"
   caseSplits :: Parser [(TT , TT)]

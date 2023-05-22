@@ -1,13 +1,12 @@
 # Lift all Let-Ins => infer must lift nests
 # Effects
 # judge bind append
-# Type aliases
+# rewrite unpattern as anamorphism
+# Bruijn vars inside inExprs are inacurrate !
   * mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
     Also ensure β-reduction doesn't rm the let-bind wrapper prematurely
-  ? opened modules
+  open a record = qualify names on it
   ? Nest QNames (also local modules/namespaces) vs module QNames in types (also let-bound mixfixes)
-  ? Opened name vs projection name
-  * letscope depends on mixfix parse
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * Conv non-mut non-rec let-binds straight to fn args
   * leaf bicasts ; subtype tycon trees
@@ -23,11 +22,11 @@
   * edit-distance
   * judge-bind / bindvector breaks the infer.scope hylo
 ## Syntax: spare: `~%;
-  * import lists: imports / opens keywords
-  * `$ ls -l --reverse`: $ run opt-parse on a string
+  * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
   * record type syntax: { x : Int , y } -- indicates y : _
-  * ~_ = implicit arg: ~A -> A -> A
+  * ~> = implicit arg: A ~> A -> A
   ? Sum-of-Record
+  ? record union,difference: value & type level
 ### Linearity ; free variables (type must be known) ; β vs always-inline
   ! β-opt: Specialise on paps iff dupd (or all paps?) (polymorphic functions may miss pap-specs)
   * dup node scope: global / device / thread ?
@@ -92,6 +91,7 @@
   * conflicting definitions (from pattern args , let bindings etc..)
   * mixfix parser errors & locations
   * Literal is out of Int range
+  ? Warn local label collides with imported label
 ## Unimportant
   * Insta-unwrap/specialise single branch cases
   * optimise strbuf and literal string/arrays

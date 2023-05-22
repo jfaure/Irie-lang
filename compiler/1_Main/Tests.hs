@@ -24,7 +24,7 @@ inferType txt = let
     reg <- initRegistry False
     lm  <- compileText defaultCmdLine {noColor = True , printPass = [] , noCache = True , noFuse = True} reg txt
     r   <- readMVar reg
-    pure (lm , BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules) (lookupFieldName r._loadedModules))
+    pure (lm , BindSource (lookupIName r._loadedModules) (lookupFieldName r._loadedModules))
   in case lm of
   Just (JudgeOK _ jm) -> prettyJudgedModule False ansiRender { bindSource = Just bindSrc , ansiColor = False } jm
   Just x  -> error $ "not judgeOK: " <> toS (showImportCon x)

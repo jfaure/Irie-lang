@@ -88,10 +88,11 @@ rollType this = let
     mkRoll :: Int -> TypeRoll -> [TypeRoll]
     mkRoll i = \case
       BuildRoll _ty mus -> [mergeRollsNE $ mus <&> \(m , rollFn , b) -> let l = layer i : rollFn
-        in if m `elem` ms then let r = reverse l in Rolling (addMu m (mergeTypes True b this)) m r r
+        in if m `elem` ms
+           then let r = reverse l in Rolling (addMu m (mergeTypes True b this)) m r r -- TODO iff strictly positive
            else BuildRoll this ((m , l , b) :| [])]
       Rolling ty m (r : nextRolls) reset -> {-trace (prettyTyRaw ty <> " <=> " <> prettyTyRaw this)-}
-        if layer i /= r -- TODO check subtype (roughly eq modulo μ and bounds)
+        if layer i /= r -- TODO ? check subtype (roughly eq modulo μ and bounds)
         then [] -- NoRoll this
 --      then NoRoll $ mkTy $ ith <&> \(j , oldT) -> if i == j then trace (prettyTyRaw ty) ty else forgetRoll oldT -- re-insert μ-bounds
         else [Rolling ty m (nextRolls <|> reset) reset]

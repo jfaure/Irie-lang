@@ -12,6 +12,7 @@ import MixfixSyn
 import Control.Lens
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
+import qualified Data.Binary as DB
 import Data.Time
 
 type Deps = BitSet
@@ -56,7 +57,7 @@ data PureRegistry = Registry {
 -- Note. We read builtins directly , this just occupies Module Name 0
 primJM = V.unzip primBinds & \(primHNames , _prims) ->
   let _letBinds = LetBlock mempty -- (\x -> _ :: _) <$> prims
-  in JudgedModule 0 "Builtins" primHNames primLabelHNames mempty (Core Question tyBot)
+  in JudgedModule 0 "Builtins" primLabelHNames primHNames (complement 0) (Core Question tyBot)
 
 builtinRegistry = let
   _timeBuiltins = UTCTime (ModifiedJulianDay 0) (getTime_resolution)
@@ -76,30 +77,18 @@ readParseExtern openMods thisModIName exts i = case exts.extNames V.! i of
     | modNm == thisModIName -> ForwardRef iNm
     | modNm == 0 -> Imported (snd (primBinds V.! iNm))
     | True -> NotOpened (show modNm <> "." <> show iNm) ("")
-    -- readQParseExtern openMods thisModIName exts modNm iNm
   x -> x
 
--- exported functions to resolve ParseSyn.VExterns
---readQParseExtern :: BitSet -> Int -> Externs -> Int -> IName -> CoreSyn.ExternVar
---readQParseExtern openMods thisModIName (exts :: Externs) modNm iNm = if
---  | modNm == thisModIName    -> ForwardRef iNm -- solveScopes can handle this
--- | openMods `testBit` modNm -> Imported $ case snd (exts.extBinds V.! modNm V.! iNm) of
---   e@(Core f t) -> case f of -- inline trivial things
---     Lit{}   -> e
---     Instr{} -> e
---     Var{}   -> e -- var indirection (TODO continue maybe inlining?)
---     _ -> e
---     _ -> Core (Var $ VQBind (mkQName modNm iNm)) t
---  | otherwise -> NotOpened (show modNm {-exts.eModNamesV V.! modNm-}) (fst (exts.extBinds V.! modNm V.! iNm))
-
-readQName :: V.Vector LoadedMod -> ModIName -> IName -> ExternVar
+readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
 readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
-  JudgeOK _ jm -> Imported (readJudgedBind jm iNm)
-  _ -> Importable modNm iNm
+  JudgeOK _ jm -> Just $ (readJudgedBind jm iNm) & \(Core _ ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
+  _ -> Nothing
 
 readJudgedBind :: JudgedModule -> IName -> Expr
 readJudgedBind m iNm = case m.moduleTT of
-  Core (LetBlock binds) _ -> snd (binds V.! iNm) & bind2Expr
+  Core (LetBlock binds) _ -> let
+    bindName = popCount (topINames m .&. setNBits iNm :: Integer)
+    in snd (binds V.! bindName) & bind2Expr
   _ -> _
 
 showImportCon :: Import -> Text
@@ -113,7 +102,15 @@ showImportCon = \case
   IRoot{} -> "IRoot"
   ImportQueued{} -> "ImportQueued"
 
---deriving instance Generic LoadedMod
---deriving instance Generic Registry
---instance DB.Binary LoadedMod
---instance DB.Binary Registry
+--deriving instance Generic PureRegistry
+deriving instance Generic QMFWord
+deriving instance Generic MixfixDef
+deriving instance Generic Prec
+deriving instance Generic Assoc
+deriving instance Generic QName
+--instance DB.Binary PureRegistry
+instance DB.Binary QMFWord
+instance DB.Binary MixfixDef
+instance DB.Binary Prec
+instance DB.Binary Assoc
+instance DB.Binary QName

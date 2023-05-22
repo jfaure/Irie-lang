@@ -12,12 +12,11 @@ import Errors
 import Externs
 import TypeCheck ( check )
 import TCState
-import Typer (generalise)
+import Generalise (generalise)
 import Control.Lens
 import Data.Functor.Foldable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import qualified Data.Vector.Generic.Mutable as MV (unsafeGrowFront)
 import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
 import PrettyCore
 
@@ -28,7 +27,7 @@ judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector 
 judgeModule pm importedModules modIName exts loaded = let
   scopeParams = initParams importedModules emptyBitSet -- open required
   modTT       = P.LetIn (P.Block True P.Let (pm ^. P.bindings)) Nothing
-  bindNms = P._fnIName <$> (pm ^. P.bindings)
+--bindNms = P._fnIName <$> (pm ^. P.bindings)
 --scopeParams = initParams importedModules emptyBitSet
 --  & lets %~ (.|. intList2BitSet (V.toList bindNms))
 --  & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName 0 i))
@@ -145,7 +144,7 @@ judgeBind letDepth bindINm = let
     (inferParsed wip ||| preInferred wip) -- >>= \r -> r <$ (use bindStack >>= \bs -> when (null bs) (clearBiSubs 0))
 
 -- judgeBind then uninline and add captured variable arguments if necessary
-getBind letDepth bindINm = do
+getLetBind letDepth bindINm = do
   expr <- judgeBind letDepth bindINm <&> \(Core _t ty) ->
     Core (Var (VLetBind (mkQName letDepth bindINm))) ty -- don't inline at this stage
   use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>= \case
@@ -217,10 +216,9 @@ inferF = let
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
-   then getBind 0 (unQName q) -- <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty -- don't inline at this stage
-   else use loadedMs >>= \ls -> case readQName ls (modName q) (unQName q) of
-     Imported e -> pure e
-     x -> error (show x)
+   then getLetBind 0 (unQName q)
+   else use loadedMs <&> \ls -> readQName ls (modName q) (unQName q)
+     & fromMaybe (error (showRawQName q)) 
 
  -- Setup new freeVars env within a letNest ; should surround this with an inc of letNest, but not the inExpr
  newFreeVarEnv :: forall s a. TCEnv s a -> TCEnv s a
@@ -242,7 +240,7 @@ inferF = let
    ret <- fromMaybe (pure poisonExpr) inExpr
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
      <&> map (BindUnused . show @P.FnDef ||| identity)
--- lets <- V.generateM (V.length letBindings - 1) (getBind nest)
+-- lets <- V.generateM (V.length letBindings - 1) (getLetBind nest)
    mI <- use thisMod
    pure (ret , V.zipWith (\fn e -> (LetMeta (fnINameToQName mI fn) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
 
@@ -256,34 +254,36 @@ inferF = let
   P.QuestionF -> pure $ Core Question tyBot
   P.WildCardF -> pure $ Core Question tyBot
   -- letin Nothing = module / record, need to type it
-  P.LetInF (P.Block _ _ lets) Nothing ->
-    use thisMod >>= \mI -> inferBlock lets Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
+  P.LetInF (P.Block _ _ lets) Nothing -> -- use thisMod >>= \mI -> 
+    inferBlock lets Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
     nms = lets <&> qName2Key . letName . fst
---  nms = lets <&> qName2Key . mkQName mI . iName . fst -- [qName2Key (mkQName (ln + 1) i) | i <- [0..]]
     tys = lets <&> exprType . bind2Expr . snd
     -- letnames = qualified on let-nests + 
     blockTy = THProduct (BSM.fromListWith mkFieldCol $ V.toList $ V.zip nms tys) -- TODO get the correct INames
     in Core (LetBlock lets) (TyGround [THTyCon blockTy])
   P.LetInF (P.Block _ _ lets) pInTT -> inferBlock lets pInTT <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
+  P.ProdF ps -> do
+    mI <- use thisMod
+    core <- ps `forM` \(i,s) -> s <&> \(Core t ty) -> let q = i -- qName2Key (mkQName mI i)
+      in ((q , t) , (q , ty))
+    pure $ unzip (V.toList core) & \(terms , tys) ->
+      Core (Prod (BSM.fromList terms)) (TyGround [THTyCon $ THProduct (BSM.fromList tys)])
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
-    -- if b is free, insertOrRetrieve its local tvar
     P.VBruijn b -> do
       argTVars <- use bruijnArgVars
       fLimit <- use freeLimit
       let lvl = V.length argTVars
           diff = lvl - fLimit
-          bruijnAtBind = b - diff -- Bruijn idx at the let-binding
-      tv <- if b >= diff
+          bruijnAtBind = b - diff -- Bruijn idx relative to enclosing let-binding, not current lvl
+      tv <- if b >= diff -- if b is free, insertOrRetrieve its local tvar
         then (letCaptures <<%= (`setBit` bruijnAtBind)) >>= \oldLc -> use captureRenames >>= \cr -> 
           if testBit oldLc bruijnAtBind
           then MV.read cr bruijnAtBind
           else freshBiSubs 1 >>= \[t] -> t <$ MV.write cr bruijnAtBind t
         else pure (argTVars V.! b) -- local arg
---    when (b >= diff) (letCaptures %= (`setBit` bruijnAtBind))
---    tv <- pure (argTVars V.! b)
       pure $ Core (VBruijn b) (tyVar tv)
-    P.VLetBind q -> getBind (modName q) (unQName q) -- <&> \(Core _t ty) -> Core (Var (VLetBind q)) ty
+    P.VLetBind q -> getLetBind (modName q) (unQName q)
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 

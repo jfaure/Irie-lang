@@ -49,7 +49,10 @@ splitAt n xs = if n <=? 0 then (@Nil , xs) else case xs of
 -- TODO let-scope depends on parsed mixfixes
 span p xs = case xs of
   @Nil => { l = xs , r = xs }
-  @Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
+
+  @Cons x xs2 => if p x then (span p xs2 > \s => { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
+  -- TODO something wrong with let-in
+--@Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
 
 foldr f s l = case l of
   Cons x xs => f x (foldr f s xs)

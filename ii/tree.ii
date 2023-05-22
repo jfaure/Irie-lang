@@ -1,13 +1,11 @@
 --import prelude
-import list
+import foldr
 
 --flatten :: Tree a -> [a]
-flattenTree t = squish t @Nil
-squish n xs = case n of
-  @Node x ts => @Cons x (foldr squish xs ts)
+flattenTree t = squish t Nil
+squish (@Node x ts) xs = Cons x (foldr squish xs ts)
 
 -- flattenTree : ∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → µd.[Nil | Cons {A , d}]
--- 
 -- squish : let ∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → D → µd.[Cons {A , d}]
 --
 -- File CString ; Dir CString (List Dir)
