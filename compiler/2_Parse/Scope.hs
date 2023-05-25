@@ -13,19 +13,9 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified BitSetMap as BSM
 
--- * within a module, equivalent HNames map to the same IName
--- * inference of terms needs quick and modular indexing + access to metadata
--- * THProduct uses raw INames (no metadata). machine code fields are sorted on HNames
--- * So Types use a module-global set of INames
--- Letblocks and binds = QName { let number ; bind number }
--- types only need the HNames for pretty printing + don't want to rebind metas etc...
-
--- replace term (not type) INames with VBruijn and QNames
-
--- free | dups (↑ occurs ; ↓ tweak abs & rename bruijns)
--- free: count escaped vars used by binder to inc the Abs; patch up during inference
--- dups: cata counts uses (except dependent case-splits)
-
+-- * IConv: each module has its convention for an (HName -> IName) isomorphism
+-- * QName is thus a module name (indicating the IConv) and an IName
+-- ? QTT requires cata to track mulitplicity (0 | 1 | ω)
 type OpenModules = BitSet
 type RequiredModules = BitSet
 data Params = Params
@@ -57,6 +47,32 @@ handleExtern exts mod open lm i = case readParseExtern open mod exts i of
   AmbiguousBinding h ms -> ScopePoison (AmbigBind h ms)
   ImportLabel q -> QLabel q
   x -> error (show x)
+
+-- Patterns (- TTs) need their labels and constants scoped, then introduce new args
+-- - A (B a _) C
+--   .. 
+-- + \s0 => guard s0 A \s1 => guard s1 B \s2 s3 => name s2 = a => guard s3 C => rhs
+-- = \s0 => case s0 of { A s1 => case s1 of { B (s2=a) s3 => case s3 of { C => rhs }}}
+--   if fail at any point, move into next case
+-- The recursion scheme: depth first unroll a case-nest to check all guards; but support failure continuation
+--unPattern :: Params -> Externs -> ModuleIName -> TT -> TT -> TTF TT
+--unPattern params exts thisMod koBranch = \case
+--  Var (VExtern i) -> case readParseExtern params._open thisMod exts i of
+--    MixfixyVar m  -> MFExprF m -- Only handle mixfixes in case i was overshadowed by an arg
+--    ImportLabel q -> QLabelF q
+--    _ -> VarF (VExtern i)
+--  Juxt o args -> unPattern params exts thisMod koBranch (solveMixfixes o args) -- solvescopes first?
+--
+--  Label i subPats -> GuardLabelF (mkQName thisMod i) subPats -- new VBruijns , new VExterns -> VBruijns
+--  QLabel q    -> GuardLabelF q []
+--  ArgProd arg -> GuardArgF arg
+--  Tuple args  -> GuardTupleF args
+--  x -> DesugarPoisonF (IllegalPattern (show x))
+--  unConsArgs = [qName2Key (mkQName 0 i) | i <- [0 .. n-1]] <&> \k -> TupleIdx k scrut
+
+-- Patterns are either case-label or case (eq C x)
+unfoldCase :: TT -> [([TT] , TT)] -> Params -> Seed
+unfoldCase scrut alts params = _unPattern 
 
 -- * name scope , free variables , dup nodes , resolve VExterns to BruijnArg | QName
 -- unpattern assigns debruijn levels: bl, the debruijn index is lvl - bl - 1
@@ -123,8 +139,7 @@ scopeApoF exts thisMod (this , params) = let
     & fst & \t -> Right . (, params) <$> project t
   LambdaCase (CaseSplits' branches) -> BruijnLamF $ BruijnAbsF 1 [] 0
     $ Right (doCase (Var $ VBruijn 0) branches (params & bruijnCount %~ (1+)))
-  CasePat (CaseSplits scrut patBranchPairs) -> doCase scrut patBranchPairs params
-    & \(tt , seed) -> RawExprF (Right (tt , seed))
+  CasePat (CaseSplits scrut patBranchPairs) -> RawExprF (Right (doCase scrut patBranchPairs params))
 
   -- ? mutual | let | rec scopes
   LetIn (Block open letType binds) mtt -> let
@@ -139,10 +154,5 @@ scopeApoF exts thisMod (this , params) = let
 
   tt -> Right . (, params) <$> project tt
 
--- ? local MVector to mark occurences
--- hylo: ↓ replace VExterns
---       ↑ rename vars , solveMixfixes
 scopeTT :: Externs -> ModuleIName -> Params -> TT -> TT
 scopeTT exts thisMod params tt = apo (scopeApoF exts thisMod) (tt , params)
-
--- QTT: lets and bruijns have mulitplicity (0 | 1 | ω)

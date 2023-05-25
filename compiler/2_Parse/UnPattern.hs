@@ -13,7 +13,7 @@ import Errors
 -- parse modules as Fn : [AllHNames] -> Module (ie. structural parse , don't lookup anything since depends on mixfix parse)
 -- codo on cofree comonad => DSL for case analysis on the base functor of the cofree comonad.
 
--- ? multi-arg case ⇒ arg inter-dependencies
+-- ? multi-arg case => arg inter-dependencies
 -- ? pattern <=> case isomorphism for specialisations (need to operate on Term syntax)
 -- β-optimality for sharing branches between different paps in dependency tree
 -- [ [Pattern , TT] ] -> [ Case ]        2 ^ (nArgs - 1) paps
@@ -71,7 +71,6 @@ buildCase thisMod = let
       _ -> (DesugarPoison (UnknownLabelExtern i) , [])
     VarF _              -> noSubs ok
     QuestionF           -> noSubs ok -- unconditional match
-    PatternGuardsF pats -> mkSubCases pats bN 0 ok ko
     ArgProdF caseAcc    -> let (this , bruijnSubs) = caseAcc (Var (VBruijnLevel bN)) (bN + 1) ok ko
       in (mkBruijnLam (BruijnAbsF 1 bruijnSubs 0 this) , [])
 --  ArgProdF cc    -> let n = length cc in mkSubCases cc bN n ok ko & \(rhs , bruijnSubs) ->

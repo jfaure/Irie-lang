@@ -11,6 +11,8 @@ data Writer o x where
 
 -- left-associated list appends is slow;
 -- instead use a "type-aligned sequence"
+-- (m >>= f) >>= g  ===  m >>= (\x => f x >>= g)
+-- >>= is not strictly associative, but >=> is (f >=> g = \x => f x >>= g)
 _>>=_ { l1 } = \(Free fx k’) k => Free fx (k’ >=> k)
 
 ------------------

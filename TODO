@@ -3,11 +3,11 @@
 # judge bind append
 # rewrite unpattern as anamorphism
 # Bruijn vars inside inExprs are inacurrate !
-  * mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
-    Also ensure β-reduction doesn't rm the let-bind wrapper prematurely
-  open a record = qualify names on it
-  ? Nest QNames (also local modules/namespaces) vs module QNames in types (also let-bound mixfixes)
+# mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
+  * open sum type (default case branch)
+  * Identity Iso subtype
+  * open record = qualify names on it (QName for modules , TTLens for local records)
   * Conv non-mut non-rec let-binds straight to fn args
   * leaf bicasts ; subtype tycon trees
   * Case call stream.next to recover nice syntax (? subtype @stream to open top layer)
@@ -20,11 +20,11 @@
   * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
   * importing new labels can break code: eg. f a = _ ; then import an 'a' label
   * edit-distance
-  * judge-bind / bindvector breaks the infer.scope hylo
 ## Syntax: spare: `~%;
   * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
   * record type syntax: { x : Int , y } -- indicates y : _
   * ~> = implicit arg: A ~> A -> A
+  ? data .. where
   ? Sum-of-Record
   ? record union,difference: value & type level
 ### Linearity ; free variables (type must be known) ; β vs always-inline
@@ -62,7 +62,6 @@
   * dynamic fuse pap: (+1) << (+1) => (+2)
   * type application (eg. perfect tree) `PTree a = Leaves a | Cons (PTree (a , a))` (μ insufficient here)
   * Sum of record [l : { f : int } | l2 : { f : int }] <: { f : int }
-  * open sum type (default case branch)
   * expand lambda-mixfixes with explicit holes
   * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
 ## Parse / Pretty

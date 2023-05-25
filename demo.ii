@@ -87,8 +87,8 @@
 
 -- Rewrite buildVarSubs on 4 bitsets + MVector: del , gen , rec , tysubs
 -- b(5) should sub for 6; but then we have bidirectional subvars
-import ifThenElse
-scanSum n l = ifThenElse (lt n 0) l (scanSum (sub n 1) (@Cons n l))
+--import ifThenElse
+--scanSum n l = ifThenElse (lt n 0) l (scanSum (sub n 1) (@Cons n l))
 
 --import prelude
 --span p xs = case xs of

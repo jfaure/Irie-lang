@@ -39,7 +39,7 @@ data ParseDetails = ParseDetails {
  , _letBindCount   :: Int
 }
 data FnDef = FnDef {
-   _fnNm         :: HName
+   _fnNm         :: HName -- TODO rm, isos with the fnIName given an IConv
  , _fnIName      :: IName
  , _fnRecType    :: !LetQual
  , _fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
@@ -52,8 +52,9 @@ data LetQual = LetIDK | Let | Dep | Rec | Mut | LetTuple {- unnamed binds -} der
 data TTName
  = VBruijnLevel IName
  | VBruijn  IName
- | VExtern  IName
  | VLetBind QName -- let-block nesting depth and IName
+
+ | VExtern  IName -- ! Parser only parses VExterns
 
 data LensOp a = LensGet | LensSet a | LensOver a deriving (Show , Functor , Foldable , Traversable)
 data DoStmt  = Sequence TT | Bind IName TT -- | Let
@@ -81,7 +82,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | App TT [TT] -- Used by unpattern and solveMixfixes once clear of precedence & mixfixes
  | AppExt IName [TT] -- possibly a label application
  | Juxt SourceOffset [TT] -- may contain mixfixes to resolve
- | PiBound [TT] TT -- (a b c : T) introduces pi-bound arguments of type T
+ | PiBound [TT] TT -- (a b c : T) ~> introduces pi-bound arguments of type T
 
  -- tt primitives (sum , product , list)
  | Prod   (V.Vector (FName , TT)) -- can be used to type itself
@@ -92,7 +93,10 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Label  LName [TT]
  | QLabel QName
 
- | PatternGuards [TT]
+ | GuardLabel QName [TT]
+ | GuardArg TT -- Bool
+ | GuardPat IName TT -- extern
+ | GuardTuple [TT]
 
  -- These negative-position TTs must be inverted first before solveScopes
  -- The newtypes hide this to allow interleaving UnPattern with solveScopes
@@ -115,7 +119,8 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  -- type primitives
  | TyListOf TT
- | Gadt [(LName , [TT] , Maybe TT)] -- Parameters and constructor signature (return type may be a subtype of the Gadt)
+ | Gadt [(LName , TT)]   -- Parameters and constructor signature (return type may be a subtype of the Gadt)
+ | Data [(LName , [TT])] -- Parameters
 
  | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat =>'
 

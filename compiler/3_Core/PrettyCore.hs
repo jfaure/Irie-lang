@@ -236,7 +236,7 @@ pTerm showRhs = let
     CastF  i t -> parens (viaShow i) <> enclose "<" ">" (viaShow t)
     LabelF   l [] -> "@" <> prettyLabel l
     LabelF   l t  -> parens $ "@" <> prettyLabel l <+> hsep (parens <$> t)
-    CaseF caseID scrut -> parens $ "Case" <> viaShow caseID <+> scrut
+--  CaseF caseID scrut -> parens $ "Case" <> viaShow caseID <+> scrut
   --List    ts -> "[" <> (T.concatMap pE ts) <> "]"
     TTLensF r target ammo -> let
       pLens = \case
@@ -246,7 +246,8 @@ pTerm showRhs = let
       in r <> " . " <> hsep (punctuate "." $ {-prettyField-} viaShow <$> target) <> pLens ammo
     LetSpecF q sh -> "let-spec: " <> viaShow q <> "(" <> viaShow sh <> ")"
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
-    ProdF ts     -> braces $ hsep $ punctuate " ," (BSM.toList ts <&> \(l , rhs) -> annotate (AQFieldName (QName l)) rhs)
+    ProdF ts     -> braces $ hsep $ punctuate " ," (BSM.toList ts <&> \(l , rhs) -> annotate (AQFieldName (QName l)) "" <> " = " <> rhs)
+
     TupleF ts    -> parens $ hsep $ punctuate " ," (V.toList ts)
     LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
       <> hardline <> "in" <+> t

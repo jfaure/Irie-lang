@@ -65,9 +65,8 @@ data Term -- β-reducable (possibly to a type)
  | CaseSeq Int Term Type (BSM.BitSetMap Term) (Maybe Term)
 
 -- Simplifier
- | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions
  | LetSpec QName [ArgShape]
--- | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
+-- | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
 --              -- Note if meet this than any contained bruijns | lets must not be unwrapped
 
 -- lensover needs idx for extracting field (??)

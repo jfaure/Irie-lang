@@ -1,4 +1,4 @@
-module Parser (parseModule , parseMixFixDef) where
+module Parser where -- (parseModule , parseMixFixDef) where
 import Prim ( Literal(PolyFrac, Char, String, Int, PolyInt) )
 import ParseSyntax as P
 import MixfixSyn ( defaultPrec, Assoc(..), MFWord(..), MixfixDef(..), Prec(Prec) )
@@ -20,7 +20,7 @@ import Data.Functor.Foldable
 
 -- debug fns
 -- dbg i = DBG.dbg i
---showN n = try ((takeP Nothing n >>= traceShowM) *> fail "debug parser") <|> pure () :: Parser ()
+showN n = try ((takeP Nothing n >>= traceShowM) *> fail "debug parser") <|> pure () :: Parser ()
 
 type Parser = ParsecT Void Text (Prelude.State ParseState)
 
@@ -30,7 +30,7 @@ type Parser = ParsecT Void Text (Prelude.State ParseState)
 addImport i = moduleWIP . imports %= (i:)
 addMFWord :: HName -> (Int -> MFWord) -> Parser IName
 addMFWord h mfw = do
-  sz <- addUnknownName h -- moduleWIP . parseDetails .  hNameMFWords . _1 <<+= 1
+  sz <- addName h -- moduleWIP . parseDetails .  hNameMFWords . _1 <<+= 1
   sz <$ (moduleWIP . parseDetails . hNameMFWords %= M.insertWith (++) h [mfw sz])
 
 -- insertLookup is tricky but saves a log(n) operation
@@ -39,28 +39,26 @@ insertOrRetrieve h mp = let sz = M.size mp in case M.insertLookupWithKey (\_k _n
   (Just x , mp) -> (x  , mp) -- retrieve
   (_      , mp) -> (sz , mp) -- insert
 
-addUnknownName :: HName -> Parser IName
-addUnknownName h = moduleWIP . parseDetails . hNamesToINames %%= insertOrRetrieve h
--- indicate name is exposed to global resolver
-addTopName h     = addUnknownName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames %= \top -> setBit top i)
-newFLabel h      = addUnknownName h
-newSLabel h      = moduleWIP . parseDetails . labels %%= insertOrRetrieve h
-lookupSLabel h   = (M.!? h) <$> use (moduleWIP . parseDetails . labels)
-
-lookupBindName h = Var . VExtern <$> addUnknownName h
+addName :: HName -> Parser IName
+addName h = moduleWIP . parseDetails . hNamesToINames %%= insertOrRetrieve h
+addTopName h = addName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames %= \top -> setBit top i)
+newFLabel h  = addName h
+newSLabel h  = moduleWIP . parseDetails . labels %%= insertOrRetrieve h -- TODO use bitset to indicate label binds
 
 -----------
 -- Lexer --
 -----------
 -- A key convention: consume trailing whitespace (use `symbol` or `lexeme`)
--- so parsers can assume they start on a non-blank.
+--  => Parsers can assume they start on a non-blank.
 -- Space consumers: scn eats newlines, sc does not.
--- Save newline offsets so we can track source locations using a single Int
+-- Save newline offsets so we can recover line-numbers from the stream offset : Nat
 addNewlineOffset :: Parser ()
 addNewlineOffset = getOffset >>= \o -> moduleWIP . parseDetails . newLines %= (o - 1 :)
+endLine = lexeme (single '\n') <* addNewlineOffset
+
 isHSpace x = isSpace x && x /= '\n' && x /= '\t' -- isHSpace , but handles all unicode spaces
 tabsc :: Parser () = L.space (void $ takeWhile1P (Just "tabs") (== '\t')) lineComment blockComment
--- TODO sc shouldn't eat tabs?
+-- TODO sc shouldn't eat tabs | check if file convention uses tab/space indent
 sc  :: Parser () = L.space (void $ takeWhile1P (Just "white space") isHSpace) lineComment blockComment
 scn :: Parser () = let
   space1 = sc *> some endLine *> skipMany (sc *> endLine)
@@ -69,11 +67,10 @@ scnTabs :: Parser () = let
   space1 = sc *> some endLine *> skipMany (tabsc *> endLine)
   in L.space space1 lineComment blockComment
 
-endLine = lexeme (single '\n') <* addNewlineOffset
 lineComment = L.skipLineComment "--" -- <* addNewlineOffset
-blockComment = let -- still need to count newlines
+blockComment = let
   skipBlockComment start end = string start
-    *> manyTill (endLine {-<|> blockComment nested-} <|> anySingle) end
+    *> manyTill (endLine {-<|> TODO blockComment nested-} <|> anySingle) end
   in void $ skipBlockComment "{-" "-}" <|> skipBlockComment "(*" "*)"
 
 lexeme, lexemen :: Parser a -> Parser a -- parser then whitespace
@@ -89,18 +86,22 @@ braces    = betweenS "{" "}"
 brackets  = betweenS "[" "]"
 
 -- ref = reference indent level
--- lvl = lvl of first indented item (often == pos)
+-- lvl = lvl of first indented item
 indentedItems :: Pos -> Parser a -> Parser () -> Parser [a]
-indentedItems prev p finished = let
- go lvl = try $ indentn *> do
-  [] <$ lookAhead (eof <|> finished) <|> (checkIndent prev lvl *> p >>= \ok -> option [ok] ((ok :) <$> go lvl))
- in L.indentLevel >>= go
+indentedItems prev p stop = let
+  go lvl = try $ indentn *> do
+    [] <$ lookAhead (eof <|> stop) <|> (checkIndent prev lvl *> p >>= \ok -> option [ok] ((ok :) <$> go lvl))
+  in L.indentLevel >>= go
+
+-- indentedItems using the state-saved (svIndent) reference
+-- This is the more useful function for parsing indented Items
+pIndentedItems p finish = scn *> use indent <* svIndent
+  >>= \ref -> indentedItems ref p finish
 
 checkIndent :: Pos -> Pos -> Parser ()
 checkIndent prev lvl = L.indentLevel >>= \pos -> {-d_ (pos , prev , lvl) $-} if
  | pos == lvl  -> pure ()
  | pos <= prev -> fail ("end of indent: " <> show pos <> " <= " <> show prev)
--- | pos == lvl  -> ok -- p >>= \ok -> option [ok] ((ok :) <$> try (go lvl))
  | otherwise   -> fail ("incorrect indentation, got " <> show pos <> ", expected " <> show lvl <> " (<= " <> show prev <>")")
 
 indentn = use indentType >>= \case
@@ -111,13 +112,7 @@ indentn = use indentType >>= \case
 -- tells linefold and let-ins not to eat our indentedItems
 svIndent = L.indentLevel >>= (indent <.=)
 
---linefold p = endLine *> scn *> do
---  prev <- use indent
---  cur  <- svIndent
---  when (cur <= prev) (fail $ "not a linefold " <> show prev <> ", expected >= " <> show cur)
---  p
-
--- once in a linefold we can parse multiple new lines at the same indent
+-- Linefolds must start at higher than reference indent, but then can parse multiple lines at this indent
 linefolds :: Parser a -> Parser [a]
 linefolds p = endLine *> scn *> do
   prev <- use indent
@@ -129,11 +124,11 @@ linefolds p = endLine *> scn *> do
 -----------
 -- Names --
 -----------
-reservedChars = ".@(){};:,\\\""
-reservedNamesL = words "let rec in \\case λcase case as over foreign foreignVarArg where of _ import use open require = ? | λ => ⇒ #"
+reservedChars = ".@(){};:,\"\\λ" -- \\ λ TODO is = necessary
+reservedNamesL = words "? _ let rec mut \\case λcase case # record data gadt as over of _ import use open = ? | => ⇒ in"
+reservedIMap = M.fromList (zip reservedNamesL [0..])
+
 reservedNames = S.fromList reservedNamesL
--- Speed up parsing by INaming reserved names also
-reservedINames = zip [maxBound , maxBound - 1 ..] reservedNamesL :: [(IName , Text)]
 -- check the name isn't an iden which starts with a reservedWord
 reservedName w = (void . lexeme . try) (string w *> notFollowedBy idenChars)
 reservedChar c = if T.any (==c) reservedChars then lexeme (char c) else lexeme (char c <* notFollowedBy idenChars)
@@ -144,6 +139,8 @@ checkReserved x = x <$ when (x `S.member` reservedNames) (fail ("keyword '" <> t
 checkLiteral x  = x <$ when (isDigit `T.all` x) -- TODO not good enough (1e3 , 2.0 etc..)
   (fail ("literal: '" <> toS x <> "' cannot be an identifier"))
 checkIden = checkReserved <=< checkLiteral
+
+anyIden = lexeme (idenChars <* notFollowedBy idenChars)
 
 -- We must use 'try', to backtrack if we ended up parsing a reserved word
 iden :: Parser HName = lexeme . try $ (idenChars >>= checkIden)
@@ -225,7 +222,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       <|> some (try (endLine *> fnMatch pMFArgs (reserved "=")))
   in option Nothing $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
     [Just nm] -> let pArgs = many (lexeme singlePattern) in do
-      iNm <- if isTop then addTopName nm else addUnknownName nm
+      iNm <- if isTop then addTopName nm else addName nm
       eqns <- pEqns pArgs (pName nm *> pArgs)
       let rhs = CasePat $ CaseSplits Question eqns -- PatternGuards eqns
       pure $ Just (FnDef nm iNm Let Nothing rhs Nothing , subParse)
@@ -236,7 +233,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       nm = mixFix2Nm mfDefHNames
       in mdo -- for mfdef
       let mfDef = MixfixDef iNm mfDefINames prec
-      iNm  <- if isTop then addTopName nm else addUnknownName nm -- <* when isTop (void $ addTopName nm)
+      iNm  <- if isTop then addTopName nm else addName nm -- <* when isTop (void $ addTopName nm)
       prec <- fromMaybe defaultPrec <$> optional (braces parsePrec)
       mfDefINames <- addMixfixWords mfDefHNames mfDef
       rhs <- CasePat . CaseSplits Question <$> pEqns (pure []) (pMixFixArgs mfDefHNames)
@@ -272,13 +269,7 @@ tt :: Parser TT
    -- lens '.' binds tighter than App
   argOrLens = arg >>= \larg -> option larg (lens larg)
   lineFoldArgs p = many p >>= \ars -> (ars ++) <$> (try (linefolds p) <|> pure [])
---lineFoldArgs p = try (linefolds p) <|> (many p >>= \ars -> (ars ++) <$> lineFoldArgs p) <|> many p
---lineFoldArgs2 p = let
---  oneLineFold = (:) <$> try (linefold p) <*> many p <* lookAhead (single '\n')
---  in choice [ oneLineFold , (:) <$> p <*> lineFoldArgs2 p , pure [] ]
---    >>= \ars -> option ars ((ars ++) <$> oneLineFold)
   appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg $ case larg of
---  Lit l -> LitArray . (l:) <$> some (lexeme $ try (literalP <* notFollowedBy iden)) -- Breaks `5 + 5`
     P.Label l [] -> P.Label l <$> lineFoldArgs argOrLens
     Var (VExtern q) -> (\args -> if null args then larg else P.AppExt q args)
       <$> lineFoldArgs argOrLens -- HACK for negative externs
@@ -291,76 +282,87 @@ tt :: Parser TT
       , idenNo_ >>= newFLabel >>= \p -> choice [lensNext (p : path) , pure (TTLens o record (reverse (p:path)) LensGet)]
       ]
     in lensNext []
-  arg = choice
+  arg = arg' -- lexeme $ (literalP <&> Lit) <|> doReservedChar <|> doReserved
+  -- We must "try" here to abort arg-parsing if a reserved word is encountered
+  -- Note. λ and \\ need to not be reservedChars for this to work
+--doReserved = try $ anyIden >>= \h -> case reservedIMap M.!? h of
+--  Just reservedIName -> if reservedIName >= V.length dispatch
+--    then fail ("keyword '" <> toS h <> "' cannot be an identifier")
+--    else dispatch V.! reservedIName
+--  Nothing -> addName h <&> Var . VExtern
+--dispatch = V.fromList -- reservedNamesL is the reference
+--  [ pure Question
+--  , pure WildCard
+--  , letIn Let
+--  , letIn Rec
+--  , letIn Mut
+--  , lambdaCase <?> "Lambda case"
+--  , lambdaCase
+--  , casePat
+--  , LitArray <$> lineFoldArgs literalP
+--  , conMultiline <&> Prod . V.fromList
+--  , tySumData <?> "Data declaration"
+--  , tyGadt    <?> "Gadt declaration"]
+--doReservedChar = choice
+--  [ braces conBraces <&> Prod . V.fromList
+--  , brackets tt <&> TyListOf
+--  , parens ((tt >>= \t -> option t (tuple t <|> typedTT t)) <|> scn $> Tuple []) >>= catchUnderscoreAbs
+--  , try $ (char '\\' <|> char 'λ') *> notFollowedBy "case" *> lambda -- Note \\ is not a reservedChar
+--  , char '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
+--  ]
+
+  arg' = choice
    [ reserved "?" $> Question
    , reserved "_" $> WildCard
-   , letIn
+   , letIn =<< choice ((\(txt , l) -> reserved txt $> l) <$> [("let" , Let) , ("rec" , Rec) , ("mut" , Mut)])
    , (reserved "\\case" <|> reserved "λcase") *> lambdaCase
    , (reservedChar '\\' <|> reservedChar 'λ') *> lambda
 -- , reserved "do" *> doExpr
 -- , reserved "record" *> tyRecord  -- multiline record decl
+   , reserved "record" *> conMultiline <&> Prod . V.fromList
    , reserved "case"   *> casePat
-   , reserved "data"   *> tySumData -- multiline sumdata decl
+   , reserved "data"   *> tySumData <?> "Data declaration"
+   , reserved "gadt"   *> tyGadt    <?> "Gadt declaration"
    , reserved "#" *> (LitArray <$> lineFoldArgs literalP)
-   , con
-   , lexeme literalP <&> Lit -- must be before Iden parsers
    , reservedChar '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
-   , try $ idenNo_ >>= \x -> choice [label x , lookupBindName x]
-   , try $ iden >>= lookupBindName -- holey names used as defined (_+_)
+   , braces conBraces <&> Prod . V.fromList
    , brackets tt <&> TyListOf
-   , parensExpr
--- , P.List <$> brackets (tt `sepBy` reservedChar ',' <|> (scn $> []))
+   , parens ((tt >>= \t -> option t (tuple t <|> typedTT t)) <|> scn $> Tuple []) >>= catchUnderscoreAbs
+   , lexeme literalP <&> Lit -- ! before iden parser
+   , iden >>= addName <&> Var . VExtern  -- '_' is parsed here..
+     -- (? support partial mixfix aps eg. if_then a else b)
    ] <?> "ttArg"
-  parensExpr = parens ((tt >>= \t -> tuple t <|> typedTT t) <|> scn $> Tuple [])
-    >>= catchUnderscoreAbs
+  tySumData = Data <$> let
+    labelDecl = (,) <$> (iden >>= newSLabel) <*> many arg
+    in pIndentedItems labelDecl (fail "")
+  tyGadt = Gadt <$> let -- vec : (n : Nat) ~> Vector n x = gadt
+    gadtDecl = (,) <$> (iden >>= newSLabel) <*> tyAnn
+    in pIndentedItems gadtDecl (fail "")
+
   tuple t = (\ts -> Tuple (t:ts)) <$> some (reservedChar ',' *> tt)
---tuple t = let mkFnBind i t = FnDef "" i Let Nothing t Nothing
---  in some (reservedChar ',' *> tt) <&> (\ts -> LetIn (Block False Let (V.imap mkFnBind $ V.fromList (t : ts))) Nothing)
-  label i = lookupSLabel i >>= \case
-    Nothing -> P.Label <$ reserved "@" <*> newSLabel i <*> many arg
-    Just l  -> pure $ P.Label l [] -- <$> many arg (converted in App)
+  confieldDecl = (,) <$> (iden >>= newFLabel) <* reservedChar '=' <*> tt <?> "Field assignment"
+  conMultiline = reserved "record" *> pIndentedItems confieldDecl (fail "")
+  conBraces    = confieldDecl `sepBy` reservedChar ','
+  tyRecord = Prod <$> let fieldDecl = (,) <$> (iden >>= newFLabel) <*> tyAnn <?> "Field declaration" in do
+    V.fromList <$> pIndentedItems fieldDecl (fail "")
 
-  tySumData = Gadt <$> do
-    let labelDecl = (,,) <$> (iden >>= newSLabel) <*> many arg <*> optional tyAnn <?> "Label declaration"
-    ref <- scn *> use indent <* svIndent
-    indentedItems ref labelDecl (fail "")
-
---tyRecord = Prod <$> let fieldDecl = (,) <$> (iden >>= newFLabel) <*> tyAnn <?> "Field declaration" in do
---  ref <- scn *> use indent <* svIndent
---  indentedItems ref fieldDecl (fail "")
-
-  con :: Parser TT
-  con = let
-    fieldDecl = (,) <$> (iden >>= newFLabel) <* reservedChar '=' <*> tt <?> "Field assignment"
-    multilineAssign = reserved "record" *> fail "" -- indentedItems ref fieldDecl (fail "")
-    conBraces = braces (fieldDecl `sepBy` reservedChar ',')
-    in use indent >>= \sv -> (\r -> r <* (indent .= sv)) $
-      Prod . V.fromList <$> (multilineAssign <|> conBraces)
-
-  branchArrow = reserved "=>" <|> reserved "⇒"
   caseSplits :: Parser [(TT , TT)]
   caseSplits = let
+    branchArrow = reserved "=>" <|> reserved "⇒"
     pattern = tt
   --  >>= option tt $ (\pat rhs -> CasePat (CaseSplits pat [rhs])) <$> (reservedName '|' *> tt) <*> (reservedName "<-" *> tt)
     split = svIndent *> ((,) <$> pattern <* branchArrow <*> tt) :: Parser (TT , TT)
     in braces (split `sepBy` reservedChar ';') <|> let
      finishEarly = void $ char ')' <|> reservedChar '_'
-     in option [] $ try $ (use indent <* scn) >>= \ref -> indentedItems ref split finishEarly
+     in option [] $ try $ pIndentedItems split finishEarly
   lambdaCase = LambdaCase . CaseSplits' <$> caseSplits
   casePat = (\tt splits -> CasePat (CaseSplits tt splits)) <$> tt <* reserved "of" <*> caseSplits
 
-  letIn = do
-    let pLetQual = choice ((\(txt , l) -> reserved txt $> l) <$> [("let" , Let) , ("rec" , Rec) , ("mut" , Mut)])
-    block <- pLetQual >>= pBlock False True
+  letIn letQual = do
+    block <- pBlock False True letQual
     (moduleWIP . parseDetails . letBindCount += V.length (binds block))
     LetIn block <$> (reserved "in" *> (Just <$> tt))
 
---letIn = let -- svIndent -- tell linefold (and subsequent let-ins) not to eat our indentedItems
---  pLetQual  = choice ((\(txt , l) -> reserved txt $> l) <$> [("let" , Let) , ("rec" , Rec) , ("mut" , Mut)])
---  pLetBinds :: Parser Int
---  pLetBinds = parseBinds False >>= \newBinds -> use (moduleWIP . liftedLets) >>= \(len , letBinds) ->
---    len <$ (moduleWIP . liftedLets .= (len + 1 , newBinds : letBinds))
---  in LiftedLets <$> pLetQual <*> pLetBinds <* reserved "in" <*> tt
   typedTT = pure
 
 ---------------------
@@ -372,22 +374,22 @@ literalP = try $ (<* notFollowedBy iden) $ let
       \i -> option i $ single '+' *> sign i <|> single '-' *> sign (not i)
     in sign False >>= \s -> p <&> \n -> if s then negate n else n
   -- L.charLiteral handles escaped chars (eg. \n)
-  char :: Parser Char = between (single '\'') (single '\'') L.charLiteral
+  pChar :: Parser Char = between (single '\'') (single '\'') L.charLiteral
   stringLiteral :: Parser [Char] = choice
-    [ single '"'      *> manyTill L.charLiteral (single '"')
-    , string "''"     *> manyTill L.charLiteral (string "''")
-    , string "$"      *> manyTill L.charLiteral endLine
+    [ single '"'  *> manyTill L.charLiteral (single '"')
+    , string "''" *> manyTill L.charLiteral (string "''")
+    , string "$"  *> manyTill L.charLiteral endLine
     ] <?> "String literal"
-  intLiteral = choice
-    [ try (signed L.decimal)
-    , string "0b" *> L.binary
-    , string "0o" *> L.octal
-    , string "0x" *> L.hexadecimal
+  intLiteral = char '0' *> choice
+    [ (char 'b' <|> char 'B') *> L.binary
+    , (char 'o' <|> char 'O') *> L.octal
+    , (char 'x' <|> char 'X') *> L.hexadecimal
+    , L.decimal
     ] <?> "integer literal"
   in choice
-   [ Char   <$> char
+   [ Char   <$> pChar
    , String <$> stringLiteral
-   , Int    <$> intLiteral
+   , Int    <$> signed (intLiteral <|> L.decimal)
    , numP
    ] <?> "literal"
 
