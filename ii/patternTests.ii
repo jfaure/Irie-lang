@@ -1,0 +1,10 @@
+t1 @F = _
+t2 @F @G = _
+t3 (@F a) = a
+t4 (@F a) @G = a
+t5 (@F a) (@G b) = @Add a b
+t6 (@F a) | @G x <- a = x
+t7 = \case { @x b | @y <- b => x }
+t8 = \case { @x b | @y x <- b => x }
+t9 (a , b) (c , d) = add (add (add a b) c) d
+t10 (@Wrap a b) = \(@XD c d) => add (add (add a b) c) d

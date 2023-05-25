@@ -1,32 +1,32 @@
 # Lift all Let-Ins => infer must lift nests
-# Effects
-# judge bind append
-# rewrite unpattern as anamorphism
-# Bruijn vars inside inExprs are inacurrate !
+# captures inside inExprs are inacurrate (They are a pdep of their freeVars)!
 # mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
+  x = a . Δ(d [x] . c)
+  x1 = a1 . D (x1 Δ x2) . c : A1 <- C
+  x2 = a2 . D (x1 Δ x2) . c : A2 <- C
+  The algebras (a1 : D (A1 X A2) -> A1) and a2 access the results of both rec calls.
+  special case is zygo-hylo, where a2 := a'2 . D outr (a2 uses only 1 of the results)
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * open sum type (default case branch)
   * Identity Iso subtype
   * open record = qualify names on it (QName for modules , TTLens for local records)
   * Conv non-mut non-rec let-binds straight to fn args
-  * leaf bicasts ; subtype tycon trees
+  * leaf bicasts ; subtype tycon trees (traversals)
   * Case call stream.next to recover nice syntax (? subtype @stream to open top layer)
   * WrappedSimpleMutual.g1 should not have polymorphic type (mutual generalistation)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * generalise all lambda types (unless inlineable?) + check not-recursive (avoid inf β-reduction eg. Y-comb)
-  * cross-module mixfixes broken
   * trim bisubs at some point
-  * check if capture free-vars correctly on mutual bindings
   * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
-  * importing new labels can break code: eg. f a = _ ; then import an 'a' label
+  * label/constant name-conv: importing new labels can break code: eg. f a = _ ; then import an 'a' label
   * edit-distance
 ## Syntax: spare: `~%;
   * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
-  * record type syntax: { x : Int , y } -- indicates y : _
+  * record type syntax: { x = Int , y } -- indicates y = ? (only makes sense as a type)
   * ~> = implicit arg: A ~> A -> A
-  ? data .. where
   ? Sum-of-Record
-  ? record union,difference: value & type level
+  * record union (| : |) , difference (\\ : \\)
+  ? argCase => f = \argCase { a b => _ }
 ### Linearity ; free variables (type must be known) ; β vs always-inline
   ! β-opt: Specialise on paps iff dupd (or all paps?) (polymorphic functions may miss pap-specs)
   * dup node scope: global / device / thread ?
@@ -34,22 +34,17 @@
       ! see when lambdas are duplicated (also reduce computations on free-vars when papped)
   ? should we compute containement
 ## Notes. Modules / records
-  ? export list & bind Import list
+  export list & bind Import list
   Cap field number to 64 (use pdep to mark subtyping frets), large records mk list
   Eraser argument is a form of function subtyping
-  Generalise top-level & duplicated lambdas (inline the rest)
-  new specs for imported binds
-  linearity
+  add-specs to imported binds
   unInline case-branch lambdas
   open / required (also locally)
   record-field patterns ((a , b) = rhs) => (\case { (a , b) => rhs })
     ? need to case over whole record since lhs is in scope mutually
-  ? mutual functions within separate records =eg. let a = { f = b.g } ; b = { g = a.f }
-  Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
   * sealing (effect): module becomes only accessible through its signature
   ? mutual functions within separate records = eg. let a = { f = b.g } ; b = { g = a.f }
   * Mutual modules = (λimports -> λM[m1 , m2] -> (m1 , m2)) i1..in M1 M2
-  * applications of insane functions must be fully applied
   * record-field patterns: ? make mutual λ over whole record -- (f , g) = (2 , 3)
   * type/term scope; Idris: (names bound in types are also bound as @-patterns)
     vlength : {n : Nat} -> Vect n a -> Nat
@@ -71,32 +66,30 @@
   * repl parser: multiline case / let
   * pretty case-case formats wrong
 ## Types
-  * mode to print type-var bounds
   * Ad-hoc polymorphism: `Int <: [ NumInt Int ]` show (esp for repl JIT) (? mempty : Monoid a => a)
   * THFieldCollision
   * Dependent normalisation
   * first class polymorphism: eg. require instantiating with polytypes
     '<<' in let f : [a] -> [a] -> Int ; g : Bool -> [a] -> [a] in f << g
   * Linear types; dependent types required to quantify relative linearity `Lin t >= Lin f => t -> u`
-## Beta-optimality:
+## Beta-optimality: Specialise paps (tough to detect paps on polymorphic data)
   * SOA data
-  * λ Minimise normal forms: λ-encoding + lifting + sharing (if subterms of App or Match contain λ, lift them)
+  * λ Minimise normal forms: λ-encoding + lifting + sharing
+  * λ-lifting: if all subterms of App or Match share λ, lift it
   * case-splitters as data for runtime optimisation
   * Partial applications extracted and specialised for beta optimality
-  * Fns passed as args must have interpretable format
   * fns that do case-splits lazy in arguments they may not need
 ## Error messages
-  * Warn nonsense type joins | infer a dependent type
-  * conflicting definitions (from pattern args , let bindings etc..)
+  * Warn nonsense type joins | dependent case?
   * mixfix parser errors & locations
-  * Literal is out of Int range
-  ? Warn local label collides with imported label
+  * Literal is out of Int range: cast Literals
+  * " f = 3" -- top level space before bind bad error message
 ## Unimportant
+  * mode to print type-var bounds
   * Insta-unwrap/specialise single branch cases
-  * optimise strbuf and literal string/arrays
   * Completion based on types (Type -> Bind)
   * tabs vs spaces
-  * Need totality checker, else a Refl type may not terminate and thus proves nothing
+  * Termination checker, if a Refl type diverges it proves nothing
   * strictly positive recursion
   * underdetermined recursion: https://counterexamples.org/underdetermined-recursion.html
     equirecursive => A = F[A] ; B = F[B] => A = B (unsound for arbitrary type-level functions F!)
@@ -110,12 +103,11 @@
   * Pattern PTT: custom unPat function to support any patterns eg. `fact (<? 2) = 1`
   * error messages via prettyprinter Doc
   * language server
-  * optimize cached modules
   * mergetyhead indicates if merge was a noop (so bisub knows it has already seen that input)
   * after function with no free-vars generalised, can trim but not fully clear bisubs!
   * Function = Constructor + rewrite rules ?
   * `typeOf : (t : Type) -> Type` shortcut to access (and alias) an inferred type
-  * reinstate ArgProd f97cd9c0d01eddb562a029fa52ddee785e6a47b6
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
   * phase distinction: meaning of static expr not dependent on executing dynamic exprs
+

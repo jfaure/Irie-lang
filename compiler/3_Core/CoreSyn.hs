@@ -106,7 +106,7 @@ data TyCon t -- Type constructors
  | THTuple    (V.Vector t) -- ordered form of THproduct
  | THProduct  (BSM.BitSetMap t)
  | THSumTy    (BSM.BitSetMap t)
- | THSumOpen  (BSM.BitSetMap t) t -- [li : τi | (lj : pj for lj ∉ li)]
+ | THSumOpen  (BSM.BitSetMap t) -- [li : τi | (lj : pj for lj ∉ li)]
  deriving (Eq , Functor , Foldable , Traversable)
 
 -- Head constructors in the profinite distributive lattice of types
@@ -150,7 +150,6 @@ data Bind
 
  -- free has the atLen of all capturable vars: the reference for where the bitset bruijns are valid
  | BindOK { optLevel :: OptBind , free :: (Int , BitSet) , naiveExpr :: Expr }
- | BindUnused Text
 
 data OptBind = OptBind
   { optId :: Int

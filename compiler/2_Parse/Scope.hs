@@ -1,6 +1,5 @@
 {-# Language TemplateHaskell #-}
 module Scope (scopeTT , scopeApoF , initParams , RequiredModules , OpenModules , Params , letMap , lets) where
-import UnPattern (patternsToCase , Scrut(..))
 import ParseSyntax
 import QName
 import CoreSyn(ExternVar(..))
@@ -9,11 +8,12 @@ import Externs ( readParseExtern, Externs )
 import Errors
 import Data.Functor.Foldable
 import Control.Lens
+import Data.List (span)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified BitSetMap as BSM
 
--- * IConv: each module has its convention for an (HName -> IName) isomorphism
+-- * IConv: each module has its own isomorpism convention (HName <-> IName)
 -- * QName is thus a module name (indicating the IConv) and an IName
 -- ? QTT requires cata to track mulitplicity (0 | 1 | ω)
 type OpenModules = BitSet
@@ -25,6 +25,7 @@ data Params = Params
   , _args        :: BitSet
   , _bruijnMap   :: V.Vector Int -- pre-built by mkCase: text IName -> BruijnArg TODO merge with letMap
   , _bruijnCount :: Int -- nesting level
+  , _guardKO     :: Maybe TT -- fallback for patternguards
 
   , _letMap      :: V.Vector QName -- text IName -> LetName
   , _letNest     :: Int
@@ -32,7 +33,7 @@ data Params = Params
 
 initParams open required = let
   sz = 300 -- TODO max number of let-bindings or bruijnVars
-  in Params open required emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 (V.create (MV.new sz)) 0
+  in Params open required emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 Nothing (V.create (MV.new sz)) 0
 
 -- TODO don't allow `bind = lonemixfixword`
 -- handleExtern (readParseExtern open mod e i) ||| readQParseExtern :: ExternVar
@@ -48,62 +49,18 @@ handleExtern exts mod open lm i = case readParseExtern open mod exts i of
   ImportLabel q -> QLabel q
   x -> error (show x)
 
--- Patterns (- TTs) need their labels and constants scoped, then introduce new args
--- - A (B a _) C
---   .. 
--- + \s0 => guard s0 A \s1 => guard s1 B \s2 s3 => name s2 = a => guard s3 C => rhs
--- = \s0 => case s0 of { A s1 => case s1 of { B (s2=a) s3 => case s3 of { C => rhs }}}
---   if fail at any point, move into next case
--- The recursion scheme: depth first unroll a case-nest to check all guards; but support failure continuation
---unPattern :: Params -> Externs -> ModuleIName -> TT -> TT -> TTF TT
---unPattern params exts thisMod koBranch = \case
---  Var (VExtern i) -> case readParseExtern params._open thisMod exts i of
---    MixfixyVar m  -> MFExprF m -- Only handle mixfixes in case i was overshadowed by an arg
---    ImportLabel q -> QLabelF q
---    _ -> VarF (VExtern i)
---  Juxt o args -> unPattern params exts thisMod koBranch (solveMixfixes o args) -- solvescopes first?
---
---  Label i subPats -> GuardLabelF (mkQName thisMod i) subPats -- new VBruijns , new VExterns -> VBruijns
---  QLabel q    -> GuardLabelF q []
---  ArgProd arg -> GuardArgF arg
---  Tuple args  -> GuardTupleF args
---  x -> DesugarPoisonF (IllegalPattern (show x))
---  unConsArgs = [qName2Key (mkQName 0 i) | i <- [0 .. n-1]] <&> \k -> TupleIdx k scrut
+-- Pattern (TT) inversion: case-alts can introduce VBruijns and thus change the scope environment
+-- Parse > resolve mixfixes > resolve cases > check arg scopes?
+-- note: codo on cofree comonad => DSL for case analysis on the base functor of the cofree comonad.
 
--- Patterns are either case-label or case (eq C x)
-unfoldCase :: TT -> [([TT] , TT)] -> Params -> Seed
-unfoldCase scrut alts params = _unPattern 
+-- β-optimality for sharing branches between different paps in dependency tree
+-- [ [Pattern , TT] ] -> [ Case ]        2 ^ (nArgs - 1) paps
 
 -- * name scope , free variables , dup nodes , resolve VExterns to BruijnArg | QName
 -- unpattern assigns debruijn levels: bl, the debruijn index is lvl - bl - 1
 type Seed = (TT , Params)
 scopeApoF :: Externs -> ModuleIName -> Seed -> TTF (Either TT Seed)
 scopeApoF exts thisMod (this , params) = let
-  -- Cases require different approach: resolve mixfix externs > solvemixfix > unpattern > solvescopes
-  -- * insert a pretraversal of *only* patterns under this scope context, then patternsToCase then resume solveScopes
-  doCase :: UnPattern.Scrut -> [(TT, TT)] -> Params -> Seed
-  doCase scrut patBranchPairs params = let
-    solvedBranches :: [(TT , TT)]
-    solvedBranches = patBranchPairs <&> \(pat , br) -> let
-      -- Special treatment for Terms in pattern position: we need to find and resolve mixfix labels immediately
-      clearExtsF = \case
-        VarF (VExtern i) ->
-          -- overwrites λ-bounds: x = 3 ; f x = x
-          -- TODO how to deal with let-bound labels?
---        | params._lets `testBit` i -> Var $ VLetBind (mkQName thisMod i) -- ?! i
-          -- Only inline mixfixes, nothing else, (? mutually bound mixfixes used in pattern)
-          case readParseExtern params._open thisMod exts i of
-            MixfixyVar m  -> MFExpr m -- Only inline possible mixfixes
-            ImportLabel q -> QLabel q
-            _ -> Var (VExtern i)
-        JuxtF o args -> solveMixfixes o args -- TODO need to solveScope the mixfixes first!
-        tt -> embed tt
-      in (cata clearExtsF pat , br) -- TODO could ana this so it could fuse
-    (this , bruijnSubs) = patternsToCase thisMod (scrut{- params-}) (params._bruijnCount) solvedBranches
-    in case bruijnSubs of
-      [] -> (this , params)
-      x  -> error ("non-empty bruijnSubs after case-solve: " <> show x)
-
   doBruijnAbs :: BruijnAbsF TT -> TTF (Either TT Seed)
   doBruijnAbs (BruijnAbsF n bruijnSubs _ tt) = let
     argsSet    = intList2BitSet (fst <$> bruijnSubs)
@@ -124,29 +81,103 @@ scopeApoF exts thisMod (this , params) = let
     | params._args `testBit` i -> Var $ VBruijn  (params._bruijnCount - 1 - (params._bruijnMap V.! i))
     | params._lets `testBit` i -> Var $ VLetBind (params._letMap V.! i)
     | otherwise -> handleExtern exts thisMod params._open params._letMap i
-  in case {-d_ (embed $ Question <$ this) $-} this of
+
+  -- Patterns (- TTs) need their labels and constants scoped, then introduce new args
+  -- - A (B a _) C => rhs1
+  --   _  => rhs2
+  -- + \s0 => guard s0 A \s1 => guard s1 B \s2 s3 => name s2 = a => guard s3 C => rhs
+  -- = \s0 => case s0 of { A s1 => case s1 of { B (s2=a) s3 => case s3 of { C => rhs }}}
+  -- failures : redundant pattern match / illegal pattern
+  -- Case /guard failures are recoverable iff wildcard higher case next: this duplicates rhs
+  -- ! This delegates spawning of new VBruijns via GuardArgs
+  unfoldCase :: TT -> [((TT {-, [TT]-}) , TT)] -> Params -> TT
+  unfoldCase scrut rawAlts params = let
+    scopeLayer pat = case pat of
+      Var (VExtern i) -> case readParseExtern params._open thisMod exts i of
+        ImportLabel q -> QLabel q
+  --    ImportLit
+        _ -> Var (VExtern i) -- new argument
+      Juxt o args -> solveMixfixes o (scopeLayer <$> args) -- TODO need to solveScope VExterns first
+      tt -> tt
+    isLabel = \case { QLabel{} -> True ; Label{} -> True ; App{} -> True; _ -> False }
+    (altPats , rest) = span (isLabel . fst) (first scopeLayer <$> rawAlts)
+    alts = altPats <&> \(pat {-, guards)-} , rhs) -> case pat of
+      QLabel q -> (qName2Key q , rhs) -- Guards openMatch guards rhs)
+      Label i subPats -> (qName2Key (mkQName thisMod i) , GuardArgs Nothing subPats rhs)
+      App (QLabel q) subPats -> (qName2Key q , GuardArgs Nothing subPats rhs)
+    openMatch = case rest of -- TODO could be guarded; another case
+      [] -> Nothing
+      (WildCard , rhs) : redundant -> Just rhs -- guards
+      x -> error (show x) -- _illegallPattern -- argProd , Tuple , Lit are parsed as guards
+    -- branch = mkBruijnLam (BruijnAbsF n argSubs 0 rhs)
+    match = MatchB scrut (BSM.fromList alts) openMatch
+   in match -- (if null redundant then identity else ScopeWarn RedundantPatMatch) (match (Just wild))
+
+  -- Spawn new VBruijns and Guard them if further cases required
+  -- a guard is recoverable if an enclosing case has a wildcard
+  -- nestGuards: enclosing guards on top of subpatterns for these args
+  guardArgs _ko [] rhs [] = RawExprF (Right (rhs , params))
+  guardArgs ko args rhs nestGuards = let
+    n = length args
+    lvl = params._bruijnCount :: Int
+    vbruijnLvls = [lvl .. lvl + n-1] -- [n-1 , n-2 .. 0]
+    argSubs = let getArgSub i = \case { Var (VExtern e) -> [(e , i)] ; x -> [] }
+      in concat (zipWith getArgSub vbruijnLvls args)
+    mkGuards pat vbl = case pat of
+      Var VExtern{} -> []
+      WildCard{} -> []
+      pat -> [GuardPat pat (Var (VBruijnLevel vbl))]
+    guards = concat (zipWith mkGuards args vbruijnLvls) :: [Guard]
+    in doBruijnAbs $ BruijnAbsF n argSubs 0 (Guards Nothing (guards ++ nestGuards) rhs)
+
+  in case {-d_ (embed $ Question <$ this) -} this of
   Var v -> case v of
     VBruijnLevel i -> VarF (VBruijn $ params._bruijnCount - 1 - i) -- Arg-prod arg name
-    VBruijn 0 -> VarF (VBruijn 0) -- spawned by LambdaCaseF
-    VBruijn n -> error "VBruijn n/=0 shouldn't be possible"
+    VBruijn n -> VarF (VBruijn n) -- lambdaCaseF spawns (VBruijn 0) ; error "VBruijn n/=0 shouldn't be possible"
     VExtern i -> Left <$> project (resolveExt i)
     VLetBind _-> VarF v
-  -- TODO Not ideal; shortcircuits the apomorphism (perhaps. should rework cataM inferF)
-  AppExt i args -> Left <$> project (solveMixfixes 0 $ resolveExt i : (scopeTT exts thisMod params <$> args))
+  -- TODO Not ideal; retype solvemixfix on (∀a. TTF a) ?
   Juxt o args   -> Left <$> project (solveMixfixes o $ scopeTT exts thisMod params <$> args)
+--Juxt o args   -> scopeApoF exts thisMod . (,params) $ solveMixfixes o $ _ $
+--  args <&> \case { Var v -> handleVar v ; x -> Left <$> project x }
   BruijnLam b -> doBruijnAbs b
-  LamPats args rhs -> patternsToCase thisMod Question (params._bruijnCount) [(args , rhs)]
-    & fst & \t -> Right . (, params) <$> project t
-  LambdaCase (CaseSplits' branches) -> BruijnLamF $ BruijnAbsF 1 [] 0
-    $ Right (doCase (Var $ VBruijn 0) branches (params & bruijnCount %~ (1+)))
-  CasePat (CaseSplits scrut patBranchPairs) -> RawExprF (Right (doCase scrut patBranchPairs params))
+  LambdaCase (CaseSplits' alts) -> doBruijnAbs $ BruijnAbsF 1 [] 0 (CasePat (CaseSplits (Var (VBruijn 0)) alts))
+  CasePat (CaseSplits scrut alts) -> RawExprF (Right (unfoldCase scrut alts params , params))
+
+  -- v transpose ?
+  FnEqns eqns -> case eqns of
+    [GuardArgs ko pats rhs] -> guardArgs ko pats rhs []
+  GuardArgs ko pats rhs -> guardArgs ko pats rhs []
+  Guards _ko [] rhs -> scopeApoF exts thisMod (rhs , params) -- RawExprF (Right (rhs , params)) -- skip
+  Guards ko (g : guards) rhs -> let
+    guardLabel scrut q subPats = fmap (Right . (,params)) $ let
+      rhs' = if null subPats then Guards ko guards rhs else GuardArgs ko subPats (Guards ko guards rhs)
+      in MatchBF scrut (BSM.singleton (qName2Key q) rhs') ko
+    in case g of
+    GuardPat pat scrut -> case pat of
+      Label l subPats -> guardLabel scrut (mkQName thisMod l) subPats
+      Tuple subPats -> let
+        n = length subPats
+        projections = [TupleIdx (qName2Key (mkQName 0 i)) scrut | i <- [0 .. n - 1]]
+        in Right . (,params) <$> AppF (GuardArgs ko subPats (Guards ko guards rhs)) projections
+      -- vv TODO could be Label or new arg
+      Var (VExtern i) -> case readParseExtern params._open thisMod exts i of
+        ImportLabel q -> guardLabel scrut q []--guards
+        NotInScope _  -> doBruijnAbs (BruijnAbsF 1 [(i , params._bruijnCount)] 0 rhs)
+        x -> DesugarPoisonF (IllegalPattern ("Ext: " <> show x))
+      x -> DesugarPoisonF (IllegalPattern (show x))
+    GuardBool{} -> error (show g)
 
   -- ? mutual | let | rec scopes
   LetIn (Block open letType binds) mtt -> let
     letParams = updateLetParams params (toList (binds <&> _fnIName))
     bindsDone :: V.Vector FnDef
     bindsDone = binds <&> (& fnRhs %~ scopeTT exts thisMod letParams)
-    in LetInF (Block open letType bindsDone) (mtt <&> \tt -> Right (tt , letParams))
+    dups = fst $ foldr (\i (dups , mask) -> (if testBit mask i then setBit dups i else dups , setBit mask i))
+      ((0 , 0) :: (BitSet , BitSet)) (binds <&> (^. fnIName))
+    dupHNames = bitSet2IntList dups <&> \i -> bindsDone V.! i ^. fnNm
+    letTT = LetInF (Block open letType bindsDone) (mtt <&> \tt -> Right (tt , letParams))
+    in if dups == 0 then letTT else ScopePoisonF (LetConflict dupHNames)
 
   Prod xs -> ProdF $ xs <&> \(i , e) -> (qName2Key (mkQName thisMod i) , Right (e , params))
   Tuple xs -> ProdF $ V.fromList $ Prelude.imap (\i e ->

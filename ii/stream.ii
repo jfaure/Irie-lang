@@ -120,6 +120,9 @@ isoStringStream = streamToString (stringToStream "0123")
 --c = b a
 
 -- Tests
+--t   = foldr add 0 (enumFromTo 0 10)
+--tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
+--ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
 --l  = sum < map (add 1) < enumFromTo 5 10
 --ll = Sappend (enumFromTo 11 15) (enumFromTo 5 10)
 --ll a = cata add 0 < Sappend a a

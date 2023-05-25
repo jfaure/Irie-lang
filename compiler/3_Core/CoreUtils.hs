@@ -165,7 +165,8 @@ mergeTyHead pos t1 t2 = -- (\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ "
   [THExt a , THExt  b]        -> if a == b then [t1] else join
   [THTyCon t1 , THTyCon t2]   -> case [t1,t2] of
 --  [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ if pos then BSM.intersectionWith mT a b else BSM.unionWith mT a b]
-    [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   $ BSM.unionWith mT a b]
+    [THSumTy a   , THSumTy b]   -> [THTyCon $ THSumTy   (BSM.unionWith mT a b)]
+    [THSumOpen a , THSumOpen b] -> [THTyCon $ THSumOpen (BSM.unionWith mT a b)]
     [THProduct a , THProduct b] -> [THTyCon $ THProduct $ if pos then BSM.unionWith mT a b else BSM.intersectionWith mT a b]
     [THTuple a , THTuple b]     -> [THTyCon $ THTuple (zM pos a b)]
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM (not pos) d1 d2) (mergeTypes pos r1 r2)]

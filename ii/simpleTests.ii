@@ -43,11 +43,11 @@ letGen2 x = let y   = x in y   -- ∏ A → A → A
 -- ^ typeof x quantified early => f2 : A → B
 letGen3 x = let y z = x z in y -- ∏ A B → (A → B) → A → B
 
-lp1   = let f = \x => x in {a = f 7 , b = f 1}     -- {a : %i32 , b : %i1}
-lp2 y = let f = \x => x  in {a = f y , b = f 1}    -- ∏ A → A → {a : A , b : %i1}
-lp3 y = let f = \x => y x in {a = f 7 , b = f 1}   -- ∏ A → ((%i1 ⊔ %i32) → A) → {a : A , b : A}
-lp4 y = let f = \x => x y in {a = f (\z => z) , b = f (\z => 1)} -- ∏ A → A → {a : A , b : %i1}
-lp5 y = let f = \x => x y in {a = f (\z => z) , b = f (\z => add 1 z)} -- ∏ A → (%i32 ⊓ A) → {a : A , b : %i32}
+lp1   = let f x = x in {a = f 7 , b = f 1}     -- {a : %i32 , b : %i1}
+lp2 y = let f x = x  in {a = f y , b = f 1}    -- ∏ A → A → {a : A , b : %i1}
+lp3 y = let f x = y x in {a = f 7 , b = f 1}   -- ∏ A → ((%i1 ⊔ %i32) → A) → {a : A , b : A}
+lp4 y = let f x = x y in {a = f (\z => z) , b = f (\z => 1)} -- ∏ A → A → {a : A , b : %i1}
+lp5 y = let f x = x y in {a = f (\z => z) , b = f (\z => add 1 z)} -- ∏ A → (%i32 ⊓ A) → {a : A , b : %i32}
 
 --lerror1 = (\k => k (\x => let tmp = add x 1 in x)) (\f => f 1) -- cannot constrain %i1 <: %i32
 

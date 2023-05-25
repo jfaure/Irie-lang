@@ -27,10 +27,12 @@ data ScopeError
   | ScopeNotImported HName HName
   | AmbigBind  Text [(ModIName , IName)]
   | ScopeLetBound IName
+  | LetConflict [Text]
   deriving Show
 data ScopeWarning
   = LetShadows BitSet
-  | LambdaShadows BitSet deriving Show
+  | LambdaShadows BitSet
+  | RedundantPatMatch deriving Show
 data TypeAppError = BadTypeApp { typeOperator :: Type , typeArgs :: [Expr] }
 data MixfixError  = MixfixError SrcOff Text deriving Show
 data UnPatError   = RedundantPatternMatch Text | NoCaseMerge Text | EmptyCase | IllegalPattern Text
@@ -90,6 +92,9 @@ formatScopeError = \case
   ScopeNotImported h m -> clRed "Not in scope " <> show h <> clBlue "\nnote. ∃: "
     <> show m <> "." <> h
   AmbigBind h many -> clRed "Ambiguous binding: " <> h <> show many
+  LetConflict many -> case many of
+    [one] -> clRed "Let conflict: " <> show one
+    many  -> clRed "Let conflicts: " <> T.intercalate " , " (show <$> many)
 
 formatTypeAppError = \case
   BadTypeApp f args -> TL.toStrict $ clRed "Cannot normalise type operator application: "

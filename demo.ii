@@ -2,7 +2,10 @@
 -- letscopeAfterMixfix y = if y then let x = 3 in x else y
 
 -- Says "⊤ → %i1" , which is perhaps even a better type
+-- instantly applying let-binds to freeVars appears to not work
 --misc0 x = let y = (x x.v) in 0  -- ∏ A → ((A → ⊤) ⊓ {v : A}) → %i1
+--lp1   = let f = \x => x in {a = f 7 , b = f 1}     -- {a : %i32 , b : %i1}
+--lp4 y = let f x = x y in {a = f (\z => z) , b = f (\z => 2)}  -- ∏ A → A → {a : A , b : %i1}
 
 -- let-bound mixfix => make VLetBind instead of QName
 -- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
@@ -10,55 +13,29 @@
 -- Don't μ-roll non-positive functions
 --Selfapp3 x y = x x y
 
---rect (P : Set) : Set = record
---Recangle = record
---  f : Int
---  g : Int
+-- multi-branch different μ merging =>
+-- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
---import list
---import list2
---import tree
---import question
---import ls
---import foldr
---import question
---import Free
---import parsec
---import intmap
+-- Type ascriptions
+--Rectangle (P : Set) : Set = { f = P }
+--Recangle = { f = Int , g = Int }
+--rect = { f = 5 , g = 3 } : Rectangle
+
+--imports list list2 tree question ls foldr Free parsec intmap patternTests
 --import irieShell -- ideas for irie as shell
 
 --import stream
 --import imports/TreeStream
 
--- pattern guards: parse and unpattern
---f = \case { @x b | @y <- b => 1 }
+-- Open sum type subtypes closed sumtype
+-- null = \case { @None => @True ; _ => @False }
+-- t = null None
 
--- Wildcard (poison cannot merge cases)
---null = \case
---  @None => @True
---  ? => @False
-
--- Merge equations properly, this creates 2 bindings
--- Also disallow extra names between the equations
+-- Let conflict
 --eq1 @x b = 2
 --eq1 a b = 3
 
--- lost some bounds
---import foldr
---nonEmptySubSequences = \case -- [a] -> [[a]]
---  @Nil       => Nil
---  @Cons x xs => Cons (Cons x Nil) (foldr (\ys r => Cons ys (Cons (Cons x ys) r)) Nil (nonEmptySubSequences xs))
-
--- list2.unwords = merge μ-bounds upwards even if layer not equal
-
--- multi-branch different μ merging =>
--- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
-
--- parse indented nested lets (lets as mixfix?)
---f x =
--- let g y =
---   let h z = add z (add x y) in h
--- in g
+--trans imports: list2 uses list.Nil
 
 --import SpecialisationTests/SpecPapArg
 --import SpecTests
@@ -71,19 +48,17 @@
 --import letCaptureTests
 --import casecase
 --import tupleTests
-
 --import mutumorphism -- avoid let-block
 --import Tee -- duplicate streams
 
--- trans imports: list2 uses list.Nil
-
+-- import QNames properly
 --import stream
 --f = enumFromTo 0 2
 
+-- D always appears with e, but e > D so can't sub..
 --import foldr
 --squish (@Node x ts) xs = Cons x (foldr squish xs ts)
 -- (µe.([Cons {A , (µe.[Cons {A , e}] ⊔ D)}] ⊔ D) ⊔ D)
--- D always appears with e, but e > D so can't sub..
 
 -- Rewrite buildVarSubs on 4 bitsets + MVector: del , gen , rec , tysubs
 -- b(5) should sub for 6; but then we have bidirectional subvars
@@ -95,47 +70,3 @@
 --  @Nil => { l = xs , r = xs }
 --  -- TODO recursive letin
 --  @Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
-
-{-
-import prelude
-Sappend (@stream nextL sl0) (@stream nextR sr0) = let
-  next = \case
-    @Left  sa => case nextL sa of
-      @Done      => Skip    (Right sr0)
-      @Skip s    => Skip    (Left s)
-      @Yield x s => Yield x (Left s)
-    @Right sb => case nextR sb of
-      @Done      => Done
-      @Skip s    => Skip    (Right s)
-      @Yield x s => Yield x (Right s)
-  in ana next (@Left sl0)
-
-SconcatMap f (@stream nexta seed) = let
-  nextC S = case S.m of
-    @None => case nexta S.sa of
-      @Done      => Done
-      @Skip s    => Skip {sa = s , m = @None}
-      @Yield a s => Skip {sa = s , m = @One (f a)}
-    @One (@stream nextb sb) => case nextb sb of
-      @Done      => Skip    {sa = S.sa , m = @None}
-      @Skip s    => Skip    {sa = S.sa , m = @One (stream nextb s)}
-      @Yield b s => Yield b {sa = S.sa , m = @One (stream nextb s)}
-  in @stream nextC {sa = seed , m = None}
-
-ana next seed = @stream next seed
-
-enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
-empty = @stream (\x => x) @Done
-
-foldr c z (@stream next seed) = let -- rhylo c a seed
-  go next c z s = case next s of
-    @Done      => z
-    @Skip r    => go next c z r
-    @Yield x r => c x (go next c z r)
-  in go next c z seed
-
--- Issue with let-nest QName
-t   = foldr add 0 (enumFromTo 0 10)
-tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
-ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
--}

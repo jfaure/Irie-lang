@@ -5,13 +5,13 @@
 -- (!?) O(log n)
 -- union , intersection , mergeWithKey O(n)
 module BitSetMap (BitSetMap(..) , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , singleton , (!?) , BitSetMap.elems , BitSetMap.keys
-  , unionWith , intersectionWith , traverseWithKey , mergeWithKey' , mergeWithKey , mapAccum , mapWithKey) where
+  , unionWith , intersectionWith , traverseWithKey , mergeWithKey' , mergeWithKey , mapAccum , mapWithKey , BitSetMap.unzip , fromVec) where
 
 -- For oneshot built ordered lists, dichotomy lookup on a (Vector (Int , a)) is a clear improvement vs Data.IntMap
 import Data.Binary ( Binary )
 import Data.Vector.Binary ()
 import qualified Data.Traversable as DT ( mapAccumL )
-import qualified Data.Vector as V ( Vector, (!), fromList, length, map, singleton, toList, unfoldrN )
+import qualified Data.Vector as V ( Vector, (!), fromList, length, map, singleton, toList, unfoldrN, unzip )
 
 newtype BitSetMap a = BSM { unBSM :: V.Vector (Int , a) }
   deriving (Eq , Generic , Show)
@@ -26,10 +26,13 @@ instance Foldable BitSetMap where
 instance Traversable BitSetMap where
   traverse f = fmap BSM . traverse (\(a,b) -> (a,) <$> f b) . unBSM
 
+unzip (BSM v) = V.unzip ((\(i , (a,b)) -> ((i , a) , (i , b))) <$> v) & \(a , b) -> (BSM a , BSM b)
+
 size       = V.length . unBSM
 toList   l = V.toList (unBSM l)
 fromList l = BSM (V.fromList (sortOn fst l))
---fromVec  l = BSM (V.sortOn fst l)
+fromVec  :: V.Vector (Int , a) -> BitSetMap a
+fromVec  = fromList . Prelude.toList -- BSM (V.sortOn fst l)
 
 fromListWith :: (b -> b -> b) -> [(Int , b)] -> BitSetMap b
 fromListWith f l = let

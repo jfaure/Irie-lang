@@ -166,11 +166,11 @@ pTyHead pos = let
         TyGround [THTyCon (THTuple v)] | V.null v -> ""
         _ -> space <> pTy' ty
       in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)))
-    THSumOpen l d -> let
+    THSumOpen l -> let
       prettyLabel (l,ty) = annotate (AQLabelName (QName l)) "" <> case ty of
         TyGround [THTyCon (THTuple v)] | V.null v -> ""
-        _ -> space <> pTy' ty
-      in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)) <> viaShow d)
+        ty -> space <> pTy' ty
+      in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)) <+> "| _")
     THProduct l -> let
       prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy' ty
       in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> BSM.toList l))
@@ -195,7 +195,6 @@ pBind nm showRhs bind = pretty nm <> " = " <> case bind of
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
     letW  = "" -- if lbound then "let " else ""
     in letW <> {-viaShow n <+> -} recKW <> (if 0 == free then "" else viaShow (nFree , bitSet2IntList free)) <> pExpr showRhs expr
-  BindUnused{} -> "BindUnused{}"
 
 -- want to print the top-level let-block without {} or = record
 pTopExpr showRhs (Core (LetBlock bs) _ty) = vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
@@ -218,7 +217,7 @@ pTerm showRhs = let
     showLabel l t = prettyLabel (QName l) <+> "=>" <+> prettyLam t
     in brackets $ annotate AKeyWord "\\case " <> nest 2 ( -- (" : " <> annotate AType (pTy caseTy)) <> hardline
       hardline <> (vsep (Prelude.foldr (\(l,k) -> (showLabel l k :)) [] (BSM.toList ts)))
-      <> maybe "" (\catchAll -> hardline <> ("_ ⇒ " <> prettyLam catchAll)) d
+      <> maybe "" (\catchAll -> hardline <> ("_ => " <> prettyLam catchAll)) d
       )
   ppTermF = \case
     TyF t -> pTy True t -- TODO polarity
@@ -243,7 +242,7 @@ pTerm showRhs = let
         LensGet          -> " . get "
         LensSet  tt      -> " . set "  <> parens (pExpr showRhs tt)
         LensOver cast tt -> " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr showRhs tt)
-      in r <> " . " <> hsep (punctuate "." $ {-prettyField-} viaShow <$> target) <> pLens ammo
+      in parens $ r <> " . " <> hsep (punctuate "." $ {-prettyField-} viaShow <$> target) <> pLens ammo
     LetSpecF q sh -> "let-spec: " <> viaShow q <> "(" <> viaShow sh <> ")"
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
     ProdF ts     -> braces $ hsep $ punctuate " ," (BSM.toList ts <&> \(l , rhs) -> annotate (AQFieldName (QName l)) "" <> " = " <> rhs)

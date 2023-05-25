@@ -17,8 +17,7 @@ import Control.Lens
 import Data.Functor.Foldable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import qualified BitSetMap as BSM ( toList, fromList, fromListWith, singleton )
-import PrettyCore
+import qualified BitSetMap as BSM ( toList, fromList, fromVec, fromListWith, singleton, unzip )
 
 --addBind :: Expr -> P.FnDef -> Expr
 --addBind jm newDef = jm
@@ -125,7 +124,6 @@ judgeBind letDepth bindINm = let
       let mbs = intList2BitSet $ snd <$> filter ((letDepth == ) . fst) bStack
       Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvar)
         <$ MV.write wip bindINm (Right $ Guard (mutuals .|. mbs) tvar)
-    b -> error (show b)
 
   genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> [Int] -> (Int , BitSet) -> Int -> TCEnv s Expr
   genExpr wip' (Core t ty) freeVarCopies letCapture@(_,freeVars) tvarIdx = do
@@ -136,7 +134,8 @@ judgeBind letDepth bindINm = let
       let copyFreeVarsTy = prependArrowArgsTy (tyVar <$> freeVarCopies) (tyVar tvarIdx)
       generalise copyFreeVarsTy
       -- <* when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
-    let retExpr = Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
+    let rawRetExpr = Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
+    retExpr <- pure rawRetExpr -- explicitFreeVarApp freeVars rawRetExpr
            -- TODO Mark eraser args (ie. lazy VBruijn rename for simplifer)
     retExpr <$ MV.write wip' bindINm (Right (BindOK optInferred letCapture retExpr))
 
@@ -148,17 +147,19 @@ getLetBind letDepth bindINm = do
   expr <- judgeBind letDepth bindINm <&> \(Core _t ty) ->
     Core (Var (VLetBind (mkQName letDepth bindINm))) ty -- don't inline at this stage
   use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>= \case
-    Right (b@BindOK{}) -> free b & \(_ld , lc) -> if lc == 0 then pure expr else
+    Right (b@BindOK{}) -> free b & \(_ld , lc) -> explicitFreeVarApp lc expr
       -- ld doesn't matter since we dont β-reduce
-      expr & \(Core t ty) -> let 
-        bruijnArs = bitSet2IntList lc
-        appFree = App t (VBruijn <$> bruijnArs)
-        in do
-        atvs <- use bruijnArgVars
-        (_cast , appTy) <- biUnifyApp ty (tyVar . (atvs V.!) <$> bruijnArs)
-        pure (Core appFree appTy)
-          -- trace (prettyTermRaw t <> "\n" <> prettyTermRaw (exprTerm c) <> "\n" <> prettyTyRaw ty) c
     _ -> pure expr -- TODO handle mutuals that capture vars ; ie. spawn mutumorphisms
+
+explicitFreeVarApp :: BitSet -> Expr -> TCEnv s Expr
+explicitFreeVarApp lc e@(Core t ty) = if lc == 0 then pure e else let
+  bruijnArs = bitSet2IntList lc
+  appFree = App t (VBruijn <$> bruijnArs)
+  in do
+  atvs <- use bruijnArgVars
+  (_cast , appTy) <- biUnifyApp ty (tyVar . (atvs V.!) <$> bruijnArs)
+  pure (Core appFree appTy)
+  -- trace (prettyTermRaw t <> "\n" <> prettyTermRaw (exprTerm c) <> "\n" <> prettyTyRaw ty) c
 
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
 -- ! we may have inferred some missing information in type holes
@@ -239,8 +240,7 @@ inferF = let
 
    ret <- fromMaybe (pure poisonExpr) inExpr
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
-     <&> map (BindUnused . show @P.FnDef ||| identity)
--- lets <- V.generateM (V.length letBindings - 1) (getLetBind nest)
+     <&> map (fromRight (error "impossible: uninferred TT")) -- mapM judgeBind solved all
    mI <- use thisMod
    pure (ret , V.zipWith (\fn e -> (LetMeta (fnINameToQName mI fn) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
 
@@ -262,12 +262,10 @@ inferF = let
     blockTy = THProduct (BSM.fromListWith mkFieldCol $ V.toList $ V.zip nms tys) -- TODO get the correct INames
     in Core (LetBlock lets) (TyGround [THTyCon blockTy])
   P.LetInF (P.Block _ _ lets) pInTT -> inferBlock lets pInTT <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
-  P.ProdF ps -> do
-    mI <- use thisMod
-    core <- ps `forM` \(i,s) -> s <&> \(Core t ty) -> let q = i -- qName2Key (mkQName mI i)
-      in ((q , t) , (q , ty))
-    pure $ unzip (V.toList core) & \(terms , tys) ->
-      Core (Prod (BSM.fromList terms)) (TyGround [THTyCon $ THProduct (BSM.fromList tys)])
+  P.ProdF pFields -> let -- duplicate the field name to both terms and types
+    mkCore (ts , tys) = Core (Prod ts) (TyGround [THTyCon (THProduct tys)])
+    in fmap (mkCore . BSM.unzip . BSM.fromVec)
+      $ pFields `forM` \(i , s) -> s <&> \(Core t ty) -> (i , (t , ty))
 
   P.VarF v -> case v of -- vars : lookup in appropriate environment
     P.VBruijn b -> do
@@ -372,9 +370,7 @@ inferF = let
           BruijnAbsTyped _ _t ars _retTy -> TyGround [THTyCon $ THTuple (V.fromList $ snd <$> ars)]
           _x -> TyGround [THTyCon $ THTuple mempty]
         scrutSum = BSM.fromList (zip labels altTys)
-        scrutTy  = TyGround [THTyCon $ case def of
-          Nothing          -> THSumTy scrutSum
-          Just (_ , defTy) -> THSumOpen scrutSum defTy]
+        scrutTy  = TyGround [THTyCon $ if isJust def then THSumOpen scrutSum else THSumTy scrutSum]
         matchTy = TyGround (mkTyArrow [scrutTy] retTy)
     (b , retT) <- biUnifyApp matchTy [gotScrutTy]
     case b of { BiEQ -> pure () ; _ -> error "expected bieq" }

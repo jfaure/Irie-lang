@@ -117,22 +117,6 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THTyCon THArrow{} , _) -> failBiSub (TextMsg "Insufficient arguments") (TyGround [p]) (TyGround [m])
   (a , b) -> failBiSub (TextMsg "Incompatible types") (TyGround [a]) (TyGround [b])
 
--- TODO cache THTycon contained vars?
-getTVarsType = \case
-  TyVars vs g -> foldr (.|.) vs (getTVarsTyHead <$> g)
-  TyGround  g -> foldr (.|.) 0 (getTVarsTyHead <$> g)
-  _ -> error "panic: getTVars on non-trivial type"
-getTVarsTyHead :: TyHead -> BitSet
-getTVarsTyHead = \case
-  THTyCon t -> case t of
-    THArrow ars r -> foldr (.|.) 0 (getTVarsType r : (getTVarsType <$> ars) )
-    THProduct   r -> foldr (.|.) 0 (getTVarsType <$> BSM.elems r)
-    THSumTy     r -> foldr (.|.) 0 (getTVarsType <$> BSM.elems r)
-    THTuple     r -> foldr (.|.) 0 (getTVarsType <$> r)
-    _ -> _
---THBi _ t -> getTVarsType t
-  _ -> 0
-
 -- used for computing both differences between 2 IntMaps (alignWith doesn't give access to the ROnly map key)
 data KeySubtype
   = LOnly Type       -- OK by record | sumtype subtyping

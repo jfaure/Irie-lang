@@ -2,7 +2,7 @@ import list
 -- Tricker to simplify than list.ii
 
 -- prependToAll has more flexible type than a -> [a] -> [a]
--- : ∏ A B C D → A → µc.[Nil | Cons {B , c}] -- → µd.[Nil | Cons {A , [Cons {B , d}]}]
+-- : ∏ A B C D → A → µc.[Nil | Cons {B , c}] → µd.[Nil | Cons {A , [Cons {B , d}]}]
 prependToAll sep = \case
   Nil => Nil
   Cons x xs => Cons sep (Cons x (prependToAll sep xs))
@@ -15,6 +15,14 @@ intersperse sep = \case
 
 -- [a] -> [[a]] -> [a]
 intercalate xs xss = concat (intersperse xs xss)
+
+-- unwords = merge μ-bounds upwards even if layer not equal
+
+-- lost some bounds
+--import foldr
+--nonEmptySubSequences = \case -- [a] -> [[a]]
+--  @Nil       => Nil
+--  @Cons x xs => Cons (Cons x Nil) (foldr (\ys r => Cons ys (Cons (Cons x ys) r)) Nil (nonEmptySubSequences xs))
 
 --intersectBy          :: (a -> a -> Bool) -> [a] -> [a] -> [a]
 --intersectBy _  [] _  =  []

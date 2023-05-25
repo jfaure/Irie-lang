@@ -147,19 +147,19 @@ intmap   = S.it "intmap.ii"       (goldenInfer "-p types --no-fuse --no-color" "
 mixfixes = S.it "mixfixTests.ii"  (goldenInfer "-p core  --no-fuse --no-color" "ii/mixfixTests.ii" "mixfixTests")
 testFuse = S.it "testBruijns.ii"  (goldenInfer "-p core  --no-color" "ii/testBruijns.ii" "bruijn fusion")
 testCaptures = S.it "letCaptureTests.ii"  (goldenInfer "-p core  --no-color" "ii/letCaptureTests.ii" "let-capture")
+inversePats = S.it "patternTests.ii"  (goldenInfer "-p core --no-fuse --no-color" "ii/patternTests.ii" "invPat")
 
 specialise = S.it "simpleMutual.ii" (goldenInfer "-p simple  --no-color" "ii/SpecialisationTests/SimpleMutual.ii" "simpleMutual")
 
-specTests = S.sydTest $ do
-  specialise
+specTests = specialise
+tMixfixes = mixfixes
+tFuses    = testFuse
+tCaptures = testCaptures
+tPatterns = inversePats
+tSpec     = specialise
 
--- fusions
-f = S.sydTest $ do
-  testFuse
-captures = S.sydTest $ do
-  testCaptures
-
-s = S.sydTest $ do
+t = S.sydTest
+tInfer = do
   sequence_ fTests
   sequence_ selfAppTests
   --sequence_ recTests
@@ -169,8 +169,13 @@ s = S.sydTest $ do
   list2
   mutual
   tree
-  mixfixes
-  testCaptures
 --intmap
+allTests = S.sydTest $ do
+  tMixfixes
+  tInfer
+--tCaptures
+  tFuses
+  tPatterns
 
-testMixfixes = S.sydTest mixfixes
+-- ghci
+s = t tInfer

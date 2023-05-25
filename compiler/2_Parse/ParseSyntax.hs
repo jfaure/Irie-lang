@@ -22,10 +22,9 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
    _moduleName   :: HName   -- fileName
  , _imports      :: [HName] -- all imports used at any scope
  , _bindings     :: V.Vector FnDef -- TT
--- , _liftedLets   :: (Int , [V.Vector FnDef]) -- revList of let-blocks: letIn blocks are annotated with lifted index
  , _parseDetails :: ParseDetails
 }
--- To allow the repl to continue
+
 emptyParsedModule h = Module h [] mempty (ParseDetails mempty mempty 0 mempty [] 0)
 
 -- HNames and local scope
@@ -80,7 +79,6 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  -- lambda-calculus
  | BruijnLam BruijnAbs
  | App TT [TT] -- Used by unpattern and solveMixfixes once clear of precedence & mixfixes
- | AppExt IName [TT] -- possibly a label application
  | Juxt SourceOffset [TT] -- may contain mixfixes to resolve
  | PiBound [TT] TT -- (a b c : T) ~> introduces pi-bound arguments of type T
 
@@ -93,17 +91,16 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Label  LName [TT]
  | QLabel QName
 
- | GuardLabel QName [TT]
- | GuardArg TT -- Bool
- | GuardPat IName TT -- extern
- | GuardTuple [TT]
+ | Guards (Maybe TT) [Guard] TT -- ko-branch (if open case above) , guards , rhs
+ | GuardArgs (Maybe TT) [TT] TT -- Spawn fresh args and pattern-match according to [TT]
+ | FnEqns [TT] -- list of guardArgs
+-- | GuardTuple TT {-scrut-} (Maybe TT) [TT] TT
 
  -- These negative-position TTs must be inverted first before solveScopes
  -- The newtypes hide this to allow interleaving UnPattern with solveScopes
  -- Since both Unpattern and solveScopes deal with deBruijn naming, they may need to be run this way
  -- LambdaCase is also complicated by requiring renaming of deBruijn vars
  | CasePat CaseSplits -- unsolved patterns
- | LamPats TT TT
  | LambdaCase CaseSplits'
 
  | MatchB TT (BSM.BitSetMap TT) (Maybe TT) -- solved patterns UnPattern.patternsToCase
@@ -139,6 +136,9 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | MixfixPoison MixfixError
 
 type Pattern = TT
+data Guard
+ = GuardBool TT    -- tt =? True
+ | GuardPat TT TT  -- pat <- tt -- arbitrary scrut
 
 data IndentType = IndentTab | IndentSpace | IndentEither -- files must commit to an indent style
 data ParseState = ParseState {
@@ -174,6 +174,7 @@ deriving instance Show FnDef
 deriving instance Show TTName
 deriving instance Show Block
 deriving instance Show TT
+deriving instance Show Guard
 deriving instance Show CaseSplits
 deriving instance Show CaseSplits'
 deriving instance Show DoStmt
