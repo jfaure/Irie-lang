@@ -206,7 +206,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
   pEqns pArgs pMFArgs = let -- first parse is possibly different
     fnMatch :: Parser [TT] -> Parser TT
     fnMatch pMFArgs = let rhs = lexemen (reserved "=") *> tt
-      in GuardArgs Nothing <$> pMFArgs <*> (patGuards rhs <|> rhs)
+      in GuardArgs <$> pMFArgs <*> (patGuards rhs <|> rhs)
     in fmap (\case { [x] -> x ; xs -> FnEqns xs }) $
       (:) <$> fnMatch pArgs
           <*> many (try $ endLine *> scn *> svIndent *> fnMatch pMFArgs)
@@ -231,7 +231,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
 
 lambda = glambda (reserved "=>" <|> reserved "⇒" <|> reserved "=")
 -- v TODO rm this if
-glambda sep = (\ars rhs -> if null ars then rhs else GuardArgs Nothing ars rhs) <$> many singlePattern <* lexemen sep <*> tt
+glambda sep = (\ars rhs -> if null ars then rhs else GuardArgs ars rhs) <$> many singlePattern <* lexemen sep <*> tt
 tyAnn = reservedChar ':' *> tt
 
 -- make a lambda around any '_' found within the tt eg. `(_ + 1)` => `\x => x + 1`

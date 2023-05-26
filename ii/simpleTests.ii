@@ -12,8 +12,9 @@ iffy a b c = ifThenElseInt1 a b c -- ∏ A → %i1 → A → A → A
 bool4 x y z = ifThenElseInt1 x y z  -- ∏ A → %i1 → A → A → A
 bool6 x y   = ifThenElseInt1 x y x  -- ∏ A → (%i1 ⊓ A) → A → A
 
-poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 } -- %i1
-poly2 = let _>_ = \a f => f a in { t = 1 } > (\y => y.t) -- %i1
+poly1 = let ap = \f a => f a in ap (\y => y.t) { t = 1 } -- %i1
+poly2 = let pa = \a f => f a in pa { t = 1 } (\y => y.t) -- %i1
+letMixfix = let _<_ = \f a => f a in (\y => y.t) < { t = 1 } -- %i1
 
 --boolerror0 = (add 1) 1                       -- cannot constrain %i1 <: %i32
 --boolerror1 = \x => (add 1) (not x)           -- cannot constrain %i1 <: %i32

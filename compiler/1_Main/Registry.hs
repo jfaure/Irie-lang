@@ -169,19 +169,23 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
   JudgeOK mI _j -> setBit dependents mI <$ registerDeps reg mI deps dependents
   ParseOK mI pm -> when ("parseTree" `elem` printPass cmdLine) (putStrLn (P.prettyModule pm))
     *> readMVar reg >>= \reg' -> deps <$ -- setBit dependents mI
-    let (resolver , mfResolver , exts) = resolveNames reg' mI pm
+    let iNamesV = iMap2Vector (pm ^. P.parseDetails . P.hNamesToINames)
+        (resolver , mfResolver , exts) = resolveNames reg' mI pm iNamesV
         getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
           BindSource (lookupIName r._loadedModules) (lookupFieldName r._loadedModules)
         putModVerdict = False -- TODO should only print at repl?
-    in case simplify cmdLine <$> judge deps reg' exts mI pm of
+        (warnings , jmResult) = judge deps reg' exts mI pm iNamesV
+    in case simplify cmdLine <$> jmResult of
       -- TODO have partially OK judged module
       Left (errs , _jm) -> registerJudgedMod reg mI (Left errs)
         *> getBindSrc >>= \bindSrc ->
         putErrors stdout Nothing bindSrc errs
         *> when putModVerdict (putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
-      Right jm -> let shouldPutJM = (dependents == 0 || putDependents cmdLine)
+      Right jm -> let
+        shouldPutJM = (dependents == 0 || putDependents cmdLine)
                        && any (`elem` printPass cmdLine) ["core", "simple", "types"]
         in registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
+        *> maybe (pure ()) putStrLn warnings
         *> when shouldPutJM (getBindSrc >>= \bindSrc -> putJudgedModule cmdLine (Just bindSrc) jm)
         *> when putModVerdict (putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
   ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
@@ -201,9 +205,9 @@ putJudgedModule cmdLine bindSrc jm = let
 
 -- * Add bindNames and local labelNames to resolver
 -- * Generate Externs vector
-resolveNames :: PureRegistry -> IName -> P.Module
+resolveNames :: PureRegistry -> IName -> P.Module -> V.Vector HName
   -> (M.Map HName (IntMap IName) , M.Map HName (IM.IntMap [QMFWord]) , Externs)
-resolveNames reg modIName p = let
+resolveNames reg modIName p iNamesV = let
   curAllNames = reg._allNames
   curMFWords  = reg._globalMixfixWords
   curMods     = reg._loadedModules
@@ -240,27 +244,25 @@ resolveNames reg modIName p = let
     (Nothing      , Nothing) -> NotInScope hNm
     (Just many , _)          -> AmbiguousBinding hNm many
 
-  -- TODO iNamesV calculated twice!
-  in (resolver , mfResolver , Externs (resolveName <$> iMap2Vector (p ^. P.parseDetails . P.hNamesToINames)))
+  in (resolver , mfResolver , Externs (resolveName <$> iNamesV))
 
 --tryLockFile "/path/to/directory/.lock" >>= maybe (ko) (ok *> unlockFile)
 isCachedFileFresh fName cache =
   (<) <$> getModificationTime fName <*> getModificationTime cache
 
-judge :: Deps -> PureRegistry -> Externs -> ModIName -> P.Module
-  -> Either (Errors , JudgedModule) JudgedModule
-judge deps reg exts modIName p = let
+judge :: Deps -> PureRegistry -> Externs -> ModIName -> P.Module -> V.Vector HName
+  -> (Maybe Text , Either (Errors , JudgedModule) JudgedModule)
+judge deps reg exts modIName p iNamesV = let
 --  bindNames   = p ^. P.bindings <&> P._fnNm
   labelHNames = p ^. P.parseDetails . P.labels
-  iNames      = p ^. P.parseDetails . P.hNamesToINames
   bindINames  = p ^. P.parseDetails . P.topINames
-  iNamesV     = iMap2Vector iNames
   (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules
   jm = JudgedModule modIName (p ^. P.moduleName) (iMap2Vector labelHNames) iNamesV bindINames modTT
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails) && null (errors ^. checkFails)
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails) && null (errors ^. unpatternFails)
-  in trace (unlines $ formatScopeWarnings iNamesV <$> (errors ^. scopeWarnings)) $
-    if coreOK then Right jm else Left (errors , jm)
+  warnings = errors ^. scopeWarnings & \ws -> if null ws then Nothing
+    else Just (unlines $ formatScopeWarnings iNamesV <$> ws)
+  in (warnings , if coreOK then Right jm else Left (errors , jm))
 
 putErrors :: Handle -> Maybe SrcInfo -> BindSource -> Errors -> IO ()
 putErrors h srcInfo bindSrc errors = let

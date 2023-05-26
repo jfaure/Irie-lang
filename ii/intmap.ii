@@ -42,13 +42,15 @@ insertLookupWithKey f k x t = case t of
   @None        => (Nothing , Tip k x)
 
 -- insert :: Key -> a -> IntMap a -> IntMap a
---insert k x t = case t of
---  @Bin p m l r => if nomatch k p m then link k (Tip k x) p t
---    else if zero k m then Bin p m (insert k x l) r
---    else                  Bin p m l (insert k x r)
---  @Tip ky y => if k =? ky then Tip k x else link k (Tip k x) ky t
---  @Nil => Tip k x
 
+insert k x t = case t of
+  @Bin p m l r => if nomatch k p m then link k (Tip k x) p t
+    else if zero k m then Bin p m (insert k x l) r
+    else                  Bin p m l (insert k x r)
+  @Tip ky y => if k =? ky then Tip k x else link k (Tip k x) ky t
+  @Nil => Tip k x
+-- insert = ∏ A B C → (%i32 ⊓ A) → B → ([Bin {%i32 , %i32 , ⊤ , ⊤} | Tip {(%i32 ⊓ A) , B} | Nil] ⊓ C) → [Bin {%i32 , %i32 , ([Tip {A , B}] ⊔ C) , ([Tip {A , B}] ⊔ C)} | Tip {A , B}]
+-- insert = ∏ A B C → (%i32 ⊓ A) → B → µc.[Bin {%i32 , %i32 , c , c} | Tip {(%i32 ⊓ A) , B} | Nil] → [Bin {%i32 , %i32 , c , c} | Tip {A , B}]
 -- delete
 -- adjust : (a -> a) -> Key -> IntMap a -> IntMap a
 -- alter :: (Maybe a -> Maybe a) -> Key -> IntMap a -> IntMap a
@@ -56,16 +58,3 @@ insertLookupWithKey f k x t = case t of
 --  flip Control.Lens.At
 -- updateWithKey ::  (Key -> a -> Maybe a) -> Key -> IntMap a -> IntMap a
 -- updateLookupWithKey ::  (Key -> a -> Maybe a) -> Key -> IntMap a -> (Maybe a , IntMap a)
-
--- Choose whether μ binders wrap or not type joins => eliminate 1 pair of Gs
--- C and D always appear with %i32 (after simplifications), should rm
---insertLookupWithKey
--- ∏ A B C D E F G → (A → B → B → B) → (%i32 ⊓ A) → B
---  → (µf.([Bin {(%i32 ⊓ C) , (%i32 ⊓ D) , E , f} | Tip {(%i32 ⊓ A) , B} | None] ⊓ G) ⊓ G)
---  → { !0 : [Nothing | Just {B}]
---    , !1 : µf.(
---      [ Bin {(%i32 ⊔ C) , (%i32 ⊔ D)
---        , (µf.([Bin {(%i32 ⊔ C) , (%i32 ⊔ D) , f , f} | Tip {A , B}] ⊔ E ⊔ G) ⊔ G)
---        , (µf.([Bin {(%i32 ⊔ C) , (%i32 ⊔ D) , f , f} | Tip {A , B}] ⊔ E ⊔ G) ⊔ G)}
---      | Tip {A , B}] ⊔ E ⊔ G)
---    }

@@ -57,10 +57,6 @@ judgeModule pm importedModules modIName exts loaded = let
     , _freeLimit = 0
     , _letCaptures = 0
     , _captureRenames = g
-
-    , _recursives = 0
-    , _nquants = 0
-    , _genVec = g
     }
 
 -- infer >> generalise >> check annotation
@@ -81,9 +77,6 @@ judgeBind letDepth bindINm = let
     bindStack %= drop 1
     lcVars <- letCaptures <<%= (.|. svlc)
     argTVs <- use captureRenames >>= \cr -> bitSet2IntList lcVars `forM` \l -> (argVars V.! l ,) <$> MV.read cr l
-
---  traceShowM argTVs
---  mapM (uncurry biSubTVarTVar) argTVs
 
     let freeVarCopies = snd <$> argTVs -- [Int]
         lc = (atLen , lcVars)
@@ -132,7 +125,8 @@ judgeBind letDepth bindINm = let
         TyGround [] -> BiEQ <$ MV.write v tvarIdx (BiSub ty (TyGround []))
         _t -> bisub ty (tyVar tvarIdx) -- ! recursive => bisub with -τ (itself)
       let copyFreeVarsTy = prependArrowArgsTy (tyVar <$> freeVarCopies) (tyVar tvarIdx)
-      generalise copyFreeVarsTy
+      use blen >>= \bl -> use bis >>= \bis' ->
+        lift (generalise bl bis' copyFreeVarsTy)
       -- <* when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
     let rawRetExpr = Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
     retExpr <- pure rawRetExpr -- explicitFreeVarApp freeVars rawRetExpr

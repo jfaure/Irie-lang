@@ -2,4 +2,4 @@ f (a , b) = add a b
 ff = \(a , b , c) => add c (add a b)
 g = (2 , 3) -- { !0 , !1 }
 x = (\(a , b) => add a b) (2 , 3)
-f = (add 2 3 , add 1 4)
+fn = (add 2 3 , add 1 4)

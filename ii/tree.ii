@@ -4,6 +4,8 @@ import foldr
 --flatten :: Tree a -> [a]
 flattenTree t = squish t Nil
 squish (@Node x ts) xs = Cons x (foldr squish xs ts)
+-- µe.([Cons {A , µe.([Cons {A , e}] ⊔ D)}] ⊔ D)
+-- non-rec can't forward-sub to a rec
 
 -- flattenTree : ∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → µd.[Nil | Cons {A , d}]
 -- squish : let ∏ A B C D → µb.[Node {A , µc.[Nil | Cons {b , c}]}] → D → µd.[Cons {A , d}]

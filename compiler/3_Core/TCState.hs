@@ -33,11 +33,6 @@ data TCEnvState s = TCEnvState {
  , _freeLimit   :: Int
  , _letCaptures :: BitSet
  , _captureRenames :: MV.MVector s Int -- unset unless letCaptures bit set!
-
- -- Type analysis
- , _recursives :: BitSet
- , _nquants :: Int
- , _genVec  :: MV.MVector s Int
 }; makeLenses ''TCEnvState
 
 clearBiSubs :: Int -> TCEnv s ()

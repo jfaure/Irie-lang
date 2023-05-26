@@ -92,9 +92,8 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | QLabel QName
 
  | Guards (Maybe TT) [Guard] TT -- ko-branch (if open case above) , guards , rhs
- | GuardArgs (Maybe TT) [TT] TT -- Spawn fresh args and pattern-match according to [TT]
- | FnEqns [TT] -- list of guardArgs
--- | GuardTuple TT {-scrut-} (Maybe TT) [TT] TT
+ | GuardArgs [TT] TT -- Spawn fresh args and pattern-match according to [TT]. no KO branch to jump out of fails
+ | FnEqns [TT]
 
  -- These negative-position TTs must be inverted first before solveScopes
  -- The newtypes hide this to allow interleaving UnPattern with solveScopes

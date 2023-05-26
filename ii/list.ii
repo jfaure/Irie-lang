@@ -23,6 +23,7 @@ takeWhile p = \case
   Nil => Nil
   Cons x xs => if p x then Cons x (takeWhile p xs) else Nil
 
+-- At some point irie inferred: ∏ A B → %i32 → (µa.[Nil | Cons {⊤ , a}] ⊓ B) → ([Nil] ⊔ B)
 drop n xs = if n <=? 0 then xs else case xs of
   Nil => Nil
   Cons x ys => drop (n - 1) ys

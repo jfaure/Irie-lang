@@ -17,7 +17,7 @@ mkLiteralEquality :: Literal -> Term -> Term
 mkLiteralEquality l x = case l of
   Char _ -> App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
   I32  _ -> App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
-  l -> Poison $ "todo literal equality on " <> show l
+  l -> Poison $ "TODO literal equality on " <> show l
 
 getArgShape :: Term -> ArgShape
 getArgShape = \case
@@ -39,7 +39,7 @@ partitionType :: Type -> (BitSet , GroundType)
 partitionType = \case
   TyVars vs g -> (vs , g)
   TyGround g  -> (0  , g)
-  TySet n     -> (0 , [])
+  TySet _n    -> (0 , [])
 --TyVar v     -> (0 `setBit` v , [])
 --pi@TyPi{}   -> (0 , [pi]) -- TODO ok?
 --TyIndexed{} -> _
@@ -126,7 +126,7 @@ mergeTyUnions pos l1 l2 = let
     (THBound a' , THBound b') -> compare a' b'
     (THMu m _ , THMuBound n) -> compare m n
     (THMuBound n , THMu m _) -> compare m n
-    _ -> kindOf a `compare` kindOf b
+    _ -> (compare `on` kindOf) a b
   in foldr (mergeTyHeadType pos) [] (sortBy cmp $ l2 ++ l1)
 
 mergeTyHeadType :: Bool -> TyHead -> [TyHead] -> [TyHead]
@@ -135,7 +135,7 @@ mergeTyHeadType pos newTy = \case
   ty : tys -> mergeTyHead pos newTy ty ++ tys
 
 mergeTyHead :: Bool -> TyHead -> TyHead -> [TyHead]
-mergeTyHead pos t1 t2 = -- (\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ " <> prettyTyRaw (TyGround [t2]) <> " => " <> prettyTyRaw (TyGround ret)) ret) $
+mergeTyHead pos t1 t2 = --(\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ " <> prettyTyRaw (TyGround [t2]) <> " => " <> prettyTyRaw (TyGround ret)) ret) $
   let join = [t1 , t2]
       zM  :: Semialign f ⇒ Bool -> f Type -> f Type -> f Type
       zM pos' = alignWith (these identity identity (mergeTypes pos'))
@@ -150,13 +150,12 @@ mergeTyHead pos t1 t2 = -- (\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ "
     _ -> join
 
   -- v should avoid producing this
-  [THMu m _ , THMuBound n] -> if m == n then [t1] else join
-  [THMuBound n , THMu m _] -> if m == n then [t2] else join
-
-  [THMu m _ , THBound n]  -> if m == n then [t1] else join
-  [THBound n , THMu m _]  -> if m == n then [t2] else join
-  [THMu m mt , THMu n nt] -> if m == n then [THMu m (mergeTypes pos mt nt)] else join
-  [THBi m mt , THBi n nt] -> if m == n then [THBi m (mergeTypes pos mt nt)] else join -- TODO slightly dodgy
+  [THMu m _ , THMuBound n] | m == n -> [t1]
+  [THMuBound n , THMu m _] | m == n -> [t2]
+  [THMu m _ , THBound n]  | m == n -> [t1]
+  [THBound n , THMu m _]  | m == n -> [t2]
+  [THMu m mt , THMu n nt] | m == n -> [THMu m (mergeTypes pos mt nt)]
+  [THBi m mt , THBi n nt] | m == n -> [THBi m (mergeTypes pos mt nt)] -- TODO slightly dodgy
   [THMuBound a , THMuBound b] -> if a == b then [t1] else join
   [THMu m a , b] -> [THMu m (mergeTypes pos a (TyGround [b]))]
   [a , THMu m b] -> [THMu m (mergeTypes pos (TyGround [a]) b)]
@@ -183,17 +182,9 @@ nullType = \case
   _ -> False
 
 mergeTypeList :: Bool -> [Type] -> Type
-mergeTypeList pos ts = let r = foldr (mergeTypes pos) (TyGround []) ts
-  in r -- trace (T.intercalate " , " (prettyTyRaw <$> ts) <> " ⇒ " <> prettyTyRaw r) r
-
-rmMuBound m = let goGround = filter (\case { THMuBound x -> x /= m ; _ -> True }) in \case
-  TyGround g  -> TyGround (goGround g)
-  TyVars vs g -> TyVars vs (goGround g)
-  t -> t
-
-rmTVar v = \case
-  TyVars ws g -> TyVars (ws `clearBit` v) g
-  t -> t
+mergeTypeList pos = \case
+  [] -> tyBot
+  t : ts -> foldr (mergeTypes pos) t ts -- & trace (intercalate " , " (toS . prettyTyRaw <$> (t : ts)))
 
 mergeTVars vs = \case
   TyVars ws g -> TyVars (ws .|. vs) g
@@ -202,7 +193,7 @@ mergeTypeGroundType pos a b = mergeTypes pos a (TyGround b)
 mergeTVar v = \case
   TyVars ws g -> TyVars (ws `setBit` v) g
   TyGround g  -> TyVars (0  `setBit` v) g
-  TySet n     -> tyVar v -- TODO ?!
+  TySet n     -> error $ "TODO: Set " <> show n -- TODO
 mergeTypes pos a b = {-d_ (a , b) $-} mergeTypes' pos a b
 mergeTypes' pos (TyGround a) (TyGround b)     = TyGround (mergeTyUnions pos a b)
 mergeTypes' pos (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions pos g1 g2)

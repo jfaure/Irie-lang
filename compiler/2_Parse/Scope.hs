@@ -103,8 +103,8 @@ scopeApoF exts thisMod (this , params) = let
     (altPats , rest) = span (isLabel . fst) (first scopeLayer <$> rawAlts)
     alts = altPats <&> \(pat {-, guards)-} , rhs) -> case pat of
       QLabel q -> (qName2Key q , rhs) -- Guards openMatch guards rhs)
-      Label i subPats -> (qName2Key (mkQName thisMod i) , GuardArgs Nothing subPats rhs)
-      App (QLabel q) subPats -> (qName2Key q , GuardArgs Nothing subPats rhs)
+      Label i subPats -> (qName2Key (mkQName thisMod i) , GuardArgs subPats rhs)
+      App (QLabel q) subPats -> (qName2Key q , GuardArgs subPats rhs)
     openMatch = case rest of -- TODO could be guarded; another case
       [] -> Nothing
       (WildCard , rhs) : redundant -> Just rhs -- guards
@@ -116,8 +116,8 @@ scopeApoF exts thisMod (this , params) = let
   -- Spawn new VBruijns and Guard them if further cases required
   -- a guard is recoverable if an enclosing case has a wildcard
   -- nestGuards: enclosing guards on top of subpatterns for these args
-  guardArgs _ko [] rhs [] = RawExprF (Right (rhs , params))
-  guardArgs ko args rhs nestGuards = let
+  guardArgs [] rhs [] = RawExprF (Right (rhs , params))
+  guardArgs args rhs nestGuards = let -- TODO use the fallback (happens when labels are matched..)
     n = length args
     lvl = params._bruijnCount :: Int
     vbruijnLvls = [lvl .. lvl + n-1] -- [n-1 , n-2 .. 0]
@@ -146,12 +146,12 @@ scopeApoF exts thisMod (this , params) = let
 
   -- v transpose ?
   FnEqns eqns -> case eqns of
-    [GuardArgs ko pats rhs] -> guardArgs ko pats rhs []
-  GuardArgs ko pats rhs -> guardArgs ko pats rhs []
+    [GuardArgs pats rhs] -> guardArgs pats rhs []
+  GuardArgs pats rhs -> guardArgs pats rhs []
   Guards _ko [] rhs -> scopeApoF exts thisMod (rhs , params) -- RawExprF (Right (rhs , params)) -- skip
   Guards ko (g : guards) rhs -> let
     guardLabel scrut q subPats = fmap (Right . (,params)) $ let
-      rhs' = if null subPats then Guards ko guards rhs else GuardArgs ko subPats (Guards ko guards rhs)
+      rhs' = if null subPats then Guards ko guards rhs else GuardArgs subPats (Guards ko guards rhs)
       in MatchBF scrut (BSM.singleton (qName2Key q) rhs') ko
     in case g of
     GuardPat pat scrut -> case pat of
@@ -159,7 +159,7 @@ scopeApoF exts thisMod (this , params) = let
       Tuple subPats -> let
         n = length subPats
         projections = [TupleIdx (qName2Key (mkQName 0 i)) scrut | i <- [0 .. n - 1]]
-        in Right . (,params) <$> AppF (GuardArgs ko subPats (Guards ko guards rhs)) projections
+        in Right . (,params) <$> AppF (GuardArgs subPats (Guards ko guards rhs)) projections
       -- vv TODO could be Label or new arg
       Var (VExtern i) -> case readParseExtern params._open thisMod exts i of
         ImportLabel q -> guardLabel scrut q []--guards
@@ -175,9 +175,10 @@ scopeApoF exts thisMod (this , params) = let
     bindsDone = binds <&> (& fnRhs %~ scopeTT exts thisMod letParams)
     dups = fst $ foldr (\i (dups , mask) -> (if testBit mask i then setBit dups i else dups , setBit mask i))
       ((0 , 0) :: (BitSet , BitSet)) (binds <&> (^. fnIName))
-    dupHNames = bitSet2IntList dups <&> \i -> bindsDone V.! i ^. fnNm
+--  vv TODO get the inames
+--  dupHNames = bitSet2IntList dups <&> \i -> bindsDone V.! i ^. fnNm
     letTT = LetInF (Block open letType bindsDone) (mtt <&> \tt -> Right (tt , letParams))
-    in if dups == 0 then letTT else ScopePoisonF (LetConflict dupHNames)
+    in if dups == 0 then letTT else ScopePoisonF (LetConflict (show <$> bitSet2IntList dups))
 
   Prod xs -> ProdF $ xs <&> \(i , e) -> (qName2Key (mkQName thisMod i) , Right (e , params))
   Tuple xs -> ProdF $ V.fromList $ Prelude.imap (\i e ->

@@ -11,7 +11,7 @@
 -- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
 
 -- Don't μ-roll non-positive functions
---Selfapp3 x y = x x y
+-- Selfapp3 x y = x x y
 
 -- multi-branch different μ merging =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
@@ -20,12 +20,6 @@
 --Rectangle (P : Set) : Set = { f = P }
 --Recangle = { f = Int , g = Int }
 --rect = { f = 5 , g = 3 } : Rectangle
-
---imports list list2 tree question ls foldr Free parsec intmap patternTests
---import irieShell -- ideas for irie as shell
-
---import stream
---import imports/TreeStream
 
 -- Open sum type subtypes closed sumtype
 -- null = \case { @None => @True ; _ => @False }
@@ -37,6 +31,9 @@
 
 --trans imports: list2 uses list.Nil
 
+--imports list list2 tree question ls foldr Free parsec intmap patternTests
+--import irieShell -- ideas for irie as shell
+--import imports/TreeStream
 --import SpecialisationTests/SpecPapArg
 --import SpecTests
 --import SpecialisationTests/SimpleMutual
@@ -52,21 +49,9 @@
 --import Tee -- duplicate streams
 
 -- import QNames properly
---import stream
+-- import stream
 --f = enumFromTo 0 2
 
--- D always appears with e, but e > D so can't sub..
---import foldr
---squish (@Node x ts) xs = Cons x (foldr squish xs ts)
--- (µe.([Cons {A , (µe.[Cons {A , e}] ⊔ D)}] ⊔ D) ⊔ D)
-
--- Rewrite buildVarSubs on 4 bitsets + MVector: del , gen , rec , tysubs
--- b(5) should sub for 6; but then we have bidirectional subvars
---import ifThenElse
---scanSum n l = ifThenElse (lt n 0) l (scanSum (sub n 1) (@Cons n l))
-
---import prelude
---span p xs = case xs of
---  @Nil => { l = xs , r = xs }
---  -- TODO recursive letin
---  @Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
+import foldr
+squish (@Node x ts) xs = Cons x (foldr squish xs ts)
+-- µe.([Cons {A , µe.([Cons {A , e}] ⊔ D)}] ⊔ D)
