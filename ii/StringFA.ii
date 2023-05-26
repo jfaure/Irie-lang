@@ -1,9 +1,17 @@
+FA = data
+  Find Char -- indexes of char in the string
+  Pattern [String]
+  Many FA
+
 BasicShiftOr :: String -> (Char -> BitSet -> BitSet)
 BasicShiftOr pattern = let
   shMask : String -> Char -> BitSet
   -- 0 bit position where char appears in pattern
   -- shMask "aphp" 'p' = [1..1]0101
+  mkShMask :: Char -> String -> Int8
+  mkShMask char = ifoldl (\i mask c -> if c == char then mask `clearBit` i else mask) (complement 0)
   
+  -- initially st mask is 1111.. Each match propagates 0 left by 1 bit
   -- st updates for each input char, if 0 is found at leftmost bit, pattern was matched
   nextChar x st = (st .<<. 1) .|. shMask 
   in nextChar
@@ -11,11 +19,18 @@ BasicShiftOr pattern = let
 multiStringShiftOr : (n : Int) ~> Vec n String
 multiStringShiftOr pats = let
 -- buckets roughly 1:1 with pats but may group patterns
--- the k-th n bits of sh-mask(‘x’) encode the bucket ids with ‘x’ at the k-th byte position
+-- 1. n distinct buckets of string patterns
+-- 2. (* n) sh-mask and st, so a group of n bits in sh-mask('x') records bucket ids
+--   byte position is counted from rightmost byte
 -- set n to 8 so sh-mask byte position == byte position in pattern
--- ! byte position counted from rightmost byte for SIMD
+-- 3. vs shift-or: Now sh-masks are shifted left instead of st mask
+--    st mask starts 0 except byte positions smaller than shortest pattern
+-- *input chars: k = idx % n, for 'x'; st-mask |= (sh-mask 'x' .<<. k)
+
+-- the k-th n bits of sh-mask(‘x’) encode the bucket ids with ‘x’ at the k-th byte position
 -- if. sh-mask byte position longer than bucket, encode bucket id in the padding byte => carry matches along
 
+  -- pre-shift sh-masks with multiple input chars; limit length of pattern to 16-bytes
   -- k: number of chars processed so far mod n
   -- repeat for n input chars, then check if st has any 0 bits; then verify match
   -- Use 128-bit sh-mask: need to limit pat length to 8, if longer extract lower 8 bytes
@@ -24,8 +39,12 @@ multiStringShiftOr pats = let
 
 -- Pattern grouping: low false positives: similar pat lengths
 
+-- NFA: each bit represents a state, threshold = 16834 (2 ** 14)
+-- State transition on 'c':
+-- 1. calc successor set (any input char)
+-- 2. calc reachable set: (any set reachable on 'c' input)
+-- 3. intersection = glushkov NFA
 FAComponentMatching = let
--- bit-based NFA where each bit represents a state
 -- maintian curSet mask that sets bit to 1 if pos matches a current state id
 -- transition span = id difference between 2 states of transition (usually small since states are seq assigned)
   glushkovNFA = _

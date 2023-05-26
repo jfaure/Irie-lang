@@ -17,7 +17,7 @@ tailRecurse c = h where h = (identity ||| h) . c -- (|||) = codiagonal
 --hyloM f g = h where h = f <=< traverse h <=< g
 myhylo f g = h where h = f . fmap h . g
 -- hylos do not compose together, but compose with algebra and coalgebra homomorphisms
--- thus ((C,c),(a,A)) |-> ((C,c)>->(a,A)) can be tunred into a functor of type (F-Coalg(C))op x F-Alg(C) -> Set
+-- thus ((C,c),(a,A)) |-> ((C,c)>->(a,A)) can be turned into a functor of type (F-Coalg(C))op x F-Alg(C) -> Set
 -- post-composing a hylo with any algebra homomorphism h :(a,A) -> (b,B) yields a unique hylo h.(|a <- c|) = (|b <- c|)
 -- full subcategory of F-Coalg c of recursive coalgebras is denoted F-Rec c
 

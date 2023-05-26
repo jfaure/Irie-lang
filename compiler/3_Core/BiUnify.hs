@@ -141,6 +141,7 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
        then CastProduct drops leafCasts -- dropped some fields
        else let leaves = snd <$> leafCasts
        in if all (\case {BiEQ->True;_->False}) leaves then BiEQ else CastLeaves leaves
+  (THSumTy _ , THSumOpen _) -> pure BiEQ -- open sums can match everything
   (THSumTy x , THSumTy y) -> let
     go label subType = case y BSM.!? label of -- x must contain supertypes of all x labels
       Nothing -> failBiSub (AbsentLabel (QName label)) tyP tyM

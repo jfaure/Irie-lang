@@ -25,7 +25,7 @@ data Params = Params
   , _args        :: BitSet
   , _bruijnMap   :: V.Vector Int -- pre-built by mkCase: text IName -> BruijnArg TODO merge with letMap
   , _bruijnCount :: Int -- nesting level
-  , _guardKO     :: Maybe TT -- fallback for patternguards
+--  , _guardKO     :: Maybe TT -- fallback for patternguards
 
   , _letMap      :: V.Vector QName -- text IName -> LetName
   , _letNest     :: Int
@@ -33,7 +33,7 @@ data Params = Params
 
 initParams open required = let
   sz = 300 -- TODO max number of let-bindings or bruijnVars
-  in Params open required emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 Nothing (V.create (MV.new sz)) 0
+  in Params open required emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 (V.create (MV.new sz)) 0
 
 -- TODO don't allow `bind = lonemixfixword`
 -- handleExtern (readParseExtern open mod e i) ||| readQParseExtern :: ExternVar
@@ -177,7 +177,7 @@ scopeApoF exts thisMod (this , params) = let
       ((0 , 0) :: (BitSet , BitSet)) (binds <&> (^. fnIName))
 --  vv TODO get the inames
 --  dupHNames = bitSet2IntList dups <&> \i -> bindsDone V.! i ^. fnNm
-    letTT = LetInF (Block open letType bindsDone) (mtt <&> \tt -> Right (tt , letParams))
+    letTT = LetInF (Block open letType bindsDone) (mtt <&> second (\tt -> Right (tt , letParams)))
     in if dups == 0 then letTT else ScopePoisonF (LetConflict (show <$> bitSet2IntList dups))
 
   Prod xs -> ProdF $ xs <&> \(i , e) -> (qName2Key (mkQName thisMod i) , Right (e , params))

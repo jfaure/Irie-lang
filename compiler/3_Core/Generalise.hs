@@ -14,7 +14,6 @@ debug_gen = False
 
 type Cooc = (Maybe Type , Maybe Type)
 data VarSub = SubVar Int | SubTy Type | DeleteVar | GeneraliseVar | RecursiveVar deriving (Show , Eq)
---data Acc = Acc { _deletes :: BitSet , _subTys :: (BitSet , [Type]) , _subVars :: [(Int , Int)] }; makeLenses ''Acc
 
 -- fresh names for generalised tvars: [A..Z etc]
 data GenState s = GenState { _nquants :: Int , _genVec :: MV.MVector s Int }; makeLenses ''GenState
@@ -31,22 +30,36 @@ generalise bl bis' startType = do
   coocVF  <- V.unsafeFreeze coocV
   let varSubs = buildVarSubs coocVF recs
   when debug_gen $ do
-    traceM ("raw-gen: " <> prettyTyRaw rawT)
+    traceM ("raw-inferred: " <> prettyTyRaw rawT)
     traceM $ "recs: " <> show (bitSet2IntList recs)
 --  traceM (unlines $ V.toList $ show <$> V.indexed coocVF)
 --  traceM (unlines $ V.toList $ show <$> V.indexed varSubs)
 
   genVec <- MV.replicate (MV.length bis') (complement 0)  -- len bis' is enough space to gen every tvar
-  (done , (GenState newQuants _vec)) <- runStateT (buildType bis' (varSubs V.!) 0 True rawT) (GenState 0 genVec)
---done <- reconstructType bis' varSubs startType
+  (rebuilt , (GenState newQuants _vec)) <- runStateT (buildType bis' (varSubs V.!) 0 True rawT) (GenState 0 genVec)
+--(rebuilt , (GenState newQuants _vec)) <- runStateT (reconstructType bis' varSubs rawT) (GenState 0 genVec)
 
-  let rolled = forgetRoll (cata rollType done)
+--traceM ("built: " <> prettyTyRaw rebuilt)
+  let rolled = forgetRoll (cata rollType rebuilt)
   pure $ case newQuants of { 0 -> rolled ; n -> TyGround [THBi n rolled] }
 
-buildVarSubs coocV recs = V.constructN (V.length coocV) $ \prevSubs -> let
-  v = V.length prevSubs
-  prevTVs = setNBits v :: Integer -- don't redo co-occurence on prev-vars
-  in case coocV V.! v of
+-- # Forward-subbing (random-access build of cooc-vector); use bitset of forward subs so if delete; generalise instead
+-- squish (@Node x ts) xs = Cons x (foldr squish xs ts)
+-- µe.([Cons {A , µe.([Cons {A , e}] ⊔ D)}] ⊔ D)
+-- ^ this requires forward subbing non-rec(D) to a rec(e)
+-- ^ thus must monadically fill varSubs instead of simpler: V.constructN (V.length coocV) $ \prevSubs ->
+--
+-- Forward subbing non-rec->rec has interesting effect on span:
+-- span = ∏ A B → (A → [!False | !True]) → µb.[Nil | Cons {A , b}] → {l : b , r : b}
+-- span = ∏ A B → (A → [!False | !True]) → b → {l : µb.[Nil | Cons {A , b}] , r : µb.[Nil | Cons {A , b}]}
+buildVarSubs coocV recs = V.length coocV & \cLen ->
+  V.create (MV.new cLen >>= \subs -> subs <$ foldM_ (calcSub coocV recs subs) 0 [0 .. cLen - 1])
+
+calcSub :: V.Vector Cooc -> BitSet -> MV.MVector s VarSub -> BitSet -> Int -> ST s BitSet
+calcSub coocV recs subs setSubs v = let
+  setSubs' = setBit setSubs v
+  writeSub newSubs s = newSubs <$ MV.write subs v s
+  in {-(setSubs' <$) $ MV.write subs v =<< -} case coocV V.! v of
   -- in v+v- if non-recursive v coocs with w then it always does, so "unify v with w" means "remove v"
   -- but in v+w+ or v-w- no shortcuts: "unify v with w" means "replace occurs of v with w"
   -- ! recursive vars are not necessarily strictly polar: eg. squish (@Node x ts) xs = Cons x (foldr squish xs ts)
@@ -54,58 +67,25 @@ buildVarSubs coocV recs = V.constructN (V.length coocV) $ \prevSubs -> let
     genVar = if testBit recs v then RecursiveVar else GeneraliseVar
     xv = getTyVars x ; yv = getTyVars y
     xx = if clearBit xv v == 0 then yv else 0 ; yy = if clearBit yv v == 0 then xv else 0
-    canSub w = {-w > v || -} (prevSubs V.! w & \vs -> vs == genVar {-same recursivity-}|| vs == RecursiveVar)
+    canSub setSubs w = if testBit setSubs w
+      then MV.read subs w <&> \vs -> vs == genVar {-same recursivity-}|| vs == RecursiveVar
+      else pure False
     recSubs = recs .&. (yv .|. xv) -- Allow subbing of tvar if co-occurs with any recursive tvar (?! investigate)
---  Unfortunately Allowing forwards tvar subbing breaks intmap.insert
---  Since we can't do the usual forward check that we're only subbing for same-recursivity or recursives
---  also has interesting effect on span:
--- span = ∏ A B → (A → [!False | !True]) → µb.[Nil | Cons {A , b}] → {l : b , r : b}
--- span = ∏ A B → (A → [!False | !True]) → b → {l : µb.[Nil | Cons {A , b}] , r : µb.[Nil | Cons {A , b}]}
---  subCandidates = (vs .|. xx .|. yy) .&. prevTVs .|. (clearBit recSubs v)
-    subCandidates = (vs .|. xx .|. yy .|. recSubs) .&. prevTVs
-    in case find canSub (bitSet2IntList subCandidates) of -- & \r -> traceShow (v , r) r) of
-      Just w  -> SubVar w & (if debug_gen then trace ("sub: " <> show v <> " => " <> show w :: Text) else identity)
-      Nothing -> if null ts then genVar else SubTy (TyGround ts)
-  (polarP , polarN) -> let
-    recCoocs = prevTVs .&. recs .&. (fromMaybe 0 ((fst . partitionType) <$> (polarP <|> polarN)))
+    subCandidates = vs .|. xx .|. yy .|. recSubs
+    fwdRec = MV.write subs v genVar -- setup worstcase for this var while checking forward subs
+      *> foldM (calcSub coocV recs subs) setSubs' (bitSet2IntList recSubs)
+      >>= \sets -> (setSubs' {- very odd "sets" fails -} ,) <$> findM (canSub sets) (bitSet2IntList recSubs)
+      -- TODO not using "sets" here will duplicate work on the recsubs
+    in findM (canSub setSubs) (bitSet2IntList (subCandidates .&. setSubs)) >>= \case -- & \r-> traceShow (v , r) r)
+      --Just w -> MV.read subs w
+      Just w  -> writeSub setSubs' (SubVar w)
+        & (if debug_gen then trace ("sub: " <> show v <> " => " <> show w :: Text) else identity)
+      Nothing -> fwdRec >>= \(sets , found) -> case found of
+        Nothing -> writeSub sets $ if null ts then genVar else SubTy (TyGround ts)
+        Just w  -> writeSub sets (SubVar w)
+  (polarP , polarN) -> writeSub setSubs' $ let
+    recCoocs = setSubs .&. recs .&. (fromMaybe 0 ((fst . partitionType) <$> (polarP <|> polarN)))
     in if testBit recs v && recCoocs == 0 then RecursiveVar else DeleteVar -- TODO cant delete merge of recursive vars?!
-
---handleVar (deletes , (subMask , subTys) , recs) v
---  | testBit deletes v = DeleteVar
---  | testBit recs v    = RecursiveVar
---  | testBit subMask v = SubTy (subTys V.! popCount (subMask .&. setNBits v))
---  | otherwise         = GeneraliseVar
-
--- Support forward substitution
---buildVarSubs2 :: V.Vector Cooc -> BitSet -> (BitSet , (BitSet , V.Vector Type) , BitSet)
---buildVarSubs2 coocV recs = let
---  doVar :: Int -> Acc -> Cooc -> Acc
---  doVar v acc vCoocs = case vCoocs of
---    (Just x , Just y) -> partitionType (intersectTypes x y) & \(vs , ts) -> let
---      polarCooc a b = if clearBit (getTyVars a) v == 0 then getTyVars b else 0
---      subCandidates = let sameRec = if testBit recs v then (.&. recs) else (.&. complement recs)
---        in clearBit (sameRec (vs .|. polarCooc x y .|. polarCooc y x)) v -- .&. setNBits v
---      in case head (bitSet2IntList subCandidates) of
---        Just w  -> acc & subVars %~ ((v , w) :)
---        Nothing -> if null ts then acc else acc & subTys %~ \(mask , tys) -> (setBit mask v , TyGround ts : tys)
---    (polarP , polarN) -> let
---      recCoocs = recs .&. (fromMaybe 0 ((fst . partitionType) <$> (polarP <|> polarN)))
---      in if recCoocs /= 0 then acc else acc & deletes %~ (`setBit` v)
---  in ifoldl' doVar (Acc 0 (0 , []) []) coocV & \(Acc deletes subTys subVars) -> let
---    -- The trouble is eliminating subVars while avoiding cycles
---    -- Refusing to sub v for w when w > v doesn't simplify all (eg. scanSum is left with a polar tvar)
---    findSub :: forall s. MV.MVector s Int -> BitSet BitSet -> Int -> (BitSet , a) -> ST s (BitSet , a)
---    findSub subsV svmask stack v (dels , (smask,_))
---      | testBit stack v = pure (dels .|. stack , smask) -- leave one var (w) be generalised
---      | testBit dels  v = pure (setBit dels w .|. stack , smask)
---      | testBit smask v = _ -- insert a subty ?!
---      | testBit svmask v = MV.read subsV v >>= \w -> findSub (setBit stack v) w (dels , smask)
---      | True = _
---    in runST $ do
---    subsV <- MV.new (V.length coocV) -- sparse vector of varsubs
---    subs <- subVars `forM` \(v,w) -> v <$ MV.write subsV v w
---    foldM (\acc v -> findSub svmask subsV 0 v acc) (deletes , subTys) subs
---    <&> \(d , (smask , subs)) -> (deletes , (smask , V.fromList (reverse subs)) , recs)
 
 -- build cooc-vector and mark recursive type variables
 --buildCoocs :: forall s. MV.MVector s BiSub -> MV.MVector s Cooc -> BitSet -> Bool -> Type -> TCEnv s Type
@@ -152,26 +132,26 @@ buildType bis' handleVar loops pos = let
     pure $ mergeTypeList pos (TyGround grounds : subs ++ varBounds)
   in readBounds loops . partitionType
 
---reconstructType :: forall s. MV.MVector s BiSub -> V.Vector VarSub -> Type -> G s Type
---reconstructType bis' varSubs ty = let
---  readBounds :: (Bool , BitSet , Type) -> G s (TypeF (Bool , BitSet , Type))
---  readBounds (pos , loops , seedTy) = let
---    (vs , gs) = partitionType seedTy
---    readVar v = MV.read bis' v <&> if pos then _pSub else _mSub
---    negArrows = mapTHeads $ \case
---      THTyCon (THArrow ars ret) -> THTyCon (THArrow ((\(p,l,t) -> (not p,l,t)) <$> ars) ret)
---      x -> x
---    in do
---    varBounds <- bitSet2IntList (vs .&. complement loops) `forM` readVar
---    subs <- bitSet2IntList vs `forM` \v -> case varSubs V.! v of
---      DeleteVar  -> pure tyBot
---      GeneraliseVar -> generaliseVar v <&> \b -> TyGround [THBound b]
---      RecursiveVar  -> generaliseVar v <&> \m -> TyGround [THMuBound m]
---      SubVar w    -> readVar w
---      SubTy ty    -> pure ty
---    let r = mergeTypeList pos (TyGround gs : subs ++ varBounds)
---        loops2 = loops .|. vs
---    partitionType r & \(rvs , rgs) -> if rvs .&. complement loops2 /= 0
---      then readBounds (pos , loops2 , (TyVars (rvs .&. complement loops2) rgs))
---      else pure $ negArrows $ (pos , loops2 ,) <$> project r -- TODO we should not recurse the subs
---  in anaM readBounds (True , 0 , ty) -- track strictly positive tvar wraps?
+-- Need to recursively read all tvar transitive bounds 
+reconstructType :: forall s. MV.MVector s BiSub -> V.Vector VarSub -> Type -> G s Type
+reconstructType bis' varSubs ty = let
+  readBounds :: (Bool , BitSet , Type) -> G s (TypeF (Bool , BitSet , Type))
+  readBounds (pos , loops , seedTy) = let
+    readVars l ty = partitionType ty & \(vs , gs) -> (bitSet2IntList (vs .&. complement l) `forM` readVar)
+      <&> mergeTypeList pos . (TyGround gs :)
+    (vs , gs) = partitionType seedTy
+    readVar v = (MV.read bis' v <&> if pos then _pSub else _mSub) >>= readVars (setBit loops v)
+    negArrows = mapTHeads $ \case
+      THTyCon (THArrow ars ret) -> THTyCon (THArrow ((\(p,l,t) -> (not p,l,t)) <$> ars) ret)
+      x -> x
+    in do
+    varBounds <- bitSet2IntList (vs .&. complement loops) `forM` readVar
+    subs <- bitSet2IntList vs `forM` \v -> case varSubs V.! v of
+      DeleteVar  -> pure tyBot
+      GeneraliseVar -> generaliseVar v <&> \b -> TyGround [THBound b]
+      RecursiveVar  -> generaliseVar v <&> \m -> TyGround [THMuBound m]
+      SubVar w    -> readVar w
+      SubTy ty    -> pure ty
+    let r = mergeTypeList pos (TyGround gs : subs ++ varBounds)
+    pure $ negArrows $ (pos , loops .|. vs ,) <$> project r
+  in anaM readBounds (True , 0 , ty) -- track strictly positive tvar wraps?

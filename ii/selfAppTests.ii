@@ -5,7 +5,7 @@
 --Selfapp4 = (\x => x x) (\x => x x) -- ⊥
 --Selfapp5 x = {l = x x , r = x }    -- ∏ A B → ((A → B) ⊓ A) → {l : B , r : A}
 
-Selfapp0 x = x x      -- ∏ A B → µa.(a → B)
+Selfapp0 x = x x      -- ∏ A B → µa.(a → B) → B
 Selfapp1 x = x x x    -- ∏ A B → µa.(a → a → B) → B
 Selfapp2 x y = x y x  -- ∏ A B C → µb.(A → b → C) → A → C
 Selfapp3 x y = x x y  -- ∏ A B C → µa.(a → B → C) → B → C

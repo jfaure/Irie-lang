@@ -107,10 +107,13 @@ rec5  = \next => 0                                    -- ⊤ → %i1
 --rec13 = let rec x = (\y => (let z = (y x) in y)) in x -- ∏ A → µx.(A ∧ (x → ⊤) → A)
 --rec15 = let rec x = (let y = (x x) in (\z => z)) in (x (\y => y.u)) -- ∏ A → A ⊓ (A ⊓ {u : B} → µx.(A ⊓ B ⊓ (A ⊓ {u : B} → x)))
 
-misc0 = (\x => (let y = (x x.v) in 0)) -- ∏ A → ((A → ⊤) ⊓ {v : A}) → %i1
+-- TODO what semantics do we want for typing freevars of unused let bindings
+-- misc0 = (\x => (let y = (x x.v) in 0)) -- ∏ A → ((A → ⊤) ⊓ {v : A}) → %i1
 -- ^ was ⊤ → %i1
 -- ^ Note: simplesub says ∏ A → {v: A} ∧ (A → ⊤) → %i32
 -- ^ Note: without canonicalization: -- (B ∨ (B ∧ {u: C} → A ∨ C)) as A
+-- Says "⊤ → %i1" , which is perhaps even a better type
+-- instantly applying let-binds to freeVars appears to not work for lp1 and lp4
 
 -- misc15 = { f = { b = 3 , f = misc15 } }                 -- μx.{f : {f : x , b : %i32}}
 -- misc16 = { f = { b = 3 , f = { a = 2 , f = misc15 } } } -- μx.{f : {f : {f : x , a : %i32} , b : %i32}}

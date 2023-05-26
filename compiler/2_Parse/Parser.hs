@@ -190,8 +190,9 @@ pBlock :: Bool -> Bool -> LetQual -> Parser Block
 pBlock isTop isOpen letTy = Block isOpen letTy <$> parseBinds isTop
 
 parseBinds :: Bool -> Parser (V.Vector FnDef)
-parseBinds isTop = scn *> use indent >>= \prev -> L.indentLevel >>= \lvl -> 
-  parseDecls isTop (eof <|> void (endLine *> scn *> checkIndent prev lvl))
+parseBinds isTop = scn *> use indent >>= \prev -> L.indentLevel >>= \lvl ->  let
+  sep = eof <|> (endLine *> scn) --  *> when (prev < lvl) (fail "unexpected top level indentation"))
+  in parseDecls isTop sep
 
 newtype SubParser = SubParser { unSubParser :: Parser (Maybe (FnDef , SubParser)) }
 parseDecls :: Bool -> Parser () -> Parser (V.Vector FnDef)
@@ -301,8 +302,8 @@ tt :: Parser TT
 
   letIn letQual = do
     block <- pBlock False True letQual
-    (moduleWIP . parseDetails . letBindCount += V.length (binds block))
-    LetIn block <$> (scn *> reserved "in" *> (Just <$> tt))
+    liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= V.length (binds block)
+    LetIn block <$> (scn *> reserved "in" *> (Just . (liftLetStart,) <$> tt))
 
   typedTT = pure
 

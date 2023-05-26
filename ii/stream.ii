@@ -24,23 +24,23 @@ foldr c z (@stream next seed) = let
     @Yield x r => c x (go r)
   in go seed
 
-foldl f z (@stream next seed) = let
+foldl f zz (@stream next seed) = let
   go z s = case next s of
     @Done      => z
     @Skip r    => go z r
     @Yield x r => go (f z x) r
-  in go z seed
+  in go zz seed
 
 -- h where h = (identity ||| h) . c
 -- a form of tail-recursion where the dfa may terminate early
-dfa f z (@stream next seed) = let
+dfa f zz (@stream next seed) = let
   go z s = case next s of
     @Done      => z
     @Skip r    => go z r
     @Yield x r => case f z x of
       @Left end   => end
       @Right cont => go cont r
-  in go z seed
+  in go zz seed
 
 fmap f = \case
   @Done      => Done

@@ -32,6 +32,13 @@ mapTHeads fn = \case
   TyGroundF g  -> TyGroundF  (fn <$> g)
   x -> x
 
+mapTHeads' fn = \case
+  TyVars vs g -> TyVars vs (fn <$> g)
+  TyGround g  -> TyGround  (fn <$> g)
+  x -> x
+
+hasMu = partitionType >>> \(_ , gs) -> hasMuTHead gs
+hasMuTHead = find (\case { THMuBound{} -> True ; _ -> False})
 tyVars vs g = if vs == 0 then TyGround g else TyVars vs g
 hasTVars = \case { TyVars{} -> True ; _ -> False }
 

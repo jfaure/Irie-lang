@@ -8,16 +8,17 @@ import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write )
 import qualified ParseSyntax as P ( FnDef )
 import qualified Data.Vector as V ( Vector )
 
--- inference uses a cataM
+-- inference uses a cataM (biunification vector and new tvar assignments)
 type TCEnv s a = StateT (TCEnvState s) (ST s) a
 data TCEnvState s = TCEnvState {
  -- in
-   _externs     :: Externs     -- imported bindings
+   _externs     :: Externs     -- vector ExternVars
  , _loadedMs    :: V.Vector LoadedMod
  , _thisMod     :: ModuleIName -- used to make the QName for local bindings
  , _openModules :: BitSet
 
  -- out
+ , _modBinds    :: MV.MVector s (Either P.FnDef Bind) -- all lets lifted
  , _letBinds    :: MV.MVector s (MV.MVector s (Either P.FnDef Bind))
  , _letNest     :: Int
  , _errors      :: Errors
@@ -44,7 +45,7 @@ freshBiSubs n = do
   bisubs <- use bis
   biLen  <- use blen
   let tyVars  = [biLen .. biLen+n-1]
-  blen .= (biLen + n)
+  blen .= biLen + n
   bisubs <- if MV.length bisubs < biLen + n then MV.grow bisubs n else pure bisubs
   bis .= bisubs
   tyVars `forM_` \i -> MV.write bisubs i (BiSub tyBot tyTop)

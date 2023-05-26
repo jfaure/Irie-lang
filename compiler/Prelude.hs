@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo)
+ , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -66,6 +66,9 @@ d_ x   = let --if not global_debug then identity else let
   in trace (clYellow (show x))
 did_ x = d_ x x
 dv_ f = traceShowM =<< V.freeze f
+
+findM :: (Foldable f, Monad m) => (a -> m Bool) -> f a -> m (Maybe a)
+findM p = foldr (\x f -> p x >>= \case { True -> pure (Just x) ; False -> f }) (pure Nothing)
 
 anyM :: Monad m => (a -> m Bool) -> [a] -> m Bool
 anyM f = \case

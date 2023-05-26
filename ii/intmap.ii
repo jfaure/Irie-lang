@@ -3,7 +3,7 @@ import prelude
 -- Invariant: Nil is never a child of Bin
 -- Invariant: Mask is a power of 2 (largest bit position where 2 maps differ)
 -- Invariant: Prefix is the common high-order bits all elements share to the left of mask bit
--- Invariant: (Bin prefix mask l r) = l is all elems that don't have mask bit set, right all that do
+-- Invariant: (Bin prefix mask l r) = l has all elems that don't have mask bit set
 -- Prefix = Int
 -- Mask   = Int
 -- IntMap a
@@ -42,7 +42,6 @@ insertLookupWithKey f k x t = case t of
   @None        => (Nothing , Tip k x)
 
 -- insert :: Key -> a -> IntMap a -> IntMap a
-
 insert k x t = case t of
   @Bin p m l r => if nomatch k p m then link k (Tip k x) p t
     else if zero k m then Bin p m (insert k x l) r

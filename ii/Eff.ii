@@ -46,7 +46,7 @@ runReader i m = let
   loop (Pure x) = Pure x
   loop (Impure u q) = case u of
     Get -> loop (qApp q i)
-    u   -> Impure u (tsingleton (qComp q loop)) -- qComp g h = h << qApp g
+    u   -> Free u (tsingleton (qComp q loop)) -- qComp g h = h << qApp g
   in loop m
 
 -- TODO builtin Identity label with subtypes (a <: Identity a) and (Identity a <: a)

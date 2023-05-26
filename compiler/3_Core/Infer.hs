@@ -22,38 +22,39 @@ import qualified BitSetMap as BSM ( toList, fromList, fromVec, fromListWith, sin
 --addBind :: Expr -> P.FnDef -> Expr
 --addBind jm newDef = jm
 
+-- lift lets:
+-- 1. rm LetIn Nothing
+-- 2. read/write everything to modBinds vec isntead of letBinds/letNest
+-- 3. rm VLetNames: mkQName thisMod (translate name)
+-- ? mutu
 judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (Expr , Errors)
 judgeModule pm importedModules modIName exts loaded = let
+  letCount = pm ^. P.parseDetails . P.letBindCount
   scopeParams = initParams importedModules emptyBitSet -- open required
   modTT       = P.LetIn (P.Block True P.Let (pm ^. P.bindings)) Nothing
---bindNms = P._fnIName <$> (pm ^. P.bindings)
---scopeParams = initParams importedModules emptyBitSet
---  & lets %~ (.|. intList2BitSet (V.toList bindNms))
---  & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName 0 i))
---bindings    = apo (scopeApoF exts modIName) (modTT , scopeParams)
-  inferTT :: P.TT -> TCEnv s Expr
-  inferTT tt = hypo inferF (scopeApoF exts modIName) (tt , scopeParams)
---inferBindings = mapM (use P.fnRhs >>= inferTT) (pm ^. P.bindings)
+  scopedInfer :: P.TT -> TCEnv s Expr
+  scopedInfer tt = hypo inferF (scopeApoF exts modIName) (tt , scopeParams)
   in runST $ do
-  letBinds' <- MV.new 32
+  modBinds' <- MV.new (letCount + V.length (pm ^. P.bindings))
+  letBinds' <- MV.new 32 -- let-nest
   bis'      <- MV.new 0xFFF
   g         <- MV.new 0
-  (_2 %~ (^. errors)) <$> runStateT (inferTT modTT) TCEnvState
+  (_2 %~ (^. errors)) <$> runStateT (scopedInfer modTT) TCEnvState
     { _externs  = exts
     , _loadedMs = loaded
     , _thisMod  = modIName
+    , _openModules = importedModules
 
+    , _modBinds = modBinds'
     , _letBinds = letBinds'
     , _letNest  = 0
     , _errors   = emptyErrors
+
     , _bruijnArgVars = mempty
     , _bindStack = []
-
-    , _openModules = importedModules
     , _tmpFails = []
     , _blen     = 0
     , _bis      = bis'
-
     , _freeLimit = 0
     , _letCaptures = 0
     , _captureRenames = g
@@ -77,8 +78,7 @@ judgeBind letDepth bindINm = let
     bindStack %= drop 1
     lcVars <- letCaptures <<%= (.|. svlc)
     argTVs <- use captureRenames >>= \cr -> bitSet2IntList lcVars `forM` \l -> (argVars V.! l ,) <$> MV.read cr l
-
-    let freeVarCopies = snd <$> argTVs -- [Int]
+    let freeVarCopies = snd <$> argTVs :: [Int]
         lc = (atLen , lcVars)
         expr = if True || lcVars == 0 then rawExpr else
           rawExpr & \(Core t ty) -> Core t (prependArrowArgsTy (tyVar <$> freeVarCopies) ty)
@@ -236,11 +236,7 @@ inferF = let
    lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
      <&> map (fromRight (error "impossible: uninferred TT")) -- mapM judgeBind solved all
    mI <- use thisMod
-   pure (ret , V.zipWith (\fn e -> (LetMeta (fnINameToQName mI fn) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
-
- fnINameToQName mI fnDef = case P._fnRecType fnDef of
-   P.LetTuple -> mkQName 0 (P._fnIName fnDef)
-   _ -> mkQName mI (P._fnIName fnDef)
+   pure (ret , V.zipWith (\fn e -> (LetMeta (mkQName mI (P._fnIName fn)) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
 
  mkFieldCol a b = TyGround [THFieldCollision a b]
 
@@ -255,7 +251,8 @@ inferF = let
     -- letnames = qualified on let-nests + 
     blockTy = THProduct (BSM.fromListWith mkFieldCol $ V.toList $ V.zip nms tys) -- TODO get the correct INames
     in Core (LetBlock lets) (TyGround [THTyCon blockTy])
-  P.LetInF (P.Block _ _ lets) pInTT -> inferBlock lets pInTT <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
+  P.LetInF (P.Block _ _ lets) pInTT -> inferBlock lets (snd <$> pInTT)
+    <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
   P.ProdF pFields -> let -- duplicate the field name to both terms and types
     mkCore (ts , tys) = Core (Prod ts) (TyGround [THTyCon (THProduct tys)])
     in fmap (mkCore . BSM.unzip . BSM.fromVec)
@@ -375,4 +372,4 @@ inferF = let
   P.ScopePoisonF e   -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))
   P.DesugarPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . unpatternFails %= (t:))
   P.ScopeWarnF w t   -> (errors . scopeWarnings %= (w:)) *> t
-  x -> error $ "not implemented: inference of: " <> show (embed $ P.Question <$ x)
+  x -> error $ "not implemented: inference of: " <> show (embed $ P.WildCard <$ x)

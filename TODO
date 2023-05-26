@@ -7,8 +7,9 @@
   The algebras (a1 : D (A1 X A2) -> A1) and a2 access the results of both rec calls.
   special case is zygo-hylo, where a2 := a'2 . D outr (a2 uses only 1 of the results)
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
+  * module import-sig (will help with mutual modules)
   * open sum type (default case branch)
-  * Identity Iso subtype
+  * subtypes: Identity Iso "a <: Identity a" "Identity a <: a" & typeClass dict "{ ret : A } <: A"
   * open record = qualify names on it (QName for modules , TTLens for local records)
   * Conv non-mut non-rec let-binds straight to fn args
   * leaf bicasts ; subtype tycon trees (traversals)
@@ -23,7 +24,7 @@
 ## Syntax: spare: `~%;
   * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
   * record type syntax: { x = Int , y } -- indicates y = ? (only makes sense as a type)
-  * ~> = implicit arg: A ~> A -> A
+  * ~> = implicit arg: A ~> A -> A ; ~ for app of implicit: "identity ~Int 3"
   ? Sum-of-Record
   * record union (| : |) , difference (\\ : \\)
   ? argCase => f = \argCase { a b => _ }
@@ -32,7 +33,7 @@
   * dup node scope: global / device / thread ?
       f x = x x => f x = let a b = DUP x in a b
       ! see when lambdas are duplicated (also reduce computations on free-vars when papped)
-  ? should we compute containement
+  ? compute containement
 ## Notes. Modules / records
   export list & bind Import list
   Cap field number to 64 (use pdep to mark subtyping frets), large records mk list
@@ -85,6 +86,7 @@
   * Literal is out of Int range: cast Literals
   * " f = 3" -- top level space before bind bad error message
 ## Unimportant
+  * let-scope depends on mixfix parse: "letscopeAfterMixfix y = if y then let x = 3 in x else y"
   * mode to print type-var bounds
   * Insta-unwrap/specialise single branch cases
   * Completion based on types (Type -> Bind)
@@ -110,4 +112,3 @@
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>
   * https://documentation.divio.com/
   * phase distinction: meaning of static expr not dependent on executing dynamic exprs
-

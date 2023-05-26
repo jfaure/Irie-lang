@@ -46,7 +46,7 @@ data FnDef = FnDef {
  , _fnSig        :: Maybe TT
 }
 
-data LetQual = LetIDK | Let | Dep | Rec | Mut | LetTuple {- unnamed binds -} deriving (Eq , Show)
+data LetQual = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show)
 
 data TTName
  = VBruijnLevel IName
@@ -105,7 +105,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | MatchB TT (BSM.BitSetMap TT) (Maybe TT) -- solved patterns UnPattern.patternsToCase
 
  | List   [TT]
- | LetIn Block (Maybe TT) -- Nothing only for moduleTT (let-ins are meant to be mutually in scope)
+ | LetIn Block (Maybe (Int , TT)) -- Nothing only for moduleTT (let-ins are meant to be mutually in scope)
 -- | LiftedLets LetQual Int TT -- Int is index into lifted-let-block vector
 
  -- term primitives

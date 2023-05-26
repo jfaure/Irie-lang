@@ -74,6 +74,8 @@ readPrimExtern i = snd (primBinds V.! i)
 readParseExtern :: BitSet -> ModIName -> Externs -> IName -> ExternVar
 readParseExtern openMods thisModIName exts i = case exts.extNames V.! i of
   Importable modNm iNm -> if
+    -- TODO don't always expose builtins!
+    | not (testBit openMods modNm || modNm == 0) -> NotOpened (show modNm <> "." <> show iNm) ("")
     | modNm == thisModIName -> ForwardRef iNm
     | modNm == 0 -> Imported (snd (primBinds V.! iNm))
     | True -> NotOpened (show modNm <> "." <> show iNm) ("")
@@ -90,6 +92,49 @@ readJudgedBind m iNm = case m.moduleTT of
     bindName = popCount (topINames m .&. setNBits iNm :: Integer)
     in snd (binds V.! bindName) & bind2Expr
   _ -> _
+
+-- * Add bindNames and local labelNames to resolver
+-- * Generate Externs vector
+resolveNames :: PureRegistry -> IName -> P.Module -> V.Vector HName
+  -> (M.Map HName (IntMap IName) , M.Map HName (IM.IntMap [QMFWord]) , Externs)
+resolveNames reg modIName p iNamesV = let
+  curAllNames = reg._allNames
+  curMFWords  = reg._globalMixfixWords
+  curMods     = reg._loadedModules
+  mixfixHNames = p ^. P.parseDetails . P.hNameMFWords
+  mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
+    zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
+
+  -- Note. temporary labelBit allows searching BindNames and labels in 1 Map
+  -- In fact labels are almost bindNames in their own right
+  resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
+  resolver = let
+    labelMap = p ^. P.parseDetails . P.labels
+    labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
+    exposedNames = M.filter (testBit (p ^. P.parseDetails . P.topINames)) (p ^. P.parseDetails . P.hNamesToINames)
+    in M.unionsWith IM.union [(IM.singleton modIName <$> exposedNames) , curAllNames , labels]
+
+  resolveName :: HName -> ExternVar
+  resolveName hNm = let
+    binds   = IM.toList <$> (resolver   M.!? hNm)
+    mfWords = IM.toList <$> (mfResolver M.!? hNm)
+    in case (binds , mfWords) of
+    (Just [] , _)  -> NotInScope hNm -- this name was deleted from (all) modules
+    -- inline builtins
+    (Just [(modNm , iNm)] , Nothing) -> if
+     | modNm == 0 -> case snd (primBinds V.! iNm) of
+       Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
+       x -> Importable modNm iNm -- Imported x
+     | testBit iNm labelBit -> ImportLabel (mkQName modNm (clearBit iNm labelBit))
+     | True -> maybe (Importable modNm iNm) Imported (readQName curMods modNm iNm)
+    (b , Just mfWords) -> let flattenMFMap = concatMap snd in MixfixyVar $ case b of
+      Nothing      -> Mixfixy Nothing              (flattenMFMap mfWords)
+      Just [(m,i)] -> Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
+      _ -> error "TODO"
+    (Nothing      , Nothing) -> NotInScope hNm
+    (Just many , _)          -> AmbiguousBinding hNm many
+
+  in (resolver , mfResolver , Externs (resolveName <$> iNamesV))
 
 showImportCon :: Import -> Text
 showImportCon = \case
