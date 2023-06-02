@@ -1,0 +1,17 @@
+1. Validate character encoding and identify start of all nodes:
+  (numbers , strings , null , true , false , arrays , objects)
+  * Distinguish chars between quotes & escaped chars
+  * whitespace is only space/tab/line-feed/carriage return
+  * bitsetmanip: 1bit ~ 1 input byte
+2. Process nodes and structural characters
+  * quote -> string , digit/hypher -> number , 't'|'f'|'n' -> test true|false|null
+  * normalise strings: convert to UTF-8 seqs
+
+* Semiring has + and * operations , matrix (paralellisation) multiplication in semirings is associative!
+Parser = data
+  S  String
+  S| [String]
+  | Parser Parser
+  * [Parser]
+
+!! can dynamically replace completed input

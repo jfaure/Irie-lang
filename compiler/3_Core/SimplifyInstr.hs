@@ -73,7 +73,7 @@ simpleInstr i args = let
   Zext | [Lit (Int i)]   <- args -> Lit (Fin 64 i)
        | [Lit (Fin _ i)] <- args -> Lit (Fin 64 i)
   NumInstr (IntInstr Chr) | [Lit (Int i) ] <- args -> Lit (Char (chr (fromIntegral i)))
-  NumInstr (IntInstr Ord) | [Lit (Char c)] <- args -> Lit (I32  (ord c))
+  NumInstr (IntInstr Ord) | [Lit (Char c)] <- args -> Lit (Fin 32 (fromIntegral $ ord c))
 --NumInstr (IntInstr i)  | [Lit (I32 a) , Lit (I32 b)] <- args ->
   NumInstr (IntInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryIntInstr i a b))
   NumInstr (BitInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryBitInstr i a b))

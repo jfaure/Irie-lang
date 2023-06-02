@@ -1,0 +1,45 @@
+-- quad width shuffle: operates on indices in range (unsigned < 64)
+-- the blend approach appears to be better
+shuf4' : __m256i -> __m256i -> __m128i -> __m256i
+shuf4' hi lo sel = let
+  -- if char > 15, set high bit (this causes shuffle_epi8 to set that pos to 0)
+  mkOverflow s = _mm_add_epi8 s (_mm_set1_epi8 0xF0)
+
+  -- 4 intervals: [0..15] [16..31] [32..47] [48..61]
+  -- for each interval, set the high control bit for all chars not in interval
+  -- use saturating subtraction to not overflow
+  -- the result is obtained by ORring each column
+  s0  = mkOverflow sel
+  i01 = _mm256_shuffle_epi hi s0 ; i00 = _mm256_shuffle_epi lo s0
+  s1 = mkOverflow (_mm_subs_epi8 sel 16) -- if not in range [16..31], set high nybble
+  i11 = _mm256_shuffle_epi hi s0 ; i10 = _mm256_shuffle_epi lo s0
+  s2 = mkOverflow (_mm_subs_epi8 sel 32) -- if not in range [16..31], set high nybble
+  i21 = _mm256_shuffle_epi hi s0 ; i20 = _mm256_shuffle_epi lo s0
+  s3 = mkOverflow (_mm_subs_epi8 sel 48) -- if not in range [16..31], set high nybble
+  i31 = _mm256_shuffle_epi hi s0 ; i30 = _mm256_shuffle_epi lo s0
+
+  -- Now each i needs to be transposed and orred
+  extractCol n = _mm128_or_si128
+    (_mm128_or_si128 (_mm256_extractf128_si256 i00 n) (_mm256_extractf128_si256 i10 n))
+    (_mm128_or_si128 (_mm256_extractf128_si256 i20 n) (_mm256_extractf128_si256 i30 n))
+
+  in _mm128_or_si128 (_mm128_or_si128 (extractCol 3) (extractCol 2))
+                     (_mm128_or_si128 (extractCol 1) (extractCol 0))
+
+
+shuf4 : __m256i -> __m256i -> __m128i -> __m256i
+shuf4 hi lo sel = let -- (note. shuf2 accepts <128 and works mod 32)
+  -- do 2 intervals at once
+  mkOverflow s = _mm_add_epi8 s (_mm_set1_epi8 0xF0)
+  -- [0..31]
+  s0  = mkOverflow (_mm_subs_epi8 sel 16) -- anything > 32 clears the hi- shuffle bit
+  lo1 = _mm256_shuffle_epi hi s0 ; lo0 = _mm256_shuffle_epi lo s0
+  lo  = _mm_blendv_epi8 lo1 lo0 (_mm_cmpgt_epi8 sel (_mm_set1_epi8 31))
+  -- [32..61]
+  sh = mkOverflow (_mm_subs_epi8 sel 32)
+  hi1 = _mm256_shuffle_epi hi s0 ; hi0 = _mm256_shuffle_epi lo s0
+
+  -- blend
+  -- or
+  r = 
+  in _mm128_or_si128 (_mm256_extractf128_si256 r 0) (_mm256_extractf128_si256 r 1)

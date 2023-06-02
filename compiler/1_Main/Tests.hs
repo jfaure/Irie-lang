@@ -24,9 +24,9 @@ inferType txt = let
     reg <- initRegistry False
     lm  <- compileText defaultCmdLine {noColor = True , printPass = [] , noCache = True , noFuse = True} reg txt
     r   <- readMVar reg
-    pure (lm , BindSource (lookupIName r._loadedModules) (lookupFieldName r._loadedModules))
+    pure (lm , BindSource (lookupLabelName r._loadedModules) (lookupFieldName r._loadedModules))
   in case lm of
-  Just (JudgeOK _ jm) -> prettyJudgedModule False ansiRender { bindSource = Just bindSrc , ansiColor = False } jm
+  Just (JudgeOK _ jm) -> prettyJudgedModule False False ansiRender { bindSource = Just bindSrc , ansiColor = False } jm
   Just x  -> error $ "not judgeOK: " <> toS (showImportCon x)
   Nothing -> error $ "no module"
 
@@ -49,10 +49,10 @@ readTestsFromfile fName = let
 caseTests = do
   let e :: Text = [r|
 printList l = case l of
-  @Nil => 2
+  @Nil => 0
   @Cons i ll => add (putNumber i) (printList ll)
 |] in S.describe "printList" $ S.it (toS e) $ UniText (inferType e)
-      `S.shouldBe` UniText "printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → %i32"
+      `S.shouldBe` UniText "printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 ⊔ %i32)"
 
 -- val as a pattern no longer parsed
 --   let e :: Text = [r|

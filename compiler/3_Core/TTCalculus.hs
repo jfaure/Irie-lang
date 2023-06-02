@@ -12,11 +12,11 @@ import qualified Data.IntMap as IM
 -- Lambda calculus TTs are ambiguous, eg. 'f x = x' could be a type or a term
 -- Terms that need to become types need to have potential fixed points converted to µ types
 -- This has to be done in TCState because forward refs may trigger inference mid ttApp
-ttApp :: Type -> (Int -> TCEnv s Expr) -> Expr -> [Expr] -> TCEnv s Expr
-ttApp retTy readBind fn args = let --trace (clYellow (show fn <> " $ " <> show args :: Text)) $ let
+ttApp :: Type -> Expr -> [Expr] -> TCEnv s Expr
+ttApp retTy fn args = let --trace (clYellow (show fn <> " $ " <> show args :: Text)) $ let
 --getQBind q = use thisMod >>= \modIName -> use openModules >>= \open -> use externs >>= \e ->
 --  handleExtern (readQParseExtern open modIName e (modName q) (unQName q))
-  ttApp' = ttApp retTy readBind
+  ttApp' = ttApp retTy
 
   -- Term application
   doApp coreFn termArgs = let

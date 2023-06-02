@@ -5,6 +5,7 @@ _>>_ { a11 } = \g f a => f (g a)
 _^_  { r10 } = pow
 
 _B~_ { r9 }  = bitNOT
+_!_ { l9 }  = readArray
 
 _B&_ { a8 } = bitAND
 _B<<_{ n8 } = bitSHL
@@ -27,6 +28,8 @@ _>?_ { n5 } = gt
 _=?_ { n5 } = eq
 _/=?_{ n5 } = ne
 
+-- clz ctl popCount setBit testBit
+-- bts (bit test and set)
 --¬_   { a5 } = not
 --not_ { a5 } = not
 

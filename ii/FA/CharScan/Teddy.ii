@@ -1,0 +1,51 @@
+-- Teddy: Fast string scanner for max 8 buckets (a char bitSet)
+-- searches for n={1,2,3} prefixes of the patterns, then checks exact matches
+-- eg. "hello|world" => 'h'|'w' then 'e'|'o'
+-- ! Setup is tricky
+
+-- Shuffle does [0..15] -> Byte lookup
+-- a Byte bitset indexes 8 buckets
+-- To extend shuffle to a loose match [0..256] -> Byte lookup
+-- Need to split chars in 2
+
+-- false positives: (ab|xy) will match (ay and bx)
+I8Map-lookup : 16x8 -> 16x8 -> 16x8 -> 16x8
+I8Map-lookup lo hi chars = let
+  maskLo  = _mm_set1_epi8(0x0F)
+  charsLo = _mm_and_si128 chars maskLo
+  charsHi = _mm_and_si128 (_mm_slli_si128 chars 4) maskLo
+  in _mm_or_si128 (_mm_shuffle_epi8 lo charsLo) (_mm_shuffle_epi8 hi charsHi)
+-- _mm_testz_si128 result _mm_setzero_si128 => guarantee no match
+-- else need to check each pattern at this offset
+
+-- The challenge is finding duplicate chars(actually nybbles)
+--   to assign them the same bucket index for the shuffle on each nybble: [0..15]
+-- IDEA: do 15 rotate + cmps ?
+buildMaps = let
+  loSets = _ -- for each nybble, the char-bitset of pattern idxs containing it
+  hiSets = _
+  initShuffle = _mm_set_epi8(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15);
+  lo = _mm_shuffle_epi8(loSets , initShuffle);
+  hi = _mm_shuffle_epi8(hiSets , initShuffle);
+  in (lo , hi)
+
+-----------------------------------------------------
+-- Experiments in building the char-bitsets from dups
+-----------------------------------------------------
+
+-- rotate by n bytes
+rotate128 v n = _mm_alignr_epi8 v v n -- shifts by n bytes
+rotate64 v n = _mm_alignr_pi8 v v n -- shifts by n bytes
+
+-- TODO audit this thing
+-- find dups
+-- a b c d
+-- d a b c
+-- c d a b
+-- b c d a
+findDups64 v = let
+  getBuckets v mask = let
+    cmpChars = _mm_cmpeq_pi8 v (rotate64 v i) -- per char: dups at rotate i
+    bucketBitSets = _mm_set_pi8 (1 .<<. i) .&. cmpChars -- set only bit i
+    in mask .|. bucketBitSets -- accumulate bucket idxs per char
+  in foldr getBuckets 0 [0..7]

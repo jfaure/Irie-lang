@@ -1,6 +1,6 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
 module Infer (judgeModule) where
-import Prim ( PrimInstr(MkPAp) )
+import Prim ( PrimInstr(MkPAp) , Literal(..) )
 import Builtins (typeOfLit)
 import BiUnify
 import qualified ParseSyntax as P
@@ -17,7 +17,7 @@ import Control.Lens
 import Data.Functor.Foldable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import qualified BitSetMap as BSM ( toList, fromList, fromVec, fromListWith, singleton, unzip )
+import qualified BitSetMap as BSM -- ( toList, fromList, fromVec, fromListWith, singleton, unzip )
 
 --addBind :: Expr -> P.FnDef -> Expr
 --addBind jm newDef = jm
@@ -27,19 +27,20 @@ import qualified BitSetMap as BSM ( toList, fromList, fromVec, fromListWith, sin
 -- 2. read/write everything to modBinds vec isntead of letBinds/letNest
 -- 3. rm VLetNames: mkQName thisMod (translate name)
 -- ? mutu
-judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (Expr , Errors)
+judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (ModuleBinds , Errors)
 judgeModule pm importedModules modIName exts loaded = let
   letCount = pm ^. P.parseDetails . P.letBindCount
-  scopeParams = initParams importedModules emptyBitSet -- open required
-  modTT       = P.LetIn (P.Block True P.Let (pm ^. P.bindings)) Nothing
-  scopedInfer :: P.TT -> TCEnv s Expr
-  scopedInfer tt = hypo inferF (scopeApoF exts modIName) (tt , scopeParams)
+  binds = pm ^. P.bindings
+  topBindsCount = V.length binds
+  scopeParams' = initModParams importedModules emptyBitSet (toList (binds <&> (^. P.fnIName))) -- TODO Rm toList
+  inferModule :: TCEnv s ModuleBinds
+  inferModule = inferBlock 0 binds Nothing >>= \(_inExpr , _lets) -> use modBinds >>= V.freeze
   in runST $ do
-  modBinds' <- MV.new (letCount + V.length (pm ^. P.bindings))
-  letBinds' <- MV.new 32 -- let-nest
+  modBinds' <- MV.new (letCount + topBindsCount)
+  letBinds' <- MV.new 0xFFF -- let-nest TODO HACK
   bis'      <- MV.new 0xFFF
   g         <- MV.new 0
-  (_2 %~ (^. errors)) <$> runStateT (scopedInfer modTT) TCEnvState
+  (_2 %~ (^. errors)) <$> runStateT inferModule TCEnvState
     { _externs  = exts
     , _loadedMs = loaded
     , _thisMod  = modIName
@@ -50,8 +51,11 @@ judgeModule pm importedModules modIName exts loaded = let
     , _letNest  = 0
     , _errors   = emptyErrors
 
+    , _inferStack = 0
+    , _topBindsCount = topBindsCount
+    , _scopeParams = scopeParams'
+    , _bindsBitSet = 0
     , _bruijnArgVars = mempty
-    , _bindStack = []
     , _tmpFails = []
     , _blen     = 0
     , _bis      = bis'
@@ -62,20 +66,26 @@ judgeModule pm importedModules modIName exts loaded = let
 
 -- infer >> generalise >> check annotation
 -- This stacks inference of forward references and let-binds and identifies mutual recursion
-judgeBind :: Int -> IName -> TCEnv s Expr
-judgeBind letDepth bindINm = let
-  inferParsed :: MV.MVector s (Either P.FnDef Bind) -> P.FnDef -> TCEnv s Expr
-  inferParsed wip' abs = freshBiSubs 1 >>= \[tvarIdx] -> do -- [tvarIdx] <- freshBiSubs 1
-    bindStack %= ((letDepth , bindINm) :)
-    MV.write wip' bindINm (Right (Guard emptyBitSet tvarIdx))
+judgeBind :: forall s. Int -> IName -> IName -> TCEnv s Expr
+judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use thisMod >>= \modIName -> let
+  inferParsed :: P.FnDef -> TCEnv s Expr
+  inferParsed abs = freshBiSubs 1 >>= \[tvarIdx] -> do -- [tvarIdx] <- freshBiSubs 1
+    inferStack %= (`setBit` modBindName) --  bindStack %= ((letDepth , bindINm) :)
+    let letMeta = LetMeta (letDepth == 0) (mkQName modIName (abs ^. P.fnIName)) (abs ^. P.fnNm) (-1)
+    MV.write modBinds' modBindName (letMeta , Guard emptyBitSet tvarIdx)
     svlc  <- letCaptures <<.= 0
     argVars <- use bruijnArgVars
     atLen <- V.length <$> use bruijnArgVars -- all capturable vars (reference where the letCaptures are valid bruijns)
     (captureRenames .=) =<< MV.new atLen
 
-    rawExpr <- cata inferF (P._fnRhs abs)
+    rawExpr <- case letDepth of -- need to solve scopes on top bindings:
+      -- the hypo (scopeApo) can't see through LetBinds vectors, so doing it per module bind is way more optimal
+      0 -> use scopeParams >>= \sp -> use externs >>= \exts ->
+          use thisMod >>= \modIName -> use topBindsCount >>= \tc ->
+          hypo inferF (scopeApoF tc exts modIName) (abs ^. P.fnRhs , sp)
+      _ -> cata inferF (abs ^. P.fnRhs)
 
-    bindStack %= drop 1
+--  inferStack %= (`clearBit` modBindName) --  bindStack %= drop 1
     lcVars <- letCaptures <<%= (.|. svlc)
     argTVs <- use captureRenames >>= \cr -> bitSet2IntList lcVars `forM` \l -> (argVars V.! l ,) <$> MV.read cr l
     let freeVarCopies = snd <$> argTVs :: [Int]
@@ -83,65 +93,69 @@ judgeBind letDepth bindINm = let
         expr = if True || lcVars == 0 then rawExpr else
           rawExpr & \(Core t ty) -> Core t (prependArrowArgsTy (tyVar <$> freeVarCopies) ty)
 
-    -- generalise
-    MV.read wip' bindINm >>= \case -- learn which binds had to be inferred as dependencies
-      Right b@BindOK{} -> pure (bind2Expr b)
-      Right (Guard ms tVar) -> do
+    -- generalise: Collect mutuals by learning which binds had to be inferred as dependencies
+    MV.read modBinds' modBindName >>= \case
+      (_ , b@BindOK{}) -> pure (bind2Expr b)
+      (lm , Guard ms tVar) -> do
         when (tVar /= tvarIdx) (error $ show (tVar , tvarIdx))
 --      typeAnn <- getAnnotationType (P._fnSig abs)
 
         -- level mutuality: let a = { f = b.g } ; b = { g = a.f }
         -- check if any prev binds mutual with this one at its level
-        let refs = setNBits bindINm .&. ms
-        hasMutual <- let isMut i = MV.read wip' i <&> \case { Right (Guard ms _) -> refs .&. ms /= 0 ; _ -> False }
+        let refs = setNBits modBindName .&. ms
+        hasMutual <- let isMut i = MV.read modBinds' i <&> (\case { Guard ms _ -> refs .&. ms /= 0 ; _ -> False }) . snd
           in anyM isMut (bitSet2IntList refs)
         if hasMutual
-          then Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tVar)
-           <$ MV.write wip' bindINm (Right (Mut expr ms lc tVar))
+          then Core (Var (VQBind (mkQName modIName modBindName))) (tyVar tVar)
+           <$ MV.write modBinds' modBindName (lm , Mut expr ms lc tVar)
            <* bisub (exprType expr) (tyVar tVar) -- ! recursive => bisub with -τ (itself)
            <* when (not (null freeVarCopies)) (error "mutual free vars")
           -- can generalise once all mutuals & associated tvars are fully constrained
-          else genExpr wip' expr freeVarCopies lc tVar
+          else genExpr lm expr freeVarCopies lc tVar
       b -> error $ "panic: " <> show b
 
   -- reference to inference stack (forward ref | recursive | mutual)
-  preInferred :: MV.MVector s (Either P.FnDef Bind) -> Bind -> TCEnv s Expr
-  preInferred wip bind = case bind of
+  preInferred :: (LetMeta , Bind) -> TCEnv s Expr
+  preInferred (lm , bind) = case bind of
     BindOK _ _f e  -> pure e -- don't inline the expr
-    Mut e _ms lc tvar -> genExpr wip e [] lc tvar
-    -- v Stacked bind means this was either Mutual | recursive (also weird recursive: r = { a = r })
+    Mut e _ms lc tvar -> genExpr lm e [] lc tvar
+    -- v Stacked bind means it could be Mutual | recursive (also weird recursive: r = { a = r })
     Guard mutuals tvar -> do
       -- mark as stacked on top of all binds at this lvl
       -- mark it as mutual with all bind at its level
-      bStack <- use bindStack
-      let mbs = intList2BitSet $ snd <$> filter ((letDepth == ) . fst) bStack
-      Core (Var (VQBind (mkQName letDepth bindINm))) (tyVar tvar)
-        <$ MV.write wip bindINm (Right $ Guard (mutuals .|. mbs) tvar)
+      mbs <- use inferStack
+      Core (Var (VQBind (mkQName modIName modBindName))) (tyVar tvar)
+        <$ MV.write modBinds' modBindName (lm , Guard (mutuals .|. mbs) tvar)
 
-  genExpr :: MV.MVector s (Either P.FnDef Bind) -> Expr -> [Int] -> (Int , BitSet) -> Int -> TCEnv s Expr
-  genExpr wip' (Core t ty) freeVarCopies letCapture@(_,freeVars) tvarIdx = do
+  genExpr :: LetMeta -> Expr -> [Int] -> (Int , BitSet) -> Int -> TCEnv s Expr
+  genExpr lm (Core t ty) freeVarCopies letCapture@(_,freeVars) tvarIdx = do
     gTy  <- do
       _cast <- use bis >>= \v -> (v `MV.read` tvarIdx) <&> _mSub >>= \case
         TyGround [] -> BiEQ <$ MV.write v tvarIdx (BiSub ty (TyGround []))
         _t -> bisub ty (tyVar tvarIdx) -- ! recursive => bisub with -τ (itself)
       let copyFreeVarsTy = prependArrowArgsTy (tyVar <$> freeVarCopies) (tyVar tvarIdx)
-      use blen >>= \bl -> use bis >>= \bis' ->
-        lift (generalise bl bis' copyFreeVarsTy)
+      use blen >>= \bl -> use bis >>= \bis' -> lift (generalise bl bis' copyFreeVarsTy)
       -- <* when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
     let rawRetExpr = Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
     retExpr <- pure rawRetExpr -- explicitFreeVarApp freeVars rawRetExpr
-           -- TODO Mark eraser args (ie. lazy VBruijn rename for simplifer)
-    retExpr <$ MV.write wip' bindINm (Right (BindOK optInferred letCapture retExpr))
+    -- TODO Mark eraser args (ie. lazy VBruijn rename for simplifer)
+    -- HACK partial letCapture will break β
+    (inferStack <%= (`clearBit` modBindName)) >>= \is -> when (is == 0) (clearBiSubs 0)
+    retExpr <$ MV.write modBinds' modBindName (lm , BindOK optInferred letCapture retExpr)
+  in use bindsBitSet >>= \b -> case testBit b modBindName of
+    True  -> MV.read modBinds' modBindName >>= preInferred
+    False -> (bindsBitSet %= (`setBit` modBindName))
+      *> use letBinds >>= (`MV.read` letDepth)
+        >>= \wip -> (wip `MV.read` bindINm) >>= inferParsed
 
-  in use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>=
-    (inferParsed wip ||| preInferred wip) -- >>= \r -> r <$ (use bindStack >>= \bs -> when (null bs) (clearBiSubs 0))
-
--- judgeBind then uninline and add captured variable arguments if necessary
-getLetBind letDepth bindINm = do
-  expr <- judgeBind letDepth bindINm <&> \(Core _t ty) ->
-    Core (Var (VLetBind (mkQName letDepth bindINm))) ty -- don't inline at this stage
-  use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm) >>= \case
-    Right (b@BindOK{}) -> free b & \(_ld , lc) -> explicitFreeVarApp lc expr
+-- judgeBind then uninline and add + biunify any captured arguments
+getModBind letNest letName modBindName = do
+  modIName <- use thisMod
+  expr <- judgeBind letNest letName modBindName <&> \(Core _t ty) ->
+    Core (Var (VQBind (mkQName modIName modBindName))) ty -- don't inline at this stage
+  use modBinds >>= (`MV.read` modBindName) <&> snd >>= \case
+--use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` modBindName) >>= \case
+    b@BindOK{} -> free b & \(_ld , lc) -> explicitFreeVarApp lc expr
       -- ld doesn't matter since we dont β-reduce
     _ -> pure expr -- TODO handle mutuals that capture vars ; ie. spawn mutumorphisms
 
@@ -168,6 +182,28 @@ checkAnnotation annTy inferredTy =
 biUnifyApp :: Type -> [Type] -> TCEnv s (BiCast , Type)
 biUnifyApp fTy argTys = freshBiSubs 1 >>= \[retV] ->
   (, tyVar retV) <$> bisub fTy (prependArrowArgsTy argTys (tyVar retV))
+
+-- Infer a block
+withLetNest go = letNest <<%= (1+) >>= \nest -> go nest <* (letNest %= \x -> x - 1)
+
+ -- Setup new freeVars env within a letNest ; should surround this with an inc of letNest, but not the inExpr
+newFreeVarEnv :: forall s a. TCEnv s a -> TCEnv s a
+newFreeVarEnv go = do
+  fl   <- use bruijnArgVars <&> V.length
+  svFL <- freeLimit <<.= fl
+  go <* do
+    freeLimit .= svFL
+    letCaptures %= (`shiftR` (fl - svFL)) -- reset relative to next enclosing let-nest
+
+inferBlock :: Int -> V.Vector P.FnDef -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
+inferBlock liftNames letBindings inExpr = withLetNest $ \nest -> do
+  newFreeVarEnv $ do
+    use letBinds >>= \lvl -> V.thaw letBindings >>= MV.write lvl nest
+    [0 .. V.length letBindings - 1] `forM_` \i -> judgeBind nest i (liftNames + i)
+
+  ret <- fromMaybe (pure poisonExpr) inExpr
+  lets <- use modBinds >>= \v -> V.freeze (MV.slice liftNames (V.length letBindings) v) -- freeze copies it
+  pure (ret , lets)
 
 inferF :: P.TTF (TCEnv s Expr) -> TCEnv s Expr
 inferF = let
@@ -201,7 +237,7 @@ inferF = let
    in if any isPoisonExpr (f : args) then pure poisonExpr else do
      (biret , retTy) <- biUnifyApp (exprType f) (exprType <$> args)
      use tmpFails >>= \case
-       [] -> castRet biret castArgs <$> ttApp retTy (\i -> _judgeBind _0 i) f args -- >>= checkRecApp
+       [] -> castRet biret castArgs <$> ttApp retTy f args -- >>= checkRecApp
        x  -> poisonExpr <$ -- trace ("problem fn: " <> show f :: Text)
          ((tmpFails .= []) *> (errors . biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
 
@@ -210,48 +246,18 @@ inferF = let
    es = exprs <&> \(Core t _ty) -> t
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
+ -- result of mixfix solves
  getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
-   then getLetBind 0 (unQName q)
+   then unQName q & \i -> getModBind 0 i i
    else use loadedMs <&> \ls -> readQName ls (modName q) (unQName q)
      & fromMaybe (error (showRawQName q)) 
-
- -- Setup new freeVars env within a letNest ; should surround this with an inc of letNest, but not the inExpr
- newFreeVarEnv :: forall s a. TCEnv s a -> TCEnv s a
- newFreeVarEnv go = do
-   fl   <- use bruijnArgVars <&> V.length
-   svFL <- freeLimit <<.= fl
-   go <* do
-     freeLimit .= svFL
-     letCaptures %= (`shiftR` (fl - svFL)) -- reset relative to next enclosing let-nest
-
- withLetNest go = letNest <<%= (1+) >>= \nest -> go nest <* (letNest %= \x -> x - 1)
-
- inferBlock :: V.Vector P.FnDef -> Maybe (TCEnv s Expr) -> TCEnv s (Expr , V.Vector (LetMeta , Bind))
- inferBlock letBindings inExpr = withLetNest $ \nest -> do
-   newFreeVarEnv $ do
-     use letBinds >>= \lvl -> V.thaw (Left <$> letBindings) >>= MV.write lvl nest
-     judgeBind nest `mapM_` [0 .. V.length letBindings - 1]
-
-   ret <- fromMaybe (pure poisonExpr) inExpr
-   lets <- use letBinds >>= \lvl -> MV.read lvl nest >>= V.unsafeFreeze
-     <&> map (fromRight (error "impossible: uninferred TT")) -- mapM judgeBind solved all
-   mI <- use thisMod
-   pure (ret , V.zipWith (\fn e -> (LetMeta (mkQName mI (P._fnIName fn)) (fn ^. P.fnNm) (-1) , e)) letBindings lets)
-
- mkFieldCol a b = TyGround [THFieldCollision a b]
 
  in \case
   P.QuestionF -> pure $ Core Question tyBot
   P.WildCardF -> pure $ Core Question tyBot
   -- letin Nothing = module / record, need to type it
-  P.LetInF (P.Block _ _ lets) Nothing -> -- use thisMod >>= \mI -> 
-    inferBlock lets Nothing <&> \(_ , lets) -> let -- [(LetMeta , Bind)]
-    nms = lets <&> qName2Key . letName . fst
-    tys = lets <&> exprType . bind2Expr . snd
-    -- letnames = qualified on let-nests + 
-    blockTy = THProduct (BSM.fromListWith mkFieldCol $ V.toList $ V.zip nms tys) -- TODO get the correct INames
-    in Core (LetBlock lets) (TyGround [THTyCon blockTy])
-  P.LetInF (P.Block _ _ lets) pInTT -> inferBlock lets (snd <$> pInTT)
+  P.LetInF (P.Block _ _ lets) liftNames pInTT -> use topBindsCount >>= \top ->
+    inferBlock (top + liftNames) lets (Just pInTT)
     <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
   P.ProdF pFields -> let -- duplicate the field name to both terms and types
     mkCore (ts , tys) = Core (Prod ts) (TyGround [THTyCon (THProduct tys)])
@@ -272,7 +278,7 @@ inferF = let
           else freshBiSubs 1 >>= \[t] -> t <$ MV.write cr bruijnAtBind t
         else pure (argTVars V.! b) -- local arg
       pure $ Core (VBruijn b) (tyVar tv)
-    P.VLetBind q -> getLetBind (modName q) (unQName q)
+    P.VLetBind (q , i) -> getModBind (modName q) (unQName q) i
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 
@@ -335,17 +341,24 @@ inferF = let
 
   -- TODO when to force introduce local label vs check if imported
   P.LabelF localL tts -> use thisMod >>= \thisM -> sequence tts 
-    <&> judgeLabel (mkQName thisM localL) -- (readLabel ext localL)
+    <&> judgeLabel (mkQName thisM localL)
   P.QLabelF q -> {-sequence tts <&>-} pure (judgeLabel q [])
  -- sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
 
-  -- Sumtype declaration
---P.GadtF alts -> use externs >>= \ext -> do
---  let getTy = fromMaybe (TyGround [THPoison]) . tyExpr
---      mkLabelCol a b = TyGround [THLabelCollision a b]
+  P.DataF alts  -> do
+    thisM <- use thisMod
+    tys <- sequence (alts <&> \(l , params) -> (qName2Key (mkQName thisM l) ,) <$> sequence params)
+    alts <- tys `forM` \(l , params) -> fmap ((l,) . tHeadToTy . THTyCon . THTuple . V.fromList) $ params `forM` \case
+      Core (Ty t) _ -> pure t
+--    Core (App t ty) _ -> ttApp t ty
+      notTy    -> pure $ trace ("TODO emit an error for data not being type: " <> show notTy :: Text) tyBot
+    pure $ Core (Ty (TyGround [THTyCon (THSumTy (BSM.fromList alts))])) (TySet 0) -- max of universe in alts
+
+  -- TODO gadt must have a signature for the whole thing also!
+--P.GadtF alts -> do
 --  sumArgsMap <- alts `forM` \(l , tyParams , _gadtSig@Nothing) -> do
---    params <- tyParams `forM` \t -> getTy <$> t
---    pure (qName2Key (readLabel ext l) , TyGround [THTyCon $ THTuple $ V.fromList params])
+--    params <- tyParams `forM` \t -> t
+--    pure (l , TyGround [THTyCon $ THTuple $ V.fromList params])
 --  pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
 
   P.MatchBF pscrut caseSplits catchAll -> pscrut >>= \(Core scrut gotScrutTy) -> do
@@ -369,6 +382,9 @@ inferF = let
 
   P.InlineExprF e -> pure e
   P.LitF l           -> pure $ Core (Lit l) (TyGround [typeOfLit l])
+  P.PLitArrayF ls    -> pure $ Core (Lit $ LitArray ls) (TyGround [THTyCon $ THArray $ mergeTypeHeadList True (typeOfLit <$> ls)])
+  P.PArrayF ls    -> sequence ls <&> \exprs -> unzipExprs exprs & \(elems , tys) ->
+    Core (Array (V.fromList elems)) (TyGround [THTyCon $ THArray $ mergeTypeList True tys])
   P.ScopePoisonF e   -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))
   P.DesugarPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . unpatternFails %= (t:))
   P.ScopeWarnF w t   -> (errors . scopeWarnings %= (w:)) *> t

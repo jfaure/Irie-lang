@@ -1,11 +1,11 @@
 -- Comments on the same line as a binding are the expected result when runnning tests
-t1 a = ifThenElseInt1 a a 3 -- ∏ A → (%i1 ⊓ A) → (%i32 ⊔ A)
+t1 a = ifThenElseInt1 a a 3 -- ∏ A → (%i1 ⊓ A) → (%i8 ⊔ A)
 
-basic1   = 42            -- %i32
-basic2 x = 42            -- ⊤ → %i32
+basic1   = 42            -- %i8
+basic2 x = 42            -- ⊤ → %i8
 basic3 x = x             -- ∏ A → A → A
-basic4 x = x 42          -- ∏ A → (%i32 → A) → A
-basic5   = (\x => x) 42  -- %i32
+basic4 x = x 42          -- ∏ A → (%i8 → A) → A
+basic5   = (\x => x) 42  -- %i8
 twice f x = f (f x)      -- ∏ A B → ((A ⊔ B) → B) → A → B
 iffy a b c = ifThenElseInt1 a b c -- ∏ A → %i1 → A → A → A
 
@@ -23,11 +23,11 @@ letMixfix = let _<_ = \f a => f a in (\y => y.t) < { t = 1 } -- %i1
 
 records0 x = x.f                      -- ∏ A → {f : A} → A
 records1 = {}                         -- {}
-records2 = { f = 42 }                 -- {f : %i32}
-records3 = { f = 42 }.f               -- %i32
-records4 = (\x => x.f) { f = 42 }     -- %i32
-records5 f = { x = f 42 }.x           -- ∏ A → (%i32 → A) → A
-records6 f = { x = f 42 , y = 123 }.y -- (%i32 → ⊤) → %i32
+records2 = { f = 42 }                 -- {f : %i8}
+records3 = { f = 42 }.f               -- %i8
+records4 = (\x => x.f) { f = 42 }     -- %i8
+records5 f = { x = f 42 }.x           -- ∏ A → (%i8 → A) → A
+records6 f = { x = f 42 , y = 123 }.y -- (%i8 → ⊤) → %i8
 records7 = ifThenElseInt1 1 { a = 1 , b = 1 } { b = 0 , c = 42 } -- {b : %i1}
 
 --recordserror1 = { a = 123 , b = 1 }.c  -- missing field: c in {a: %i32, b: %i1})
@@ -44,9 +44,9 @@ letGen2 x = let y   = x in y   -- ∏ A → A → A
 -- ^ typeof x quantified early => f2 : A → B
 letGen3 x = let y z = x z in y -- ∏ A B → (A → B) → A → B
 
-lp1   = let f x = x in {a = f 7 , b = f 1}     -- {a : %i32 , b : %i1}
+lp1   = let f x = x in {a = f 7 , b = f 1}     -- {a : %i8 , b : %i1}
 lp2 y = let f x = x  in {a = f y , b = f 1}    -- ∏ A → A → {a : A , b : %i1}
-lp3 y = let f x = y x in {a = f 7 , b = f 1}   -- ∏ A → ((%i1 ⊔ %i32) → A) → {a : A , b : A}
+lp3 y = let f x = y x in {a = f 7 , b = f 1}   -- ∏ A → ((%i1 ⊔ %i8) → A) → {a : A , b : A}
 lp4 y = let f x = x y in {a = f (\z => z) , b = f (\z => 1)} -- ∏ A → A → {a : A , b : %i1}
 lp5 y = let f x = x y in {a = f (\z => z) , b = f (\z => add 1 z)} -- ∏ A → (%i32 ⊓ A) → {a : A , b : %i32}
 

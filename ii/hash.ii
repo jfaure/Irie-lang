@@ -1,0 +1,5 @@
+//fnv1aHash :: Int -> ByteString -> Int
+//fnv1aHashWithSalt n = let -- eg n = 2166136261
+//  in foldl (\hash char -> xor hash (ord char) * 16777619) n
+
+// for [0 .. len - 1] $ hash = 33 * hash + str[i]

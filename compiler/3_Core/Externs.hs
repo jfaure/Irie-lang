@@ -57,7 +57,7 @@ data PureRegistry = Registry {
 -- Note. We read builtins directly , this just occupies Module Name 0
 primJM = V.unzip primBinds & \(primHNames , _prims) ->
   let _letBinds = LetBlock mempty -- (\x -> _ :: _) <$> prims
-  in JudgedModule 0 "Builtins" primLabelHNames primHNames (complement 0) (Core Question tyBot)
+  in JudgedModule 0 "Builtins" primLabelHNames primHNames (complement 0) mempty
 
 builtinRegistry = let
   _timeBuiltins = UTCTime (ModifiedJulianDay 0) (getTime_resolution)
@@ -87,11 +87,9 @@ readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m o
   _ -> Nothing
 
 readJudgedBind :: JudgedModule -> IName -> Expr
-readJudgedBind m iNm = case m.moduleTT of
-  Core (LetBlock binds) _ -> let
-    bindName = popCount (topINames m .&. setNBits iNm :: Integer)
-    in snd (binds V.! bindName) & bind2Expr
-  _ -> _
+readJudgedBind m iNm = let
+  bindName = popCount (topINames m .&. setNBits iNm :: Integer)
+  in snd (m.moduleTT V.! bindName) & bind2Expr
 
 -- * Add bindNames and local labelNames to resolver
 -- * Generate Externs vector

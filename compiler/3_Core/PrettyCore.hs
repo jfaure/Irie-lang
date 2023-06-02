@@ -47,10 +47,15 @@ prettyExpr flags = render flags . layoutPretty defaultLayoutOptions . pExpr True
 prettyBind :: RenderOptions -> Bool -> T.Text -> Bind -> TL.Text
 prettyBind flags showTerm nm b = render flags . layoutPretty defaultLayoutOptions $ pBind nm showTerm b <> hardline
 
-prettyJudgedModule :: Bool -> RenderOptions -> JudgedModule -> TL.Text
-prettyJudgedModule showRhs flags j = render flags . layoutPretty defaultLayoutOptions $ pJM showRhs j
+prettyJudgedModule :: Bool -> Bool -> RenderOptions -> JudgedModule -> TL.Text
+prettyJudgedModule showLetBinds showRhs flags j = render flags . layoutPretty defaultLayoutOptions
+  $ pJM showLetBinds showRhs j
 
-pJM showRhs jm = pTopExpr showRhs (moduleTT jm)
+-- want to print the top-level let-block without {} or = record
+pJM showLetBinds showRhs jm = let
+  isTopBind (lm , _) = isTop lm
+  binds = toList (if showLetBinds then moduleTT jm else V.takeWhile isTopBind (moduleTT jm))
+  in vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> binds)
 
 --------------
 -- Renderer --
@@ -87,14 +92,14 @@ render flags = let
     AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
     AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
     AQRawName   q -> addColor (getColor a) $ fromText (showRawQName q)
-    AQBindName  q -> addColor (getColor a) $ case srcFieldNames <$> bindSource flags of
+    AQBindName  q -> addColor (getColor a) $ case srcBindNames <$> bindSource flags of
       Nothing  -> "π(" <> (fromText (showRawQName q)) <> ")"
       Just fn -> fromText (fromMaybe (showRawQName q) $ fn (modName q) (unQName q))
       -- (fst (nms V.! modName q V.! unQName q))
     AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcLabelNames <$> bindSource flags) q)
 --  AQFieldName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
     AQFieldName q -> -- if modName q == 0 then "!" <> fromText (show (unQName q)) else
-      {-addColor ansiCLYellow $-} b <> fromText (prettyQName True (srcFieldNames <$> bindSource flags) q)
+      {-addColor ansiCLYellow $-} b <> fromText (prettyQName True (srcBindNames <$> bindSource flags) q)
     ARawFieldName q -> fromText q
     ARawLabelName q -> fromText q
     ALiteral      -> addColor (getColor a) b
@@ -171,6 +176,7 @@ pTyHead pos = let
         TyGround [THTyCon (THTuple v)] | V.null v -> ""
         ty -> space <> pTy' ty
       in enclose "[" "]" (hsep (punctuate (" |") (prettyLabel <$> BSM.toList l)) <+> "| _")
+    THArray eTy -> parens $ "Array" <+> pTy' eTy
     THProduct l -> let
       prettyField (f,ty) = annotate (AQFieldName (QName f)) "" <> " : " <> pTy' ty
       in enclose "{" "}" (hsep $ punctuate " ," (prettyField <$> BSM.toList l))
@@ -195,9 +201,6 @@ pBind nm showRhs bind = pretty nm <> " = " <> case bind of
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
     letW  = "" -- if lbound then "let " else ""
     in letW <> {-viaShow n <+> -} recKW <> (if 0 == free then "" else viaShow (nFree , bitSet2IntList free)) <> pExpr showRhs expr
-
--- want to print the top-level let-block without {} or = record
-pTopExpr showRhs (Core (LetBlock bs) _ty) = vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 
 pExpr :: Bool -> Expr -> Doc Annotation
 pExpr showRhs (Core term ty) = let pos = True in case term of
@@ -232,6 +235,7 @@ pTerm showRhs = let
     CaseSeqF _n arg _ty ts d -> arg <+> " caseSeq> " <+> prettyMatch identity Nothing ts d
     AppF f args    -> parens (f <+> nest 2 (sep args))
     InstrF   p -> annotate AInstr (prettyInstr p)
+    X86IntrinsicF t -> annotate AInstr (viaShow t)
     CastF  i t -> parens (viaShow i) <> enclose "<" ">" (viaShow t)
     LabelF   l [] -> "@" <> prettyLabel l
     LabelF   l t  -> parens $ "@" <> prettyLabel l <+> hsep (parens <$> t)
@@ -247,6 +251,7 @@ pTerm showRhs = let
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
     ProdF ts     -> braces $ hsep $ punctuate " ," (BSM.toList ts <&> \(l , rhs) -> annotate (AQFieldName (QName l)) "" <> " = " <> rhs)
 
+    ArrayF ts    -> parens $ "#" <+> hsep (V.toList ts)
     TupleF ts    -> parens $ hsep $ punctuate " ," (V.toList ts)
     LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
       <> hardline <> "in" <+> t

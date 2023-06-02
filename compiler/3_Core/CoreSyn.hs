@@ -32,7 +32,7 @@ type CaseID    = Int
 data VName
  = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
  | VForeign HName -- opaque name resolved at linktime
- | VLetBind QName -- + counterpart of VBruijn
+ | VLetBind QName -- + counterpart of VBruijn rm this
 
 data Term -- β-reducable (possibly to a type)
  = Var     !VName
@@ -40,6 +40,7 @@ data Term -- β-reducable (possibly to a type)
  | Question      -- attempt to infer this TT
  | Poison  !Text -- typecheck inconsistency
  | Instr   !PrimInstr
+ | X86Intrinsic Text
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
  | Ty Type -- to embed (TermF Type): `-> {} [] let-in` may contain types
@@ -53,6 +54,7 @@ data Term -- β-reducable (possibly to a type)
  | App     Term [Term]
 
 -- {}
+ | Array    (V.Vector Term)      -- Simplifier only: Must not contain any free variables!
  | Tuple    (V.Vector Term)      -- Simplifier only: Must not contain any free variables!
  | Prod     (BSM.BitSetMap Term)
  | LetBlock (V.Vector (LetMeta , Bind))
@@ -104,6 +106,7 @@ instance Eq Type where
 data TyCon t -- Type constructors
  = THArrow    [t] t   -- degenerate case of THPi (bot → top is the largest)
  | THTuple    (V.Vector t) -- ordered form of THproduct
+ | THArray    t
  | THProduct  (BSM.BitSetMap t)
  | THSumTy    (BSM.BitSetMap t)
  | THSumOpen  (BSM.BitSetMap t) -- [li : τi | (lj : pj for lj ∉ li)]
@@ -194,25 +197,27 @@ data BiSub = BiSub { _pSub :: Type , _mSub :: Type }; makeLenses ''BiSub
 data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
  deriving (Eq , Ord)
 
+type ModuleBinds = V.Vector (LetMeta , Bind)
 -- Each module has its own convention for numbering HNames - this must be resolved when importing binds
 -- thus QName indicates which modules HName->IName convention to use (Also guarantees names are generative)
 data JudgedModule = JudgedModule {
    modIName   :: IName
  , modHName   :: HName
  -- * JudgedModule saves its own HName list to save the Registry the trouble of maintaining them
- , labelNames :: V.Vector HName -- M.Map HName IName -- parseDetails . labels
- , jmINames   :: V.Vector HName -- M.Map HName IName -- parseDetails . hNamesToINames
+ , labelNames :: V.Vector HName -- fromMap $ parseDetails . labels
+ , jmINames   :: V.Vector HName -- fromMap $ parseDetails . hNamesToINames
  , topINames  :: BitSet -- These allow QName -> TopBind vec lookup
- , moduleTT   :: Expr
+ -- (modBinds and lets (these will be lifted) are set here)
+ , moduleTT   :: ModuleBinds
 }
-emptyJudgedModule = JudgedModule (-1) "" mempty mempty 0 poisonExpr -- dodgy (used for repl atm)
+emptyJudgedModule = JudgedModule (-1) "" mempty mempty 0 mempty -- dodgy (used for repl atm)
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 
 -- Used by prettyCore functions and the error formatter
 data BindSource = BindSource {
-   srcLabelNames :: ModIName -> IName -> Maybe HName
- , srcFieldNames :: ModIName -> IName -> Maybe HName -- INames as parsed by P.unknownNames
+   srcLabelNames :: ModIName -> IName -> Maybe HName -- TODO should merge this into srcFieldNames somehow
+ , srcBindNames  :: ModIName -> IName -> Maybe HName -- INames as parsed by P.unknownNames
 }
 
 makeBaseFunctor ''Expr

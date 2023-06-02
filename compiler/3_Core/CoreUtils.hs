@@ -10,13 +10,21 @@ import Prim
 import qualified BitSetMap as BSM
 import Data.List (union , intersect)
 
+mkFieldCol a b = TyGround [THFieldCollision a b]
+mkLabelCol a b = TyGround [THLabelCollision a b]
+
 makeLabel q = let sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
   in Core (Label q []) (TyGround [THTyCon sumTy])
+
+tHeadToTy t = TyGround [t]
+
+unzipExprs :: [Expr] -> ([Term] , [Type])
+unzipExprs = unzip . fmap (\(Core expr ty) -> (expr , ty))
 
 mkLiteralEquality :: Literal -> Term -> Term
 mkLiteralEquality l x = case l of
   Char _ -> App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
-  I32  _ -> App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
+  Fin _ _ -> App (Instr $ NumInstr (PredInstr EQCmp)) [Lit l , x]
   l -> Poison $ "TODO literal equality on " <> show l
 
 getArgShape :: Term -> ArgShape
@@ -114,6 +122,7 @@ kindOf = \case
     THSumTy{}   -> KSum
     THSumOpen{} -> KSum
     THTuple{}   -> KTuple
+    THArray{}   -> KArray
   THBound{} -> KBound
   THMuBound{} -> KRec
   THMu{}      -> KRec
@@ -176,6 +185,7 @@ mergeTyHead pos t1 t2 = --(\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ " 
     [THProduct a , THProduct b] -> [THTyCon $ THProduct $ if pos then BSM.unionWith mT a b else BSM.intersectionWith mT a b]
     [THTuple a , THTuple b]     -> [THTyCon $ THTuple (zM pos a b)]
     [THArrow d1 r1 , THArrow d2 r2] | length d1 == length d2 -> [THTyCon $ THArrow (zM (not pos) d1 d2) (mergeTypes pos r1 r2)]
+    [THArray e1 , THArray e2] -> [THTyCon $ THArray (mergeTypes pos e1 e2)]
     _ -> join
   _ -> join
 
@@ -187,6 +197,11 @@ nullType = \case
   TyVars 0 [] -> True
   TyGround [] -> True
   _ -> False
+
+mergeTypeHeadList :: Bool -> [TyHead] -> Type
+mergeTypeHeadList pos = \case
+  [] -> tyBot
+  t : th -> TyGround (foldr (\t ts -> mergeTyHeadType pos t ts) [t] th)
 
 mergeTypeList :: Bool -> [Type] -> Type
 mergeTypeList pos = \case

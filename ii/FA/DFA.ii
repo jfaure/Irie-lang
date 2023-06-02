@@ -1,0 +1,138 @@
+DFA = record
+  Q  -- set of states
+  Σ  -- alphabet
+  δ  -- transition fn (δ : Q x Σ -> Q)
+  q0 -- start state
+  F  -- set of accept states
+-- Break seq dependencies by enumerating transitions
+-- up to 3x speedup on single core
+
+-- gather operation: _⊗mn_ array of length m such that (S ⊗mn T)[i] = T[S[i]]
+-- S has indices that are used to lookup T
+_⊗m,n_ { assoc } : _
+
+-- ! Don't mix avx and avx2
+-- note. shuffle_epi8 operates on nybbles [0..15] and sets 0 if bit[7] is set
+_⊗16,16_   = _mm_shuffle_epi8
+_2x⊗16,16_ = _mm256_shuffle_epi8 -- shuffle 2 _m128 at once
+
+-- double width shuffle assuming all indices in range (unsigned < 32)
+-- !to be precise, it works with indices (unsigned < 128) mod 32
+--   since it uses one spare hole bit for addition carry to check < 16
+_⊗32,32_
+shuf2 : __m128i -> __m128i -> __m128i -> __m128i
+shuf2 x1 x0 sel = let -- 5 instr, exploit overflow and shuffle control bit 7 => 0
+  f0 = _mm_set1_epi8 0xF0
+  sl = _mm_add_epi8 sel f0
+  in _mm_or_si128
+    (_mm_shuffle_epi8 x1 (_mm_xor_si128 sl f0))
+    (_mm_shuffle_epi8 x0 sl)
+
+-- proper shuffle, expects sel to be a 128 duplicated to both lanes
+mm256 : __m256i -> __m256i -> __m256i
+mm256-shuffle x sel = let
+  t = _mm256_shuffle_epi8 x sel
+  tt = _mm256_permute2x128_si256 _mm256_undefined_si256 t 1 -- swap low and hi 
+  in _mm256_blendv_epi8 t tt (_mm256_cmpgt_epi8 sel (_mm256_set1_epi8 15))
+
+--shuf2' : _mm256 -> _mm128 -> _mm128
+--shuf2' x sel = let
+--  f0 = _mm256_set1_epi8 0xF0
+--  f1 = _mm256_zextsi128_si256 (_mm_set1_epi8 0xF0)
+--  sel' = _mm256_add_epi8 sel f0
+--  sl   = _mm256_xor_si256 sel' f1 -- xor only the bottom half
+--  res = _mm256_shuffle_epi8 x sl
+--  in _mm_or_si128 (_mm256_extracti128_si256 res 1) (_mm256_extracti128_si256 res 0)
+
+-- general double width shuffle:
+-- (S⊗T)47 = blend (S47 ⊗ T03 , S47 ⊗ T47 , S47 < (W/2))
+-- (S⊗T)03 = blend (S03 ⊗ T03 , S03 ⊗ T47 , S03 < (W/2))
+
+-- quad width shuffle (14 instrs total)
+_⊗64,64_ -- indices in range (unsigned < 64)
+shuf4 : 4 x __m128i -> __m128i -> 2x __m128i
+shuf4 x3 x2 x1 x0 sel = let -- (note. shuf2 accepts <128 and works mod 32)
+  -- need to ensure high bit is clear for shuf2 after subtracting 32
+  THi = shuf2 x3 x2 (_mm_and_si128 (_mm_set1_epi8 127) (_mm_sub_epi8 sel 32))
+  TLo = shuf2 x1 x0 sel
+  rHi = _mm_blendv_epi8 THi TLo (_mm_cmplt_epi8 sel (_mm_set1_epi8 31))
+  rLo = _mm_blendv_epi8 THi TLo (_mm_cmpgt_epi8 sel (_mm_set1_epi8 32))
+  in (rHi , rLo)
+
+_⊗m,n_ = _
+-- straightforwards implementation needs m memory lookups
+-- we only need m <= n
+-- Example: m=n=8
+-- S = [3, 5, 0, 1, 5, 4, 6, 2], T = [A, B, C, D, E, F, G, H]
+-- The desired answer is [D, F, A, B, F, E, G, C]
+-- place S and T into simd registers, S03,S47 , T03,T47
+-- S03 ⊗ T03 = [D,B,A,B] , S03⊗T47 = [H,F,E,F]
+-- then blend based on whether index > W
+-- (S⊗T)03 = blend (S03 ⊗ T03 , S03 ⊗ T47 , S03 < 4)
+-- (S⊗T)47 = blend (S47 ⊗ T03 , S47 ⊗ T47 , S47 < 4)
+-- So ⊗m,n can be implemented using (m * n)/W invocations of ⊗w,w
+-- Simd16 is 4.4x faster than sequential baseline
+-- upto 64 still faster, then (m*n)/16 becomes bottleneck => can then parallelize on multiple cores
+
+(SHi , SLo) ⊗m,m (THi , TLo) = let
+  w = m / 2
+  S⊗TLo = blend (SLo ⊗ TLo , SLo ⊗ THi , SLo < w)
+  S⊗THi = blend (SHi ⊗ TLo , SHi ⊗ THi , SHi < w)
+  in (S⊗THi , S⊗TLo)
+
+------------
+-- ⊗32,32 --
+------------
+-- 8 instructions
+--S@(SHi , SLo) ⊗32,32 T@(THi , TLo) = let
+--  S⊗TLo = _mm_blendv_epi8 (SLo ⊗16,16 TLo) (SLo ⊗16,16 THi) (SLo < 16)
+--  S⊗THi = _mm_blendv_epi8 (SHi ⊗16,16 TLo) (SHi ⊗16,16 THi) (SHi < 16)
+--  r = (S⊗THi , S⊗TLo)
+--  in 
+
+-- _mm256_shuffle_epi8 is a 2x_mm_shuffle_epi8
+-- 7 instructions
+--S avx⊗32,32 T = let
+--  SLoSHi = _mm256_permute2x128_si256 S _mm256_undefined_si256 16 -- (0 | (1 << 4))
+--  TLoTLo = _mm256_permute2x128_si256 T _mm256_undefined_si256 0  --  (0 | (0 << 4))
+--  THiTHi = _mm256_permute2x128_si256 T _mm256_undefined_si256 17 --  (1 | (1 << 4))
+--  a = 2x⊗16,16 SLoSHi TLoTLo -- SLo ⊗16,16 TLo , SHi ⊗16,16 TLo
+--  b = 2x⊗16,16 SLoSHi THiTHi -- SLo ⊗16,16 THi , SHi ⊗16,16 THi
+--  in _mm256_blendv_epi8 a b (S <?256x8 16)
+
+-- unrolling the loop (3 times) exposes parallelisation
+-- φ at each step is unnecessary if only checking ok/ko, else can φ once after all input
+-- runDFA (T : Char -> State -> State) input φ = let
+--   S = IdentityState
+--   in for [0,3 .. length input] \i -> let
+--     (a , b , c) = (input ! i , input ! (i + 1) , input ! (i + 2))
+--     sa = S ⊗ T[a] ; Tbc = T[b] ⊗ T[c]
+--     sb = sa ⊗ T[b] ; S = Sa ⊗ Tbc
+--     φ(a , Sa[st]) , φ(b , sb[st]) , φ(c , S[st])
+State = data | S16 _mm128 | S32 | 64 .. -- assume a _mm128 
+runDFA : Vec 256 State -> String -> (Char -> State -> Bool) -> Bool
+runDFA T input φ = let -- idState maps i to i
+  next3 state a b c = 
+  in stream3 next3 idstate input -- ?!
+
+-- Eliminate identical lookups, in the hope of reducing ⊗m,n below a width threshold
+-- Given an array S, Factor(S) is a pair (L , U) (lookup , unique)
+-- such that S = L ⊗ U and U
+-- [s, t, u, t, t, u, s] = [0, 1, 2, 1, 1, 2, 0] ⊗ [s, t, u]
+
+-- Use factoring to minimise states:
+-- ! there are n**n possible transitions n->n, but only n! permutations
+-- thus exponentially more many->one fns than permutations
+Convergence φ st input = let
+ S = Id : States;
+ Acc = Id : States;
+ in for [0 .. input.len-1] \i -> do
+   S = S ⊗ (T ! (input ! i))
+   when conv_check $ do -- analyse conv characteristics; precalculate range of transition fn
+     (L , U) = Factor(S)
+     S = U
+     Acc = Acc ⊗ L
+   Sbase = Acc ⊗ S
+   φ i (Sbase ! st)
+
+-- Range coalescing: make state transitions continguous in memory

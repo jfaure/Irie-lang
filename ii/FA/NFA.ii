@@ -1,0 +1,30 @@
+-- Byte at time input; use SIMD bitmask for active NFA states
+-- construct: each state needs a successor mask
+--            each char needs reach mask
+
+-- span: id difference between 2 states (typically small)
+
+-- # Transition
+-- 1. successor set (union of sets transitionnable to for all chars)
+-- 2. reachable (all states from c)
+-- succ : | 2**n save all successor sets
+--        | keep succ-mask for each state: requires n memory lookups and n-1 OR
+-- * optimise succ-mask:
+--   shift-k masks: record all forward transitions with span k (k = 7)
+--   build shift-k masks for all typical transitions
+--   * typical succs = for all k: ((States .&. shift-kMask) .<<. k)
+--   * exceptionals: have to read succ-mask from memory
+
+-- simple version that doesn't optimise memory lookups
+StateSet = BitSet
+K = 7 -- all forward transitions with span k
+transition : StateSet -> (Char -> StateSet) -> (StateId -> BitSet) -> Vec K StateSet
+  -> BitSet -> Char -> TailRecurse States States
+transition accept reach SuccMask ShMasks states c =
+  if states == 0 then error else let -- ?!
+  succEx = foldr (\i succ -> (succMask ! s) .|. succ) 0 (bitSet2IntList states)
+
+  -- SuccTyp complicates matters but saves memory lookups on (bitSet2IntList) !!
+  succTyp = foldr (\i succ -> succ .|. ((s .&. SHMasks[i]) .<<. i)) [0 .. shiftLimit-1]
+  S = (SuccEx .|. SuccTyp) .&. reach c
+  in if testz accept S then Continue S else Done S

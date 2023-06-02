@@ -3,6 +3,17 @@
 interpret d1(x) = T for x not present in d1
 ! subsumption (on typing schemes) allows instantiation of type variables
 
+# Inference
+Inference must be capable of identifying and handling mutumorphisms (mutually recursive functions).
+ * Generalisation must wait for all typing constraints
+ * Free variables may be assumed to be shared by all, since we are going to perform defunctionalisation anyway.
+## mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
+  x = a . Δ(d [x] . c)
+  x1 = a1 . D (x1 Δ x2) . c : A1 <- C
+  x2 = a2 . D (x1 Δ x2) . c : A2 <- C
+  The algebras (a1 : D (A1 X A2) -> A1) and a2 access the results of both rec calls.
+  special case is zygo-hylo, where a2 := a'2 . D outr (a2 uses only 1 of the results)
+
 # Generalization
 suppose `e = let x = e1 in e2`. e1 must be typeable and have principal ty [D1-]t1+ under Pi
 the most general choice is to insert x into Pi with principal type of e1

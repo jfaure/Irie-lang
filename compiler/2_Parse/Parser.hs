@@ -1,5 +1,5 @@
 module Parser (parseModule , parseMixFixDef) where
-import Prim ( Literal(PolyFrac, Char, String, Int, PolyInt) )
+import Prim ( Literal(..) )
 import ParseSyntax as P
 import MixfixSyn ( defaultPrec, Assoc(..), MFWord(..), MixfixDef(..), Prec(Prec) )
 import Text.Megaparsec
@@ -268,12 +268,13 @@ tt :: Parser TT
    , reserved "case"   *> casePat   <?> "Case_of__"
    , reserved "data"   *> tySumData <?> "Data declaration"
    , reserved "gadt"   *> tyGadt    <?> "Gadt declaration"
-   , reserved "#" *> (LitArray <$> lineFoldArgs literalP) <?> "Literal array"
+   , reserved "##" *> (PLitArray <$> lineFoldArgs literalP) <?> "Literal array"
+   , reserved "#" *> (PArray <$> lineFoldArgs ttArg) <?> "Literal array"
    , reservedChar '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
    , braces conBraces <&> Prod . V.fromList <?> "record"
 -- , brackets tt <&> TyListOf
    , parens ((tt >>= \t -> option t (tuple t <|> typedTT t)) <|> scn $> Tuple []) >>= catchUnderscoreAbs
-   , lexeme literalP <&> Lit -- ! before iden parser
+   , literalP <&> Lit -- ! before iden parser
    , iden >>= addName <&> Var . VExtern  -- '_' is parsed here..
      -- (? support partial mixfix aps eg. if_then a else b)
    ] <?> "TT Argument"
@@ -301,9 +302,9 @@ tt :: Parser TT
   casePat = (\tt splits -> CasePat (CaseSplits tt splits)) <$> tt <* reserved "of" <*> caseSplits
 
   letIn letQual = do
-    block <- pBlock False True letQual
+    block <- pBlock True True letQual
     liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= V.length (binds block)
-    LetIn block <$> (scn *> reserved "in" *> (Just . (liftLetStart,) <$> tt))
+    LetIn block liftLetStart <$> (scn *> reserved "in" *> tt)
 
   typedTT = pure
 
@@ -315,7 +316,7 @@ patGuards rhs = let
 ---------------------
 -- literal parsers --
 ---------------------
-literalP = try $ (<* notFollowedBy iden) $ let
+literalP = lexeme $ try $ (<* notFollowedBy iden) $ let
   signed p = let
     sign :: Bool -> Parser Bool =
       \i -> option i $ single '+' *> sign i <|> single '-' *> sign (not i)
@@ -333,10 +334,14 @@ literalP = try $ (<* notFollowedBy iden) $ let
     , L.decimal
     , pure 0
     ] <?> "integer literal"
+  mkInt i
+    | i == 0 || i == 1 = Fin 1 i
+    | i < 256 = Fin 8 i
+    | True    = Int (fromIntegral i)
   in choice
    [ Char   <$> between (single '\'') (single '\'') L.charLiteral
    , String <$> stringLiteral
-   , Int    <$> signed (intLiteral <|> L.decimal)
+   , mkInt  <$> signed (intLiteral <|> L.decimal)
    , numP
    ] <?> "literal"
 

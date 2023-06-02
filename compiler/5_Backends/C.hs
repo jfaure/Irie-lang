@@ -182,7 +182,7 @@ emitLiteral ssaMod = \case
     64 → "(uint64_t)"  <> fromString (show i)
     128→ "(uint128_t)" <> fromString (show i)
   String s → fromString s <> "\n"
-  Array  l → fromChar '{' <> mconcat (intersperse (fromChar ',') (emitLiteral ssaMod <$> l)) <> "};"
+  LitArray  l → fromChar '{' <> mconcat (intersperse (fromChar ',') (emitLiteral ssaMod <$> l)) <> "};"
 
 emitPrimType = \case
   PrimInt 8  → "int8_t"

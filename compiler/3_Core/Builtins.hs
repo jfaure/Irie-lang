@@ -9,6 +9,8 @@ import qualified Data.Map.Strict as M ( Map , (!?) , fromList )
 import qualified Data.Vector as V ( Vector, fromList , (!) , toList , length )
 import qualified BitSetMap as BSM
 
+tHeadToTy t = TyGround [t]
+
 --mkExtTy x  = [THExt x]
 mkExtTy x  = [mkExt x]
 getPrimIdx = (primMap M.!?)
@@ -21,17 +23,69 @@ getPrimTy nm = case getPrimIdx nm of
 primMap = M.fromList $ zipWith (\(nm,_val) i -> (nm,i)) primTable [0..]
 primBinds :: V.Vector (HName , Expr) = V.fromList primTable
 
-primType2Type x = Core (Ty (TyGround [THPrim x])) (TySet 1)
+primType2Type x = Core (Ty (TyGround [THPrim x])) (TySet 0)
 primTable :: [(HName , Expr)]
 primTable = concat
   [ (\(nm , x)         -> (nm , primType2Type x)) <$> V.toList primTys
   , boolLabel
   , let tys2TyHead  (args , t) = TyGround $ mkTyArrow (TyGround . mkExtTy <$> args) (TyGround $ mkExtTy t) in
-    (\(nm , (i , tys)) -> (nm , Core (Instr i) (tys2TyHead tys)))           <$> primInstrs
-  , (\(nm , (i , t))   -> (nm , Core (Instr i) (TyGround t)))               <$> instrs
+    (\(nm , (i , tys)) -> (nm , Core (Instr i) (tys2TyHead tys)))         <$> primInstrs
+  , (\(nm , (i , t))   -> (nm , Core (Instr i) (TyGround t)))             <$> instrs
   , [("Set" , Core (Ty (TySet 0)) (TySet 1))]
--- , (\(nm , e)         -> (nm , Ty (TyGround [e])))                         <$> tyFns
+  , (\(nm , aTs , retT)   -> let
+    ty = case aTs of
+      []  -> tHeadToTy retT
+      aTs -> TyGround [THTyCon (THArrow (tHeadToTy <$> aTs) (tHeadToTy retT))]
+    in (nm {-<&> \case { '_' -> '-' ; x -> x }-}
+      , Core (X86Intrinsic nm) ty)) <$> x86Intrinsics
+-- , (\(nm , e)         -> (nm , Ty (TyGround [e])))                      <$> tyFns
 -- , uncurry ExtFn <$> extFnBinds
+  ]
+
+mm256 = THPrim (X86Vec 256)
+mm128 = THPrim (X86Vec 128)
+primI32 = THPrim (PrimInt 32)
+-- TODO ? '-' name is replaced by '-' in irie to avoid confusion with mixfixes
+x86Intrinsics =
+  [ ("_mm256_abs_epi8"     , [mm256] , mm256)
+  , ("_mm256_add_epi8"     , [mm256 , mm256] , mm256)
+  , ("_mm256_adds_epi8"    , [mm256 , mm256] , mm256)
+  , ("_mm256_alignr_epi8"  , [mm256 , mm256 , primI32] , mm256)
+  , ("_mm256_blendv_epi8"  , [mm256 , mm256 , mm256] , mm256)
+  , ("_mm256_broadcastb_epi8" , [mm128] , mm256)
+  , ("_mm256_cmpeq_epi8"  , [mm256 , mm256] , mm256)
+  , ("_mm256_cmpgt_epi8"  , [mm256 , mm256] , mm256)
+  , ("_mm256_cvtepi8_epi16"  , [mm128] , mm256)
+  , ("_mm256_cvtepi8_epi32"  , [mm128] , mm256)
+  , ("_mm256_cvtepi8_epi64"  , [mm128] , mm256)
+  , ("_mm256_extract_epi8"  , [mm256 , primI32] , primI32)
+  , ("_mm256_insert_epi8"  , [mm256 , primI32 , primI32] , mm256)
+  , ("_mm256_max_epi8"     , [mm256 , mm256] , mm256)
+  , ("_mm256_min_epi8"     , [mm256 , mm256] , mm256)
+  , ("_mm256_movemask_epi8" , [mm256] , primI32)
+  , ("_mm256_set_epi8" , replicate 32 (THPrim (PrimInt 8)) , mm256)
+  , ("_mm256_setr_epi8" , replicate 32 (THPrim (PrimInt 8)) , mm256)
+  , ("_mm256_set1_epi8" , [THPrim (PrimInt 8)] , mm256)
+  , ("_mm256_shuffle_epi8" , [mm256 , mm256] , mm256)
+  , ("_mm256_sign_epi8" , [mm256 , mm256] , mm256)
+  , ("_mm256_sub_epi8" , [mm256 , mm256] , mm256)
+  , ("_mm256_subs_epi8" , [mm256 , mm256] , mm256)
+  , ("_mm256_unpackhi_epi8" , [mm256 , mm256] , mm256)
+  , ("_mm256_unpacklo_epi8" , [mm256 , mm256] , mm256)
+
+  , ("_mm256_undefined_si256" , [] , mm256)
+  , ("_mm256_permute2x128_si256" , [mm256 , mm256 , primI32] , mm256)
+  , ("_mm256_and_si256" , [mm256 , mm256] , mm256)
+  , ("_mm256_andnot_si256" , [mm256 , mm256] , mm256)
+  , ("_mm256_or_si256" , [mm256 , mm256] , mm256)
+  , ("_mm256_xor_si256" , [mm256 , mm256] , mm256)
+  , ("_mm256_setzero_si256" , [] , mm256)
+  , ("_mm256_slli_si256" , [mm256 , mm256] , mm256)
+  , ("_mm256_srli_si256" , [mm256 , mm256] , mm256)
+  , ("_mm256_zextsi128_si256" , [mm128] , mm256)
+  , ("_mm256_testc_si256" , [mm256 , mm256] , mm256)
+  , ("_mm256_testnzc_si256" , [mm256 , mm256] , mm256)
+  , ("_mm256_testz_si256" , [mm256 , mm256] , mm256)
   ]
 
 -- Primitive Labels
@@ -58,11 +112,12 @@ primFieldHNames = mempty :: V.Vector HName
 primFieldMap    = mempty :: M.Map HName QName
 
 -- ! Indexes here are of vital importance: THExts are assigned to these to speed up comparisons
--- If anything here is changed, type of lit must also change
+-- If anything here is changed, type of lit and the getPrimTy list below may also need to be changed
 primTys :: V.Vector (HName , PrimType) = V.fromList
   [ ("Bool"    , PrimInt 1)
   , ("Int"     , PrimInt 32)
-  , ("Int64"   , PrimInt 64)
+  , ("I64"     , PrimInt 64)
+  , ("U64"     , PrimNat 64)
   , ("BigInt"  , PrimBigInt)
   , ("Char"    , PrimInt 8)
   , ("Nat"     , PrimNat 32)
@@ -75,10 +130,12 @@ primTys :: V.Vector (HName , PrimType) = V.fromList
   , ("dirent*" , POSIXTy DirentP)
   , ("CStruct" , PrimCStruct)
   , ("StrBuf"  , PrimStrBuf)
+  , ("mm256"   , X86Vec 256)
+  , ("mm128"   , X86Vec 128)
   ]
 
 --b = boolL
-[i, bi, b, f, c, ia, str, set , i64 , dirp , _dirent , cstruct , strBuf] = getPrimTy <$> ["Int", "BigInt" , "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Int64" , "DIR*" , "dirent*" , "CStruct" , "StrBuf"]
+[i, b, f, c, ia, str, set , i64 , dirp , _dirent , cstruct , strBuf] = getPrimTy <$> ["Int", "Bool", "Double", "Char", "IntArray", "CString", "Set" , "I64" , "DIR*" , "dirent*" , "CStruct" , "StrBuf"]
 i8 = c
 i32 = i
 
@@ -89,12 +146,12 @@ mkExt i | i <= V.length primTys = THPrim $ snd (primTys V.! i)
 mkExt i = THExt i
 
 -- instrs are typed with indexes into the primty map
-tyFns = [
+--tyFns = [
 --[ ("IntN" , (THPi [(0,(mkExtTy i))] [THInstr MkIntN [0]] M.empty))
 --  ("arrowTycon", (THPi [(0,[THSet 0]),(1,[THSet 0])] [THInstr ArrowTy [0, 1]] M.empty))
 --  ("Set" , THSet 0)
 --  , ("_->_", (ArrowTy , ([set] , set)))
-  ]
+-- ]
 
 -- tuples are THProducts in module 0 (builtin module)
 mkTHTuple vs = THTyCon $ THProduct $ BSM.fromList (zip (qName2Key . mkQName 0 <$> [0..]) vs)
@@ -133,6 +190,10 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("pushStrBuf" , (PushStrBuf , mkTHArrow [mkExt strBuf , charTy] (mkExt strBuf)))
   , ("strBufToString" , (StrBufToString , mkTHArrow [mkExt strBuf] (mkExt str)))
 
+  , ("newArray"  , (NewArray , [THBi 1 $ TyGround $ mkTHArrow [THExt i64 , THTyCon (THArray (tHeadToTy $ THBound 0))] (THTyCon (THArray (tHeadToTy $ THBound 0)))]))
+  , ("readArray"  , (ReadArray , [THBi 1 $ TyGround $ mkTHArrow [THTyCon (THArray (tHeadToTy $ THBound 0)) , THExt i64] (THBound 0)]))
+  , ("writeArray" , (WriteArray , [THBi 1 $ TyGround $ mkTHArrow [THTyCon (THArray (tHeadToTy $ THBound 0)) , THExt i64 , THBound 0] (THBound 0)]))
+
   , ("readFile"  , (ReadFile  , mkTHArrow [mkExt str] (mkExt str)))
   , ("writeFile" , (WriteFile , mkTHArrow [mkExt str] (mkExt str)))
 
@@ -155,7 +216,7 @@ charTy = THPrim (PrimInt 8)
 
 primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   [ ("Arrow" , (TyInstr Arrow  , ([set,set] , set)))
-  , ("IntN"  , (TyInstr MkIntN , ([i] , set)))
+  , ("Fin"   , (TyInstr MkIntN , ([i] , set)))
   , ("primLen" , (Len , ([ia] , i)))
 
   , ("puts"      , (Puts    , ([str] , i)))
@@ -199,20 +260,15 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("bitPopCount", (NumInstr (BitInstr PopCount ) , ([i] , i) ))
   , ("bitPDEP", (NumInstr (BitInstr PDEP ) , ([i , i] , i) ))
   , ("bitPEXT", (NumInstr (BitInstr PEXT ) , ([i , i] , i) ))
-
-  , ("gmp-putNumber" , (GMPPutNbr , ([bi] , i)))
-  , ("gmp-add"  , (GMPInstr (IntInstr Add) , ([bi, bi] , bi) ))
-  , ("gmp-sub"  , (GMPInstr (IntInstr Sub) , ([bi, bi] , bi) ))
-  , ("gmp-mul"  , (GMPInstr (IntInstr Mul) , ([bi, bi] , bi) ))
-  , ("gmp-le"   , (GMPInstr (PredInstr LECmp) , ([bi, bi] , b) ))
   ]
 
 typeOfLit = \case
   String{}  -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
-  Array{}   -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
+  LitArray{}-> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   PolyInt{} -> THPrim PrimBigInt
   Int 0     -> THPrim (PrimInt 1)
   Int 1     -> THPrim (PrimInt 1)
   Int{}     -> THPrim (PrimInt 32)
-  Char{}    -> THPrim (PrimInt 8) --mkExt 3
+  Char{}    -> THPrim (PrimInt 8)
+  Fin n _   -> THPrim (PrimInt n) --mkExt 3
   x -> error $ "don't know type of literal: " <> show x

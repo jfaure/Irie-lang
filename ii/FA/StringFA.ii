@@ -61,11 +61,25 @@ FAComponentMatching = let
 
   runNFA : (n : Int) ~> Vec n (Sh , Succ) -> BitSet -> (Char -> StateSet) -> _
   runNFA masks exMask reach = _
-  -- 1. Succ = combine successor masks possibly reached (typical .| exceptional)
+  -- 1. Succ = combine successor masks possibly reached (typical .|. exceptional)
   -- 2. Next x = reach c .&. succ
   -- 3. Match if next contains any accept state
 
   in _
+
+-- 32 states
+-- curSet: BitSet State id
+-- span of a state transition = id difference between 2 states (usually small)
+-- State transition on 'c':
+-- 1. calc successor set (any input char)
+-- 2. calc reachable set: (any set reachable on 'c' input)
+-- 3. intersection = glushkov NFA
+fastDFA
+
+-- Sheng <= 16 states
+-- PSHUFB instruction to implement the state transitions taken by looking up a shuffle mask for each input character.
+-- pshufb: bytewise shuffle using low 4 bits of each control-mask byte
+-- pshufb masks made per character
 
 ----------------
 -- SubSystems --

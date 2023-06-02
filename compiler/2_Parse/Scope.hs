@@ -1,8 +1,8 @@
 {-# Language TemplateHaskell #-}
-module Scope (scopeTT , scopeApoF , initParams , RequiredModules , OpenModules , Params , letMap , lets) where
+module Scope (scopeTT , scopeApoF , initModParams , RequiredModules , OpenModules , Params , letMap , lets) where
 import ParseSyntax
 import QName
-import CoreSyn(ExternVar(..))
+import CoreSyn(ExternVar(..) , VName(VQBind))
 import Mixfix (solveMixfixes)
 import Externs ( readParseExtern, Externs )
 import Errors
@@ -25,19 +25,22 @@ data Params = Params
   , _args        :: BitSet
   , _bruijnMap   :: V.Vector Int -- pre-built by mkCase: text IName -> BruijnArg TODO merge with letMap
   , _bruijnCount :: Int -- nesting level
---  , _guardKO     :: Maybe TT -- fallback for patternguards
-
-  , _letMap      :: V.Vector QName -- text IName -> LetName
+  , _letMap      :: V.Vector (QName , IName) -- letName (letNest , index) & lifted index in module binds
   , _letNest     :: Int
   } deriving Show ; makeLenses ''Params
 
 initParams open required = let
-  sz = 300 -- TODO max number of let-bindings or bruijnVars
+  sz = 2048 -- TODO max number of let-nests and / or bruijn args
   in Params open required emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 (V.create (MV.new sz)) 0
+
+initModParams open required bindNms = initParams open required & \params -> params
+  & lets %~ (.|. intList2BitSet bindNms)
+  & letNest %~ (1+)
+  & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName 0 i , i)) -- top-binds written to modBinds without offset
 
 -- TODO don't allow `bind = lonemixfixword`
 -- handleExtern (readParseExtern open mod e i) ||| readQParseExtern :: ExternVar
-handleExtern :: Externs -> Int -> BitSet -> V.Vector QName -> Int -> TT
+handleExtern :: Externs -> Int -> BitSet -> V.Vector _ -> Int -> TT
 handleExtern exts mod open lm i = case readParseExtern open mod exts i of
   ForwardRef b  -> Var (VLetBind (lm V.! b))
   Imported e    -> InlineExpr e
@@ -59,8 +62,8 @@ handleExtern exts mod open lm i = case readParseExtern open mod exts i of
 -- * name scope , free variables , dup nodes , resolve VExterns to BruijnArg | QName
 -- unpattern assigns debruijn levels: bl, the debruijn index is lvl - bl - 1
 type Seed = (TT , Params)
-scopeApoF :: Externs -> ModuleIName -> Seed -> TTF (Either TT Seed)
-scopeApoF exts thisMod (this , params) = let
+scopeApoF :: Int -> Externs -> ModuleIName -> Seed -> TTF (Either TT Seed)
+scopeApoF topBindsCount exts thisMod (this , params) = let
   doBruijnAbs :: BruijnAbsF TT -> TTF (Either TT Seed)
   doBruijnAbs (BruijnAbsF n bruijnSubs _ tt) = let
     argsSet    = intList2BitSet (fst <$> bruijnSubs)
@@ -73,10 +76,11 @@ scopeApoF exts thisMod (this , params) = let
                        & bruijnMap %~ V.modify (\v -> bruijnSubs `forM_` \(i , b) -> MV.write v i b)
     in BruijnLamF $ BruijnAbsF n [] params._bruijnCount (Right (warnShadows tt , absParams))
 
-  updateLetParams params bindNms = params
+  updateLetParams params liftName bindNms = params
     & lets %~ (.|. intList2BitSet bindNms)
     & letNest %~ (1+)
-    & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName params._letNest i))
+    & letMap %~ V.modify (\v -> bindNms `iforM_` \i e ->
+      MV.write v e (mkQName params._letNest i , i + topBindsCount + liftName))
   resolveExt i = if
     | params._args `testBit` i -> Var $ VBruijn  (params._bruijnCount - 1 - (params._bruijnMap V.! i))
     | params._lets `testBit` i -> Var $ VLetBind (params._letMap V.! i)
@@ -105,6 +109,7 @@ scopeApoF exts thisMod (this , params) = let
       QLabel q -> (qName2Key q , rhs) -- Guards openMatch guards rhs)
       Label i subPats -> (qName2Key (mkQName thisMod i) , GuardArgs subPats rhs)
       App (QLabel q) subPats -> (qName2Key q , GuardArgs subPats rhs)
+      x -> (0 , ScopePoison (ScopeError $ "bad pattern: " <> show x))
     openMatch = case rest of -- TODO could be guarded; another case
       [] -> Nothing
       (WildCard , rhs) : redundant -> Just rhs -- guards
@@ -135,9 +140,8 @@ scopeApoF exts thisMod (this , params) = let
     VBruijnLevel i -> VarF (VBruijn $ params._bruijnCount - 1 - i) -- Arg-prod arg name
     VBruijn n -> VarF (VBruijn n) -- lambdaCaseF spawns (VBruijn 0) ; error "VBruijn n/=0 shouldn't be possible"
     VExtern i -> Left <$> project (resolveExt i)
-    VLetBind _-> VarF v
   -- TODO Not ideal; retype solvemixfix on (∀a. TTF a) ?
-  Juxt o args   -> Left <$> project (solveMixfixes o $ scopeTT exts thisMod params <$> args)
+  Juxt o args   -> Left <$> project (solveMixfixes o $ scopeTT topBindsCount exts thisMod params <$> args)
 --Juxt o args   -> scopeApoF exts thisMod . (,params) $ solveMixfixes o $ _ $
 --  args <&> \case { Var v -> handleVar v ; x -> Left <$> project x }
   BruijnLam b -> doBruijnAbs b
@@ -148,7 +152,7 @@ scopeApoF exts thisMod (this , params) = let
   FnEqns eqns -> case eqns of
     [GuardArgs pats rhs] -> guardArgs pats rhs []
   GuardArgs pats rhs -> guardArgs pats rhs []
-  Guards _ko [] rhs -> scopeApoF exts thisMod (rhs , params) -- RawExprF (Right (rhs , params)) -- skip
+  Guards _ko [] rhs -> scopeApoF topBindsCount exts thisMod (rhs , params) -- RawExprF (Right (rhs , params)) -- skip
   Guards ko (g : guards) rhs -> let
     guardLabel scrut q subPats = fmap (Right . (,params)) $ let
       rhs' = if null subPats then Guards ko guards rhs else GuardArgs subPats (Guards ko guards rhs)
@@ -169,15 +173,15 @@ scopeApoF exts thisMod (this , params) = let
     GuardBool{} -> error (show g)
 
   -- ? mutual | let | rec scopes
-  LetIn (Block open letType binds) mtt -> let
-    letParams = updateLetParams params (toList (binds <&> _fnIName))
+  LetIn (Block open letType binds) liftNames mtt -> let
+    letParams = updateLetParams params liftNames (toList (binds <&> _fnIName))
     bindsDone :: V.Vector FnDef
-    bindsDone = binds <&> (& fnRhs %~ scopeTT exts thisMod letParams)
+    bindsDone = binds <&> (& fnRhs %~ scopeTT topBindsCount exts thisMod letParams)
     dups = fst $ foldr (\i (dups , mask) -> (if testBit mask i then setBit dups i else dups , setBit mask i))
       ((0 , 0) :: (BitSet , BitSet)) (binds <&> (^. fnIName))
 --  vv TODO get the inames
 --  dupHNames = bitSet2IntList dups <&> \i -> bindsDone V.! i ^. fnNm
-    letTT = LetInF (Block open letType bindsDone) (mtt <&> second (\tt -> Right (tt , letParams)))
+    letTT = LetInF (Block open letType bindsDone) liftNames (Right (mtt , letParams))
     in if dups == 0 then letTT else ScopePoisonF (LetConflict (show <$> bitSet2IntList dups))
 
   Prod xs -> ProdF $ xs <&> \(i , e) -> (qName2Key (mkQName thisMod i) , Right (e , params))
@@ -186,5 +190,5 @@ scopeApoF exts thisMod (this , params) = let
 
   tt -> Right . (, params) <$> project tt
 
-scopeTT :: Externs -> ModuleIName -> Params -> TT -> TT
-scopeTT exts thisMod params tt = apo (scopeApoF exts thisMod) (tt , params)
+scopeTT :: Int -> Externs -> ModuleIName -> Params -> TT -> TT
+scopeTT tc exts thisMod params tt = apo (scopeApoF tc exts thisMod) (tt , params)

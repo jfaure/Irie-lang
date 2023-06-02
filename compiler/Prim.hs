@@ -7,15 +7,14 @@ import GHC.Show (Show(..))
 
 data Literal
  = Char Char
- | I32 Int
+-- | I32 Int
  | Int Integer -- convenience
  | Fin Int Integer
--- | Frac Rational
  | PolyInt   !Text -- gmp
  | PolyFrac  !Text -- gmp
  | String    [Char]
  | RevString [Char]
- | Array [Literal] -- incl. tuples ?
+ | LitArray [Literal] -- incl. tuples ?
  | DirStream [FilePath] -- Unfortunately posix dirstreams are hidden so I cannot derive a binary instance for it
 -- | LitTuple [Literal]
 -- | WildCard      -- errors on evaluation
@@ -37,6 +36,7 @@ data PrimType
  | PrimCStruct
  | PrimStrBuf
  | POSIXTy POSIXType
+ | X86Vec Int -- width: 128 , 256
 
 data FloatTy = HalfTy | FloatTy | DoubleTy | FP128 | PPC_FP128
 -- POSIXTypes require the backend to include C headers
@@ -87,6 +87,10 @@ data PrimInstr
  | AllocStrBuf
  | PushStrBuf
  | StrBufToString
+
+ | NewArray
+ | WriteArray
+ | ReadArray
 
  -- Posix instructions
  | GetCWD
@@ -199,6 +203,7 @@ prettyPrimType = toS . \case
   POSIXTy t -> case t of { DirP → "%DIR*" ; DirentP → "%dirent*" }
   PrimCStruct -> "%CStruct" -- (" <> show x <> ")"
   PrimStrBuf -> "%StrBuf" -- (" <> show x <> ")"
+  X86Vec i -> "__m" <> show i
   x -> error $ show x
 
 primSubtypeOf :: PrimType -> PrimType -> Bool

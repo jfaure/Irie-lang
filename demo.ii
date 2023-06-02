@@ -1,4 +1,4 @@
--- let-bound mixfix => make VLetBind instead of QName
+-- let-bound mixfix
 -- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
 
 -- Type ascriptions
@@ -10,10 +10,7 @@
 --eq1 @x b = 2
 --eq1 a b = 3
 
---import stream
---f = fromMaybe -- should not be available
-
---imports list list2 tree question ls foldr Free parsec intmap patternTests
+--imports list list2 tree question ls foldr Free parsec intmap patternTests hash
 --import irieShell -- ideas for irie as shell
 --import imports/TreeStream
 --import SpecialisationTests/{SpecPapArg , SimpleMutual , SumOfSquares , fib}
@@ -26,8 +23,18 @@
 --import tupleTests
 --import mutumorphism -- avoid let-block
 --import Tee -- duplicate streams
+--import Eff2
+
+-- import stream
+-- f = fromMaybe -- should not be available
 
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
--- | lift-lets + Mutumorphisms + pdep captures
+-- QName -> HName lookup broke for imports
+import prelude
+f = _>>_ -- add -- ifThenElse
+g = { x = 3 , y = 4 }
+
+--import prelude
+--cata fmap f = f << fmap (cata f) -- << project

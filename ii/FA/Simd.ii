@@ -1,0 +1,93 @@
+-- https://arxiv.org/pdf/1611.07612.pdf
+-- Mulas algorithm to compute 16 pop-counts
+__m128i count_bytes ( __m128i v) {
+  __m128i lookup = _mm_setr_epi8(0 ,1 ,1 ,2 ,1 ,2 ,2 ,3 ,1 ,2 ,2 ,3 ,2 ,3 ,3 ,4) ;
+  __m128i low_mask = _mm_set1_epi8 (0 x0f ) ;
+  __m128i lo = _mm_and_si128 (v, low_mask ) ;
+  __m128i hi = _mm_and_si128 ( _mm_srli_epi16 (v, 4) , low_mask ) ;
+  __m128i cnt1 = _mm_shuffle_epi8 (lookup , lo) ;
+  __m128i cnt2 = _mm_shuffle_epi8 (lookup , hi) ;
+  return _mm_add_epi8 (cnt1 , cnt2 ) ;
+}
+-- mulas: 4x popcounts of 64-bit words
+__m256i count ( __m256i v) {
+  __m256i lookup =
+  _mm256_setr_epi8 (0 , 1 , 1 , 2 , 1 , 2 , 2 , 3 , 1 , 2 , 2 , 3 , 2 , 3 , 3 , 4 , 0 , 1 , 1 , 2 , 1 , 2 , 2 , 3 , 1 , 2 , 2 , 3 , 2 , 3 , 3 , 4) ;
+  __m256i low_mask = _mm256_set1_epi8 (0 x0f ) ;
+  __m256i lo = = _mm256_and_si256 (v, low_mask ) ;
+  __m256i hi = _mm256_and_si256 ( _mm256_srli_epi32
+  (v, 4) , low_mask ) ;
+  __m256i popcnt1 = _mm256_shuffle_epi8 (lookup ,
+  lo) ;
+  __m256i popcnt2 = _mm256_shuffle_epi8 (lookup ,
+  hi) ;
+  __m256i total = _mm256_add_epi8 ( popcnt1 , popcnt2
+) ;
+return _mm256_sad_epu8 (total , _mm256_setzero_si256 () ) ;
+}
+
+// bitwise parallel carry-save adder
+void CSA ( __m256i * h, __m256i * l, __m256i a, __m256i b, __m256i c) {
+  __m256i u = _mm256_xor_si256 (a , b) ;
+  *h = _mm256_or_si256 ( _mm256_and_si256 (a , b) , _mm256_and_si256 (u , c) ) ;
+  *l = _mm256_xor_si256 (u , c) ;
+}
+
+-- https://lemire.me/blog/2019/02/08/faster-remainders-when-the-divisor-is-a-constant-beating-compilers-and-libdivide/
+-- fastmod computes (n mod d) given precomputed c
+uint32_t d = ...;// your divisor > 0
+uint64_t c = UINT64_C(0xFFFFFFFFFFFFFFFF) / d + 1;
+uint32_t fastmod(uint32_t n ) {
+  uint64_t lowbits = c * n; return ((__uint128_t)lowbits * d) >> 64; }
+bool is_divisible(uint32_t n) { return n * c <= c - 1; }
+
+--https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
+-- fastest logBase 10
+int fast_digit_count(uint32_t x) {
+  -- for j = [2..30]
+  -- ceil(logBase 10 (2 ** j)) * 2**32 + 2**32 - 10**(ceil(logBase 10 (2**j)))
+  -- for j=1 (2**32)
+  -- for j=31,j=32 ceil(logBase 10 (2**j))
+  static uint64_t table[] = {
+      4294967296,  8589934582,  8589934582,  8589934582,  12884901788,
+      12884901788, 12884901788, 17179868184, 17179868184, 17179868184,
+      21474826480, 21474826480, 21474826480, 21474826480, 25769703776,
+      25769703776, 25769703776, 30063771072, 30063771072, 30063771072,
+      34349738368, 34349738368, 34349738368, 34349738368, 38554705664,
+      38554705664, 38554705664, 41949672960, 41949672960, 41949672960,
+      42949672960, 42949672960};
+  return (x + table[int_log2(x)]) >> 32;
+}
+
+-- 5 instr double width shuffle; assuming all indices in range (usigned < 32)
+shuf2 : m128 -> m128 -> m128 -> m128
+shuf2 x0 x1 sel = let
+  __m128i const f0 = _mm_set1_epi8(0xF0);
+  sel = _mm_add_epi8(sel, f0);
+  in _mm_or_si128
+    (_mm_shuffle_epi8 x0 (_mm_xor_si128 sel f0))
+    (_mm_shuffle_epi8 x1 sel)
+  );
+}
+
+// Count unique bytes in the vector
+size_t countUniqueBytes( __m128i vec )
+{
+    size_t result = 0;
+    // Accumulator for the bytes encountered so far, initialize with broadcasted first byte
+    __m128i partial = _mm_broadcastb_epi8( vec );
+    const __m128i one = _mm_set1_epi8( 1 ); // Permutation vector to broadcast these bytes
+    __m128i perm = one;
+
+    for( int i = 1; i < 16; ++i ) {
+      __m128i bc = _mm_shuffle_epi8( vec, perm ); // Broadcast i-th byte from the source vector
+      perm = _mm_add_epi8( perm, one ); // Compare bytes with the partial vector
+      __m128i eq = _mm_cmpeq_epi8( bc, partial ); // Append current byte to the partial vector
+      partial = _mm_alignr_epi8( bc, partial, 1 );
+      // Increment result if the byte was not yet in the partial vector
+      // Compilers are smart enough to do that with `sete` instruction, no branches
+      int isUnique = _mm_testz_si128( eq, eq );
+      result += ( isUnique ? (size_t)1 : (size_t)0 );
+    }
+    return result;
+}

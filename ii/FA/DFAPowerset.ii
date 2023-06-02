@@ -1,0 +1,2 @@
+-- for every n, there exists n-state NFAs such that every subset of states is reachable
+-- from the initial subset, so the converted DFA has exactly 2**n states

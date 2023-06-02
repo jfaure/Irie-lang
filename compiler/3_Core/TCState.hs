@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module TCState where
-import CoreSyn ( tyBot, tyTop, BiSub(BiSub), Bind )
+import CoreSyn ( tyBot, tyTop, BiSub(BiSub), Bind, LetMeta )
+import qualified Scope (Params)
 import Externs
 import Errors ( Errors, TmpBiSubError )
 import Control.Lens ( use, (.=), makeLenses )
@@ -18,13 +19,17 @@ data TCEnvState s = TCEnvState {
  , _openModules :: BitSet
 
  -- out
- , _modBinds    :: MV.MVector s (Either P.FnDef Bind) -- all lets lifted
- , _letBinds    :: MV.MVector s (MV.MVector s (Either P.FnDef Bind))
+ , _modBinds    :: MV.MVector s (LetMeta , Bind) -- all lets lifted, the P.FnDef is saved in letBinds
+ , _letBinds    :: MV.MVector s (MV.MVector s P.FnDef)-- (Either P.FnDef Bind))
  , _letNest     :: Int
  , _errors      :: Errors
 
  -- Biunification state
- , _bindStack     :: [(Int , Int)]      -- [(LetDepth , IName)]
+ , _topBindsCount :: Int
+ , _bindsBitSet   :: BitSet -- mark inferred binds
+ , _inferStack    :: BitSet -- To detect infer cycles: recursion / mutuals
+ , _scopeParams   :: Scope.Params
+-- , _bindStack     :: [(Int , Int)]      -- [(LetDepth , IName)]
  , _bruijnArgVars :: V.Vector Int       -- bruijn arg -> TVar map
  , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen          :: Int                -- cursor for bis which may have spare space

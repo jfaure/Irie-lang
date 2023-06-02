@@ -1,0 +1,29 @@
+-- FDR => byte at a time scanner, handles huge pattern sets (>80)
+-- idea is, for next byte in search space: eg 'x', and patterns ('xyaxx' ..)
+-- check if 'x' appears at all expected positions (bit[i] == 0) for any pattern in set
+-- The search space throughput is thus slow, but we match all patterns simultaneously
+
+-- k (* n)th bits of sh-mask 'x' = bucket ids with 'x' at kth byte
+-- (n=8) patterns len 32 | (n=16) patterns len 16
+-- bucket 0 = "hp"
+-- bucket 1 = "aphp"
+--    pat bytes:     
+-- sh-mask 'a' = 11101110 11111110 11111111 11111111
+-- sh-mask 'h' = 11111110 11111110 11101110 11111111
+-- sh-mask 'p' = 11111110 11101110 11111111 11101110
+int n = 8 , patLen = 32;
+SH mkShMask(char const patterns[n][patLen], char c) { 
+    __m256i shMask        = _mm256_setzero_si256();
+    __m256i replicateChar = _mm256_set1_epi8(c);
+    for (unsigned char patI = 0; patI < n; ++patI) {
+        __m256i pat      = _mm256_loadu_si256((__m256i*) patterns[patI]);
+        __m256i charMask = _mm256_cmpeq_epi8(replicateChar , pat);
+        __m256i bucketIdx= _mm256_set1_epi8(1 << patI);
+        charMask         = _mm256_and_si256(bucketIdx , charMask); // set only this bucket id
+        shMask           = _mm256_or_si256(shMask , charMask);
+    }
+    return shMask;
+}
+
+--next (rawPatterns , shMasks) stMask c =
+--   stMask | shMasks[c]

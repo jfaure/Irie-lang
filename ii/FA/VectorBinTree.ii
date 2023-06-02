@@ -1,0 +1,5 @@
+--vectorized variant of a B-tree that could handle variable-length prefixes. I eventually found a nice way to compare with a vectorfull of prefixes for both equality and inequality. I found that it’s most efficient to store each prefix reversed, that is, in big-endian order. Then the central idea is:
+--bot = 2*top + 1;
+--streq = top & eq & ((eq&~top)+bot); // Same as SMH tight fit
+--strlt = top & (((eq>>1)&~top)+lt);
+--The popcount of (islt<<16|iseq) can be used to determine which node to go to next, as in poptrie. There are a few more tricks to figure out how long of a prefix can be discarded and when to stop, but the whole thing comes out to about 10ns per level. If there aren't many strings, this is probably faster than a hash table, so I think it's suitable for name lookups. I haven't used it yet—one problem is handling insertions, but the real problem is dealing with all the code that expects names to be stored in a binary tree.

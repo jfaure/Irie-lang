@@ -1,0 +1,39 @@
+-- Monad , foldM , and array write
+foldM f z xs = foldl (\acc x => acc >>= \b => f b x) (pure z) xs
+-- foldl (>=>) pure (replicate n addGet) 0
+
+-- A snoc list
+_>>=_ { l1 } = \(Free fx f) g => Free fx (f >=> g)
+f >=> g = \x => f x >>= g
+
+-- t is an effect that can be used with other effects
+send : ∀r -> t v -> Eff (r & t) v
+send t = Free t Pure -- singleton Pure
+
+--read  : ∀x. Array x -> Nat -> ArrayM x
+--read v i = send (Read v i)
+--write : ∀x. Array x -> Nat -> x -> ArrayM ()
+--write
+
+Reader i x = gadt
+  Get : Reader i i
+
+ask = ∀r i -> Eff (r & Reader i)
+ask = Free Get Pure -- send Get
+
+-- qApp applies arg to a composition of fns:
+--  gives arg to head of seq and leaves tail unchanged (needs front of list!)
+-- Loop over the free monad, case out any Get operations
+runReader : i -> Eff (Reader i & r) a -> Eff r a
+runReader i m = case m of
+  Pure x   => Pure x
+  Free u q => case u of
+    Get -> runArrM i (qApp q i)  -- give i arg to head of "Free" snoclist
+    _   -> Free u (qComp q loop) -- loop over the snoclist
+
+handleRelay : (a -> Eff r w) -> (∀v. t v -> Arr v w -> Eff r w) -> Eff (t ': r) a
+  -> Eff r w
+-- v ? turn a function of a sumtype into a guard? | union case statements?
+runReader i = handleRelay pure (\Get k => k i)
+
+test = readArray >>= writeArray

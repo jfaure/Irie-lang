@@ -51,8 +51,8 @@ data LetQual = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show)
 data TTName
  = VBruijnLevel IName
  | VBruijn  IName
- | VLetBind QName -- let-block nesting depth and IName
-
+-- | VBind IName -- bound in this module , also lifted lets
+ | VLetBind (QName , IName) -- let-name and lifted name
  | VExtern  IName -- ! Parser only parses VExterns
 
 data LensOp a = LensGet | LensSet a | LensOver a deriving (Show , Functor , Foldable , Traversable)
@@ -105,18 +105,21 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | MatchB TT (BSM.BitSetMap TT) (Maybe TT) -- solved patterns UnPattern.patternsToCase
 
  | List   [TT]
- | LetIn Block (Maybe (Int , TT)) -- Nothing only for moduleTT (let-ins are meant to be mutually in scope)
+ | LetIn Block Int TT
+ | ModBinds Block
+
 -- | LiftedLets LetQual Int TT -- Int is index into lifted-let-block vector
 
  -- term primitives
  | Lit      Literal
- | LitArray {-(Maybe Int)-} [Literal] -- maybe size
+ | PLitArray {-(Maybe Int)-} [Literal] -- maybe size
+ | PArray {-(Maybe Int)-} [TT] -- maybe size
  | LitEq Literal TT
 
  -- type primitives
  | TyListOf TT
- | Gadt [(LName , TT)]   -- Parameters and constructor signature (return type may be a subtype of the Gadt)
- | Data [(LName , [TT])] -- Parameters
+ | Gadt [(LName , TT)]    -- Parameters and constructor signature (return type must be a subtype of the Gadt sig)
+ | Data [(LName , [TT])]  -- Parameters
 
  | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat =>'
 

@@ -1,0 +1,45 @@
+-- Fastest scanner (Only for pattern sets with small total len (<= 32), 64,128 extensions
+-- if pattern set < 16, can search 2x the pattern space
+
+scanMini : 16x8 -> (32x8 , 32x8) -> i32
+scanMini 16Bytes (catPatterns , patShuf) = let
+  -- copy prefixes of len P.i from 16byte input for direct cmp with catPatterns
+  input = _mm256_shuffle_epi8 (_mm256_broadcast_si128_si256 16Bytes) patShuf
+  cmp   = _mm256_cmpeq_epi8 input catPatterns
+  in _mm256_movemask_epi8 cmp
+
+-- The mask sets 1 for each char match in each pattern
+-- setup a hole at the top and + to carry over matches into a single bit
+-- returns bitset of matchidx: clz to find first match (more if overlapping patterns)
+-- Faster If space between patterns to pre-setup holes for carry operation
+verifyTight , verifyLoose : i32 -> i32 -> i32 -> i32
+verifyLoose hi lo mask = hi .&. (mask + lo)
+verifyTight hi lo mask = let
+  carryMatches = (mask .&. complement hi) + lo -- 0 the carry bit and perform carry
+  in carryMatches .&. mask .&. hi
+  -- 0 all except the MSB (start idx of each pattern in catPatterns)
+
+-- patShuf
+-- , hi mask (MSB of each string) "cat|dog" -> 2 5 (0b001001)
+-- , lo mask (LSB of each string) => the bit to be carried over to by + if all matches
+-- loose means we can pre-setup a hole bit in fewer instructions
+fromPatterns : [String]
+  [ Fail Int -- only handle small patsets (<= 32 total len)
+  | Loose 32x8 32x8 i32 i32 -- catPats , shufControl , lo , hi
+  | Tight 32x8 32x8 i32 i32]
+fromPatterns pats = let
+  patLens = len <$> pats
+  fullLen = sum patLens
+  loose = (32 - length pats) > fullLen
+  in if
+    | fullLen >= 32 => Fail
+    | loose => Loose _
+    |       => Tight _
+
+-- !! Can compare discontinuous things!
+-- * Only a boolean function where some ordering allows all true values above all false vaules
+-- Pred ::= Cmp"∧("Pred")" | Cmp"∨("Pred")" | "0"
+-- Cmp is whatever you can put together with vector instructions
+-- (∀ (c d : Char) -> (i < 16) -> c <= str[i] && str[i] <= d
+-- eg. (ab(cd|x)) ok, add 0b00101 to mask, but not possible for ab(cd|xy)
+-- https://branchfree.org/2018/05/30/smh-the-swiss-army-chainsaw-of-shuffle-based-matching-sequences/

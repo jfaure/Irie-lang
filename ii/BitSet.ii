@@ -1,0 +1,22 @@
+-- BitSet lib
+
+BitSetFixed = data -- why type of this is bot not Set0
+--Bits64 (Fin 64) -- why fails
+  Bits64 U64
+  Bits256 mm256
+
+setBit = _
+clearBit = _
+testBit = _
+--eq
+--neq
+--or
+--xor
+--and
+--not
+--shl
+--shr
+--all
+--any
+--none
+--popCount

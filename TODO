@@ -1,11 +1,8 @@
 # Lift all Let-Ins => infer must lift nests
 # captures inside inExprs are inacurrate (They are a pdep of their freeVars)!
-# mutumorphism: (f1 Δ f2) as input (Requires special construct to avoid β-reduce loop)
-  x = a . Δ(d [x] . c)
-  x1 = a1 . D (x1 Δ x2) . c : A1 <- C
-  x2 = a2 . D (x1 Δ x2) . c : A2 <- C
-  The algebras (a1 : D (A1 X A2) -> A1) and a2 access the results of both rec calls.
-  special case is zygo-hylo, where a2 := a'2 . D outr (a2 uses only 1 of the results)
+# Monad , foldM , and array write
+# BitSet lib
+# Usability of recursion schemes on open sumtypes: functor vs embed
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * module import-sig (will help with mutual modules)
   * open sum type (default case branch)
@@ -21,6 +18,7 @@
   * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
   * label/constant name-conv: importing new labels can break code: eg. f a = _ ; then import an 'a' label
   * edit-distance
+  * Database effect
 ## Syntax: spare: `~%;
   * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
   * record type syntax: { x = Int , y } -- indicates y = ? (only makes sense as a type)

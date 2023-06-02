@@ -2,6 +2,7 @@
 module Registry where
 import CmdLine
 import CoreSyn
+import MixfixSyn(QMFWord)
 import qualified ParseSyntax as P
 import Parser (parseModule)
 import CoreBinary()
@@ -48,7 +49,6 @@ doParallel = False
 -- ## RegMap : Global bind-lookup (HName -> IMap INames)
 --   * If mod IConv changes; need to also update regMap (use oldHNames to find them)
 
--- TODO When exactly print stuff
 -- TODO search(fuzzy?) Registry (hackage edit-distance)
 -- TODO print dep-tree (also needsRecompile tree)
 -- TODO Append module (for repl) & suspended parse & parse Expr
@@ -58,10 +58,10 @@ doParallel = False
 -- TODO mergeRegistries
 -- TODO ImportedSig: BitSet of imported binds from each module (depends on scope)
 
-lookupIName     = lookupJM labelNames
+lookupLabelName   = lookupJM labelNames
 lookupFieldName = lookupJM jmINames
 lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
-  JudgeOK _mI jm -> Just (jmProj jm V.! iName)
+  JudgeOK _mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName) else Just ("bug:" <> show iName)
   _ -> Nothing
 
 -- useCache
@@ -137,7 +137,8 @@ registerDeps reg mI deps dents = takeMVar reg >>= \r -> let
   in putMVar reg (r & loadedModules %~ V.modify (\v -> MV.modify v addDeps mI))
 
 -- Add bindNames to allBinds!
---registerJudgedMod :: Registry -> ModIName -> Either Errors (_ , _ , JudgedModule) -> IO ()
+registerJudgedMod :: Registry -> ModIName
+  -> Either Errors (Map HName (IntMap IName) , Map HName (IntMap [QMFWord]) , JudgedModule) -> IO ()
 registerJudgedMod reg mI modOrErrors = let
   addMod jm (LoadedMod deps dents _m) = LoadedMod deps dents (JudgeOK mI jm)
   addJM (resolver , mfResolver , jm) = takeMVar reg >>= \r -> putMVar reg (
@@ -153,9 +154,10 @@ registerJudgedMod reg mI modOrErrors = let
 
 simplify :: CmdLine -> JudgedModule -> JudgedModule
 simplify cmdLine jm = if noFuse cmdLine then jm else let
-  mL :: F.Lens' JudgedModule Expr
+  mL :: F.Lens' JudgedModule ModuleBinds
   mL = F.lens moduleTT (\u new -> u { moduleTT = new })
-  in jm & mL F.%~ (\e -> runST (BetaEnv.simpleExpr e))
+  -- TODO hacky β-env may depend on the full module
+  in jm & mL F.%~ (\e -> runST (BetaEnv.simpleExpr (Core (LetBlock e) tyBot)) & \(Core (LetBlock r) _) -> r)
 
 -- cata DepTree => parallel judge modules , register all modules and deps/dependents
 judgeTree :: CmdLine -> Registry -> TreeF (Dependents , Import) (IO Deps) -> IO Deps
@@ -169,7 +171,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
     let iNamesV = iMap2Vector (pm ^. P.parseDetails . P.hNamesToINames)
         (resolver , mfResolver , exts) = resolveNames reg' mI pm iNamesV
         getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
-          BindSource (lookupIName r._loadedModules) (lookupFieldName r._loadedModules)
+          BindSource (lookupLabelName r._loadedModules) (lookupFieldName r._loadedModules)
         putModVerdict = False -- TODO should only print at repl?
         (warnings , jmResult) = judge deps reg' exts mI pm iNamesV
     in case simplify cmdLine <$> jmResult of
@@ -195,7 +197,7 @@ putJudgedModule :: CmdLine -> Maybe BindSource -> JudgedModule -> IO ()
 putJudgedModule cmdLine bindSrc jm = let
   putBind = not $ "types" `elem` printPass cmdLine 
   renderOpts = ansiRender { bindSource = bindSrc , ansiColor = not (noColor cmdLine) }
-  putJM outHandle = TL.IO.hPutStrLn outHandle (prettyJudgedModule putBind renderOpts jm)
+  putJM outHandle = TL.IO.hPutStrLn outHandle (prettyJudgedModule (putLetBinds cmdLine) putBind renderOpts jm)
   in case cmdLine.outFile of
     Nothing    -> putJM stdout
     Just fName -> openFile fName WriteMode >>= \h -> putJM h *> SIO.hClose h

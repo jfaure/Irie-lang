@@ -1,0 +1,66 @@
+-- no ε transitions (otherwise same as thompsons construction)
+-- states = 1 + len(Σ) (alphabet size of regex)
+
+-- 1. linearise expression: rename each letter in e, so letters of the local language L(e') occur at most once
+-- 
+-- 2.a compute sets P(e') D(e') and F(e') (by induction over expr)
+-- P = set of letters occuring as first letter of a word of L(e')
+-- D = set of letters that end a word
+-- F = set of letter pairs that can occur in words of L(e')
+--   ie. set of factors of length 2 of words of L(e')
+-- P(e') = { x : B | xB* intersect L(e') != 0 }
+-- D(e') = { y : B | B*y intersect L(e') != 0 }
+-- F(e') = { u : B^2 | B* uB* intersect L(e') != 0 }
+-- 
+-- 2b. compute Δ(e') = {ε} intersect L(e')
+--   contains empty word if word belongs to L(e'), else empty set
+-- 
+-- 3. Compute automata recognizing the local language
+-- L' = (PB* intersect B*D) \B* (B^2 \ F)B* union Δ(e0)
+-- => The set of words begin with letter of P, end by a letter of D
+--   and whose factors of length 2 belong to F, optionally also including the empty word
+-- strictly speaking, glushkov construction is the automata for the local language
+-- This automata contains an initial state, and a state for each letters of its alphabet
+-- 
+-- 4. remove linearisation, replace each indexed letter B by original letter of A
+
+Re m c = rec r in data
+--Sym (c -> Bool)  -- "c", ., [abc], or [^abc]
+  Char c
+  NotChar c
+  Any Int   -- ε . , .{n}
+  Alt r r   -- α|β
+  And r r   -- α&β intersection
+  Rep r     -- α* (Kleene closure)
+  Seq r r   -- αβ
+
+NFA = record
+  States : Nat
+  startState : StateId
+  alphabet : Set Char
+  transition : Char -> StateId -> StateId
+  accept : Set StateId
+
+-- 1. anaM : assign unique ids and build table : Char -> Set State
+-- 2. cata : merge P , D , F
+-- 3. Build NFA from L' = (PB* intersect B*D) \B* (B^2 \ F)B* union Δ(e0)
+--   * statecount = 1(initial state) + count(linearised letters)
+--   * transition from 1 to all states of P
+--   * transition from x to y for (xy : F)
+--   * states of D are accepting
+-- * linearisation means that a char may map to multiple states
+glushkov : Re -> NFA
+-- compute pair (P , D , F). : Set Char -> Set Char -> Set 2xChar
+-- Δ tracks if empty language or singleton language with empty word
+-- /0 = empty language , matches nothing
+-- ε singleton language containing empty word, matches only ""
+cataF = \case
+  Char c -> ([c] , [d] , [])
+--NotChar c -> _
+--And (p,d,f) (p1,d1,f1) -> 
+  Alt (p,d,f) (p1,d1,f1) -> (p <> p1 , d <> d1 , f <> f1)
+  rep (p,d,f)            -> (p , d , f <> productSet d e)
+  Seq (p,d,f) (p1,d1,f1) -> (p <> {-Δe-}p1 , d1 <> d{-Δf-} , f <> f1 <> productSet d p)
+
+--productSet x y = (,) <$> x <*> y
+productSet x y = concatMap (\x => (x,) <$> y) x

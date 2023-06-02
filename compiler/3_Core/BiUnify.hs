@@ -127,6 +127,7 @@ data KeySubtype
 biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
   (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSubType x y
+  (THArray x , THArray y) -> BiEQ <$ biSubType x y
   (THProduct x , THProduct y) -> let --use normFields >>= \nf -> let -- record: fields in the second must all be in the first
     merged     = BSM.mergeWithKey' (\_k a b -> Just (Both a b)) (\_k v -> LOnly v) ROnly x y
 --  normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
