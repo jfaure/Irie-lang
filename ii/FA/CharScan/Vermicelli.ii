@@ -1,0 +1,11 @@
+-- Scan for: 'a'|'A' , where 'a' and 'A' only differ in one bit
+verify : m256 -> m256 -> m256 -> I32
+verify inp andMask cmpMask = _mm256_movemask_epi8
+  (_mm256_cmpeq_epi8 cmpMask (_mm256_and_si256 inp andMask))
+
+from2Char : I8 -> I8 -> { andMask = I8 , cmpMask = I8 }
+from2Char c1 c2 = if popCount (xor c1 c2) /= 1 then Nothing else let
+  andM = bitNOT (xor c1 c2)
+  in Just record
+  andMask = _mm256_set1_epi8 andM
+  cmpMask = _mm256_set1_epi8 (c1 B& andM)

@@ -26,6 +26,7 @@ data TCEnvState s = TCEnvState {
 
  -- Biunification state
  , _topBindsCount :: Int
+ , _topBindsMask  :: BitSet
  , _bindsBitSet   :: BitSet -- mark inferred binds
  , _inferStack    :: BitSet -- To detect infer cycles: recursion / mutuals
  , _scopeParams   :: Scope.Params

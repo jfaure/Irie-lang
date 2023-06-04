@@ -8,6 +8,7 @@ _B~_ { r9 }  = bitNOT
 _!_ { l9 }  = readArray
 
 _B&_ { a8 } = bitAND
+_B&~_ { a8 }= bitANDN
 _B<<_{ n8 } = bitSHL
 _B>>_{ n8 } = bitSHR
 
@@ -57,5 +58,15 @@ fromMaybe a = \case
 
 fst (a , b) = a
 snd (a , b) = b
+
+
+--setBit bits pos   = bitOR (bits (bitSHL 1 pos))
+-- TODO mixfixes defined and used in same module appear to be broken
+setBit bits pos   = bitOR bits (bitSHL 1 pos)
+clearBit bits pos = bitAND bits (bitNOT (bitSHL 1 pos))
+testBit  bits pos = bitAND bits (bitSHL 1 pos)
+--setBit bits pos   = bits B| 1 -- (1 B<< pos)
+--clearBit bits pos = bits B& bitNOT (1 B<< pos)
+--testBit  bits pos = bits B& (1 B<< pos)
 
 -- <_> = \x => x

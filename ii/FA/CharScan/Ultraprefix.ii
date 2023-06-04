@@ -1,0 +1,20 @@
+-- 32 byte inp: Miniscule patternset (max 3):
+-- for each pattern, filter pos. in inp => check exact match
+
+-- KO: Attempt to fill up entire 256 vector before movemask
+-- ! Seems not useful: may as well AND results
+-- Exact match 7 bytes at a time against 32 patterns
+-- the inp vec will usually be , for 7 bytes:  _mm256_set_epi8 (bytes ! i)
+-- But it could be staggered copies of the input, to match copies of patterns in a small set
+-- eg only 1 pattern and input of 01234: pat pat pat =? 012 123 234
+scan : Vec 7 32x8 -> Vec 32x8 -> I32
+scan inp 32Patterns = let
+--32Matches = let checkByte i acc = _mm256_or_si256 acc
+--    (_mm256_slli_si256 (_mm256_and_si256 acc (_mm256_cmp_eq_epi8 (32Patterns ! i) (inp ! i))) 1)
+--  in foldl checkByte (_mm256_set_ones) (0 .. 6)
+  -- ^for each pattern, a 7-bit result indicating match for each byte
+  patMatches = _mm256_add_epi8 32Matches (_mm256_set_epi8 1)
+  in _mm256_movemask_epi8 patMatches
+  -- IFF all 7 bytes matched pattern i; mask[i] is set
+
+verify scanMask = if scanMask == 0 then Nothing else Just (ctlz scanMask) -- idx of (first) matching pattern

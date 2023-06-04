@@ -49,7 +49,7 @@ evalLine txt = use replCmdLine >>= \c -> use replRegistry >>= \reg ->
   liftIO (void $ compileText c reg (T.pack txt))
 
 replOpts :: [(String , String -> Repl ())]
-replOpts = 
+replOpts =
   [ ("help" , \s -> liftIO $ putStrLn ("Help: " <> s))
 --, ("load" , \s -> liftIO $ readFile s >>= putStrLn)
 --, ("set"  , \s -> case s of
@@ -62,7 +62,7 @@ mkTabComplete = let
   cmdArgMatcher = let
     helpCompleter :: Monad m => WordCompleter m
     helpCompleter n = pure (filter (isPrefixOf n) (fst <$> replOpts))
-    in 
+    in
     [ (":load", fileCompleter)
     , (":help", wordCompleter helpCompleter)
     ]
@@ -80,5 +80,5 @@ runRepl rawCmdLine reg = let cmdLine = rawCmdLine { printPass = "simple" : print
   , multilineCommand = Just "paste"
   , tabComplete = mkTabComplete
   , initialiser = pure ()
-  , finaliser = pure Exit 
+  , finaliser = pure Exit
   }

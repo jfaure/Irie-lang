@@ -25,6 +25,7 @@ data Import
  | NoParse Text (ParseErrorBundle Text Void)
  | ImportLoop BitSet -- All deps known; but the loop must be handled specially
  | ParseOK ModIName P.Module -- P.Module contains the filepath
+ -- perhaps the ana part that reads depths should instantly register modules and collect inames?
  | JudgeOK ModIName JudgedModule
  | NoJudge ModIName Errors
 -- | Cached  ModIName FilePath
@@ -38,13 +39,21 @@ data LoadedMod = LoadedMod
  }; -- makeLenses ''LoadedMod
 
 newtype Externs = Externs { extNames :: V.Vector ExternVar } deriving Show
+type LoadedBinds = V.Vector LoadedMod
+
+lookupLabelName = lookupJM labelNames
+lookupFieldName = lookupJM jmINames
+lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
+  JudgeOK _mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName)
+    else Just ("bugged IName resolution:" <> show iName)
+  _ -> Nothing
 
 type Registry = MVar PureRegistry
 data PureRegistry = Registry {
 -- 1. A convention for INaming modules at the top-level
 -- 2. Track dependency tree (! Modules know their import-list : [HName] , but not their dependents)
--- 3. Efficient bind/type lookup through all loaded modules
--- 4. QName lookup (QName -> HName): main bind vector , fields , labels
+-- 3. Efficient bind/type lookup through all loaded modules (HName -> QName)
+-- 4. QName lookup: main bind vector , fields , labels
 -- 5. Tracks file freshness and read/writes to cache
 -- 6. Module edits (Add specialisations , incremental compilation)
    _modNames          :: M.Map HName IName
@@ -70,15 +79,20 @@ builtinRegistry = let
 readPrimExtern :: IName -> Expr
 readPrimExtern i = snd (primBinds V.! i)
 
--- TODO rm this
-readParseExtern :: BitSet -> ModIName -> Externs -> IName -> ExternVar
-readParseExtern openMods thisModIName exts i = case exts.extNames V.! i of
-  Importable modNm iNm -> if
+-- TODO not pretty
+checkExternScope :: BitSet -> ModIName -> Externs -> IName -> ExternVar
+checkExternScope openMods thisModIName exts i = case exts.extNames V.! i of
+  Importable modNm iNm
     -- TODO don't always expose builtins!
-    | not (testBit openMods modNm || modNm == 0) -> NotOpened (show modNm <> "." <> show iNm) ("")
     | modNm == thisModIName -> ForwardRef iNm
-    | modNm == 0 -> Imported (snd (primBinds V.! iNm))
-    | True -> NotOpened (show modNm <> "." <> show iNm) ("")
+    | modNm == 0 -> Imported 0 (snd (primBinds V.! iNm))
+  Imported modNm e
+    | testBit openMods modNm || modNm == 0 -> Imported modNm e
+    | True -> NotOpened (did_ openMods) (mkQName thisModIName i)
+  ImportLabel q
+    | m <- modName q , testBit openMods m || m == 0 || m == thisModIName -> ImportLabel q
+  NotInScope x -> NotInScope (show (bitSet2IntList openMods) <> " : " <> x)
+  m@MixfixyVar{} -> m -- TODO
   x -> x
 
 readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
@@ -86,10 +100,15 @@ readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m o
   JudgeOK _ jm -> Just $ (readJudgedBind jm iNm) & \(Core _ ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
   _ -> Nothing
 
+iNameToBindName topINames iNm = popCount (topINames .&. setNBits iNm :: Integer)
+
 readJudgedBind :: JudgedModule -> IName -> Expr
-readJudgedBind m iNm = let
-  bindName = popCount (topINames m .&. setNBits iNm :: Integer)
-  in snd (m.moduleTT V.! bindName) & bind2Expr
+readJudgedBind m iNm = snd (m.moduleTT V.! iNameToBindName (topINames m) iNm) & bind2Expr
+
+mfw2qmfw topINames modNm = \case
+  StartPrefix  (MixfixDef m mfw f) i -> QStartPrefix  (MixfixDef (m) mfw f) (mkQName modNm i)
+  StartPostfix (MixfixDef m mfw f) i -> QStartPostfix (MixfixDef (m) mfw f) (mkQName modNm i)
+  MFPart                           i -> QMFPart                             (mkQName modNm i)
 
 -- * Add bindNames and local labelNames to resolver
 -- * Generate Externs vector
@@ -100,8 +119,9 @@ resolveNames reg modIName p iNamesV = let
   curMFWords  = reg._globalMixfixWords
   curMods     = reg._loadedModules
   mixfixHNames = p ^. P.parseDetails . P.hNameMFWords
+  topINames = p ^. P.parseDetails . P.topINames
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
-    zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
+    zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw topINames modIName) <$> mixfixHNames]
 
   -- Note. temporary labelBit allows searching BindNames and labels in 1 Map
   -- In fact labels are almost bindNames in their own right
@@ -124,7 +144,8 @@ resolveNames reg modIName p iNamesV = let
        Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
        x -> Importable modNm iNm -- Imported x
      | testBit iNm labelBit -> ImportLabel (mkQName modNm (clearBit iNm labelBit))
-     | True -> maybe (Importable modNm iNm) Imported (readQName curMods modNm iNm)
+     | True -> maybe (Importable modNm iNm) (Imported modNm) (readQName curMods modNm iNm)
+--   | True -> Importable modNm iNm
     (b , Just mfWords) -> let flattenMFMap = concatMap snd in MixfixyVar $ case b of
       Nothing      -> Mixfixy Nothing              (flattenMFMap mfWords)
       Just [(m,i)] -> Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)

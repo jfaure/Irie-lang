@@ -4,7 +4,7 @@ import ParseSyntax
 import QName
 import CoreSyn(ExternVar(..) , VName(VQBind))
 import Mixfix (solveMixfixes)
-import Externs ( readParseExtern, Externs )
+import Externs ( checkExternScope , Externs )
 import Errors
 import Data.Functor.Foldable
 import Control.Lens
@@ -25,7 +25,8 @@ data Params = Params
   , _args        :: BitSet
   , _bruijnMap   :: V.Vector Int -- pre-built by mkCase: text IName -> BruijnArg TODO merge with letMap
   , _bruijnCount :: Int -- nesting level
-  , _letMap      :: V.Vector (QName , IName) -- letName (letNest , index) & lifted index in module binds
+  , _letMap      :: V.Vector (IName , Int , Int , Int) -- iname , letNest let idx , lifted index in module binds
+                                             -- unfortunately must keep the letName in case its a (mutual?) forward ref
   , _letNest     :: Int
   } deriving Show ; makeLenses ''Params
 
@@ -36,17 +37,17 @@ initParams open required = let
 initModParams open required bindNms = initParams open required & \params -> params
   & lets %~ (.|. intList2BitSet bindNms)
   & letNest %~ (1+)
-  & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (mkQName 0 i , i)) -- top-binds written to modBinds without offset
+  & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (e , 0 , i , i)) -- top-binds written to modBinds without offset
 
 -- TODO don't allow `bind = lonemixfixword`
 -- handleExtern (readParseExtern open mod e i) ||| readQParseExtern :: ExternVar
-handleExtern :: Externs -> Int -> BitSet -> V.Vector _ -> Int -> TT
-handleExtern exts mod open lm i = case readParseExtern open mod exts i of
+handleExtern :: Externs -> Int -> BitSet -> V.Vector (IName , Int , Int , Int) -> Int -> TT
+handleExtern exts mod open lm i = case checkExternScope open mod exts i of
   ForwardRef b  -> Var (VLetBind (lm V.! b))
-  Imported e    -> InlineExpr e
+  Imported _ e  -> InlineExpr e
   MixfixyVar m  -> MFExpr m -- TODO if ko, mixfix should report "mixfix word cannot be a binding: "
   -- (errors . scopeFails %= s)
-  NotOpened m h -> ScopePoison (ScopeNotImported h m)
+  NotOpened m h -> ScopePoison (ScopeNotImported m h)
   NotInScope  h -> ScopePoison (ScopeError h)
   AmbiguousBinding h ms -> ScopePoison (AmbigBind h ms)
   ImportLabel q -> QLabel q
@@ -80,11 +81,11 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
     & lets %~ (.|. intList2BitSet bindNms)
     & letNest %~ (1+)
     & letMap %~ V.modify (\v -> bindNms `iforM_` \i e ->
-      MV.write v e (mkQName params._letNest i , i + topBindsCount + liftName))
+      MV.write v e (e , params._letNest , i , i + topBindsCount + liftName))
   resolveExt i = if
     | params._args `testBit` i -> Var $ VBruijn  (params._bruijnCount - 1 - (params._bruijnMap V.! i))
     | params._lets `testBit` i -> Var $ VLetBind (params._letMap V.! i)
-    | otherwise -> handleExtern exts thisMod params._open params._letMap i
+    | otherwise -> handleExtern exts thisMod (params ^. Scope.open) params._letMap i
 
   -- Patterns (- TTs) need their labels and constants scoped, then introduce new args
   -- - A (B a _) C => rhs1
@@ -97,7 +98,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
   unfoldCase :: TT -> [((TT {-, [TT]-}) , TT)] -> Params -> TT
   unfoldCase scrut rawAlts params = let
     scopeLayer pat = case pat of
-      Var (VExtern i) -> case readParseExtern params._open thisMod exts i of
+      Var (VExtern i) -> case checkExternScope params._open thisMod exts i of
         ImportLabel q -> QLabel q
   --    ImportLit
         _ -> Var (VExtern i) -- new argument
@@ -113,7 +114,8 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
     openMatch = case rest of -- TODO could be guarded; another case
       [] -> Nothing
       (WildCard , rhs) : redundant -> Just rhs -- guards
-      x -> error (show x) -- _illegallPattern -- argProd , Tuple , Lit are parsed as guards
+      x -> Just (ScopePoison (ScopeError $ "Unknown label: " <> show x))
+--    x -> error (show x) -- _illegallPattern -- argProd , Tuple , Lit are parsed as guards
     -- branch = mkBruijnLam (BruijnAbsF n argSubs 0 rhs)
     match = MatchB scrut (BSM.fromList alts) openMatch
    in match -- (if null redundant then identity else ScopeWarn RedundantPatMatch) (match (Just wild))
@@ -165,7 +167,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
         projections = [TupleIdx (qName2Key (mkQName 0 i)) scrut | i <- [0 .. n - 1]]
         in Right . (,params) <$> AppF (GuardArgs subPats (Guards ko guards rhs)) projections
       -- vv TODO could be Label or new arg
-      Var (VExtern i) -> case readParseExtern params._open thisMod exts i of
+      Var (VExtern i) -> case checkExternScope params._open thisMod exts i of
         ImportLabel q -> guardLabel scrut q []--guards
         NotInScope _  -> doBruijnAbs (BruijnAbsF 1 [(i , params._bruijnCount)] 0 rhs)
         x -> DesugarPoisonF (IllegalPattern ("Ext: " <> show x))
@@ -182,7 +184,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
 --  vv TODO get the inames
 --  dupHNames = bitSet2IntList dups <&> \i -> bindsDone V.! i ^. fnNm
     letTT = LetInF (Block open letType bindsDone) liftNames (Right (mtt , letParams))
-    in if dups == 0 then letTT else ScopePoisonF (LetConflict (show <$> bitSet2IntList dups))
+    in if dups == 0 then letTT else ScopePoisonF (LetConflict thisMod dups)
 
   Prod xs -> ProdF $ xs <&> \(i , e) -> (qName2Key (mkQName thisMod i) , Right (e , params))
   Tuple xs -> ProdF $ V.fromList $ Prelude.imap (\i e ->

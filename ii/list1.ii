@@ -83,8 +83,6 @@ filter pred l = case l of
   Nil => Nil
   Cons x xs => if pred x then Cons x (filter pred xs) else filter pred xs
 
-listToBitSet = foldr bitOR 0
-
 {-
 -- String conversion
 fromCString str = let

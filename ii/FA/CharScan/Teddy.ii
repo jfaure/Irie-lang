@@ -1,4 +1,4 @@
--- Teddy: Fast string scanner for max 8 buckets (a char bitSet)
+-- Teddy: Fast 32-byte string scanner for max 8 buckets (nybble -> bitSet 8 of bucket idxs)
 -- searches for n={1,2,3} prefixes of the patterns, then checks exact matches
 -- eg. "hello|world" => 'h'|'w' then 'e'|'o'
 -- ! Setup is tricky

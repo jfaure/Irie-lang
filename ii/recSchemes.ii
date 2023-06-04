@@ -1,0 +1,8 @@
+-- How to get generic cata?
+-- ? embed|project
+-- Type functions: embed : (T : Set -> Set) -> μx.(T x)
+
+import prelude
+--cata fmap f = f << fmap (cata f) -- << project --cataL = cataList ListF
+ListF f = \case { @Nil => Nil ; @Cons x xs => Cons x (f xs) }
+cataList f = f << ListF (cataList f)

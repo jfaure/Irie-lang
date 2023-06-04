@@ -33,7 +33,7 @@ data TypeRoll
 forgetRoll x = {-d_ (rollTy x)-} (forgetRoll' x)
 
 -- 1. merge sub-builds
--- 2. attempt to merge 
+-- 2. attempt to merge
 mergeRolls (NoRoll t) b = case b of
   NoRoll t2        -> NoRoll (mergeTypes True t t2) -- TODO pos/neg type merge?!
   BuildRoll a ms   -> BuildRoll (a {-mergeTypes True a t-}) ms

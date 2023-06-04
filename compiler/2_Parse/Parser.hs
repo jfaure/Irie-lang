@@ -306,7 +306,7 @@ tt :: Parser TT
     liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= V.length (binds block)
     LetIn block liftLetStart <$> (scn *> reserved "in" *> tt)
 
-  typedTT = pure
+  typedTT t = option t (Typed t <$> tyAnn)
 
 patGuards :: Parser TT -> Parser TT
 patGuards rhs = let

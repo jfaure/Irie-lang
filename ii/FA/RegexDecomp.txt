@@ -23,7 +23,7 @@ r/.*foo[ˆX]barY+/
 -- track input offsets of matched strings
 
 Alternations (A|B)
-  | A and B decomposable => mk 2 regexes 
+  | A and B decomposable => mk 2 regexes
   | => mk FA for (A|B)
 recursively apply to convert all alternations into linear regexes
 

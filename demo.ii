@@ -1,10 +1,11 @@
 -- let-bound mixfix
 -- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
 
--- Type ascriptions
---Rectangle (P : Set) : Set = { f = P }
---Recangle = { f = Int , g = Int }
---rect = { f = 5 , g = 3 } : Rectangle
+-- bad type depending on order of mutuals
+--ii/SpecialisationTests/WrappedSimpleMutual.ii"
+
+-- parse type params
+-- Rectangle (P : Set) : Set = { f = P }
 
 -- Let conflict "0"
 --eq1 @x b = 2
@@ -13,7 +14,7 @@
 --imports list list2 tree question ls foldr Free parsec intmap patternTests hash
 --import irieShell -- ideas for irie as shell
 --import imports/TreeStream
---import SpecialisationTests/{SpecPapArg , SimpleMutual , SumOfSquares , fib}
+--import SpecialisationTests/{SpecPapArg , SimpleMutual , SumOfSquares , fib , WrappedSimpleMutual}
 --import SpecTests
 --import testBruijns -- β-reduction
 --import testFuse
@@ -23,18 +24,14 @@
 --import tupleTests
 --import mutumorphism -- avoid let-block
 --import Tee -- duplicate streams
---import Eff2
 
--- import stream
--- f = fromMaybe -- should not be available
+-- Libs: Lens List Eff DFA BitSet
+
+-- Resolve type aliases & parse fn sigs
+--Rectangle = { f = Int , g = Int }
+--rect = { f = 5 , g = 3 } : Rectangle
+--rect2 : Rectangle
+--rect2 = { f = 3 , g = 10 }
 
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
-
--- QName -> HName lookup broke for imports
-import prelude
-f = _>>_ -- add -- ifThenElse
-g = { x = 3 , y = 4 }
-
---import prelude
---cata fmap f = f << fmap (cata f) -- << project

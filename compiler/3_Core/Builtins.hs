@@ -86,6 +86,9 @@ x86Intrinsics =
   , ("_mm256_testc_si256" , [mm256 , mm256] , mm256)
   , ("_mm256_testnzc_si256" , [mm256 , mm256] , mm256)
   , ("_mm256_testz_si256" , [mm256 , mm256] , mm256)
+  , ("_mm256_castsi128_si256" , [mm128] , mm256)
+  , ("_mm256_castsi256_si128" , [mm256] , mm128)
+  , ("_mm256_insertf128_si256" , [mm256 , mm128 , primI32] , mm256)
   ]
 
 -- Primitive Labels
@@ -116,6 +119,8 @@ primFieldMap    = mempty :: M.Map HName QName
 primTys :: V.Vector (HName , PrimType) = V.fromList
   [ ("Bool"    , PrimInt 1)
   , ("Int"     , PrimInt 32)
+  , ("I32"     , PrimInt 64)
+  , ("U32"     , PrimNat 64)
   , ("I64"     , PrimInt 64)
   , ("U64"     , PrimNat 64)
   , ("BigInt"  , PrimBigInt)
@@ -130,14 +135,12 @@ primTys :: V.Vector (HName , PrimType) = V.fromList
   , ("dirent*" , POSIXTy DirentP)
   , ("CStruct" , PrimCStruct)
   , ("StrBuf"  , PrimStrBuf)
-  , ("mm256"   , X86Vec 256)
-  , ("mm128"   , X86Vec 128)
+  , ("m256"    , X86Vec 256)
+  , ("m128"    , X86Vec 128)
   ]
 
 --b = boolL
-[i, b, f, c, ia, str, set , i64 , dirp , _dirent , cstruct , strBuf] = getPrimTy <$> ["Int", "Bool", "Double", "Char", "IntArray", "CString", "Set" , "I64" , "DIR*" , "dirent*" , "CStruct" , "StrBuf"]
-i8 = c
-i32 = i
+[i, b, f, i8, ia, str, set , i32 , i64 , dirp , _dirent , cstruct , strBuf] = getPrimTy <$> ["Int", "Bool", "Double", "Char", "IntArray", "CString", "Set" , "I32" , "I64" , "DIR*" , "dirent*" , "CStruct" , "StrBuf"]
 
 --substPrimTy i = THPrim $ primTyBinds V.! i
 
@@ -195,7 +198,7 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("writeArray" , (WriteArray , [THBi 1 $ TyGround $ mkTHArrow [THTyCon (THArray (tHeadToTy $ THBound 0)) , THExt i64 , THBound 0] (THBound 0)]))
 
   , ("readFile"  , (ReadFile  , mkTHArrow [mkExt str] (mkExt str)))
-  , ("writeFile" , (WriteFile , mkTHArrow [mkExt str] (mkExt str)))
+  , ("writeFile" , (WriteFile , mkTHArrow [mkExt str , mkExt str] (mkExt i64)))
 
   , ("opendir" , (OpenDir , mkTHArrow [mkExt str]  (mkExt dirp)))
   , ("readdir" , (ReadDir , mkTHArrow [mkExt dirp] (mkTHTuple $ TyGround <$> [[boolL] , [mkExt dirp] , [mkExt str]] )))
@@ -221,7 +224,7 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
 
   , ("puts"      , (Puts    , ([str] , i)))
   , ("putNumber" , (PutNbr  , ([i] , i)))
-  , ("putChar"   , (PutChar , ([c] , c)))
+  , ("putChar"   , (PutChar , ([i8] , i8)))
   , ("ord"       , (NumInstr (IntInstr Ord) , ([i8] , i32)))
   , ("chr"       , (NumInstr (IntInstr Chr) , ([i32] , i8)))
 
@@ -237,13 +240,6 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("fadd"  , (NumInstr (FracInstr FAdd  ) , ([f, f] , f) ))
   , ("fsub"  , (NumInstr (FracInstr FSub  ) , ([f, f] , f) ))
   , ("fmul"  , (NumInstr (FracInstr FMul  ) , ([f, f] , f) ))
---, ("fcmp"  , (NumInstr (FracInstr FCmp  ) , ([f, f] , b) ))
---, ("le"    , (NumInstr (PredInstr LECmp ) , ([i, i] , b) ))
---, ("ge"    , (NumInstr (PredInstr GECmp ) , ([i, i] , b) ))
---, ("lt"    , (NumInstr (PredInstr LTCmp ) , ([i, i] , b) ))
---, ("gt"    , (NumInstr (PredInstr GTCmp ) , ([i, i] , b) ))
---, ("eq"    , (NumInstr (PredInstr EQCmp ) , ([i, i] , b) ))
---, ("ne"    , (NumInstr (PredInstr NEQCmp) , ([i, i] , b) ))
 --, ("boolOR",  (NumInstr (PredInstr OR )   , ([b, b] , b) ))
 --, ("boolAND", (NumInstr (PredInstr AND )  , ([b, b] , b) ))
   , ("zext"  , (Zext  , ([b] , i) ))
@@ -251,8 +247,9 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("srem"  , (NumInstr (IntInstr SRem) , ([i, i] , i) ))
   , ("bitXOR", (NumInstr (BitInstr Xor ) , ([i, i] , i) ))
   , ("bitAND", (NumInstr (BitInstr And ) , ([i, i] , i) ))
+  , ("bitANDN", (NumInstr (BitInstr ANDN) , ([i, i] , i) ))
   , ("bitOR" , (NumInstr (BitInstr Or  ) , ([i, i] , i) ))
-  , ("bitNOT", (NumInstr (BitInstr Not ) , ([i, i] , i) ))
+  , ("bitNOT", (NumInstr (BitInstr Not ) , ([i] , i) ))
   , ("bitSHL", (NumInstr (BitInstr ShL ) , ([i, i] , i) ))
   , ("bitSHR", (NumInstr (BitInstr ShR ) , ([i, i] , i) ))
   , ("bitCLZ", (NumInstr (BitInstr CLZ ) , ([i] , i) ))

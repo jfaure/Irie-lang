@@ -41,5 +41,5 @@ shuf4 hi lo sel = let -- (note. shuf2 accepts <128 and works mod 32)
 
   -- blend
   -- or
-  r = 
+  r =
   in _mm128_or_si128 (_mm256_extractf128_si256 r 0) (_mm256_extractf128_si256 r 1)

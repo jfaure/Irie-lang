@@ -18,6 +18,15 @@ makeLabel q = let sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCo
 
 tHeadToTy t = TyGround [t]
 
+exprToTy (Core term _tyty) = termToTy term
+
+termToTy :: Term -> Maybe Type
+termToTy = \case
+  Ty t -> Just t
+  Prod xs -> traverse termToTy xs <&> \ts -> TyGround [THTyCon (THProduct ts)]
+  Var (VQBind q) -> Just (TyAlias q)
+  x -> Nothing
+
 unzipExprs :: [Expr] -> ([Term] , [Type])
 unzipExprs = unzip . fmap (\(Core expr ty) -> (expr , ty))
 

@@ -1,54 +1,56 @@
--- free: left adjoint of a forgetful operation
--- f is the "request signature"
--- Iries datatypes are open via subtyping, so no hacks needed on top of this
-data Freer f a =
-  Pure a
-  Free (f x) (x -> Freer f a)
+-- See also Effnotes.txt
+-- Monad , foldM , and array write
+foldM f z xs = foldl (\acc x => acc >>= \b => f b x) (pure z) xs
+-- foldl (>=>) pure (replicate n addGet) 0
 
-Reader i x = { Get : FReaderWriter i i }
-Writer o x = { Put : o -> Writer o ()  }
+-- A snoc list
+_>>=_ { l1 } = \(Free fx f) g => Free fx (f >=> g)
+f >=> g = \x => f x >>= g
 
--- left-associated list appends is slow;
--- instead use a "type-aligned sequence"
-_>>=_ { l1 } = \(@Free fx k’) k => Free fx (k’ >=> k)
+-- t is an effect that can be used with other effects
+send : ∀r -> t v -> Eff (r & t) v
+send t = Free t Pure -- singleton Pure
 
-ask :: Member (Reader i) r => Eff r i
-ask = Impure (inj Get) (tsingleton Pure)
+--read  : ∀x. Array x -> Nat -> ArrayM x
+--read v i = send (Read v i)
+--write : ∀x. Array x -> Nat -> x -> ArrayM ()
+--write
 
-send :: Member t r => t v -> Eff r v
-send t = Impure (inj t) (tsingleton Pure)
+-- qApp (apply arg to composition of fns), needs to |><| effects
+Freer f a = gadt
+  Pure a : Freer [] a
+  Free   : ∀x -> f x -> (x -> Freer f a) -> Freer f a -- >>= snoclist
+  Seq    : _
+Pure x   >>= k = k x
+Free u q >>= k = Free u (q |> k) -- snoclist _>>=_ is left associative
 
-addGet :: Int -> Eff (Reader Int) Int
-addGet x = ask >>= \i => Pure (i + x)
+Reader i x = gadt
+  Get : Reader i i
 
-addN :: Int -> Eff (Reader Int) Int
-addN n = foldl (>=>) Pure (replicate n addGet) 0
+ask = ∀r i -> Eff (r & Reader i)
+ask = Free Get Pure -- send Get
 
--- qApp q x applies x to a composition of functions
--- It applies x to the head of sequence k "tacks in" the tail
-qApp :: Arrs r b w → b → Eff r w
-qApp q x = let
-  bind' : Eff r a -> Arrs r a b -> Eff r b
-  bind’ (Pure y) k = qApp k y
-  bind’ (Impure u q) k = Impure u (q BC k)
-  in case tviewl q of
-  TOne k -> k x
-  k :| t -> case (k x) of
-    Pure y   => qApp k y -- bindEff would be just k y
-    Free u q => Free u (q |> k)
+-- >>= is simple snoclist
+-- handling effects requires looking at head of snocList
+-- qApp applies arg to a composition of fns:
+--  gives arg to head of seq and leaves tail unchanged (needs front of list!)
+qApp q k = case (head q) x of
+  Pure y   >>= k => qApp k y
+  Free u q >>= k => Free u (q |><| k)
 
-bindEff (Pure y)   k => k y
-bindEff (Free u q) k => Free u (q |> k)
+-- Loop over the free monad, case out any Get operations
+runReader : i -> Eff (Reader i & r) a -> Eff r a
+runReader i m = loop m where loop = \case
+  Pure x   => Pure x
+  Free u q => case u of
+    Get -> loop (qApp q i)  -- give i arg to head of "Free" snoclist
+    _   -> Free u (loop << qApp q) -- loop over the snoclist
 
--- ! explicitly open sum type
-runReader :: i -> Eff ([Reader i] | r) a -> Eff r a
-runReader i m = let
-  loop (Pure x) = Pure x
-  loop (Impure u q) = case u of
-    Get -> loop (qApp q i)
-    u   -> Free u (tsingleton (qComp q loop)) -- qComp g h = h << qApp g
-  in loop m
+-- * Filter all 'Get' operations by function composition
+handleRelay : (a -> Eff r w) -> (∀ v ~> t v -> Arr v w -> Eff r w) -> Eff (t ': r) a
+  -> Eff r w
+-- v ? turn a function of a sumtype into a guard? | union case statements?
+-- decomp : [A | ..] -> ([A] , [..])
+runReader i = handleRelay pure (\Get k => k i)
 
--- TODO builtin Identity label with subtypes (a <: Identity a) and (Identity a <: a)
-run :: Eff [] a -> a
-run (Pure a) = a
+test arr = readArray arr 0 >>= writeArray arr 0

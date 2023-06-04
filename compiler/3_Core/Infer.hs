@@ -27,12 +27,18 @@ import qualified BitSetMap as BSM -- ( toList, fromList, fromVec, fromListWith, 
 -- 2. read/write everything to modBinds vec isntead of letBinds/letNest
 -- 3. rm VLetNames: mkQName thisMod (translate name)
 -- ? mutu
-judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (ModuleBinds , Errors)
-judgeModule pm importedModules modIName exts loaded = let
+judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> BitSet -> (ModuleBinds , Errors)
+judgeModule pm importedModules modIName exts loaded topBindsMask' = let
   letCount = pm ^. P.parseDetails . P.letBindCount
   binds = pm ^. P.bindings
   topBindsCount = V.length binds
   scopeParams' = initModParams importedModules emptyBitSet (toList (binds <&> (^. P.fnIName))) -- TODO Rm toList
+  -- sadly have to duplicate this warning here since we override scope for top-level. (letBinds vectors break the hylo)
+  warnTopDups :: forall s. TCEnv s ()
+  warnTopDups = let
+    topDups = fst $ foldr (\i (dups , mask) -> (if testBit mask i then setBit dups i else dups , setBit mask i))
+      ((0 , 0) :: (BitSet , BitSet)) (binds <&> (^. P.fnIName))
+    in when (topDups /= 0) ((\e -> errors . scopeFails %= (e:)) $ LetConflict modIName topDups)
   inferModule :: TCEnv s ModuleBinds
   inferModule = inferBlock 0 binds Nothing >>= \(_inExpr , _lets) -> use modBinds >>= V.freeze
   in runST $ do
@@ -40,7 +46,7 @@ judgeModule pm importedModules modIName exts loaded = let
   letBinds' <- MV.new 0xFFF -- let-nest TODO HACK
   bis'      <- MV.new 0xFFF
   g         <- MV.new 0
-  (_2 %~ (^. errors)) <$> runStateT inferModule TCEnvState
+  (_2 %~ (^. errors)) <$> runStateT (inferModule <* warnTopDups) TCEnvState
     { _externs  = exts
     , _loadedMs = loaded
     , _thisMod  = modIName
@@ -53,6 +59,7 @@ judgeModule pm importedModules modIName exts loaded = let
 
     , _inferStack = 0
     , _topBindsCount = topBindsCount
+    , _topBindsMask  = topBindsMask'
     , _scopeParams = scopeParams'
     , _bindsBitSet = 0
     , _bruijnArgVars = mempty
@@ -149,10 +156,12 @@ judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use this
         >>= \wip -> (wip `MV.read` bindINm) >>= inferParsed
 
 -- judgeBind then uninline and add + biunify any captured arguments
-getModBind letNest letName modBindName = do
+getModBind iName letNest letName modBindName = do
   modIName <- use thisMod
   expr <- judgeBind letNest letName modBindName <&> \(Core _t ty) ->
-    Core (Var (VQBind (mkQName modIName modBindName))) ty -- don't inline at this stage
+    Core (Var (VQBind (mkQName modIName iName))) ty -- don't inline at this stage
+    -- also importantly we set the IName, not the modIName here;
+    -- QNames represent a module iname convention, not top-bind index
   use modBinds >>= (`MV.read` modBindName) <&> snd >>= \case
 --use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` modBindName) >>= \case
     b@BindOK{} -> free b & \(_ld , lc) -> explicitFreeVarApp lc expr
@@ -172,11 +181,11 @@ explicitFreeVarApp lc e@(Core t ty) = if lc == 0 then pure e else let
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
 -- ! we may have inferred some missing information in type holes
 checkAnnotation :: Type -> Type -> TCEnv s Type
-checkAnnotation annTy inferredTy =
+checkAnnotation inferredTy annTy =
 --unaliased <- normaliseType mempty annTy
-  check _exts inferredTy annTy >>= \ok -> if ok
-  then pure annTy
-  else inferredTy <$ (errors . checkFails %= (CheckError inferredTy annTy:))
+  use loadedMs >>= \lBinds -> check lBinds inferredTy annTy >>= \case
+    True  -> pure annTy
+    False -> inferredTy <$ (errors . checkFails %= (CheckError inferredTy annTy:))
 
 -- App is the only place inference can fail (if an arg doesn't subtype its expected type)
 biUnifyApp :: Type -> [Type] -> TCEnv s (BiCast , Type)
@@ -248,9 +257,10 @@ inferF = let
 
  -- result of mixfix solves
  getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
-   then unQName q & \i -> getModBind 0 i i
+   then use topBindsMask >>= \topMask -> iNameToBindName topMask (unQName q) & \i -> getModBind (unQName q) 0 i i
+--   <&> \(Core _ ty) -> Core (Var (VQBind (mkQName m (unQName q)))) ty
    else use loadedMs <&> \ls -> readQName ls (modName q) (unQName q)
-     & fromMaybe (error (showRawQName q)) 
+     & fromMaybe (error (showRawQName q))
 
  in \case
   P.QuestionF -> pure $ Core Question tyBot
@@ -272,13 +282,13 @@ inferF = let
           diff = lvl - fLimit
           bruijnAtBind = b - diff -- Bruijn idx relative to enclosing let-binding, not current lvl
       tv <- if b >= diff -- if b is free, insertOrRetrieve its local tvar
-        then (letCaptures <<%= (`setBit` bruijnAtBind)) >>= \oldLc -> use captureRenames >>= \cr -> 
+        then (letCaptures <<%= (`setBit` bruijnAtBind)) >>= \oldLc -> use captureRenames >>= \cr ->
           if testBit oldLc bruijnAtBind
           then MV.read cr bruijnAtBind
           else freshBiSubs 1 >>= \[t] -> t <$ MV.write cr bruijnAtBind t
         else pure (argTVars V.! b) -- local arg
       pure $ Core (VBruijn b) (tyVar tv)
-    P.VLetBind (q , i) -> getModBind (modName q) (unQName q) i
+    P.VLetBind (iName , letNest , letIdx , i) -> getModBind iName letNest letIdx i
     P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 
@@ -340,7 +350,7 @@ inferF = let
          pure $ Core lensOverCast (mergeTVar rT (mkExpected outT))
 
   -- TODO when to force introduce local label vs check if imported
-  P.LabelF localL tts -> use thisMod >>= \thisM -> sequence tts 
+  P.LabelF localL tts -> use thisMod >>= \thisM -> sequence tts
     <&> judgeLabel (mkQName thisM localL)
   P.QLabelF q -> {-sequence tts <&>-} pure (judgeLabel q [])
  -- sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
@@ -351,7 +361,7 @@ inferF = let
     alts <- tys `forM` \(l , params) -> fmap ((l,) . tHeadToTy . THTyCon . THTuple . V.fromList) $ params `forM` \case
       Core (Ty t) _ -> pure t
 --    Core (App t ty) _ -> ttApp t ty
-      notTy    -> pure $ trace ("TODO emit an error for data not being type: " <> show notTy :: Text) tyBot
+      notTy    -> tyBot <$ expectedType notTy
     pure $ Core (Ty (TyGround [THTyCon (THSumTy (BSM.fromList alts))])) (TySet 0) -- max of universe in alts
 
   -- TODO gadt must have a signature for the whole thing also!
@@ -380,6 +390,9 @@ inferF = let
     case b of { BiEQ -> pure () ; _ -> error "expected bieq" }
     pure $ Core (CaseB scrut retT (BSM.fromList (zip labels alts)) (fst <$> def)) retT
 
+  P.TypedF t ty    -> t >>= \(Core term gotT) -> ty >>= \rawAnn -> case exprToTy rawAnn of
+    Just annTy -> Core term <$> checkAnnotation gotT annTy
+    Nothing -> poisonExpr <$ expectedType rawAnn
   P.InlineExprF e -> pure e
   P.LitF l           -> pure $ Core (Lit l) (TyGround [typeOfLit l])
   P.PLitArrayF ls    -> pure $ Core (Lit $ LitArray ls) (TyGround [THTyCon $ THArray $ mergeTypeHeadList True (typeOfLit <$> ls)])
@@ -389,3 +402,6 @@ inferF = let
   P.DesugarPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . unpatternFails %= (t:))
   P.ScopeWarnF w t   -> (errors . scopeWarnings %= (w:)) *> t
   x -> error $ "not implemented: inference of: " <> show (embed $ P.WildCard <$ x)
+
+expectedType :: Expr -> TCEnv s ()
+expectedType notTy = (errors . checkFails %= (ExpectedType notTy :))

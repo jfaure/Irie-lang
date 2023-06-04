@@ -27,11 +27,6 @@ data QMFWord -- qualified
   | QMFPart       QName --(ModIName , IName)
   deriving Eq
 
-mfw2qmfw modNm = \case
-  StartPrefix  m i -> QStartPrefix  m (mkQName modNm i)--(modNm , i)
-  StartPostfix m i -> QStartPostfix m (mkQName modNm i)--(modNm , i)
-  MFPart         i -> QMFPart         (mkQName modNm i)--(modNm , i)
-
 deriving instance Show Assoc
 deriving instance Show Prec
 deriving instance Show MixfixDef

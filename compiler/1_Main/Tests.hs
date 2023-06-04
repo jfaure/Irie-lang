@@ -129,7 +129,7 @@ ph = S.sydTest (S.it "phantom label" testPhantomLabel)
 
 --goldenList = S.goldenTextFile "golden/goldenList" $
 --  withSystemTempFile "goldenList" $ \tmpFile tmpHandle -> do
---    Main.sh ("imports/list.ii -p types --no-fuse -o" <> tmpFile)
+--    Main.sh ("imports/list1.ii -p types --no-fuse -o" <> tmpFile)
 --    readFile tmpFile
 
 goldDir = "goldenOutput/"
@@ -139,7 +139,7 @@ goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
   readFile tmpFile -- If file does not exist, then irie failed before writing to it.
 
 tuple    = S.it "tuple.ii"        (goldenInfer "-p types --no-fuse --no-color" "ii/tuple.ii"       "tuple")
-list1    = S.it "list.ii"         (goldenInfer "-p types --no-fuse --no-color" "ii/list.ii"        "list")
+list1    = S.it "list1.ii"        (goldenInfer "-p types --no-fuse --no-color" "ii/list1.ii"        "list")
 list2    = S.it "list2.ii"        (goldenInfer "-p types --no-fuse --no-color" "ii/list2.ii"       "list2")
 mutual   = S.it "mutual sumMul.ii"(goldenInfer "-p types --no-fuse --no-color" "ii/sumMul.ii"      "sumMul")
 tree     = S.it "tree.ii"         (goldenInfer "-p types --no-fuse --no-color" "ii/tree.ii"        "tree")

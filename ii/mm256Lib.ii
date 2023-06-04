@@ -1,0 +1,24 @@
+-- sum256 =
+-- ; Example 13.15a. Add 16 elements in vector of 8-bit unsigned integers
+-- ; (SSE2)
+-- movaps xmm1, [source] ; Source vector, 16 8-bit integers
+-- pxor xmm0, xmm0 ; 0
+-- psadbw xmm1, xmm0 ; Sum of 8 differences
+-- pshufd xmm0, xmm1, 0EH ; Get bit 64-127 from xmm1
+-- paddd xmm0, xmm1 ; Sum
+-- movd [sum], xmm0 ; Store sum
+
+zeros  = _mm256_xor_s256 _mm256_undefined_si256 _mm256_undefined_si256
+ones   = _mm256_cmpeq_epi8 _mm256_undefined_si256 _mm256_undefined_si256
+set1_epi8_0 = _mm256_setzeros_si256
+set1_epi8_1 = _mm256_abs_epi8 ones
+set1_epi8_2 = set1_epi8-1 > \one -> _mm256_add_epi8 one one
+set1_epi8_-1 = ones
+set1_epi8_-2 = ones > \m1 -> _mm256_add_epi8 m1 m1
+
+-- proper shuffle, expects sel to be a 128 duplicated to both lanes
+mm256 : __m256i -> __m256i -> __m256i
+mm256-shuffle x sel = let
+  t = _mm256_shuffle_epi8 x sel
+  tt = _mm256_permute2x128_si256 _mm256_undefined_si256 t 1 -- swap low and hi
+  in _mm256_blendv_epi8 t tt (_mm256_cmpgt_epi8 sel (_mm256_set1_epi8 15))

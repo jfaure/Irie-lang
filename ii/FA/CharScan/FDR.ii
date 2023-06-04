@@ -7,12 +7,12 @@
 -- (n=8) patterns len 32 | (n=16) patterns len 16
 -- bucket 0 = "hp"
 -- bucket 1 = "aphp"
---    pat bytes:     
+--    pat bytes:
 -- sh-mask 'a' = 11101110 11111110 11111111 11111111
 -- sh-mask 'h' = 11111110 11111110 11101110 11111111
 -- sh-mask 'p' = 11111110 11101110 11111111 11101110
 int n = 8 , patLen = 32;
-SH mkShMask(char const patterns[n][patLen], char c) { 
+SH mkShMask(char const patterns[n][patLen], char c) {
     __m256i shMask        = _mm256_setzero_si256();
     __m256i replicateChar = _mm256_set1_epi8(c);
     for (unsigned char patI = 0; patI < n; ++patI) {

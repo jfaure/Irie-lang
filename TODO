@@ -1,31 +1,26 @@
-# Lift all Let-Ins => infer must lift nests
+# Libs Lens List Eff BitSet ; DFA NFA glushkov Charscan
 # captures inside inExprs are inacurrate (They are a pdep of their freeVars)!
-# Monad , foldM , and array write
-# BitSet lib
-# Usability of recursion schemes on open sumtypes: functor vs embed
+# open modules / records (qualify names on it?)
+## New primitives + Syntax
+  * forall
+  * ~> = implicit arg: A ~> A -> A ; ~ for app of implicit: "identity ~Int 3"
+  * quantify over fields / labels (dependent type)
+     decomp : Label A -> [A _ | ..] -> ([A _] , [..])
+  * record type syntax: { x = Int , y } -- indicates y = ? (only makes sense as a type, but legal syntax)
+  * record union (| : |) , difference (\\ : \\)
+  * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
+  ? Sum-of-Record
+  ? argCase => f = \argCase { a b => _ }
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * module import-sig (will help with mutual modules)
-  * open sum type (default case branch)
   * subtypes: Identity Iso "a <: Identity a" "Identity a <: a" & typeClass dict "{ ret : A } <: A"
-  * open record = qualify names on it (QName for modules , TTLens for local records)
-  * Conv non-mut non-rec let-binds straight to fn args
   * leaf bicasts ; subtype tycon trees (traversals)
   * Case call stream.next to recover nice syntax (? subtype @stream to open top layer)
-  * WrappedSimpleMutual.g1 should not have polymorphic type (mutual generalistation)
+  * WrappedSimpleMutual.g1 should not have polymorphic type (mutual generalistation bug)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * generalise all lambda types (unless inlineable?) + check not-recursive (avoid inf β-reduction eg. Y-comb)
-  * trim bisubs at some point
-  * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
   * label/constant name-conv: importing new labels can break code: eg. f a = _ ; then import an 'a' label
   * edit-distance
-  * Database effect
-## Syntax: spare: `~%;
-  * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
-  * record type syntax: { x = Int , y } -- indicates y = ? (only makes sense as a type)
-  * ~> = implicit arg: A ~> A -> A ; ~ for app of implicit: "identity ~Int 3"
-  ? Sum-of-Record
-  * record union (| : |) , difference (\\ : \\)
-  ? argCase => f = \argCase { a b => _ }
 ### Linearity ; free variables (type must be known) ; β vs always-inline
   ! β-opt: Specialise on paps iff dupd (or all paps?) (polymorphic functions may miss pap-specs)
   * dup node scope: global / device / thread ?
@@ -82,8 +77,8 @@
   * Warn nonsense type joins | dependent case?
   * mixfix parser errors & locations
   * Literal is out of Int range: cast Literals
-  * " f = 3" -- top level space before bind bad error message
 ## Unimportant
+  * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
   * let-scope depends on mixfix parse: "letscopeAfterMixfix y = if y then let x = 3 in x else y"
   * mode to print type-var bounds
   * Insta-unwrap/specialise single branch cases

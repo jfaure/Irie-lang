@@ -32,7 +32,7 @@ shuf2 x1 x0 sel = let -- 5 instr, exploit overflow and shuffle control bit 7 => 
 mm256 : __m256i -> __m256i -> __m256i
 mm256-shuffle x sel = let
   t = _mm256_shuffle_epi8 x sel
-  tt = _mm256_permute2x128_si256 _mm256_undefined_si256 t 1 -- swap low and hi 
+  tt = _mm256_permute2x128_si256 _mm256_undefined_si256 t 1 -- swap low and hi
   in _mm256_blendv_epi8 t tt (_mm256_cmpgt_epi8 sel (_mm256_set1_epi8 15))
 
 --shuf2' : _mm256 -> _mm128 -> _mm128
@@ -88,7 +88,7 @@ _⊗m,n_ = _
 --  S⊗TLo = _mm_blendv_epi8 (SLo ⊗16,16 TLo) (SLo ⊗16,16 THi) (SLo < 16)
 --  S⊗THi = _mm_blendv_epi8 (SHi ⊗16,16 TLo) (SHi ⊗16,16 THi) (SHi < 16)
 --  r = (S⊗THi , S⊗TLo)
---  in 
+--  in
 
 -- _mm256_shuffle_epi8 is a 2x_mm_shuffle_epi8
 -- 7 instructions
@@ -109,10 +109,10 @@ _⊗m,n_ = _
 --     sa = S ⊗ T[a] ; Tbc = T[b] ⊗ T[c]
 --     sb = sa ⊗ T[b] ; S = Sa ⊗ Tbc
 --     φ(a , Sa[st]) , φ(b , sb[st]) , φ(c , S[st])
-State = data | S16 _mm128 | S32 | 64 .. -- assume a _mm128 
+State = data | S16 _mm128 | S32 | 64 .. -- assume a _mm128
 runDFA : Vec 256 State -> String -> (Char -> State -> Bool) -> Bool
 runDFA T input φ = let -- idState maps i to i
-  next3 state a b c = 
+  next3 state a b c =
   in stream3 next3 idstate input -- ?!
 
 -- Eliminate identical lookups, in the hope of reducing ⊗m,n below a width threshold

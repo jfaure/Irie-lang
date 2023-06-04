@@ -31,8 +31,9 @@ type CaseID    = Int
 -- Note. lifted let binds are appended to the module and become VQBinds
 data VName
  = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
+ -- IMPORTANT: QBinds qualify INames (they are no different to record field names)
+ --   within a module, their index is obtained from (Externs.iNameToBindName: (topBinds : BitSet) -> QName -> Int)
  | VForeign HName -- opaque name resolved at linktime
- | VLetBind QName -- + counterpart of VBruijn rm this
 
 data Term -- β-reducable (possibly to a type)
  = Var     !VName
@@ -162,11 +163,11 @@ optInferred = OptBind 0 mempty
 
 data ExternVar
  = ForwardRef IName -- not extern
- | Imported   Expr  -- Inlined
+ | Imported   ModuleIName Expr  -- Inlined
  | ImportLabel QName
 
  | NotInScope       HName
- | NotOpened        HName HName
+ | NotOpened        BitSet QName -- HName HName
  | AmbiguousBinding HName [(ModIName , IName)] -- same level binding overlap / overwrite
 
  | Importable ModuleIName IName -- Available externally but not obviously worth inlining
@@ -217,7 +218,7 @@ data SrcInfo = SrcInfo Text (VU.Vector Int)
 -- Used by prettyCore functions and the error formatter
 data BindSource = BindSource {
    srcLabelNames :: ModIName -> IName -> Maybe HName -- TODO should merge this into srcFieldNames somehow
- , srcBindNames  :: ModIName -> IName -> Maybe HName -- INames as parsed by P.unknownNames
+ , srcFieldNames :: ModIName -> IName -> Maybe HName -- INames as parsed by P.unknownNames
 }
 
 makeBaseFunctor ''Expr

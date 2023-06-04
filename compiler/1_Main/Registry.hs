@@ -58,12 +58,6 @@ doParallel = False
 -- TODO mergeRegistries
 -- TODO ImportedSig: BitSet of imported binds from each module (depends on scope)
 
-lookupLabelName   = lookupJM labelNames
-lookupFieldName = lookupJM jmINames
-lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
-  JudgeOK _mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName) else Just ("bug:" <> show iName)
-  _ -> Nothing
-
 -- useCache
 initRegistry False  = newMVar builtinRegistry
 initRegistry True = doesFileExist registryFName >>= \case
@@ -96,10 +90,14 @@ compileFiles cmdLine reg = let
 -- Somewhat a hack (?)
 textModName = "<text>" :: Text -- module Name for text strings; This will be overwritten each time
 
+-- must call findModule on import statements to normalise the key
+resolveModuleHName :: PureRegistry -> HName -> IName
+resolveModuleHName reg textModName = fromMaybe (error ("module unknown! " <> show textModName)) (_modNames reg M.!? textModName)
+
 compileText :: CmdLine -> Registry -> Text -> IO (Maybe Import)
 compileText cmdLine reg progText = do
   void $ join (hyloM (judgeTree cmdLine reg) (readDeps reg) (0 , InText progText))
-  modIName <- readMVar reg <&> (M.! textModName) . _modNames
+  modIName <- readMVar reg <&> \r -> resolveModuleHName r textModName
   getLoadedModule reg modIName <&> Just . _loadedImport
 
 type MISeed = (Dependents , InCompile)
@@ -124,8 +122,9 @@ readDeps reg (ds , input) = let
   inText :: IName -> FilePath -> Text -> IO (TreeF (Dependents , Import) MISeed)
   inText iM fPath txt = case parseModule fPath txt of
     Left parseKO -> pure (NodeF (ds , NoParse (T.pack fPath) parseKO) [])
-    Right p -> ((fmap InFilePath . findModule searchPath . toS) `mapM` (p ^. P.imports))
-      <&> \imports -> NodeF (ds , ParseOK iM p) ((setBit ds iM , ) <$> imports)
+    Right p -> ((fmap InFilePath . findModule searchPath . toS) `mapM` (p ^. P.imports)) <&> \imports ->
+--    <&> \imports -> let hackImports = concatMap (\case {InText{}->[] ; InFilePath e -> (const [] ||| (\x->[toS x])) e}) imports
+      NodeF (ds , ParseOK iM p) ((setBit ds iM , ) <$> imports)
   in case input of
   InText txt -> registerModule reg textModName
     >>= \iM -> inText ((identity ||| identity) iM) (T.unpack textModName) txt
@@ -165,42 +164,38 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
   >>= \depL -> let deps = foldr (.|.) 0 depL in case mod of
   NoPath fName -> deps <$ putStrLn ("Not found: \"" <> fName <> "\"")
   NoParse _fName parseError -> deps <$ putStrLn (errorBundlePretty parseError)
-  JudgeOK mI _j -> setBit dependents mI <$ registerDeps reg mI deps dependents
-  ParseOK mI pm -> when ("parseTree" `elem` printPass cmdLine) (putStrLn (P.prettyModule pm))
-    *> readMVar reg >>= \reg' -> deps <$ -- setBit dependents mI
-    let iNamesV = iMap2Vector (pm ^. P.parseDetails . P.hNamesToINames)
-        (resolver , mfResolver , exts) = resolveNames reg' mI pm iNamesV
-        getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
-          BindSource (lookupLabelName r._loadedModules) (lookupFieldName r._loadedModules)
-        putModVerdict = False -- TODO should only print at repl?
-        (warnings , jmResult) = judge deps reg' exts mI pm iNamesV
-    in case simplify cmdLine <$> jmResult of
-      -- TODO have partially OK judged module
-      Left (errs , _jm) -> registerJudgedMod reg mI (Left errs)
-        *> getBindSrc >>= \bindSrc ->
-        putErrors stdout Nothing bindSrc errs
-        *> when putModVerdict (putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
-      Right jm -> let
-        shouldPutJM = (dependents == 0 || putDependents cmdLine)
-                       && any (`elem` printPass cmdLine) ["core", "simple", "types"]
-        in registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
-        *> maybe (pure ()) putStrLn warnings
-        *> when shouldPutJM (getBindSrc >>= \bindSrc -> putJudgedModule cmdLine (Just bindSrc) jm)
-        *> when putModVerdict (putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
+  JudgeOK mI _j -> setBit deps mI <$ registerDeps reg mI deps dependents
+  ParseOK mI pm -> do
+   when ("parseTree" `elem` printPass cmdLine) (putStrLn (P.prettyModule pm))
+   reg' <-  readMVar reg
+   importINames <- let
+     go acc f = findModule searchPath (toS f) <&> (const acc ||| setBit acc . resolveModuleHName reg' . toS)
+     in foldM go 0 (pm ^. P.imports)
+   setBit deps mI <$ let -- setBit dependents mI
+     iNamesV = iMap2Vector (pm ^. P.parseDetails . P.hNamesToINames)
+     (resolver , mfResolver , exts) = resolveNames reg' mI pm iNamesV
+     getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
+       BindSource (lookupLabelName r._loadedModules) (lookupFieldName r._loadedModules)
+     putModVerdict = False -- TODO should only print at repl?
+     (warnings , jmResult) = judge importINames reg' exts mI pm iNamesV
+     in case simplify cmdLine <$> jmResult of
+     -- Note. we still register the module even though its is partially broken, esp. for putErrors to lookup names
+     Left (errs , jm) -> registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
+       *> getBindSrc >>= \bindSrc ->
+       putErrors stdout Nothing bindSrc errs
+       *> {-when putModVerdict-} (putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
+     Right jm -> let
+       shouldPutJM = (dependents == 0 || putDependents cmdLine)
+                      && any (`elem` printPass cmdLine) ["core", "simple", "types"]
+       in registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
+       *> maybe (pure ()) putStrLn warnings
+       *> when shouldPutJM (getBindSrc >>= \bindSrc -> putJudgedModule cmdLine (Just bindSrc) jm)
+       *> when putModVerdict (putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
   ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
   NoJudge _mI _jm -> pure deps
   IRoot -> error "root"
-  ImportQueued m -> readMVar m $> deps
+  ImportQueued m -> deps <$ readMVar m
   -- Wait. TODO IMPORTANT! This will hang if ImportQueued thread fails to putMVar (call registerJudgedMod)
-
-putJudgedModule :: CmdLine -> Maybe BindSource -> JudgedModule -> IO ()
-putJudgedModule cmdLine bindSrc jm = let
-  putBind = not $ "types" `elem` printPass cmdLine 
-  renderOpts = ansiRender { bindSource = bindSrc , ansiColor = not (noColor cmdLine) }
-  putJM outHandle = TL.IO.hPutStrLn outHandle (prettyJudgedModule (putLetBinds cmdLine) putBind renderOpts jm)
-  in case cmdLine.outFile of
-    Nothing    -> putJM stdout
-    Just fName -> openFile fName WriteMode >>= \h -> putJM h *> SIO.hClose h
 
 --tryLockFile "/path/to/directory/.lock" >>= maybe (ko) (ok *> unlockFile)
 isCachedFileFresh fName cache =
@@ -212,7 +207,7 @@ judge deps reg exts modIName p iNamesV = let
 --  bindNames   = p ^. P.bindings <&> P._fnNm
   labelHNames = p ^. P.parseDetails . P.labels
   bindINames  = p ^. P.parseDetails . P.topINames
-  (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules
+  (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules bindINames
   jm = JudgedModule modIName (p ^. P.moduleName) (iMap2Vector labelHNames) iNamesV bindINames modTT
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails) && null (errors ^. checkFails)
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails) && null (errors ^. unpatternFails)
@@ -220,11 +215,20 @@ judge deps reg exts modIName p iNamesV = let
     else Just (unlines $ formatScopeWarnings iNamesV <$> ws)
   in (warnings , if coreOK then Right jm else Left (errors , jm))
 
+putJudgedModule :: CmdLine -> Maybe BindSource -> JudgedModule -> IO ()
+putJudgedModule cmdLine bindSrc jm = let
+  putBind = not $ "types" `elem` printPass cmdLine
+  renderOpts = ansiRender { bindSource = bindSrc , ansiColor = not (noColor cmdLine) }
+  putJM outHandle = TL.IO.hPutStrLn outHandle (prettyJudgedModule (putLetBinds cmdLine) putBind renderOpts jm)
+  in case cmdLine.outFile of
+    Nothing    -> putJM stdout
+    Just fName -> openFile fName WriteMode >>= \h -> putJM h *> SIO.hClose h
+
 putErrors :: Handle -> Maybe SrcInfo -> BindSource -> Errors -> IO ()
 putErrors h srcInfo bindSrc errors = let
   e = [ formatMixfixError srcInfo        <$> (errors ^. mixfixFails)
       , formatBisubError bindSrc srcInfo <$> (errors ^. biFails)
-      , formatScopeError                 <$> (errors ^. scopeFails)
+      , formatScopeError bindSrc         <$> (errors ^. scopeFails)
       , formatCheckError bindSrc         <$> (errors ^. checkFails)
       , formatTypeAppError               <$> (errors ^. typeAppFails)
       , formatUnPatError                 <$> (errors ^. unpatternFails)]

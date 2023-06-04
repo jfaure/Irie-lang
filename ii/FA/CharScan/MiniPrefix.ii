@@ -1,43 +1,47 @@
--- Fastest scanner (Only for pattern sets with small total len (<= 32), 64,128 extensions
+import prelude
+-- import list
+-- 16byte scanner; small pattern sets (<= 32);
 -- if pattern set < 16, can search 2x the pattern space
+-- can detect ranges, bytes, negated bytes and negated ranges and match several boolean combinations of these predicates at once.
+-- If tight (spare bit in front of each pattern in CatPatterns) , can call verifyTight, and:
+-- CatPatterns must set each spare byte to 1 and PatShuf must always shuffle a 0 there (set high bit of ctrl mask)
+MiniScanner = record
+  CatPatterns = m256 -- 32x8 concatenated patterns
+  PatShuf     = m256 -- 32x8 shuffle mask for input corresponding to catPatterns
+  Hi          = I32  -- hi mask (MSB of each string)
+  Lo          = I32  -- lo mask (LSB of each string) =>  "cat|dog" -> 2 5 (0b001001) the bit to be carried by +
 
-scanMini : 16x8 -> (32x8 , 32x8) -> i32
-scanMini 16Bytes (catPatterns , patShuf) = let
+--scanMini : 16x8 -> (32x8 , 32x8) -> i32
+-- 4 instrs (insertf128 is slow though)
+scanMini 16Bytes (catPatterns , patShuf) = _mm256_movemask_epi8
+  (_mm256_cmpeq_epi8 catPatterns
+    (_mm256_shuffle_epi8 (_mm256_insertf128_si256 (_mm256_castsi128_si256 16Bytes) 16Bytes 1) patShuf))
   -- copy prefixes of len P.i from 16byte input for direct cmp with catPatterns
-  input = _mm256_shuffle_epi8 (_mm256_broadcast_si128_si256 16Bytes) patShuf
-  cmp   = _mm256_cmpeq_epi8 input catPatterns
-  in _mm256_movemask_epi8 cmp
 
--- The mask sets 1 for each char match in each pattern
--- setup a hole at the top and + to carry over matches into a single bit
--- returns bitset of matchidx: clz to find first match (more if overlapping patterns)
--- Faster If space between patterns to pre-setup holes for carry operation
-verifyTight , verifyLoose : i32 -> i32 -> i32 -> i32
-verifyLoose hi lo mask = hi .&. (mask + lo)
-verifyTight hi lo mask = let
-  carryMatches = (mask .&. complement hi) + lo -- 0 the carry bit and perform carry
-  in carryMatches .&. mask .&. hi
-  -- 0 all except the MSB (start idx of each pattern in catPatterns)
+-- The mask sets 1 for each char match in each pattern, We need a 0 bit above that for + to carry into
+-- returns bitset of matchidx in the 32 bytes scanned
+-- use clz to find first match (maybe more if overlapping patterns)
+-- verifyTight , verifyLoose : i32 -> i32 -> i32 -> i32
+verifyLoose hi lo scanMask = hi B& (lo + scanMask) -- ScanMask pre-setup holes for carry
+verifyTight hi lo scanMask = hi B& scanMask B& (lo + (scanMask B& bitNOT hi))
 
--- patShuf
--- , hi mask (MSB of each string) "cat|dog" -> 2 5 (0b001001)
--- , lo mask (LSB of each string) => the bit to be carried over to by + if all matches
--- loose means we can pre-setup a hole bit in fewer instructions
-fromPatterns : [String]
-  [ Fail Int -- only handle small patsets (<= 32 total len)
-  | Loose 32x8 32x8 i32 i32 -- catPats , shufControl , lo , hi
-  | Tight 32x8 32x8 i32 i32]
-fromPatterns pats = let
-  patLens = len <$> pats
-  fullLen = sum patLens
-  loose = (32 - length pats) > fullLen
-  in if
-    | fullLen >= 32 => Fail
-    | loose => Loose _
-    |       => Tight _
+-- Patterns may not be < 2 bytes
+-- If patterns don't fully fit in 32 bytes; trim longest ones
+-- fromPatterns : Nat -> Nat -> Array Nat -> Array CString -> MiniScanner
+fromPatterns nPats sumLens lens pats = let
+  tight = sumLens <? 32 - nPats -- TODO mk tight if possible
+  listToBitSet = foldl setBit 0
+  loList = scanl _+_ 0 lens
+  lo    = listToBitSet loList -- "cat|dog" -> 0b001001
+  in record
+  CatPatterns = _mm256_fromList_epi8 (concat pats)
+              -- vv [0..] , reset at each pat start offset (TODO set bit 7 at end iff tight)
+  PatShuf     = _mm256_fromList_epi8 (concatMap (\len => 0 .. len) lens)
+  Hi          = setBit (lo B>> 1) sumLens
+  Lo          = lo
 
--- !! Can compare discontinuous things!
--- * Only a boolean function where some ordering allows all true values above all false vaules
+-- !! Can compare discontinuous things, within limits:
+-- * boolean function where some ordering allows all true values above all false vaules
 -- Pred ::= Cmp"∧("Pred")" | Cmp"∨("Pred")" | "0"
 -- Cmp is whatever you can put together with vector instructions
 -- (∀ (c d : Char) -> (i < 16) -> c <= str[i] && str[i] <= d

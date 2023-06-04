@@ -93,13 +93,13 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
       fuse (lvl , (prevEnv , trailingArgs) , argTerm)
 
   -- inlineLetBind: lvl == 0 means this fully reduces (won't produce a function)
-  Var (VLetBind q) | lvl == 0 {-&& q /= (QName 1)  HACK -} -> use letBinds >>= \lb -> (lb `MV.read` modName q)
-    >>= \bindVec -> MV.read bindVec (unQName q) >>= simpleBind lvl (argEnv , []) >>= \b -> case b of
-      BindOK _ (nL , letCapture) (Core inlineF _ty) -> let
-        env' = (V.drop (V.length argEnv - nL) argEnv , trailingArgs)
-        in MV.write bindVec (unQName q) b -- in case this is first time seeing the bind
-          *> fuse (lvl , env' , inlineF)
-      x -> error $ show x
+--Var (VLetBind q) | lvl == 0 {-&& q /= (QName 1)  HACK -} -> use letBinds >>= \lb -> (lb `MV.read` modName q)
+--  >>= \bindVec -> MV.read bindVec (unQName q) >>= simpleBind lvl (argEnv , []) >>= \b -> case b of
+--    BindOK _ (nL , letCapture) (Core inlineF _ty) -> let
+--      env' = (V.drop (V.length argEnv - nL) argEnv , trailingArgs)
+--      in MV.write bindVec (unQName q) b -- in case this is first time seeing the bind
+--        *> fuse (lvl , env' , inlineF)
+--    x -> error $ show x
 
 --Var (VLetBind q) | not (null trailingArgs) -> specApp lvl (argEnv , []) q
 --  =<< (trailingArgs `forM` \(TSub e l t) -> simpleTerm' l (e , []) t)
@@ -145,10 +145,10 @@ fuse (lvl , env@(argEnv , trailingArgs) , term) = let
     inferBlock lets (\_ -> LetBlockF <$> lets `forM` \(lm , bind) -> (lm ,)
       <$> simpleBind lvl (argEnv , mempty) bind)
   LetBinds lets inE -> inferBlock lets $ \_ -> do
-    newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl (argEnv , mempty) bind
+--  newLets <- lets `forM` \(lm , bind) -> (lm ,) <$> simpleBind lvl (argEnv , mempty) bind
     newInE  <- simpleTerm' lvl env inE -- incl trailingArgs
     -- TODO Cannot remove the LetBinds iff expr contains a letSpec / reference to this let
-    pure $ if lvl == 0 then Left <$> project newInE else LetBindsF newLets (Left newInE)
+    pure $ if lvl == 0 then Left <$> project newInE else LetBindsF mempty (Left newInE)
 
   x -> pure $ if null trailingArgs
     then Right . (lvl , env ,) <$> project x
@@ -180,7 +180,7 @@ fuseCase lvl argEnv trailingArgs retT branches d tt = let
 inferBlock lets go = do
   nest <- letNest <<%= (1+)
   v <- use letBinds >>= \lvl -> V.thaw (snd <$> lets) >>= \v -> MV.write lvl nest v $> v
-  go v <* (letNest %= \x -> x - 1) -- <* traceM "decBlock" 
+  go v <* (letNest %= \x -> x - 1) -- <* traceM "decBlock"
 
 -- TODO how to avoid duplicate simplifications? ie. iff no VBruijns to solve: isEnvEmpty
 simpleBind lvl env b = case b of
@@ -217,10 +217,10 @@ destructureArgs args = let
   solveArg :: Term -> State Int ([Term] , [Term] , ArgShape)
   solveArg arg = case arg of
     Var (VQBind q)   -> pure ([] , [arg] , ShapeQBind q)
-    Var (VLetBind q) -> pure ([] , [arg] , ShapeLetBind q)
+--  Var (VLetBind q) -> pure ([] , [arg] , ShapeLetBind q)
     -- avoid specialising on builtins, which can never fuse
-    App (Var (VLetBind q)) ars -> traverse solveArg ars <&> \ars ->
-      unzip3 ars & \(uL , rL , shL) -> (concat uL , [App (Var (VLetBind q)) (concat rL)] , ShapePAPLet q shL)
+--  App (Var (VLetBind q)) ars -> traverse solveArg ars <&> \ars ->
+--    unzip3 ars & \(uL , rL , shL) -> (concat uL , [App (Var (VLetBind q)) (concat rL)] , ShapePAPLet q shL)
     Label l ars -> traverse solveArg ars <&> \case
       [] -> ([] , [Label l []] , ShapeLabel l []) -- lone label is like a constant VQBind
       ars -> unzip3 ars & \(uL , rL , shL) -> (concat uL , [Label l (concat rL)] , ShapeLabel l shL)
@@ -232,7 +232,7 @@ specApp :: forall s. Lvl -> Env -> QName -> [Term] -> SimplifierEnv s (TermF (Ei
 specApp lvl env q args = let
   nest     = modName q
   bindNm   = unQName q
-  noInline = Left <$> AppF (Var (VLetBind q)) args
+  noInline = Left <$> AppF (Var (_VLetBind q)) args
   (bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
   in -- d_ args $ d_ argShapes $ d_ repackedArgs $ d_ unstructuredArgs $ d_ "" $
   use letBinds >>= \lb -> (lb `MV.read` nest) >>= \bindVec -> MV.read bindVec bindNm >>= \case

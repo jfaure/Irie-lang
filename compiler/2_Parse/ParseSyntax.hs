@@ -52,7 +52,7 @@ data TTName
  = VBruijnLevel IName
  | VBruijn  IName
 -- | VBind IName -- bound in this module , also lifted lets
- | VLetBind (QName , IName) -- let-name and lifted name
+ | VLetBind (IName , Int , Int , Int) -- iName , letnest , letidx , modiname (lifted name)
  | VExtern  IName -- ! Parser only parses VExterns
 
 data LensOp a = LensGet | LensSet a | LensOver a deriving (Show , Functor , Foldable , Traversable)
@@ -94,6 +94,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Guards (Maybe TT) [Guard] TT -- ko-branch (if open case above) , guards , rhs
  | GuardArgs [TT] TT -- Spawn fresh args and pattern-match according to [TT]. no KO branch to jump out of fails
  | FnEqns [TT]
+ | Typed TT TT
 
  -- These negative-position TTs must be inverted first before solveScopes
  -- The newtypes hide this to allow interleaving UnPattern with solveScopes
@@ -108,8 +109,6 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | LetIn Block Int TT
  | ModBinds Block
 
--- | LiftedLets LetQual Int TT -- Int is index into lifted-let-block vector
-
  -- term primitives
  | Lit      Literal
  | PLitArray {-(Maybe Int)-} [Literal] -- maybe size
@@ -123,7 +122,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat =>'
 
- -- desugaring
+ -- desugaring , scope solve
  | DesugarPoison UnPatError
  | ScopeWarn  ScopeWarning TT -- Scope
  | ScopePoison ScopeError

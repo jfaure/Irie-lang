@@ -17,7 +17,7 @@ data VarSub = SubVar Int | SubTy Type | DeleteVar | GeneraliseVar | RecursiveVar
 
 -- fresh names for generalised tvars: [A..Z etc]
 data GenState s = GenState { _nquants :: Int , _genVec :: MV.MVector s Int }; makeLenses ''GenState
-type G s = StateT (GenState s) (ST s) 
+type G s = StateT (GenState s) (ST s)
 
 -- Generalising a type unavoidably requires a double pass since simplification must know all co-occurences
 -- 1. recursively read tvar bounds and register coocurrences
@@ -132,7 +132,7 @@ buildType bis' handleVar loops pos = let
     pure $ mergeTypeList pos (TyGround grounds : subs ++ varBounds)
   in readBounds loops . partitionType
 
--- Need to recursively read all tvar transitive bounds 
+-- Need to recursively read all tvar transitive bounds
 reconstructType :: forall s. MV.MVector s BiSub -> V.Vector VarSub -> Type -> G s Type
 reconstructType bis' varSubs ty = let
   readBounds :: (Bool , BitSet , Type) -> G s (TypeF (Bool , BitSet , Type))

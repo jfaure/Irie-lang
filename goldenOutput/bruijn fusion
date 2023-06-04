@@ -1,12 +1,12 @@
 f1 = (Int 6) : %i32
 rename = (λb(2) (_+_ B1 B0)) : %i32 → %i32 → %i32
-fg = (λb(2) B0  >  [\case 
+fg = (λb(2) B0  >  [\case
   Wrap => (_+_ B1 B1)]) : %i32 → [Wrap] → %i32
-ff = (λb(2) B0  >  [\case 
+ff = (λb(2) B0  >  [\case
   Wrap => (_+_ B1 B1)]) : %i32 → [Wrap] → %i32
-fg = (λb(2) B0  >  [\case 
+fg = (λb(2) B0  >  [\case
   Wrap => (_+_ B1 B1)]) : %i32 → [Wrap] → %i32
-fh = (λb(2) B0  >  [\case 
+fh = (λb(2) B0  >  [\case
   Wrap => (λb(1) (_+_ B0 B2))]) : %i32 → [Wrap {%i32}] → %i32
 fv1 = (λb(2) (NatInstr UDiv B0 B1)) : %i32 → %i32 → %i32
 fv2 = (λb(2) (_+_ B1 (NatInstr UDiv B0 (Int 0)))) : %i32 → %i32 → %i32

@@ -45,8 +45,8 @@ interpretBinaryBitInstr = \case
 --PopCount -> popCount
 --CTZ -> countTrailingZeros
 --CLZ -> countLeadingZeros
---FShL 
---FShR 
+--FShL
+--FShR
 --RotL -> rotateL
 --RotR -> rotateR
 --TestBit -> testBit

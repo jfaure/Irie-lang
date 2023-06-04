@@ -10,10 +10,10 @@ BasicShiftOr pattern = let
   -- shMask "aphp" 'p' = [1..1]0101
   mkShMask :: Char -> String -> Int8
   mkShMask char = ifoldl (\i mask c -> if c == char then mask `clearBit` i else mask) (complement 0)
-  
+
   -- initially st mask is 1111.. Each match propagates 0 left by 1 bit
   -- st updates for each input char, if 0 is found at leftmost bit, pattern was matched
-  nextChar x st = (st .<<. 1) .|. shMask 
+  nextChar x st = (st .<<. 1) .|. shMask
   in nextChar
 
 multiStringShiftOr : (n : Int) ~> Vec n String

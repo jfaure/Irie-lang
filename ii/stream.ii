@@ -101,7 +101,7 @@ SconcatMap f (@stream nexta seed) = let
 -- takes fn to apply to the front of list and returns the back
 -- ?! support having access to both lists
 -- SsplitAt n onFront = \case
---   stream nexta seed => 
+--   stream nexta seed =>
 
 --fromStr str = @stream (\(ok , head , tail) => if ok then Yield head (nextElem tail) else Done) (nextElem str)
 stringToStream string = @stream (\str => if nullString str then Done else (unConsString str > \(head , tail) => Yield head tail)) string

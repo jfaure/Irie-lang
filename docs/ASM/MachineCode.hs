@@ -55,7 +55,7 @@ data MType
 --   r0 : rs -> if r0.tag == TAG
 --     then pushRLE r0.rle (mkRecord args) (mkPtrs rs) -- allocate new rle if == 0 || >= rlesz
 --     else mkPtrs (endRLE r0) rs -- spawn ptrs to other branches and trim their rles
--- 
+--
 -- -- ? how to accept smaller than max sz tag-tree
 -- match :
 -- match scrut LAMS = let

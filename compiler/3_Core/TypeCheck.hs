@@ -11,13 +11,13 @@ import qualified BitSetMap as BSM
 -- Biunification solves constraints `t+ <= t-` whereas subsumption compares t+ <:? t+
 -- Type annotations may be subtypes (less general) than inferred signatures
 -- Check must fill in any holes present in the type annotation
-check :: Externs -> Type -> Type -> TCEnv s Bool
+check :: LoadedBinds -> Type -> Type -> TCEnv s Bool
 check e inferred gotRaw = let
   go = check' e inferred gotRaw
   in if global_debug -- True {-debug getGlobalFlags-}
   then trace ("check: " <> prettyTyRaw inferred <> "\n   <?: " <> prettyTyRaw gotRaw) go else go
 
-check' :: Externs -> Type -> Type -> TCEnv s Bool
+check' :: LoadedBinds -> Type -> Type -> TCEnv s Bool
 check' es (TyGround inferred) (TyGround gotTy) = let
   readExt x = case readPrimExtern x of
     Core (Ty t) _ -> t
@@ -68,4 +68,5 @@ check' es t1@(TyIndexed{}) t2 = normaliseType mempty t1 >>= \case
 --check' es t1 t2@(TyAlias{}) = normaliseType mempty t2 ≫= \unaliased ->
 --  check' es t1 unaliased
 
+check' _es t1 (TyAlias q) = error $ "TODO resolve type aliases: π" <> showRawQName q
 check' _es t1 t2 = error $ show t1 <> "\n" <> show t2
