@@ -55,18 +55,18 @@ deriving instance Show TmpBiSubError
 formatSrcLoc srcInfo o = case srcInfo of
   Nothing -> ""
   Just (SrcInfo text nlOff) -> let
-    lineIdx = (+1) $ fromMaybe (0) $ VU.findIndex (> o) nlOff
-    line    = (nlOff VU.! lineIdx)
+    lineIdx = (+1) $ fromMaybe 0 (VU.findIndex (> o) nlOff)
+    line    = nlOff VU.! lineIdx
     col     = line - o
     in if lineIdx < 0
-       then " <no source info>"
-       else "\n" <> show lineIdx <> ":" <> show col <> ": \"" <> T.takeWhile (/= '\n') (T.drop o text) <> "\""
+       then "<no source info>"
+       else "\n" <> show lineIdx <> ":" <> show col <> ": " <> T.takeWhile (/= '\n') (T.drop o text)
 
 getName nameFn q = if unQName q < 0 -- (names V.! modName q V.! unQName q)
   then "!" <> show (0 - unQName q)
   else show (modName q) <> "." <> fromMaybe (showRawQName q) (nameFn (modName q) (unQName q))
 
-formatBisubError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)) = let
+formatBisubError srcNames srcInfo (BiSubError src (TmpBiSubError failType got exp)) = let
   bindSrc = Just srcNames
   msg = case failType of
     TextMsg m     -> m
@@ -76,10 +76,10 @@ formatBisubError srcNames srcInfo (BiSubError o (TmpBiSubError failType got exp)
     AbsentField q -> "Absent field '" <> showRawQName q <> "'"
     AbsentLabel q -> "Absent label '" <> getName (srcLabelNames srcNames) q <> "'"
   in
-     "\n" <> clRed ("No subtype: " <> msg <> ":")
-  <> formatSrcLoc srcInfo o
-  <> "\n      " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } got)
-  <> "\n  <:? " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } exp)
+     clRed ("No subtype: " <> msg <> ":")
+  <> formatSrcLoc srcInfo src
+  <> "\n    " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } got)
+  <> "\n<:? " <> clGreen (toS $ prettyTy ansiRender{ bindSource = bindSrc } exp)
 
 formatCheckError :: BindSource -> CheckError -> Text
 formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annotation: "

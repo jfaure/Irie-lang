@@ -1,5 +1,5 @@
 {-# Language TemplateHaskell #-}
-module Scope (scopeTT , scopeApoF , initModParams , RequiredModules , OpenModules , Params , letMap , lets) where
+module Scope (scopeTT , scopeApoF , initModParams , RequiredModules , OpenModules , Params , letMap , lets , findDups) where
 import ParseSyntax
 import QName
 import CoreSyn(ExternVar(..) , VName(VQBind))
@@ -39,6 +39,10 @@ initModParams open required bindNms = initParams open required & \params -> para
   & letNest %~ (1+)
   & letMap %~ V.modify (\v -> bindNms `iforM_` \i e -> MV.write v e (e , 0 , i , i)) -- top-binds written to modBinds without offset
 
+findDups iNames = let
+  fn i (dups , mask) = (if testBit mask i then setBit dups i else dups , setBit mask i)
+  in fst $ foldr fn ((0 , 0) :: (BitSet , BitSet)) iNames
+
 -- TODO don't allow `bind = lonemixfixword`
 -- handleExtern (readParseExtern open mod e i) ||| readQParseExtern :: ExternVar
 handleExtern :: Externs -> Int -> BitSet -> V.Vector (IName , Int , Int , Int) -> Int -> TT
@@ -51,6 +55,7 @@ handleExtern exts mod open lm i = case checkExternScope open mod exts i of
   NotInScope  h -> ScopePoison (ScopeError h)
   AmbiguousBinding h ms -> ScopePoison (AmbigBind h ms)
   ImportLabel q -> QLabel q
+  Importable m i  -> QVar (mkQName m i)
   x -> error (show x)
 
 -- Pattern (TT) inversion: case-alts can introduce VBruijns and thus change the scope environment
@@ -109,14 +114,13 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
     alts = altPats <&> \(pat {-, guards)-} , rhs) -> case pat of
       QLabel q -> (qName2Key q , rhs) -- Guards openMatch guards rhs)
       Label i subPats -> (qName2Key (mkQName thisMod i) , GuardArgs subPats rhs)
-      App (QLabel q) subPats -> (qName2Key q , GuardArgs subPats rhs)
+      App _ (QLabel q) subPats -> (qName2Key q , GuardArgs subPats rhs)
       x -> (0 , ScopePoison (ScopeError $ "bad pattern: " <> show x))
     openMatch = case rest of -- TODO could be guarded; another case
       [] -> Nothing
       (WildCard , rhs) : redundant -> Just rhs -- guards
       x -> Just (ScopePoison (ScopeError $ "Unknown label: " <> show x))
 --    x -> error (show x) -- _illegallPattern -- argProd , Tuple , Lit are parsed as guards
-    -- branch = mkBruijnLam (BruijnAbsF n argSubs 0 rhs)
     match = MatchB scrut (BSM.fromList alts) openMatch
    in match -- (if null redundant then identity else ScopeWarn RedundantPatMatch) (match (Just wild))
 
@@ -165,7 +169,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
       Tuple subPats -> let
         n = length subPats
         projections = [TupleIdx (qName2Key (mkQName 0 i)) scrut | i <- [0 .. n - 1]]
-        in Right . (,params) <$> AppF (GuardArgs subPats (Guards ko guards rhs)) projections
+        in Right . (,params) <$> AppF (-1) (GuardArgs subPats (Guards ko guards rhs)) projections
       -- vv TODO could be Label or new arg
       Var (VExtern i) -> case checkExternScope params._open thisMod exts i of
         ImportLabel q -> guardLabel scrut q []--guards

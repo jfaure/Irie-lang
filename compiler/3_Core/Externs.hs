@@ -24,7 +24,7 @@ data Import
  = NoPath  Text
  | NoParse Text (ParseErrorBundle Text Void)
  | ImportLoop BitSet -- All deps known; but the loop must be handled specially
- | ParseOK ModIName P.Module -- P.Module contains the filepath
+ | ParseOK Text ModIName P.Module -- P.Module contains the filepath
  -- perhaps the ana part that reads depths should instantly register modules and collect inames?
  | JudgeOK ModIName JudgedModule
  | NoJudge ModIName Errors
@@ -97,7 +97,7 @@ checkExternScope openMods thisModIName exts i = case exts.extNames V.! i of
 
 readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
 readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
-  JudgeOK _ jm -> Just $ (readJudgedBind jm iNm) & \(Core _ ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
+  JudgeOK _ jm -> Just $ (readJudgedBind jm iNm) & \(Core t ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
   _ -> Nothing
 
 iNameToBindName topINames iNm = popCount (topINames .&. setNBits iNm :: Integer)
@@ -129,7 +129,7 @@ resolveNames reg modIName p iNamesV = let
   resolver = let
     labelMap = p ^. P.parseDetails . P.labels
     labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
-    exposedNames = M.filter (testBit (p ^. P.parseDetails . P.topINames)) (p ^. P.parseDetails . P.hNamesToINames)
+    exposedNames = M.filter (testBit topINames) (p ^. P.parseDetails . P.hNamesToINames)
     in M.unionsWith IM.union [(IM.singleton modIName <$> exposedNames) , curAllNames , labels]
 
   resolveName :: HName -> ExternVar
@@ -144,7 +144,8 @@ resolveNames reg modIName p iNamesV = let
        Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
        x -> Importable modNm iNm -- Imported x
      | testBit iNm labelBit -> ImportLabel (mkQName modNm (clearBit iNm labelBit))
-     | True -> maybe (Importable modNm iNm) (Imported modNm) (readQName curMods modNm iNm)
+--   | True -> maybe (Importable modNm iNm) (Imported modNm) (readQName curMods modNm iNm)
+     | True -> (Importable modNm iNm) -- (Imported modNm) (readQName curMods modNm iNm)
 --   | True -> Importable modNm iNm
     (b , Just mfWords) -> let flattenMFMap = concatMap snd in MixfixyVar $ case b of
       Nothing      -> Mixfixy Nothing              (flattenMFMap mfWords)

@@ -1,0 +1,21 @@
+{-
+https://hackage.haskell.org/package/optparse-applicative-0.18.1.0/docs/src/Options.Applicative.Types.html#runParserM
+Parser a = data
+  NilP (Maybe a)
+  OptP (Option a)
+  forall x . MultP (Parser (x -> a)) (Parser x)
+  AltP (Parser a) (Parser a)
+  forall x . BindP (Parser x) (x -> Parser a)
+-}
+
+--import prelude
+Flag = record
+  short = Char
+  long = CString
+  help = CString
+--option = Maybe CString -- metavar
+
+--OptDesc = Array [Opt Flag | Arg CString | Seq Flag Flag | KleeneStar Flag]
+parseOpts : OptDesc -> ?
+
+patSetMatcher = 

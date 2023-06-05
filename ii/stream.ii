@@ -49,6 +49,7 @@ fmap f = \case
 map = Sfuse << fmap
 
 enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
+_.._ = enumFromTo
 
 Sappend (@stream nextL sl0) (@stream nextR sr0) = let
   next = \case
@@ -87,15 +88,15 @@ Sappend (@stream nextL sl0) (@stream nextR sr0) = let
 --  in @stream next (seed , None)
 
 SconcatMap f (@stream nexta seed) = let
-  nextC S = case S.m of
-    @None => case nexta S.sa of
+  nextC S = case S . m of
+    @None => case nexta S . sa of
       @Done      => Done
       @Skip s    => Skip { sa = s , m = @None}
       @Yield a s => Skip { sa = s , m = @One (f a)}
     @One (@stream nextb sb) => case nextb sb of
-      @Done      => Skip    {sa = S.sa , m = @None}
-      @Skip s    => Skip    {sa = S.sa , m = @One (stream nextb s)}
-      @Yield b s => Yield b {sa = S.sa , m = @One (stream nextb s)}
+      @Done      => Skip    {sa = S . sa , m = @None}
+      @Skip s    => Skip    {sa = S . sa , m = @One (stream nextb s)}
+      @Yield b s => Yield b {sa = S . sa , m = @One (stream nextb s)}
   in @stream nextC {sa = seed , m = None}
 
 -- takes fn to apply to the front of list and returns the back
@@ -113,6 +114,10 @@ showIntList = streamToString << map (chr << (add 48))
 test = showIntList (enumFromTo 0 9)
 
 isoStringStream = streamToString (stringToStream "0123")
+
+--z = let gg = 1532 in gg
+--f = @G -- let g = 3 in g
+gg = 3
 
 -- TODO leaf bicasts; typechecks because %i8 is a subtype of %i32
 --a = stringToStream "0123"

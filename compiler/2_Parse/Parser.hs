@@ -121,7 +121,7 @@ linefolds p = endLine *> scn *> do
 -----------
 -- Names --
 -----------
-reservedChars = ".@(){};:,\"\\λ" -- \\ λ TODO is = necessary
+reservedChars = "@(){};:,\"\\λ" -- \\ λ necessary?
 reservedNamesL = words "? _ let rec mut \\case λcase case # record data gadt as over of _ import use open = ? | => ⇒ in <-"
 reservedIMap = M.fromList (zip reservedNamesL [0..])
 
@@ -202,21 +202,23 @@ pDecl :: Bool -> Parser () -> SubParser
 pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
   subParse = SubParser (option Nothing $ sep *> unSubParser (pDecl isTop sep))
   -- parse a name and consume all idenChars; ie. if expecting "take", don't parse "takeWhile"
-  pName nm = symbol nm *> lookAhead (satisfy (not . isIdenChar))
-  pEqns :: Parser [TT] -> Parser [TT] -> Parser TT
+  pName nm = lexeme (string nm *> lookAhead (satisfy (not . isIdenChar)))
+  pRhs = lexemen (reserved "=") *> tt
+  fnMatch :: Parser [TT] -> Parser TT
+  fnMatch pMFArgs = GuardArgs <$> pMFArgs <*> (patGuards pRhs <|> pRhs)
+  pEqns :: Parser [TT] -> Parser [TT] -> Parser [TT]
   pEqns pArgs pMFArgs = let -- first parse is possibly different
-    fnMatch :: Parser [TT] -> Parser TT
-    fnMatch pMFArgs = let rhs = lexemen (reserved "=") *> tt
-      in GuardArgs <$> pMFArgs <*> (patGuards rhs <|> rhs)
-    in fmap (\case { [x] -> x ; xs -> FnEqns xs }) $
-      (:) <$> fnMatch pArgs
-          <*> many (try $ endLine *> scn *> svIndent *> fnMatch pMFArgs)
+    in (:) <$> fnMatch pArgs
+           <*> many (try $ endLine *> scn *> svIndent *> fnMatch pMFArgs)
       <|> some (try (endLine *> fnMatch pMFArgs))
-  in option Nothing $ optional (reserved "rec") *> lexeme pMixfixWords >>= \case
+  mkFnEqns = \case { [x] -> x ; xs -> FnEqns xs }
+  in option Nothing $ getOffset >>= \srcOff -> optional (reserved "rec") *> lexeme pMixfixWords >>= \case
     [Just nm] -> let pArgs = many (lexeme singlePattern) in do
       iNm <- if isTop then addTopName nm else addName nm
-      rhs <- pEqns pArgs (pName nm *> pArgs)
-      pure $ Just (FnDef nm iNm Let Nothing rhs Nothing , subParse)
+      sig <- optional (tyAnn <* try (endLine *> scn *> pName nm))
+      rhsTT <- mkFnEqns <$> pEqns pArgs (pName nm *> pArgs)
+      let rhs = maybe rhsTT (Typed rhsTT) sig
+      pure $ Just (FnDef nm iNm Let Nothing rhs srcOff , subParse)
     mfDefHNames   -> let
       pMixFixArgs = cata $ \case
         Nil      -> pure []
@@ -227,11 +229,12 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       iNm  <- if isTop then addTopName nm else addName nm -- <* when isTop (void $ addTopName nm)
       prec <- fromMaybe defaultPrec <$> optional (braces parsePrec)
       mfDefINames <- addMixfixWords mfDefHNames mfDef
-      rhs <- pEqns (pure []) (pMixFixArgs mfDefHNames)
-      pure $ Just (FnDef nm iNm Let (Just mfDef) rhs Nothing , subParse)
+      sig <- optional (tyAnn <* try (endLine *> scn *> pName nm))
+      rhsTT <- mkFnEqns <$> pEqns (pure []) (pMixFixArgs mfDefHNames)
+      let rhs = maybe rhsTT (Typed rhsTT) sig
+      pure $ Just (FnDef nm iNm Let (Just mfDef) rhs srcOff , subParse)
 
 lambda = glambda (reserved "=>" <|> reserved "⇒" <|> reserved "=")
--- v TODO rm this if
 glambda sep = (\ars rhs -> if null ars then rhs else GuardArgs ars rhs) <$> many singlePattern <* lexemen sep <*> tt
 tyAnn = reservedChar ':' *> tt
 
@@ -243,7 +246,7 @@ tt :: Parser TT
 (tt , ttArg) = (anyTT , arg) where
   anyTT = ({-tySum <|>-} appOrArg) >>= catchUnderscoreAbs >>= typedTT <?> "tt"
    -- lens '.' binds tighter than App
-  argOrLens = arg >>= \larg -> option larg (lens larg)
+  argOrLens = arg >>= \larg -> option larg (try $ lens larg)
   lineFoldArgs p = many p >>= \ars -> (ars ++) <$> (try (linefolds p) <|> pure [])
   appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg $ case larg of
     P.Label l [] -> P.Label l <$> lineFoldArgs argOrLens
@@ -263,7 +266,6 @@ tt :: Parser TT
    , (reserved "\\case" <|> reserved "λcase") *> lambdaCase <?> "Lambda case"
    , (reservedChar '\\' <|> reservedChar 'λ') *> lambda <?> "Lambda"
 -- , reserved "do" *> doExpr
--- , reserved "record" *> tyRecord  -- multiline record decl
    , reserved "record" *> conMultiline <&> Prod . V.fromList <?> "Record"
    , reserved "case"   *> casePat   <?> "Case_of__"
    , reserved "data"   *> tySumData <?> "Data declaration"
@@ -272,15 +274,15 @@ tt :: Parser TT
    , reserved "#" *> (PArray <$> lineFoldArgs ttArg) <?> "Literal array"
    , reservedChar '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
    , braces conBraces <&> Prod . V.fromList <?> "record"
--- , brackets tt <&> TyListOf
    , parens ((tt >>= \t -> option t (tuple t <|> typedTT t)) <|> scn $> Tuple []) >>= catchUnderscoreAbs
    , literalP <&> Lit -- ! before iden parser
-   , iden >>= addName <&> Var . VExtern  -- '_' is parsed here..
+   , iden >>= addName <&> Var . VExtern
      -- (? support partial mixfix aps eg. if_then a else b)
    ] <?> "TT Argument"
   tySumData = Data <$> let
     labelDecl = (,) <$> (iden >>= newSLabel) <*> many arg
     in pIndentedItems labelDecl (fail "")
+-- , brackets tt <&> TyListOf
   tyGadt = Gadt <$> let -- vec : (n : Nat) ~> Vector n x = gadt
     gadtDecl = (,) <$> (iden >>= newSLabel) <*> tyAnn
     in pIndentedItems gadtDecl (fail "")
@@ -302,7 +304,7 @@ tt :: Parser TT
   casePat = (\tt splits -> CasePat (CaseSplits tt splits)) <$> tt <* reserved "of" <*> caseSplits
 
   letIn letQual = do
-    block <- pBlock True True letQual
+    block <- pBlock False True letQual
     liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= V.length (binds block)
     LetIn block liftLetStart <$> (scn *> reserved "in" *> tt)
 

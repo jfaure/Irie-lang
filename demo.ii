@@ -4,12 +4,15 @@
 -- bad type depending on order of mutuals
 --ii/SpecialisationTests/WrappedSimpleMutual.ii"
 
--- parse type params
--- Rectangle (P : Set) : Set = { f = P }
-
 -- Let conflict "0"
 --eq1 @x b = 2
 --eq1 a b = 3
+
+-- ∃ type in optparse-applicative
+-- data Parser a
+--   = NilP (Maybe a)
+--   | OptP (Option a)
+--   | forall x . MultP (Parser (x -> a)) (Parser x)
 
 --imports list list2 tree question ls foldr Free parsec intmap patternTests hash
 --import irieShell -- ideas for irie as shell
@@ -25,13 +28,25 @@
 --import mutumorphism -- avoid let-block
 --import Tee -- duplicate streams
 
--- Libs: Lens List Eff DFA BitSet
-
--- Resolve type aliases & parse fn sigs
---Rectangle = { f = Int , g = Int }
---rect = { f = 5 , g = 3 } : Rectangle
---rect2 : Rectangle
---rect2 = { f = 3 , g = 10 }
-
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
+
+-- Libs: Optparse Lens List Eff DFA BitSet
+
+-- Cat records: V and ^
+
+-- pdep captures
+
+-- Resolve type aliases
+--Rectangle = { f = Int , g = Int }
+--r : Rectangle
+--r = \x y => { f = 3 , g = 10 }
+
+-- type params, mk THBi or port over to subset of Core?
+--Maybe a = data
+--  Nothing
+--  Just a
+
+--import ii/FA/CharScan/MiniPrefix
+import stream
+f = enumFromTo -- 0 10 -- 0 .. 10

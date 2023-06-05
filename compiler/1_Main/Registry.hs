@@ -18,6 +18,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T.IO
 import qualified Data.Text.Lazy.IO as TL.IO
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Map.Strict as M
 import Control.Lens
@@ -124,7 +125,7 @@ readDeps reg (ds , input) = let
     Left parseKO -> pure (NodeF (ds , NoParse (T.pack fPath) parseKO) [])
     Right p -> ((fmap InFilePath . findModule searchPath . toS) `mapM` (p ^. P.imports)) <&> \imports ->
 --    <&> \imports -> let hackImports = concatMap (\case {InText{}->[] ; InFilePath e -> (const [] ||| (\x->[toS x])) e}) imports
-      NodeF (ds , ParseOK iM p) ((setBit ds iM , ) <$> imports)
+      NodeF (ds , ParseOK txt iM p) ((setBit ds iM , ) <$> imports)
   in case input of
   InText txt -> registerModule reg textModName
     >>= \iM -> inText ((identity ||| identity) iM) (T.unpack textModName) txt
@@ -152,11 +153,13 @@ registerJudgedMod reg mI modOrErrors = let
     (const (pure ()) ||| addJM) modOrErrors
 
 simplify :: CmdLine -> JudgedModule -> JudgedModule
-simplify cmdLine jm = if noFuse cmdLine then jm else let
+simplify cmdLine jm = let
+  noSimplify = noFuse cmdLine || elem "core" (printPass cmdLine) || elem "types" (printPass cmdLine)
   mL :: F.Lens' JudgedModule ModuleBinds
   mL = F.lens moduleTT (\u new -> u { moduleTT = new })
   -- TODO hacky β-env may depend on the full module
-  in jm & mL F.%~ (\e -> runST (BetaEnv.simpleExpr (Core (LetBlock e) tyBot)) & \(Core (LetBlock r) _) -> r)
+  in if noSimplify then jm else
+    jm & mL F.%~ (\e -> runST (BetaEnv.simpleExpr (Core (LetBlock e) tyBot)) & \(Core (LetBlock r) _) -> r)
 
 -- cata DepTree => parallel judge modules , register all modules and deps/dependents
 judgeTree :: CmdLine -> Registry -> TreeF (Dependents , Import) (IO Deps) -> IO Deps
@@ -165,7 +168,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
   NoPath fName -> deps <$ putStrLn ("Not found: \"" <> fName <> "\"")
   NoParse _fName parseError -> deps <$ putStrLn (errorBundlePretty parseError)
   JudgeOK mI _j -> setBit deps mI <$ registerDeps reg mI deps dependents
-  ParseOK mI pm -> do
+  ParseOK progText mI pm -> do
    when ("parseTree" `elem` printPass cmdLine) (putStrLn (P.prettyModule pm))
    reg' <-  readMVar reg
    importINames <- let
@@ -176,13 +179,14 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      (resolver , mfResolver , exts) = resolveNames reg' mI pm iNamesV
      getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
        BindSource (lookupLabelName r._loadedModules) (lookupFieldName r._loadedModules)
+     srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ pm ^. P.parseDetails . P.newLines))
      putModVerdict = False -- TODO should only print at repl?
      (warnings , jmResult) = judge importINames reg' exts mI pm iNamesV
      in case simplify cmdLine <$> jmResult of
      -- Note. we still register the module even though its is partially broken, esp. for putErrors to lookup names
      Left (errs , jm) -> registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
        *> getBindSrc >>= \bindSrc ->
-       putErrors stdout Nothing bindSrc errs
+       putErrors stdout srcInfo bindSrc errs
        *> {-when putModVerdict-} (putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
      Right jm -> let
        shouldPutJM = (dependents == 0 || putDependents cmdLine)

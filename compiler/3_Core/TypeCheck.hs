@@ -1,6 +1,7 @@
 module TypeCheck (check) where
 import Prim
 import CoreSyn as C
+import CoreUtils
 import TCState
 import PrettyCore
 import Externs
@@ -65,8 +66,13 @@ check' _es _t1 (TyGround [THTop]) = pure True
 check' es t1@(TyIndexed{}) t2 = normaliseType mempty t1 >>= \case
   loop@TyIndexed{} -> error $ "cannot normalise TyIndexed: " <> show loop
   unaliased        -> check' es unaliased t2
---check' es t1 t2@(TyAlias{}) = normaliseType mempty t2 ≫= \unaliased ->
---  check' es t1 unaliased
 
+-- TODO local type aliases
+check' _es (TyAlias q0) (TyAlias q) | q0 == q = pure True
+check' es t1 (TyAlias q) = case readQName es (modName q) (unQName q) of
+  Just expr | Just t2 <- exprToTy expr -> check' es t1 t2
+  Nothing -> error $ "TODO resolve local type aliases: π" <> showRawQName q
+
+check' es (TyAlias q) t2 = check' es t2 (TyAlias q)
 check' _es t1 (TyAlias q) = error $ "TODO resolve type aliases: π" <> showRawQName q
 check' _es t1 t2 = error $ show t1 <> "\n" <> show t2

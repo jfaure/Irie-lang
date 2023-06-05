@@ -43,7 +43,7 @@ data FnDef = FnDef {
  , _fnRecType    :: !LetQual
  , _fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
  , _fnRhs        :: TT
- , _fnSig        :: Maybe TT
+ , _fnSrc        :: SourceOffset
 }
 
 data LetQual = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show)
@@ -78,7 +78,6 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  -- lambda-calculus
  | BruijnLam BruijnAbs
- | App TT [TT] -- Used by unpattern and solveMixfixes once clear of precedence & mixfixes
  | Juxt SourceOffset [TT] -- may contain mixfixes to resolve
  | PiBound [TT] TT -- (a b c : T) ~> introduces pi-bound arguments of type T
 
@@ -131,7 +130,8 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  -- tmp mixfix vars
  | QVar QName
  | MFExpr CoreSyn.Mixfixy
- | PExprApp Prec QName [TT]
+ | App SourceOffset TT [TT] -- Used by unpattern and solveMixfixes once clear of precedence & mixfixes
+ | PExprApp SourceOffset Prec QName [TT]
  | RawExpr TT -- Skip case for anamorphisms
  | VoidExpr
  | MixfixPoison MixfixError

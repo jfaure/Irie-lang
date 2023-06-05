@@ -52,13 +52,16 @@ if_then_else_ { l0 } = ifThenElse
 --identity : (a : Set) -> a
 -- identity x = x
 
+--Maybe a = data
+--  Nothing
+--  Just a
+
 fromMaybe a = \case
   @Nothing => a
   @Just x  => x
 
 fst (a , b) = a
 snd (a , b) = b
-
 
 --setBit bits pos   = bitOR (bits (bitSHL 1 pos))
 -- TODO mixfixes defined and used in same module appear to be broken

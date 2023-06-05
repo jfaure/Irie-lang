@@ -69,6 +69,7 @@ data Term -- β-reducable (possibly to a type)
 
 -- Simplifier
  | LetSpec QName [ArgShape]
+ | RenameCaptures BitSet Term
 -- | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
 --              -- Note if meet this than any contained bruijns | lets must not be unwrapped
 
@@ -211,7 +212,6 @@ data JudgedModule = JudgedModule {
  -- (modBinds and lets (these will be lifted) are set here)
  , moduleTT   :: ModuleBinds
 }
-emptyJudgedModule = JudgedModule (-1) "" mempty mempty 0 mempty -- dodgy (used for repl atm)
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 

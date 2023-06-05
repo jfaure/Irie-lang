@@ -52,10 +52,11 @@ prettyJudgedModule showLetBinds showRhs flags j = render flags . layoutPretty de
   $ pJM showLetBinds showRhs j
 
 -- want to print the top-level let-block without {} or = record
+-- Note. the bindHNm is given more directly by "letMeta.hName" , but this should be removed
 pJM showLetBinds showRhs jm = let
-  isTopBind (lm , _) = isTop lm
-  binds = toList (if showLetBinds then moduleTT jm else V.takeWhile isTopBind (moduleTT jm))
-  in vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> binds)
+  jmINms = jmINames jm
+  binds = toList (if showLetBinds then moduleTT jm else V.takeWhile (isTop . fst) (moduleTT jm))
+  in vsep ((\(letMeta , b) -> pBind (jmINms V.! unQName (letName letMeta)) showRhs b) <$> binds)
 
 --------------
 -- Renderer --
@@ -247,6 +248,7 @@ pTerm showRhs = let
         LensOver cast tt -> " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr showRhs tt)
       in parens $ r <> " . " <> hsep (punctuate "." $ {-prettyField-} viaShow <$> target) <> pLens ammo
     LetSpecF q sh -> "let-spec: " <> viaShow q <> "(" <> viaShow sh <> ")"
+    RenameCapturesF freeVars t -> "Rename-captures: " <> viaShow freeVars <> " in " <> t
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
     ProdF ts     -> braces $ hsep $ punctuate " ," (BSM.toList ts <&> \(l , rhs) -> annotate (AQFieldName (QName l)) "" <> " = " <> rhs)
 
