@@ -38,7 +38,9 @@ insertOrRetrieve h mp = let sz = M.size mp in case M.insertLookupWithKey (\_k _n
 
 addName :: HName -> Parser IName
 addName h = moduleWIP . parseDetails . hNamesToINames %%= insertOrRetrieve h
-addTopName h = addName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames   %= \top -> setBit top i)
+addNewName h = addNameh -- TODO update the IName but also allow IName2Vector to work..
+
+addTopName h = addNewName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames   %= \top -> setBit top i)
 newFLabel h  = addName h >>= \i -> i <$ (moduleWIP . parseDetails . fieldINames %= \top -> setBit top i)
 newSLabel h  = addName h >>= \i -> i <$ (moduleWIP . parseDetails . labelINames %= \top -> setBit top i)
 
@@ -248,9 +250,11 @@ tt :: Parser TT
    -- lens '.' binds tighter than App
   argOrLens = arg >>= \larg -> option larg (try $ lens larg)
   lineFoldArgs p = many p >>= \ars -> (ars ++) <$> (try (linefolds p) <|> pure [])
-  appOrArg  = getOffset >>= \o -> argOrLens >>= \larg -> option larg $ case larg of
+  appOrArg' o  = argOrLens >>= \larg -> option larg $ case larg of
     P.Label l [] -> P.Label l <$> lineFoldArgs argOrLens
     fn     -> (\args -> if null args then fn else Juxt o (fn : args)) <$> lineFoldArgs argOrLens
+  appOrArg = getOffset >>= \o -> appOrArg' o
+    <|> (lineFoldArgs argOrLens >>= \args -> if null args then fail "Expected linefold" else pure (Juxt o args))
   lens :: TT -> Parser TT
   lens record = let
     lensNext path = reservedChar '.' *> getOffset >>= \o -> choice [
@@ -339,7 +343,7 @@ literalP = lexeme $ try $ (<* notFollowedBy iden) $ let
   mkInt i
     | i == 0 || i == 1 = Fin 1 i
     | i < 256 = Fin 8 i
-    | True    = Int (fromIntegral i)
+    | True    = Fin 32 (fromIntegral i)
   in choice
    [ Char   <$> between (single '\'') (single '\'') L.charLiteral
    , String <$> stringLiteral

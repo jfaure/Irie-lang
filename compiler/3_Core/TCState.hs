@@ -30,7 +30,6 @@ data TCEnvState s = TCEnvState {
  , _bindsBitSet   :: BitSet -- mark inferred binds
  , _inferStack    :: BitSet -- To detect infer cycles: recursion / mutuals
  , _scopeParams   :: Scope.Params
--- , _bindStack     :: [(Int , Int)]      -- [(LetDepth , IName)]
  , _bruijnArgVars :: V.Vector Int       -- bruijn arg -> TVar map
  , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen          :: Int                -- cursor for bis which may have spare space

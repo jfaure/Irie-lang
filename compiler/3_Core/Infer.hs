@@ -133,7 +133,7 @@ judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use this
         <$ MV.write modBinds' modBindName (lm , Guard (mutuals .|. mbs) tvar)
 
   genExpr :: LetMeta -> Expr -> [Int] -> (Int , BitSet) -> Int -> TCEnv s Expr
-  genExpr lm (Core t ty) freeVarCopies letCapture@(_,freeVars) tvarIdx = do
+  genExpr lm (Core t ty) freeVarCopies letCapture@(_atLen,freeVars) tvarIdx = do
     gTy  <- do
       _cast <- use bis >>= \v -> (v `MV.read` tvarIdx) <&> _mSub >>= \case
         TyGround [] -> BiEQ <$ MV.write v tvarIdx (BiSub ty (TyGround []))
@@ -145,8 +145,10 @@ judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use this
 --  retExpr <- pure rawRetExpr -- explicitFreeVarApp freeVars rawRetExpr
     retExpr <- pure $ case popCount (freeVars + 1) == 1 of
       True -> rawRetExpr -- no need to rename
-      False -> -- trace ("TODO: rename captures" <> prettyTermRaw (rawRetExpr & \(Core t _) -> t))
-        (rawRetExpr & \(Core t ty) -> Core (RenameCaptures freeVars t) ty)
+      False -> let -- trace ("TODO: rename captures" <> prettyTermRaw (rawRetExpr & \(Core t _) -> t))
+        patchBruijn i = popCount (setNBits i .&. freeVars)
+        in (rawRetExpr & \(Core t ty) -> Core (RenameCaptures freeVars t) ty)
+--      in rawRetExpr & \(Core t ty) -> Core (cata (\case { VBruijnF i | testBit freeVars i -> VBruijn (patchBruijn i) ; x -> embed x }) t) ty
     -- TODO Mark eraser args (ie. lazy VBruijn rename for simplifer)
     -- HACK partial letCapture will break β
     (inferStack <%= (`clearBit` modBindName)) >>= \is -> when (is == 0) (clearBiSubs 0)
@@ -313,10 +315,10 @@ inferF = let
     in bisub tupleTy expectedTy <&> \cast ->
       let obj = TTLens tuple [qN] LensGet in Core (case cast of { BiEQ -> obj ; cast -> Cast cast obj }) (tyVar i)
   P.TTLensF o tt fieldsLocal maybeSet -> tt >>= \record -> use thisMod >>= \iM -> let
-    fields = fieldsLocal -- readField ext <$> fieldsLocal
+    fields = qName2Key . mkQName iM <$> fieldsLocal -- readField ext <$> fieldsLocal
     recordTy = exprType record
     mkExpected :: Type -> Type
-    mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton (qName2Key $ mkQName iM f) ty)]) dest fields
+    mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton f ty)]) dest fields
 --  mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton f ty)]) dest fields
     in checkFails o =<< case record of
     Core object objTy -> case maybeSet of

@@ -51,7 +51,7 @@ ttApp retTy fn args = let --trace (clYellow (show fn <> " $ " <> show args :: Te
 --  Special instructions (esp. type constructors)
     Instr (TyInstr Arrow)  -> expr2Ty `mapM` args <&> \case
       { [a , b] -> Core (Ty (TyGround (mkTyArrow [a] b))) (TySet 0) ; x -> error $ "wrong arity for TyArrow" <> show x }
-    Instr (TyInstr MkIntN) | [Core (Lit (Int i)) _ty] <- args ->
+    Instr (TyInstr MkIntN) | [Core (Lit (Fin _ i)) _ty] <- args ->
       pure $ Core (Ty (TyGround [THPrim (PrimInt $ fromIntegral i)])) (TySet 0)
     Instr (MkPAp _n) | f : args' <- args -> ttApp' f args'
     coreFn -> doApp coreFn args

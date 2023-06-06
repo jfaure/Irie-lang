@@ -6,15 +6,15 @@ go2 z i next s = case next s of
   @Yield x s => go2 (add z x) i next s
 
 nextRet i = \case
-  @True  => Yield (mul i i) @False
-  @False => Done
+  True  => Yield (mul i i) False
+  False => Done
 
 go1 z i =
 --ifThenElse (ge i 10) z (go2 z (add i 1) (nextRet i) True)
   case ge i 10 of
-    @True  => z
-    @False => go2 z (add i 1) (nextRet i) True
+    True  => z
+    False => go2 z (add i 1) (nextRet i) True
     -- go1 i z
 
 -- 285
-test2 = go2 0 1 (nextRet 1) @False
+test2 = go2 0 1 (nextRet 1) False

@@ -8,7 +8,7 @@ import GHC.Show (Show(..))
 data Literal
  = Char Char
 -- | I32 Int
- | Int Integer -- convenience
+-- | Int Integer -- convenience
  | Fin Int Integer
  | PolyInt   !Text -- gmp
  | PolyFrac  !Text -- gmp
@@ -98,6 +98,7 @@ data PrimInstr
  | WriteFile
  | Execve
  | Fork
+ | TraceId
 
  -- Almost Posix
  | OpenDir

@@ -42,15 +42,6 @@ data LoadedMod = LoadedMod
 newtype Externs = Externs { extNames :: V.Vector ExternVar } deriving Show
 type LoadedBinds = V.Vector LoadedMod
 
-lookupIName = lookupJM jmINames -- labelNames
-lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
-  JudgeOK _mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName)
-    else Just ("bugged IName resolution:" <> show iName)
-  _ -> Nothing
-lookupLabelBitSet lms mName = case _loadedImport (lms V.! mName) of
-  JudgeOK _mI jm -> Just jm.labelINames
-  _ -> Nothing
-
 type Registry = MVar PureRegistry
 data PureRegistry = Registry {
 -- 1. A convention for INaming modules at the top-level
@@ -68,8 +59,7 @@ data PureRegistry = Registry {
 
 -- Note. We read builtins directly , this just occupies Module Name 0
 primJM = V.unzip primBinds & \(primHNames , _prims) ->
-  let _letBinds = LetBlock mempty -- (\x -> _ :: _) <$> prims
-  in JudgedModule 0 "Builtins" primHNames (complement 0) 0 mempty -- prim labels are direct bindings
+  JudgedModule 0 "Builtins" primHNames (complement 0) 0 mempty -- prim labels are direct bindings
 
 builtinRegistry = let
   _timeBuiltins = UTCTime (ModifiedJulianDay 0) (getTime_resolution)
@@ -79,8 +69,38 @@ builtinRegistry = let
 --readLabel {-, readField-} :: Externs -> IName -> QName
 --readLabel exts l = if l < 0 then mkQName 0 (-1 - l) else exts.importLabels V.! l
 
+--newtype BindName = BindName IName
+-- TODO enforce type safety here
+iNameToBindName :: BitSet -> IName -> IName -- BindName
+iNameToBindName topINames iNm = popCount (topINames .&. setNBits iNm :: Integer)
+
+readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
+readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
+  JudgeOK _ jm -> if testBit jm.labelINames iNm                   
+    -- vv don't like this
+    then mkQName modNm iNm & \qNameL -> Just $ Core (Label qNameL [])
+      (tHeadToTy $ THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) (TyGround [THTyCon $ THTuple mempty]))
+    else Just $ (readJudgedBind jm iNm) & \(Core t ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
+  _ -> Nothing
+
+readJudgedBind :: JudgedModule -> IName -> Expr
+readJudgedBind m iNm = snd (m.moduleTT V.! iNameToBindName (topINames m) iNm) & bind2Expr
+
 readPrimExtern :: IName -> Expr
 readPrimExtern i = snd (primBinds V.! i)
+
+lookupIName = lookupJM jmINames -- labelNames
+lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
+  JudgeOK _mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName)
+    else Just ("bugged IName resolution:" <> show iName)
+  _ -> Nothing
+lookupLabelBitSet lms mName = case _loadedImport (lms V.! mName) of
+  JudgeOK _mI jm -> Just jm.labelINames
+  _ -> Nothing
+lookupBindName :: V.Vector LoadedMod -> ModuleIName -> IName -> _
+lookupBindName lms mName iName = case _loadedImport (lms V.! mName) of
+  JudgeOK _mI jm -> moduleTT jm & \v -> Just (snd $ v V.! iNameToBindName jm.topINames iName)
+  _ -> Nothing
 
 -- TODO not pretty
 checkExternScope :: BitSet -> ModIName -> Externs -> IName -> ExternVar
@@ -97,24 +117,10 @@ checkExternScope openMods thisModIName exts i = case exts.extNames V.! i of
   m@MixfixyVar{} -> m -- TODO
   x -> x
 
-readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
-readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
-  JudgeOK _ jm -> if testBit jm.labelINames iNm
-    -- vv don't like this
-    then mkQName modNm iNm & \qNameL -> Just $ Core (Label qNameL [])
-      (tHeadToTy $ THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) (TyGround [THTyCon $ THTuple mempty]))
-    else Just $ (readJudgedBind jm iNm) & \(Core t ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
-  _ -> Nothing
-
-iNameToBindName topINames iNm = popCount (topINames .&. setNBits iNm :: Integer)
-
-readJudgedBind :: JudgedModule -> IName -> Expr
-readJudgedBind m iNm = snd (m.moduleTT V.! iNameToBindName (topINames m) iNm) & bind2Expr
-
 mfw2qmfw topINames modNm = \case
-  StartPrefix  (MixfixDef m mfw f) i -> QStartPrefix  (MixfixDef (m) mfw f) (mkQName modNm i)
-  StartPostfix (MixfixDef m mfw f) i -> QStartPostfix (MixfixDef (m) mfw f) (mkQName modNm i)
-  MFPart                           i -> QMFPart                             (mkQName modNm i)
+  StartPrefix  m i -> QStartPrefix  m (mkQName modNm i)
+  StartPostfix m i -> QStartPostfix m (mkQName modNm i)
+  MFPart         i -> QMFPart         (mkQName modNm i)
 
 -- * Add bindNames and local labelNames to resolver
 -- * Generate Externs vector

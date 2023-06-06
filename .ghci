@@ -5,11 +5,6 @@ import Prelude
 -- :set -fobject-code
 :set -ferror-spans
 :set -fbreak-on-error
-:def raw (\_->pure ":set args demo.ii -p core \n:r\n main\n")
-:def llvm (\_->pure ":set args demo.ii -p core,ssa\n:r\n main\n")
-:def jit (\_->pure ":set args demo.ii -p ssa --jit\n:r\n main\n")
-:def mf (\_->pure ":set args imports/mixfix.ii -p parse \n:r\n main\n")
-:def n (\_->pure ":set args imports/parser.ii -p types \n:r\n main\n")
 
 :def z (\i -> pure (":r\n" ++ i))
 :def core (\_->pure ":r\n sh \"demo.ii --no-fuse -p core\"\n")
@@ -18,3 +13,4 @@ import Prelude
 :def emitSSA (\_->pure ":r\n ssa\n")
 :def emitC (\_->pure ":r\n emitC\n")
 :def interpret (\_->pure ":r\n interp\n")
+:def stream (\_->pure ":r\n sh \"ii/stream.ii -p simple\"\n")

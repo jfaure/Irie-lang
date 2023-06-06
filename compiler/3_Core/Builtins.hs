@@ -5,7 +5,7 @@
 module Builtins (primBinds , primMap , typeOfLit , builtinFalse , builtinTrue , builtinFalseQ , builtinTrueQ) where
 import Prim
 import CoreSyn
-import qualified Data.Map.Strict as M ( Map , (!?) , fromList )
+import qualified Data.Map.Strict as M ( (!?) , fromList )
 import qualified Data.Vector as V ( Vector, fromList , (!) , toList , length )
 import qualified BitSetMap as BSM
 
@@ -204,12 +204,14 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("ne"      , (NumInstr (PredInstr NEQCmp) , mkTHArrow [iTy , iTy]    boolL))
   , ("boolOR"  , (NumInstr (PredInstr OR )   , mkTHArrow [boolL, boolL] boolL))
   , ("boolAND" , (NumInstr (PredInstr AND )   , mkTHArrow [boolL, boolL] boolL))
+
+  , ("traceId" , (TraceId , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (THBound 0)]))
   ]
 iTy = THPrim (PrimInt 32)
 charTy = THPrim (PrimInt 8)
 
 primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
-  [ ("Arrow" , (TyInstr Arrow  , ([set,set] , set)))
+  [ ("Arrow" , (TyInstr Arrow  , ([set , set] , set)))
   , ("Fin"   , (TyInstr MkIntN , ([i] , set)))
   , ("primLen" , (Len , ([ia] , i)))
 
@@ -254,9 +256,9 @@ typeOfLit = \case
   String{}  -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   LitArray{}-> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
   PolyInt{} -> THPrim PrimBigInt
-  Int 0     -> THPrim (PrimInt 1)
-  Int 1     -> THPrim (PrimInt 1)
-  Int{}     -> THPrim (PrimInt 32)
+--Int 0     -> THPrim (PrimInt 1)
+--Int 1     -> THPrim (PrimInt 1)
+--Int{}     -> THPrim (PrimInt 32)
   Char{}    -> THPrim (PrimInt 8)
   Fin n _   -> THPrim (PrimInt n) --mkExt 3
   x -> error $ "don't know type of literal: " <> show x

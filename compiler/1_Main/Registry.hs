@@ -8,7 +8,7 @@ import Parser (parseModule)
 import CoreBinary()
 import PrettyCore
 import Infer(judgeModule)
-import qualified BetaEnv(simpleExpr)
+import qualified BetaEnv(simpleBindings)
 import Text.Megaparsec (errorBundlePretty)
 import ModulePaths
 import Errors
@@ -152,15 +152,6 @@ registerJudgedMod reg mI modOrErrors = let
       _ -> pure ()
     (const (pure ()) ||| addJM) modOrErrors
 
-simplify :: CmdLine -> JudgedModule -> JudgedModule
-simplify cmdLine jm = let
-  noSimplify = noFuse cmdLine || elem "core" (printPass cmdLine) || elem "types" (printPass cmdLine)
-  mL :: F.Lens' JudgedModule ModuleBinds
-  mL = F.lens moduleTT (\u new -> u { moduleTT = new })
-  -- TODO hacky β-env may depend on the full module
-  in if noSimplify then jm else
-    jm & mL F.%~ (\e -> runST (BetaEnv.simpleExpr (Core (LetBlock e) tyBot)) & \(Core (LetBlock r) _) -> r)
-
 -- cata DepTree => parallel judge modules , register all modules and deps/dependents
 judgeTree :: CmdLine -> Registry -> TreeF (Dependents , Import) (IO Deps) -> IO Deps
 judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identity m_depL
@@ -182,7 +173,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ pm ^. P.parseDetails . P.newLines))
      putModVerdict = False -- TODO should only print at repl?
      (warnings , jmResult) = judge importINames reg' exts mI pm iNamesV
-     in case simplify cmdLine <$> jmResult of
+     in case simplify cmdLine mI reg'._loadedModules <$> jmResult of
      -- Note. we still register the module even though its is partially broken, esp. for putErrors to lookup names
      Left (errs , jm) -> registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
        *> getBindSrc >>= \bindSrc ->
@@ -218,6 +209,14 @@ judge deps reg exts modIName p iNamesV = let
   warnings = errors ^. scopeWarnings & \ws -> if null ws then Nothing
     else Just (unlines $ formatScopeWarnings iNamesV <$> ws)
   in (warnings , if coreOK then Right jm else Left (errors , jm))
+
+simplify :: CmdLine -> ModuleIName -> V.Vector LoadedMod -> JudgedModule -> JudgedModule
+simplify cmdLine thisMod loadedMods jm = let
+  noSimplify = noFuse cmdLine || elem "core" (printPass cmdLine) || elem "types" (printPass cmdLine)
+  mL :: F.Lens' JudgedModule ModuleBinds
+  mL = F.lens moduleTT (\u new -> u { moduleTT = new })
+  in if noSimplify then jm else
+    jm & mL F.%~ (\e -> runST (BetaEnv.simpleBindings thisMod jm.topINames loadedMods e))
 
 putJudgedModule :: CmdLine -> Maybe BindSource -> JudgedModule -> IO ()
 putJudgedModule cmdLine bindSrc jm = let

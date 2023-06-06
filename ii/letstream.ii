@@ -1,0 +1,148 @@
+import prelude
+-- *state of stream has existential type
+
+-- vv Functor constraint?
+-- hylo :: Functor f => (f b -> b) -> (a -> f a) -> a -> b
+--hylo fmap f g = f << fmap (hylo fmap f g) << g
+--listF f = \case
+--  @ConsF x r => ConsF x (f r)
+--  @NilF => NilF
+--hyloL = hylo listF
+
+-- ∀s. stream (unstream s) => s
+Sfuse next (@stream n0 s0) = @stream (next << n0) s0
+ana next seed = @stream next seed
+
+-- foldr/l/dfa = only way to eliminate streams
+foldr c z (@stream next seed) = let
+  go s = case next s of
+    @Done      => z
+    @Skip r    => go r
+    @Yield x r => c x (go r)
+  in go seed
+
+foldl f zz (@stream next seed) = let
+  go z s = case next s of
+    @Done      => z
+    @Skip r    => go z r
+    @Yield x r => go (f z x) r
+  in go zz seed
+
+-- h where h = (identity ||| h) . c
+-- a form of tail-recursion where the dfa may terminate early
+dfa f zz (@stream next seed) = let
+  go z s = case next s of
+    @Done      => z
+    @Skip r    => go z r
+    @Yield x r => case f z x of
+      @Left end   => end
+      @Right cont => go cont r
+  in go zz seed
+
+fmap f = \case
+  @Done      => Done
+  @Skip r    => Skip r
+  @Yield x r => Yield (f x) r
+map = Sfuse << fmap
+
+enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
+_.._ { n0 } = enumFromTo
+
+Sappend (@stream nextL sl0) (@stream nextR sr0) = let
+  next = \case
+    @Left  sa => case nextL sa of
+      @Done      => Skip    (Right sr0)
+      @Skip s    => Skip    (Left s)
+      @Yield x s => Yield x (Left s)
+    @Right sb => case nextR sb of
+      @Done      => Done
+      @Skip s    => Skip    (Right s)
+      @Yield x s => Yield x (Right s)
+  in ana next (@Left sl0)
+
+--SzipWith f (@stream nextL sl0) (@stream nextR sr0) = let
+--  nxt (sl , sr , maybeST) = case maybeST of
+--    @None => case nextL sl of
+--      @Done      => Done
+--      @Skip s    => Skip (s , sr , None)
+--      @Yield x s => Skip (s , sr , One x)
+--    @One a => case nextR sr of
+--      @Done      => Done
+--      @Skip s    => Skip          (sl , s , One a)
+--      @Yield x s => Yield (f a x) (sl , s , None)
+--  in ana nxt (sl0 , sr0 , None)
+
+--SconcatMap f (@stream nexta seed) = let
+--  next (sa , m) = case m of
+--    None => case nexta sa of
+--      @Done      => Done
+--      @Skip s    => Skip (s , None)
+--      @Yield a s => Skip (s , One (f a))
+--    One (@stream nextb sb) => case nextb sb of
+--      @Done      => Skip    (sa , None)
+--      @Skip s    => Skip    (sa , One (stream nextb s))
+--      @Yield b s => Yield b (sa , One (stream nextb s))
+--  in @stream next (seed , None)
+
+SconcatMap f (@stream nexta seed) = let
+  nextC S = case S . m of
+    @None => case nexta S . sa of
+      @Done      => Done
+      @Skip s    => Skip { sa = s , m = @None}
+      @Yield a s => Skip { sa = s , m = @One (f a)}
+    @One (@stream nextb sb) => case nextb sb of
+      @Done      => Skip    {sa = S . sa , m = @None}
+      @Skip s    => Skip    {sa = S . sa , m = @One (stream nextb s)}
+      @Yield b s => Yield b {sa = S . sa , m = @One (stream nextb s)}
+  in @stream nextC {sa = seed , m = None}
+
+-- takes fn to apply to the front of list and returns the back
+-- ?! support having access to both lists
+-- SsplitAt n onFront = \case
+--   stream nexta seed =>
+
+--fromStr str = @stream (\(ok , head , tail) => if ok then Yield head (nextElem tail) else Done) (nextElem str)
+stringToStream string = @stream (\str => if nullString str then Done else (unConsString str > \(head , tail) => Yield head tail)) string
+
+-- @Stream -> %Str
+streamToString s = strBufToString (foldl pushStrBuf (allocStrBuf 512) s)
+
+showIntList = streamToString << map (chr << (add 48))
+test = showIntList (enumFromTo 0 9)
+
+isoStringStream = streamToString (stringToStream "0123")
+
+-- TODO leaf bicasts; typechecks because %i8 is a subtype of %i32
+--a = stringToStream "0123"
+--b = showIntList
+--c = b a
+
+-- Tests
+--t   = foldr add 0 (enumFromTo 0 10)
+--tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2))
+--ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))
+--l  = sum < map (add 1) < enumFromTo 5 10
+--ll = Sappend (enumFromTo 11 15) (enumFromTo 5 10)
+--ll a = cata add 0 < Sappend a a
+--rr a = foldr add 0 < SzipWith add a a
+--t5   = foldr add 0 < SconcatMap (enumFromTo 10) (enumFromTo 5 10)
+--t6 a = Sappend a a
+--t7 a = foldr add 0 < Sappend a (Sappend a a)
+--t8 a = foldr add 0 < map (add 1) < Sappend a a
+--flatStream xs ys = foldr add 0 (Sappend xs ys)
+--
+---- DirStream
+---- TODO indicate end of dirstream?
+--dirStream dirp = @stream (readdir >> \(ok , nextDirp , name) => if ok then Yield name nextDirp else Done) dirp
+--
+--ls fName = foldr (\n ? => puts n) 0 < dirStream (opendir fName)
+--
+--treeP fName = foldr (\n ? => puts n + treeP n) 0 < dirStream (opendir fName)
+
+-- f n = sum [ k * m | k ← [1..n] , m ← [1..k] ]
+-- T[E | ] = return E
+-- T[E | B , Q] = guard B T[E | Q]
+-- T[E | P ← L , Q] = let f P = True ; f _ = False
+--                        g P = T[E | Q]
+--                    in concatMap (\x => guard (f x) (g x)) L
+-- T[E | let decls , Q] = let decls in T [E | Q]

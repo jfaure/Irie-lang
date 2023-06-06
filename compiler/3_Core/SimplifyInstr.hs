@@ -2,10 +2,12 @@ module SimplifyInstr where
 import CoreSyn
 import Prim
 import Builtins
-import Data.Bits
+--import Data.Bits
 import qualified Data.Vector as V
 import qualified System.Directory as Dir
 import System.IO.Unsafe
+import PrettyCore
+import qualified Data.Text as T
 
 interpretBinaryIntInstr = \case
   Add  -> (+)
@@ -64,20 +66,20 @@ simpleInstr i args = let
 --  x -> x
   in case i of
   IfThenE | [cond , a , b] <- args
-          , App pred [Lit (Int x) , Lit (Int y)] <- cond
+          , App pred [Lit (Fin _ x) , Lit (Fin _Int y)] <- cond
           , Instr (NumInstr (PredInstr p)) <- pred ->
       if case p of { EQCmp-> x == y ; NEQCmp-> x /= y ; GECmp-> x > y ; GTCmp-> x >= y
                    ; LECmp-> x <= y ; LTCmp-> x < y ; _ -> _ }
       then a else b
-  GMPInstr j -> simpleGMPInstr j args
-  Zext | [Lit (Int i)]   <- args -> Lit (Fin 64 i)
+--GMPInstr j -> simpleGMPInstr j args
+  Zext -- | [Lit ( i)]   <- args -> Lit (Fin 64 i)
        | [Lit (Fin _ i)] <- args -> Lit (Fin 64 i)
-  NumInstr (IntInstr Chr) | [Lit (Int i) ] <- args -> Lit (Char (chr (fromIntegral i)))
+  NumInstr (IntInstr Chr) | [Lit (Fin _ i) ] <- args -> Lit (Char (chr (fromIntegral i)))
   NumInstr (IntInstr Ord) | [Lit (Char c)] <- args -> Lit (Fin 32 (fromIntegral $ ord c))
 --NumInstr (IntInstr i)  | [Lit (I32 a) , Lit (I32 b)] <- args ->
-  NumInstr (IntInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryIntInstr i a b))
-  NumInstr (BitInstr i)  | [Lit (Int a) , Lit (Int b)] <- args -> Lit (Int (interpretBinaryBitInstr i a b))
-  NumInstr (PredInstr p) | [Lit (Int a) , Lit (Int b)] <- args -> boolToLabel (interpretBinaryPredInstr p a b)
+  NumInstr (IntInstr i)  | [Lit (Fin n a) , Lit (Fin m b)] <- args -> Lit (Fin (max m n) (interpretBinaryIntInstr i a b))
+  NumInstr (BitInstr i)  | [Lit (Fin n a) , Lit (Fin m b)] <- args -> Lit (Fin (max m n) (interpretBinaryBitInstr i a b))
+  NumInstr (PredInstr p) | [Lit (Fin _ a) , Lit (Fin _ b)] <- trace (T.intercalate "," $ prettyTermRaw <$> args) args -> boolToLabel (interpretBinaryPredInstr p a b)
 
   -- cannot use posix types directly due to hidden constructors preventing deriving Binary for Literal
   OpenDir | [Lit (String fName)] <- args -> let
@@ -87,16 +89,18 @@ simpleInstr i args = let
     []     -> Tuple (V.fromList [builtinFalse , Lit (DirStream []) , Lit (String "")])
     f : fs -> Tuple (V.fromList [builtinTrue  , Lit (DirStream fs) , Lit (String f)])
   IsDir   | [Lit (String fName)] <- args -> if unsafePerformIO (Dir.doesDirectoryExist fName) then builtinTrue else builtinFalse
-  Puts    | [Lit (String fName)] <- args -> trace fName $ Lit (Int (fromIntegral $ length fName))
+  Puts    | [Lit (String fName)] <- args -> trace fName $ Lit (Fin 32 (fromIntegral $ length fName))
 
   StrBufToString | [Lit (RevString rs)] <- args -> Lit (String (reverse rs)) -- TODO slow
   PushStrBuf | [Lit (RevString rs) , Lit (Char c)] <- args -> Lit (RevString (c : rs))
-  AllocStrBuf | [Lit (Int len)] <- args -> Lit (RevString [])
+  AllocStrBuf | [Lit (Fin _ len)] <- args -> Lit (RevString [])
   NullString | [Lit (String s)] <- args -> boolToLabel (null s)
   UnCons | [Lit (String s)]     <- args -> fromMaybe (chr 0 , "") (uncons s)
     & \(head , tail) -> Tuple (V.fromList [Lit (Char head) , Lit (String tail)])
+  TraceId | [Lit t] <- args -> d_ t (Lit t)
   _ -> App (Instr i) args
 
+{-
 simpleGMPInstr :: NumInstrs -> [Term] -> Term
 simpleGMPInstr i args = let
   mkCmpInstr pred args = App (Instr (NumInstr (PredInstr pred))) args
@@ -126,3 +130,4 @@ simpleGMPInstr i args = let
     | [_larg , Lit (Fin 64 _)]          <- args -> App (Instr (GMPOther PowUI)) args
   -- nothing to fold
   i -> App (Instr (GMPInstr i)) args
+  -}

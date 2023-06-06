@@ -1,5 +1,6 @@
 import prelude
--- import list
+--import list
+
 -- 16byte scanner; small pattern sets (<= 32);
 -- if pattern set < 16, can search 2x the pattern space
 -- can detect ranges, bytes, negated bytes and negated ranges and match several boolean combinations of these predicates at once.
@@ -28,15 +29,16 @@ verifyTight hi lo scanMask = hi B& scanMask B& (lo + (scanMask B& bitNOT hi))
 -- Patterns may not be < 2 bytes
 -- If patterns don't fully fit in 32 bytes; trim longest ones
 -- fromPatterns : Nat -> Nat -> Array Nat -> Array CString -> MiniScanner
+
 fromPatterns nPats sumLens lens pats = let
   tight = sumLens <? 32 - nPats -- TODO mk tight if possible
   listToBitSet = foldl setBit 0
   loList = scanl _+_ 0 lens
   lo    = listToBitSet loList -- "cat|dog" -> 0b001001
   in record
-  CatPatterns = _mm256_fromList_epi8 (concat pats)
+  CatPatterns = _ -- _mm256_fromList_epi8 (concat pats)
               -- vv [0..] , reset at each pat start offset (TODO set bit 7 at end iff tight)
-  PatShuf     = _mm256_fromList_epi8 (concatMap (\len => 0 .. len) lens)
+  PatShuf     = _ --_mm256_fromList_epi8 (concatMap (\len => 0 .. len) lens)
   Hi          = setBit (lo B>> 1) sumLens
   Lo          = lo
 

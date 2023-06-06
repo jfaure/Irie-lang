@@ -35,7 +35,6 @@ data ParseDetails = ParseDetails {
  , _topINames      :: BitSet -- the fields of the module record
  , _fieldINames    :: BitSet
  , _labelINames    :: BitSet
--- , _labels         :: NameMap
  , _newLines       :: [Int]
  , _letBindCount   :: Int
 }

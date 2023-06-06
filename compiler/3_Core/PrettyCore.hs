@@ -203,7 +203,7 @@ pBind nm showRhs bind = pretty nm <> " = " <> case bind of
 
 pExpr :: Bool -> Expr -> Doc Annotation
 pExpr showRhs (Core term ty) = let pos = True in case term of
-  LetBlock{} -> (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy True ty)
+--LetBlock{} -> (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy True ty)
 --  -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
   term       -> (if showRhs then pTerm showRhs term <+> ": " else "") <> annotate AType (pTy pos ty)
 
@@ -244,7 +244,8 @@ pTerm showRhs = let
         LensGet          -> " . get "
         LensSet  tt      -> " . set "  <> parens (pExpr showRhs tt)
         LensOver cast tt -> " . over " <> parens ("<" <> viaShow cast <> ">" <> pExpr showRhs tt)
-      in parens $ r <> " . " <> hsep (punctuate "." $ {-prettyField-} viaShow <$> target) <> pLens ammo
+      prettyField q = annotate (AQFieldName (QName q)) ""
+      in parens $ r <> " . " <> hsep (punctuate "." $ prettyField <$> target) <> pLens ammo
     LetSpecF q sh -> "let-spec: " <> viaShow q <> "(" <> viaShow sh <> ")"
     RenameCapturesF freeVars t -> "Rename-captures: " <> viaShow freeVars <> " in " <> t
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
@@ -254,7 +255,7 @@ pTerm showRhs = let
     TupleF ts    -> parens $ hsep $ punctuate " ," (V.toList ts)
     LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
       <> hardline <> "in" <+> t
-    LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
+--  LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 
   parensApp f args = parens $ parens f <+> nest 2 (sep args)

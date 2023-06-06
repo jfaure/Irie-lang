@@ -2,29 +2,34 @@ import prelude
 -- Fusion
 -- sumAppend n = sum [m * m | m <- [1..n]]
 -- = foldl _+_ 0 (concatMap (\m => pure (m * m)) (enum 1 n)
-nextEnum n = case n >=? 10 of
-  @True  => @Done
-  @False => @Yield n (1 + n)
+nextEnum n i = case i >? n of
+  True  => Done
+  False => Yield i (1 + i)
 
-nextConcatMap i nest = case nest of
+nextConcatMap n i nest = case nest of
   @J (@Stream next s0) => case next s0 of
-    @Done      => @Skip i @N
-    @Skip s    => @Skip i (J (Stream next s))
-    @Yield y s => @Yield y i (J (Stream next s))
-  @N => case nextEnum i of
+    @Done      => Skip i N
+    @Skip s    => Skip i (J (Stream next s))
+    @Yield y s => Yield y i (J (Stream next s))
+  @N => case nextEnum n i of
     Done   => Done
     Skip i => Skip i N
-    Yield x i => let
-      nextRet x = \case
-        @True  => Yield (x * x) False
-        @False => Done
-      in Skip i (J (Stream (nextRet x) True))
+    Yield x i => -- let 
+--    nextRet x = \case
+--      True  => Yield (x * x) False
+--      False => Done
+      Skip i (J (Stream (nextRet x) True))
 
-go z s0 s1 = case nextConcatMap s0 s1 of
+nextRet x = \case
+  True  => Yield (x * x) False
+  False => Done
+
+go n z s0 s1 = case nextConcatMap n s0 s1 of
   @Done        => z
-  @Skip s q    => go z s q
-  @Yield x s q => go (z + x) s q
+  @Skip s q    => go n z s q
+  @Yield x s q => go n (z + x) s q
 
-sumAppend n = go 0 n N
+-- Specialise
+sumAppend n = go n 0 1 N
 
-t = sumAppend 5
+--t = sumAppend 6 -- 55

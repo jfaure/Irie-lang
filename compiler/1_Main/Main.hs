@@ -17,6 +17,7 @@ demoFile   = "demo.ii"
 sh         = main' . Data.List.words
 [parseTree , ssa , core , types , opt , emitC , interp] = sh . (demoFile <>) <$>
   [" -p parse" , " -p ssa" , " -p core --no-fuse", " -p types --no-fuse" , " -p simple" , " -p C" , " --interpret"]
+stream = sh "ii/stream.ii -p simple"
 testRepl   = sh ""
 
 main = getArgs >>= main'

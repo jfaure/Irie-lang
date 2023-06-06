@@ -28,14 +28,21 @@
 --import mutumorphism -- avoid let-block
 --import Tee -- duplicate streams
 
+-- Need to re-app freeVars on recursive calls: letstream.ii
+-- pdep captures
+--foldr c z (@stream next seed) = let
+--  go s = case next s of
+--    @Done      => z
+--    @Skip r    => go r
+--    @Yield x r => c x (go r)
+--  in go seed
+
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
 -- Libs: Optparse Lens List Eff DFA BitSet
 
 -- Cat records: V and ^
-
--- pdep captures
 
 -- Resolve type aliases
 --Rectangle = { f = Int , g = Int }
@@ -46,11 +53,22 @@
 --  Nothing
 --  Just a
 
---import ii/FA/CharScan/MiniPrefix
-import stream
-f = enumFromTo -- 0 10 -- 0 .. 10
-g (stream next i) = next i
-
 -- vv promoting inames to topNames breaks popcount lookup
+-- but only when imported; should patch resolvenames?
 --import odd
 --f = gg
+
+-- labels vs typed bindings returning labels
+
+-- 'x' field QName not imported.
+-- should it be a lens|prims|iso|adapter|traversal|getter|fold ?
+-- import Maybe?
+-- f = rect . x
+
+-- import stream.ii
+
+-- loops
+-- sh "-p simple ii/SpecialisationTests/SimpleMutual"
+
+-- Specialise
+-- sh "-p simple ii/SpecialisationTests/SumOfSquares"

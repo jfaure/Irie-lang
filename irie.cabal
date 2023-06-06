@@ -21,7 +21,7 @@ source-repository head
   location: https://github.com/jfaure/irie
 
 executable irie-exe
-  ghc-options: -threaded -O3 -Wno-deprecations -fdefer-typed-holes -Wno-typed-holes -fdefer-typed-holes -Wno-typed-holes
+  ghc-options: -threaded -O2 -Wno-deprecations -fdefer-typed-holes -Wno-typed-holes -fdefer-typed-holes -Wno-typed-holes
     -Wunused-imports
     -Wincomplete-patterns
     -Wincomplete-record-updates

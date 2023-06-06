@@ -55,11 +55,11 @@ data Term -- β-reducable (possibly to a type)
  | App     Term [Term]
 
 -- {}
- | Array    (V.Vector Term)      -- Simplifier only: Must not contain any free variables!
- | Tuple    (V.Vector Term)      -- Simplifier only: Must not contain any free variables!
+ | Array    (V.Vector Term)
+ | Tuple    (V.Vector Term)
  | Prod     (BSM.BitSetMap Term)
- | LetBlock (V.Vector (LetMeta , Bind))
- | LetBinds (V.Vector (LetMeta , Bind)) Term
+-- | LetBlock (V.Vector (LetMeta , Bind)) -- RM
+ | LetBinds (V.Vector (LetMeta , Bind)) Term -- change; all lets are lifted
  | TTLens  Term [IField] LensOp
 
 -- []

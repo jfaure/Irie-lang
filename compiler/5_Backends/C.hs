@@ -174,7 +174,6 @@ parens p = fromChar '(' <> p <> fromChar ')'
 
 emitLiteral ssaMod = \case
   Char c  → fromString $ show c
-  Int i   → fromString $ show i
   Fin n i → case n of
     8  → "(uint8_t)"   <> fromString (show i)
     16 → "(uint16_t)"  <> fromString (show i)
