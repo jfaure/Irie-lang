@@ -30,7 +30,7 @@ int_t = TPrim (PtrTo (PrimInt 32))
 
 setTop t = modify $ \x->x{top = t}
 
-mkSSAModule coreMod@(JudgedModule modIName modName pLabels _ _ _modTT) = let
+mkSSAModule coreMod = let
   nArgs  = 100 -- TODO !
   nBinds = V.length coreBinds
   wip2Fn = \case
@@ -49,10 +49,10 @@ mkSSAModule coreMod@(JudgedModule modIName modName pLabels _ _ _modTT) = let
     , locCount    = 0
     , muDefs      = mempty
     , expectedTy  = TVoid
-    , thisMod     = modIName
+    , thisMod     = _modIName
     }
     fns ← V.unsafeFreeze (wipBinds st)
-    pure $ Module modName (V.reverse $ V.fromList (wipTypeDefs st)) mempty (wip2Fn <$> fns)
+    pure $ Module _modName (V.reverse $ V.fromList (wipTypeDefs st)) mempty (wip2Fn <$> fns)
 
 typeOfInstr i = TPrim (PrimInt 32)
 

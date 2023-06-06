@@ -25,7 +25,7 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
  , _parseDetails :: ParseDetails
 }
 
-emptyParsedModule h = Module h [] mempty (ParseDetails mempty mempty 0 mempty [] 0)
+emptyParsedModule h = Module h [] mempty (ParseDetails mempty mempty 0 0 0 [] 0)
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
@@ -33,7 +33,9 @@ data ParseDetails = ParseDetails {
 -- , _hNameBinds     :: M.Map HName IName -- top-level and let-bound assignments TODO list is sufficient here
  , _hNamesToINames :: NameMap -- INames (module-local HName equivalents)
  , _topINames      :: BitSet -- the fields of the module record
- , _labels         :: NameMap
+ , _fieldINames    :: BitSet
+ , _labelINames    :: BitSet
+-- , _labels         :: NameMap
  , _newLines       :: [Int]
  , _letBindCount   :: Int
 }
@@ -166,7 +168,7 @@ prettyModule m = show (m^.moduleName) <> " {\n"
     <> show (m^.parseDetails) <> "\n}"
 prettyParseDetails p = Prelude.concatMap ("\n  " <>)
     [ "names:  "   <> show (p^.hNamesToINames)
-    , "labels: "   <> show (p^.labels)
+--  , "labels: "   <> show (p^.labels)
 --  , "newlines: " <> show (p^.newLines)
     ]
 

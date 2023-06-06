@@ -12,26 +12,26 @@ iffy a b c = ifThenElseInt1 a b c -- ∏ A → %i1 → A → A → A
 bool4 x y z = ifThenElseInt1 x y z  -- ∏ A → %i1 → A → A → A
 bool6 x y   = ifThenElseInt1 x y x  -- ∏ A → (%i1 ⊓ A) → A → A
 
-poly1 = let ap = \f a => f a in ap (\y => y.t) { t = 1 } -- %i1
-poly2 = let pa = \a f => f a in pa { t = 1 } (\y => y.t) -- %i1
-letMixfix = let _<_ = \f a => f a in (\y => y.t) < { t = 1 } -- %i1
+poly1 = let ap = \f a => f a in ap (\y => y . t) { t = 1 } -- %i1
+poly2 = let pa = \a f => f a in pa { t = 1 } (\y => y . t) -- %i1
+letMixfix = let _<_ = \f a => f a in (\y => y . t) < { t = 1 } -- %i1
 
 --boolerror0 = (add 1) 1                       -- cannot constrain %i1 <: %i32
 --boolerror1 = \x => (add 1) (not x)           -- cannot constrain %i1 <: %i32
---boolerror2 = (\x => not x.f) { f = 123 }     -- cannot constrain %i32 <: %i1
---boolerror3 = (\f => \x => not (f x.u)) 0 -- cannot constrain %i1 <: A => B
+--boolerror2 = (\x => not x . f) { f = 123 }     -- cannot constrain %i32 <: %i1
+--boolerror3 = (\f => \x => not (f x . u)) 0 -- cannot constrain %i1 <: A => B
 
-records0 x = x.f                      -- ∏ A → {f : A} → A
+records0 x = x . f                      -- ∏ A → {f : A} → A
 records1 = {}                         -- {}
 records2 = { f = 42 }                 -- {f : %i8}
-records3 = { f = 42 }.f               -- %i8
-records4 = (\x => x.f) { f = 42 }     -- %i8
-records5 f = { x = f 42 }.x           -- ∏ A → (%i8 → A) → A
-records6 f = { x = f 42 , y = 123 }.y -- (%i8 → ⊤) → %i8
+records3 = { f = 42 } . f               -- %i8
+records4 = (\x => x . f) { f = 42 }     -- %i8
+records5 f = { x = f 42 } . x           -- ∏ A → (%i8 → A) → A
+records6 f = { x = f 42 , y = 123 } . y -- (%i8 → ⊤) → %i8
 records7 = ifThenElseInt1 1 { a = 1 , b = 1 } { b = 0 , c = 42 } -- {b : %i1}
 
---recordserror1 = { a = 123 , b = 1 }.c  -- missing field: c in {a: %i32, b: %i1})
---recordserror2 = (\x => { a = x }.b)       -- missing field: b in {a: A})
+--recordserror1 = { a = 123 , b = 1 } . c  -- missing field: c in {a: %i32, b: %i1})
+--recordserror2 = (\x => { a = x } . b)       -- missing field: b in {a: A})
 
 YComb f = (\x => f (x x)) (\x => f (x x)) -- ∏ A → (A → A) → A
 ZComb f = (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v)) -- ∏ A B C → ((A → B) → ((A → B) ⊓ C)) → C
@@ -57,8 +57,8 @@ lp5 y = let f x = x y in {a = f (\z => z) , b = f (\z => add 1 z)} -- ∏ A → 
 
 -- Example loss of polymorphism due to extrusion – the identity function becomes less polymorphic:
 -- MLsub: (((a => (%i1 | %i32 | a)) => Top) => {u : (%i32 | a), v : (%i1 | a)})
---lp8 = \k => let test = (\id => {tmp = k id , res = id}.res) (\x => x) in {u = test 78 , v = test 1} -- ∏ A → ((A → (%i1 ⊓ %i32 ⊓ A)) → ⊤) → {u : (%i32 ⊓ A) , v : (%i1 ⊓ A)}
-lp9 = \k => let test = {tmp = k (\x => x) , res = (\x => x)}.res in {u = test 0 , v = test 1} -- ∏ A → ((A → A) → ⊤) → {u : %i1 , v : %i1}
+--lp8 = \k => let test = (\id => {tmp = k id , res = id} . res) (\x => x) in {u = test 78 , v = test 1} -- ∏ A → ((A → (%i1 ⊓ %i32 ⊓ A)) → ⊤) → {u : (%i32 ⊓ A) , v : (%i1 ⊓ A)}
+lp9 = \k => let test = {tmp = k (\x => x) , res = (\x => x)} . res in {u = test 0 , v = test 1} -- ∏ A → ((A → A) → ⊤) → {u : %i1 , v : %i1}
 
 -- cases where a tmp function is defined but never used:
 -- Irie considers that unused let-bindings have no effect tvars in scope so these tests are moot
@@ -72,7 +72,7 @@ lp9 = \k => let test = {tmp = k (\x => x) , res = (\x => x)}.res in {u = test 0 
 lp14 = \f => let r = \x => \g => { a = f x , b = g x } in r -- ∏ A B C → (A → B) → A → (A → C) → {a : B , b : C}
 lp15 = \f => let r = \x => \g => { a = g x } in {u = r 0 (add 1) , v = r 1 (add 0)} -- ⊤ → {u : {a : %i32} , v : {a : %i32}}
 lp16 = \f => let r = \x => \g => { a = g x , b = f x } in {u = r 0 (add 1) , v = r 1 (add 0)} -- ∏ A → (%i1 → A) → {u : {a : %i32 , b : A} , v : {a : %i32 , b : A}}
-lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y.t)} -- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
+lp17 f = let r x g = { a = g x , b = f x } in {u = r 0 (add 1) , v = r {t = 1} (\y => y . t)} -- ∏ A → ((%i1 ⊔ {t : %i1}) → A) → {u : {a : %i32 , b : A} , v : {a : %i1 , b : A}}
 
 ---------------------
 -- Recursive types --
@@ -88,7 +88,7 @@ ManyArgs = (\f => (\x => f (\v => (x x) v)) (\x => f (\v => (x x) v))) (\f => \x
 
 --trutru = let rec trutru = \g => trutru (g 1) in trutru -- ∏ A → (%i1 → A) as A → ⊥)
 -- µx.{u : x} → ⊥
-lpRec1 = let rec f = \x => f x.u in f -- ∏ A → µa.{u : a} → ⊥
+lpRec1 = let rec f = \x => f x . u in f -- ∏ A → µa.{u : a} → ⊥
 
 -- merge two (∏ A → µa.(⊤ → a))
 lpRec2 = let r a = r in ifThenElseInt1 1 r r  -- ∏ A → µa.(⊤ → a)
@@ -105,10 +105,10 @@ rec5  = \next => 0                                    -- ⊤ → %i1
 --rec12 = let rec x = (\y => {u = y , v = (x x)}) in x  -- ∏ A → A → µxy.{u : A ∨ (A → x) , v : y}
 --rec12 = let rec x = (\y => {u = (x x) , v = y}) in x  -- ∏ A → A → µxy.{u : y, v : A ∨ (A → x)}
 --rec13 = let rec x = (\y => (let z = (y x) in y)) in x -- ∏ A → µx.(A ∧ (x → ⊤) → A)
---rec15 = let rec x = (let y = (x x) in (\z => z)) in (x (\y => y.u)) -- ∏ A → A ⊓ (A ⊓ {u : B} → µx.(A ⊓ B ⊓ (A ⊓ {u : B} → x)))
+--rec15 = let rec x = (let y = (x x) in (\z => z)) in (x (\y => y . u)) -- ∏ A → A ⊓ (A ⊓ {u : B} → µx.(A ⊓ B ⊓ (A ⊓ {u : B} → x)))
 
 -- TODO what semantics do we want for typing freevars of unused let bindings
--- misc0 = (\x => (let y = (x x.v) in 0)) -- ∏ A → ((A → ⊤) ⊓ {v : A}) → %i1
+-- misc0 = (\x => (let y = (x x . v) in 0)) -- ∏ A → ((A → ⊤) ⊓ {v : A}) → %i1
 -- ^ was ⊤ → %i1
 -- ^ Note: simplesub says ∏ A → {v: A} ∧ (A → ⊤) → %i32
 -- ^ Note: without canonicalization: -- (B ∨ (B ∧ {u: C} → A ∨ C)) as A

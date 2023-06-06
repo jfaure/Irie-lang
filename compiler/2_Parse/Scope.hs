@@ -106,7 +106,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
       Var (VExtern i) -> case checkExternScope params._open thisMod exts i of
         ImportLabel q -> QLabel q
   --    ImportLit
-        _ -> Var (VExtern i) -- new argument
+        x -> Var (VExtern i) -- new argument. (x is likely: `NotInScope sometxt`)
       Juxt o args -> solveMixfixes o (scopeLayer <$> args) -- TODO need to solveScope VExterns first
       tt -> tt
     isLabel = \case { QLabel{} -> True ; Label{} -> True ; App{} -> True; _ -> False }
@@ -115,6 +115,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
       QLabel q -> (qName2Key q , rhs) -- Guards openMatch guards rhs)
       Label i subPats -> (qName2Key (mkQName thisMod i) , GuardArgs subPats rhs)
       App _ (QLabel q) subPats -> (qName2Key q , GuardArgs subPats rhs)
+      App _ (Var (VExtern i)) ars -> (0 , ScopePoison (NoScopeLabel i (length ars)))
       x -> (0 , ScopePoison (ScopeError $ "bad pattern: " <> show x))
     openMatch = case rest of -- TODO could be guarded; another case
       [] -> Nothing
@@ -157,6 +158,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
   -- v transpose ?
   FnEqns eqns -> case eqns of
     [GuardArgs pats rhs] -> guardArgs pats rhs []
+    fns -> DesugarPoisonF (IllegalPattern $ "TODO: desugar multiple function equations:\n" <> show fns)
   GuardArgs pats rhs -> guardArgs pats rhs []
   Guards _ko [] rhs -> scopeApoF topBindsCount exts thisMod (rhs , params) -- RawExprF (Right (rhs , params)) -- skip
   Guards ko (g : guards) rhs -> let
@@ -164,17 +166,18 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
       rhs' = if null subPats then Guards ko guards rhs else GuardArgs subPats (Guards ko guards rhs)
       in MatchBF scrut (BSM.singleton (qName2Key q) rhs') ko
     in case g of
-    GuardPat pat scrut -> case pat of
+    GuardPat pat scrut -> case pat of -- TODO should probably let unfoldCase take over everything
       Label l subPats -> guardLabel scrut (mkQName thisMod l) subPats
       Tuple subPats -> let
         n = length subPats
         projections = [TupleIdx (qName2Key (mkQName 0 i)) scrut | i <- [0 .. n - 1]]
         in Right . (,params) <$> AppF (-1) (GuardArgs subPats (Guards ko guards rhs)) projections
-      -- vv TODO could be Label or new arg
-      Var (VExtern i) -> case checkExternScope params._open thisMod exts i of
-        ImportLabel q -> guardLabel scrut q []--guards
-        NotInScope _  -> doBruijnAbs (BruijnAbsF 1 [(i , params._bruijnCount)] 0 rhs)
-        x -> DesugarPoisonF (IllegalPattern ("Ext: " <> show x))
+--    -- vv TODO could be Label or new arg
+--    Var (VExtern i) -> case checkExternScope params._open thisMod exts i of
+--      ImportLabel q -> guardLabel scrut q []--guards
+--      NotInScope _  -> doBruijnAbs (BruijnAbsF 1 [(i , params._bruijnCount)] 0 rhs)
+--      x -> DesugarPoisonF (IllegalPattern ("Ext: " <> show x))
+      x -> RawExprF (Right (unfoldCase scrut [(x , rhs)] params , params))
       x -> DesugarPoisonF (IllegalPattern (show x))
     GuardBool{} -> error (show g)
 

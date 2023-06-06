@@ -178,7 +178,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      iNamesV = iMap2Vector (pm ^. P.parseDetails . P.hNamesToINames)
      (resolver , mfResolver , exts) = resolveNames reg' mI pm iNamesV
      getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
-       BindSource (lookupLabelName r._loadedModules) (lookupFieldName r._loadedModules)
+       BindSource (lookupIName r._loadedModules)
      srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ pm ^. P.parseDetails . P.newLines))
      putModVerdict = False -- TODO should only print at repl?
      (warnings , jmResult) = judge importINames reg' exts mI pm iNamesV
@@ -186,7 +186,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      -- Note. we still register the module even though its is partially broken, esp. for putErrors to lookup names
      Left (errs , jm) -> registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
        *> getBindSrc >>= \bindSrc ->
-       putErrors stdout srcInfo bindSrc errs
+       putErrors stdout mI srcInfo bindSrc errs
        *> {-when putModVerdict-} (putStrLn @Text ("KO \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
      Right jm -> let
        shouldPutJM = (dependents == 0 || putDependents cmdLine)
@@ -209,10 +209,10 @@ judge :: Deps -> PureRegistry -> Externs -> ModIName -> P.Module -> V.Vector HNa
   -> (Maybe Text , Either (Errors , JudgedModule) JudgedModule)
 judge deps reg exts modIName p iNamesV = let
 --  bindNames   = p ^. P.bindings <&> P._fnNm
-  labelHNames = p ^. P.parseDetails . P.labels
+  labelINames = p ^. P.parseDetails . P.labelINames
   bindINames  = p ^. P.parseDetails . P.topINames
   (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules bindINames
-  jm = JudgedModule modIName (p ^. P.moduleName) (iMap2Vector labelHNames) iNamesV bindINames modTT
+  jm = JudgedModule modIName (p ^. P.moduleName) iNamesV bindINames labelINames modTT
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails) && null (errors ^. checkFails)
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails) && null (errors ^. unpatternFails)
   warnings = errors ^. scopeWarnings & \ws -> if null ws then Nothing
@@ -228,11 +228,11 @@ putJudgedModule cmdLine bindSrc jm = let
     Nothing    -> putJM stdout
     Just fName -> openFile fName WriteMode >>= \h -> putJM h *> SIO.hClose h
 
-putErrors :: Handle -> Maybe SrcInfo -> BindSource -> Errors -> IO ()
-putErrors h srcInfo bindSrc errors = let
+putErrors :: Handle -> ModuleIName -> Maybe SrcInfo -> BindSource -> Errors -> IO ()
+putErrors h thisMod srcInfo bindSrc errors = let
   e = [ formatMixfixError srcInfo        <$> (errors ^. mixfixFails)
       , formatBisubError bindSrc srcInfo <$> (errors ^. biFails)
-      , formatScopeError bindSrc         <$> (errors ^. scopeFails)
+      , formatScopeError thisMod bindSrc <$> (errors ^. scopeFails)
       , formatCheckError bindSrc         <$> (errors ^. checkFails)
       , formatTypeAppError               <$> (errors ^. typeAppFails)
       , formatUnPatError                 <$> (errors ^. unpatternFails)]

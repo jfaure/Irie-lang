@@ -12,12 +12,15 @@
   * label/constant name-conv: importing new labels can break code: eg. f a = _ ; then import an 'a' label
   * edit-distance
 ## New primitives + Syntax
+  * '.' , reservedChar for "r.f" , but want ".&." , ".." names => words can't start with "."?
   * ~> = implicit arg: A ~> A -> A ; ~ for app of implicit: "identity ~Int 3"
   * quantify over fields / labels (dependent type)
      decomp : Label A -> [A _ | ..] -> ([A _] , [..])
   * record type syntax: { x = Int , y } -- indicates y = ? (only makes sense as a type, but legal syntax)
   * record union (| : |) , difference (\\ : \\)
   * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
+  * scope of field/label names: topnames or label names?
+      {x = 3} . x .~ "hello" -- { x : Int } -> { x : String }
   ? Sum-of-Record
   ? argCase => f = \argCase { a b => _ }
 ### Linearity ; free variables (type must be known) ; β vs always-inline

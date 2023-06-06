@@ -1,0 +1,3 @@
+Maybe a = data
+  Just a
+  Nothing

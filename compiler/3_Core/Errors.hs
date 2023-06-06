@@ -24,6 +24,7 @@ data BiSubError = BiSubError SrcOff TmpBiSubError
 data CheckError = CheckError { inferredType :: Type , annotationType :: Type } | ExpectedType Expr
 data ScopeError
   = ScopeError Text
+  | NoScopeLabel IName Int
   | ScopeNotImported BitSet QName
   | AmbigBind  Text [(ModIName , IName)]
   | ScopeLetBound IName
@@ -74,7 +75,7 @@ formatBisubError srcNames srcInfo (BiSubError src (TmpBiSubError failType got ex
       (_ , TyGround [THTyCon THArrow{}]) -> " (excess arguments)"
       _ -> ""
     AbsentField q -> "Absent field '" <> showRawQName q <> "'"
-    AbsentLabel q -> "Absent label '" <> getName (srcLabelNames srcNames) q <> "'"
+    AbsentLabel q -> "Absent label '" <> getName (srcINames srcNames) q <> "'"
   in
      clRed ("No subtype: " <> msg <> ":")
   <> formatSrcLoc srcInfo src
@@ -87,18 +88,19 @@ formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annota
   <>  "\n  expected: " <> clGreen (TL.toStrict $ prettyTy (ansiRender { bindSource = Just bindSrc }) annTy)
 formatCheckError bindSrc (ExpectedType expr) = clRed "Annotation is not a type: " <> toS (prettyExpr ansiRender expr)
 
-lookupIName bindSrc modIName i = fromMaybe (show i) ((srcFieldNames bindSrc) modIName i)
+getIName bindSrc modIName i = fromMaybe (show i) ((srcINames bindSrc) modIName i)
 
-formatScopeError bindSrc = \case
+formatScopeError thisMod bindSrc = \case
   ScopeError h -> clRed "Not in scope: "      <> h
+  NoScopeLabel i n -> clRed "Not in scope: label "      <> show (getIName bindSrc thisMod i) <> " (Applied to " <> show n <> " args)"
   ScopeLetBound i -> clRed "let-bound not in scope: "      <> show i
-  ScopeNotImported opens q -> clRed "Not in scope " <> lookupIName bindSrc (modName q) (unQName q)
+  ScopeNotImported opens q -> clRed "Not in scope " <> getIName bindSrc (modName q) (unQName q)
     <> clBlue "\nnote. ∃: " <> showRawQName q
   AmbigBind h many -> clRed "Ambiguous binding: " <> h <> show many
   LetConflict modIName many -> let
     in case bitSet2IntList many of
-    [one] -> clRed "Let conflict: " <> lookupIName bindSrc modIName one
-    many  -> clRed "Let conflicts: " <> T.intercalate " , " (lookupIName bindSrc modIName <$> many)
+    [one] -> clRed "Let conflict: " <> getIName bindSrc modIName one
+    many  -> clRed "Let conflicts: " <> T.intercalate " , " (getIName bindSrc modIName <$> many)
 
 formatTypeAppError = \case
   BadTypeApp f args -> TL.toStrict $ clRed "Cannot normalise type operator application: "

@@ -93,14 +93,12 @@ render flags = let
     AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
     AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
     AQRawName   q -> addColor (getColor a) $ fromText (showRawQName q)
-    AQBindName  q -> addColor (getColor a) $ case srcFieldNames <$> bindSource flags of
+    AQBindName  q -> addColor (getColor a) $ case srcINames <$> bindSource flags of
       Nothing  -> "π(" <> (fromText (showRawQName q)) <> ")"
       Just fn -> fromText (fromMaybe (showRawQName q) $ fn (modName q) (unQName q))
-      -- (fst (nms V.! modName q V.! unQName q))
-    AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcLabelNames <$> bindSource flags) q)
---  AQFieldName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName (srcFieldNames <$> bindSource flags) q)
+    AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcINames <$> bindSource flags) q)
     AQFieldName q -> -- if modName q == 0 then "!" <> fromText (show (unQName q)) else
-      {-addColor ansiCLYellow $-} b <> fromText (prettyQName True (srcFieldNames <$> bindSource flags) q)
+      {-addColor ansiCLYellow $-} b <> fromText (prettyQName True (srcINames <$> bindSource flags) q)
     ARawFieldName q -> fromText q
     ARawLabelName q -> fromText q
     ALiteral      -> addColor (getColor a) b

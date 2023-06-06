@@ -1,0 +1,7 @@
+-- ! gg is IName 1, and is then later made a topiname
+-- but this is incompatible with its current IName
+z = let gg = 1532 in gg
+f = () --{ r = 3 } -- @G
+gg = 3
+
+-- import odd; f = gg

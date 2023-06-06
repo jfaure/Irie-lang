@@ -1,0 +1,6 @@
+-- swift ABI
+-- Witness tables required outside dylib , but no in!
+-- layout out things inline
+-- * existelsials can prevent caller from knowing size of return value before making call
+-- * caller needs to pass in type information
+-- * reabstraction thunks

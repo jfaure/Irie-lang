@@ -14,7 +14,7 @@ intersperse sep = \case
   Cons x xs => Cons x (prependToAll sep xs)
 
 -- [a] -> [[a]] -> [a]
---intercalate xs xss = concat (intersperse xs xss)
+intercalate xs xss = concat (intersperse xs xss)
 
 -- unwords = merge μ-bounds upwards even if layer not equal
 

@@ -206,9 +206,11 @@ data JudgedModule = JudgedModule {
    modIName   :: IName
  , modHName   :: HName
  -- * JudgedModule saves its own HName list to save the Registry the trouble of maintaining them
- , labelNames :: V.Vector HName -- fromMap $ parseDetails . labels
+-- , labelNames :: V.Vector HName -- fromMap $ parseDetails . labels
  , jmINames   :: V.Vector HName -- fromMap $ parseDetails . hNamesToINames
  , topINames  :: BitSet -- These allow QName -> TopBind vec lookup
+ , labelINames:: BitSet
+--, fieldINames :: anything not top and not label
  -- (modBinds and lets (these will be lifted) are set here)
  , moduleTT   :: ModuleBinds
 }
@@ -216,10 +218,7 @@ data JudgedModule = JudgedModule {
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 
 -- Used by prettyCore functions and the error formatter
-data BindSource = BindSource {
-   srcLabelNames :: ModIName -> IName -> Maybe HName -- TODO should merge this into srcFieldNames somehow
- , srcFieldNames :: ModIName -> IName -> Maybe HName -- INames as parsed by P.unknownNames
-}
+data BindSource = BindSource { srcINames :: ModIName -> IName -> Maybe HName }
 
 makeBaseFunctor ''Expr
 makeBaseFunctor ''Term

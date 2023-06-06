@@ -115,10 +115,6 @@ test = showIntList (enumFromTo 0 9)
 
 isoStringStream = streamToString (stringToStream "0123")
 
---z = let gg = 1532 in gg
---f = @G -- let g = 3 in g
-gg = 3
-
 -- TODO leaf bicasts; typechecks because %i8 is a subtype of %i32
 --a = stringToStream "0123"
 --b = showIntList

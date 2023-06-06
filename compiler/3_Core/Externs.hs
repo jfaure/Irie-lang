@@ -1,9 +1,9 @@
 {-# Language TemplateHaskell #-}
 module Externs where
-import Builtins ( primBinds , primMap , primLabelHNames )
+import Builtins ( primBinds , primMap )
 import CoreSyn
 import ShowCore()
-import CoreUtils(bind2Expr)
+import CoreUtils(bind2Expr , tHeadToTy)
 import qualified Data.Vector as V
 import Text.Megaparsec (ParseErrorBundle)
 import qualified ParseSyntax as P
@@ -14,6 +14,7 @@ import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import qualified Data.Binary as DB
 import Data.Time
+import qualified BitSetMap as BSM
 
 type Deps = BitSet
 type Dependents = BitSet
@@ -41,11 +42,13 @@ data LoadedMod = LoadedMod
 newtype Externs = Externs { extNames :: V.Vector ExternVar } deriving Show
 type LoadedBinds = V.Vector LoadedMod
 
-lookupLabelName = lookupJM labelNames
-lookupFieldName = lookupJM jmINames
+lookupIName = lookupJM jmINames -- labelNames
 lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
   JudgeOK _mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName)
     else Just ("bugged IName resolution:" <> show iName)
+  _ -> Nothing
+lookupLabelBitSet lms mName = case _loadedImport (lms V.! mName) of
+  JudgeOK _mI jm -> Just jm.labelINames
   _ -> Nothing
 
 type Registry = MVar PureRegistry
@@ -66,7 +69,7 @@ data PureRegistry = Registry {
 -- Note. We read builtins directly , this just occupies Module Name 0
 primJM = V.unzip primBinds & \(primHNames , _prims) ->
   let _letBinds = LetBlock mempty -- (\x -> _ :: _) <$> prims
-  in JudgedModule 0 "Builtins" primLabelHNames primHNames (complement 0) mempty
+  in JudgedModule 0 "Builtins" primHNames (complement 0) 0 mempty -- prim labels are direct bindings
 
 builtinRegistry = let
   _timeBuiltins = UTCTime (ModifiedJulianDay 0) (getTime_resolution)
@@ -83,12 +86,11 @@ readPrimExtern i = snd (primBinds V.! i)
 checkExternScope :: BitSet -> ModIName -> Externs -> IName -> ExternVar
 checkExternScope openMods thisModIName exts i = case exts.extNames V.! i of
   Importable modNm iNm
-    -- TODO don't always expose builtins!
     | modNm == thisModIName -> ForwardRef iNm
-    | modNm == 0 -> Imported 0 (snd (primBinds V.! iNm))
+    | modNm == 0 -> Imported 0 (readPrimExtern iNm) -- TODO don't always expose builtins!
   Imported modNm e
     | testBit openMods modNm || modNm == 0 -> Imported modNm e
-    | True -> NotOpened (did_ openMods) (mkQName thisModIName i)
+    | True -> NotOpened openMods (mkQName thisModIName i)
   ImportLabel q
     | m <- modName q , testBit openMods m || m == 0 || m == thisModIName -> ImportLabel q
   NotInScope x -> NotInScope (show (bitSet2IntList openMods) <> " : " <> x)
@@ -97,7 +99,11 @@ checkExternScope openMods thisModIName exts i = case exts.extNames V.! i of
 
 readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
 readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
-  JudgeOK _ jm -> Just $ (readJudgedBind jm iNm) & \(Core t ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
+  JudgeOK _ jm -> if testBit jm.labelINames iNm
+    -- vv don't like this
+    then mkQName modNm iNm & \qNameL -> Just $ Core (Label qNameL [])
+      (tHeadToTy $ THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) (TyGround [THTyCon $ THTuple mempty]))
+    else Just $ (readJudgedBind jm iNm) & \(Core t ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
   _ -> Nothing
 
 iNameToBindName topINames iNm = popCount (topINames .&. setNBits iNm :: Integer)
@@ -118,19 +124,20 @@ resolveNames reg modIName p iNamesV = let
   curAllNames = reg._allNames
   curMFWords  = reg._globalMixfixWords
   curMods     = reg._loadedModules
-  mixfixHNames = p ^. P.parseDetails . P.hNameMFWords
-  topINames = p ^. P.parseDetails . P.topINames
+  pd = p ^. P.parseDetails
+  mixfixHNames = pd ^. P.hNameMFWords
+  topINames    = pd ^. P.topINames
+  labelINames  = pd ^. P.labelINames
+  fieldINames  = pd ^. P.fieldINames
+  exposedINames = topINames .|. labelINames .|. fieldINames
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw topINames modIName) <$> mixfixHNames]
 
-  -- Note. temporary labelBit allows searching BindNames and labels in 1 Map
-  -- In fact labels are almost bindNames in their own right
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
-    labelMap = p ^. P.parseDetails . P.labels
-    labels = IM.singleton modIName . (`setBit` labelBit) <$> labelMap
-    exposedNames = M.filter (testBit topINames) (p ^. P.parseDetails . P.hNamesToINames)
-    in M.unionsWith IM.union [(IM.singleton modIName <$> exposedNames) , curAllNames , labels]
+    exposedNames = -- d_ (bitSet2IntList topINames) $ did_ $
+      IM.singleton modIName <$> M.filter (testBit exposedINames) (pd ^. P.hNamesToINames)
+    in M.union exposedNames curAllNames
 
   resolveName :: HName -> ExternVar
   resolveName hNm = let
@@ -143,10 +150,12 @@ resolveNames reg modIName p iNamesV = let
      | modNm == 0 -> case snd (primBinds V.! iNm) of
        Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
        x -> Importable modNm iNm -- Imported x
-     | testBit iNm labelBit -> ImportLabel (mkQName modNm (clearBit iNm labelBit))
+--   | testBit labelINames iNm -> ImportLabel (mkQName modNm iNm) -- (clearBit iNm labelBit))
+--   | testBit iNm labelBit -> ImportLabel (mkQName modNm (clearBit iNm labelBit))
 --   | True -> maybe (Importable modNm iNm) (Imported modNm) (readQName curMods modNm iNm)
-     | True -> (Importable modNm iNm) -- (Imported modNm) (readQName curMods modNm iNm)
---   | True -> Importable modNm iNm
+     | True -> case if modNm == modIName then Just labelINames else lookupLabelBitSet curMods modNm of
+       Just ls | testBit ls iNm -> ImportLabel (mkQName modNm iNm)
+       _ -> Importable modNm iNm
     (b , Just mfWords) -> let flattenMFMap = concatMap snd in MixfixyVar $ case b of
       Nothing      -> Mixfixy Nothing              (flattenMFMap mfWords)
       Just [(m,i)] -> Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)

@@ -38,9 +38,9 @@ insertOrRetrieve h mp = let sz = M.size mp in case M.insertLookupWithKey (\_k _n
 
 addName :: HName -> Parser IName
 addName h = moduleWIP . parseDetails . hNamesToINames %%= insertOrRetrieve h
-addTopName h = addName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames %= \top -> setBit top i)
-newFLabel h  = addName h
-newSLabel h  = moduleWIP . parseDetails . labels %%= insertOrRetrieve h -- TODO use bitset to indicate label binds
+addTopName h = addName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames   %= \top -> setBit top i)
+newFLabel h  = addName h >>= \i -> i <$ (moduleWIP . parseDetails . fieldINames %= \top -> setBit top i)
+newSLabel h  = addName h >>= \i -> i <$ (moduleWIP . parseDetails . labelINames %= \top -> setBit top i)
 
 -----------
 -- Lexer --

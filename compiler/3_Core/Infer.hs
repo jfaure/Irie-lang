@@ -259,7 +259,6 @@ inferF = let
  -- result of mixfix solves
  getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
    then use topBindsMask >>= \topMask -> iNameToBindName topMask (unQName q) & \i -> getModBind (unQName q) 0 i i
---   <&> \(Core _ ty) -> Core (Var (VQBind (mkQName m (unQName q)))) ty
    else use loadedMs <&> \ls -> readQName ls (modName q) (unQName q)
      & fromMaybe (error (showRawQName q))
 

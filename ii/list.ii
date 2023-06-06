@@ -51,9 +51,9 @@ splitAt n xs = if n <=? 0 then (@Nil , xs) else case xs of
 span p xs = case xs of
   @Nil => { l = xs , r = xs }
 
-  @Cons x xs2 => if p x then (span p xs2 > \s => { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
+  @Cons x xs2 => if p x then (span p xs2 > \s => { l = Cons x s . l , r = s . r }) else { l = Nil , r = xs }
   -- TODO something wrong with let-in
---@Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
+--@Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s . l , r = s . r }) else { l = Nil , r = xs }
 
 foldr f s l = case l of
   Cons x xs => f x (foldr f s xs)
@@ -76,7 +76,7 @@ unlines = concatMap (\l => append l (Cons '\n' Nil))
 
 unfoldr f b0 = case f b0 of
 --Just ({ val as a , seed as b1 }) => Cons a (unfoldr f b1)
-  @Just r   => @Cons r.val (unfoldr f r.seed)
+  @Just r   => @Cons r . val (unfoldr f (r . seed))
   @Nothing  => @Nil
 
 filter pred l = case l of
@@ -105,7 +105,7 @@ fromCString str = let
 -- TODO Should we copy the μ-type ?
 span p xs = case xs of
   Nil => { l = xs , r = xs }
-  Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
+  Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s . l , r = s . r }) else { l = Nil , r = xs }
 -}
 
 reverse = foldl (\x xs => Cons xs x) Nil

@@ -41,8 +41,7 @@
 --Rectangle = { f = Int , g = Int }
 --r : Rectangle
 --r = \x y => { f = 3 , g = 10 }
-
--- type params, mk THBi or port over to subset of Core?
+--type params (conv fn to THBi or embed Core in types)
 --Maybe a = data
 --  Nothing
 --  Just a
@@ -50,3 +49,8 @@
 --import ii/FA/CharScan/MiniPrefix
 import stream
 f = enumFromTo -- 0 10 -- 0 .. 10
+g (stream next i) = next i
+
+-- vv promoting inames to topNames breaks popcount lookup
+--import odd
+--f = gg
