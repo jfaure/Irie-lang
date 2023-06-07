@@ -142,7 +142,7 @@ resolveNames reg modIName p iNamesV = let
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
     exposedNames = -- d_ (bitSet2IntList topINames) $ did_ $
-      IM.singleton modIName <$> M.filter (testBit exposedINames) (pd ^. P.hNamesToINames)
+      IM.singleton modIName <$> M.filter (testBit exposedINames) (pd ^. P.hNamesToINames . _3)
     in M.union exposedNames curAllNames
 
   resolveName :: HName -> ExternVar

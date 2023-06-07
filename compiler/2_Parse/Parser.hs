@@ -31,14 +31,15 @@ addMFWord h mfw = do
   sz <$ (moduleWIP . parseDetails . hNameMFWords %= M.insertWith (++) h [mfw sz])
 
 -- insertLookup is tricky but saves a log(n) operation
-insertOrRetrieve :: HName -> Map HName Int -> (IName , Map HName IName)
-insertOrRetrieve h mp = let sz = M.size mp in case M.insertLookupWithKey (\_k _new old -> old) h sz mp of
-  (Just x , mp) -> (x  , mp) -- retrieve
-  (_      , mp) -> (sz , mp) -- insert
+insertOrRetrieve :: HName -> _ -> (IName , _)
+insertOrRetrieve h (sz , hList , mp) = {-let sz = M.size mp in-} case M.insertLookupWithKey (\_k _new old -> old) h sz mp of
+  (Just x , mp) -> (x  , (sz     , hList     , mp)) -- retrieve
+  (_      , mp) -> (sz , (sz + 1 , h : hList , mp)) -- insert
 
 addName :: HName -> Parser IName
 addName h = moduleWIP . parseDetails . hNamesToINames %%= insertOrRetrieve h
-addNewName h = addNameh -- TODO update the IName but also allow IName2Vector to work..
+addNewName h = moduleWIP . parseDetails . hNamesToINames %%= \(sz , hList , mp) ->
+  (sz , (sz + 1 , h : hList , M.insert h sz mp))
 
 addTopName h = addNewName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames   %= \top -> setBit top i)
 newFLabel h  = addName h >>= \i -> i <$ (moduleWIP . parseDetails . fieldINames %= \top -> setBit top i)

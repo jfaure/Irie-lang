@@ -25,13 +25,17 @@ data Module = Module { -- Contents of a File (Module = Function : _ → Record |
  , _parseDetails :: ParseDetails
 }
 
-emptyParsedModule h = Module h [] mempty (ParseDetails mempty mempty 0 0 0 [] 0)
+emptyParsedModule h = Module h [] mempty (ParseDetails mempty (0,mempty,mempty) 0 0 0 [] 0)
+
+-- sz , rev list of (Int->HNames) and HName->IName. !NameMap may be smaller than the rev-list
+--  ; when INames are promoted to topNames, need to spawn a new IName so topBinds bitset works directly
+type HNameMap = (Int , [HName] , NameMap)
 
 -- HNames and local scope
 data ParseDetails = ParseDetails {
    _hNameMFWords   :: M.Map HName [MFWord] -- keep count to handle overloads (bind & mfword)
 -- , _hNameBinds     :: M.Map HName IName -- top-level and let-bound assignments TODO list is sufficient here
- , _hNamesToINames :: NameMap -- INames (module-local HName equivalents)
+ , _hNamesToINames :: HNameMap -- INames (module-local HName equivalents)
  , _topINames      :: BitSet -- the fields of the module record
  , _fieldINames    :: BitSet
  , _labelINames    :: BitSet

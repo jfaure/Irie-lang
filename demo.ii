@@ -55,8 +55,8 @@
 
 -- vv promoting inames to topNames breaks popcount lookup
 -- but only when imported; should patch resolvenames?
---import odd
---f = gg
+import odd
+f = gg
 
 -- labels vs typed bindings returning labels
 

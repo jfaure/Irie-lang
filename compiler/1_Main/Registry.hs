@@ -166,7 +166,8 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      go acc f = findModule searchPath (toS f) <&> (const acc ||| setBit acc . resolveModuleHName reg' . toS)
      in foldM go 0 (pm ^. P.imports)
    setBit deps mI <$ let -- setBit dependents mI
-     iNamesV = iMap2Vector (pm ^. P.parseDetails . P.hNamesToINames)
+     iNamesV = V.fromList (reverse (pm ^. P.parseDetails . P.hNamesToINames . _2))
+     -- iMap2Vector (pm ^. P.parseDetails . P.hNamesToINames)
      (resolver , mfResolver , exts) = resolveNames reg' mI pm iNamesV
      getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
        BindSource (lookupIName r._loadedModules)
