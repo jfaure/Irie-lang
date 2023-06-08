@@ -79,7 +79,7 @@ simpleInstr i args = let
 --NumInstr (IntInstr i)  | [Lit (I32 a) , Lit (I32 b)] <- args ->
   NumInstr (IntInstr i)  | [Lit (Fin n a) , Lit (Fin m b)] <- args -> Lit (Fin (max m n) (interpretBinaryIntInstr i a b))
   NumInstr (BitInstr i)  | [Lit (Fin n a) , Lit (Fin m b)] <- args -> Lit (Fin (max m n) (interpretBinaryBitInstr i a b))
-  NumInstr (PredInstr p) | [Lit (Fin _ a) , Lit (Fin _ b)] <- trace (T.intercalate "," $ prettyTermRaw <$> args) args -> boolToLabel (interpretBinaryPredInstr p a b)
+  NumInstr (PredInstr p) | [Lit (Fin _ a) , Lit (Fin _ b)] <- {-trace (T.intercalate "," $ prettyTermRaw <$> args)-} args -> boolToLabel (interpretBinaryPredInstr p a b)
 
   -- cannot use posix types directly due to hidden constructors preventing deriving Binary for Literal
   OpenDir | [Lit (String fName)] <- args -> let

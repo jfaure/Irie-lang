@@ -6,7 +6,6 @@ import BiUnify
 import qualified ParseSyntax as P
 import CoreSyn as C
 import CoreUtils
-import TTCalculus ( ttApp )
 import qualified Scope
 import Errors
 import Externs
@@ -18,7 +17,6 @@ import Data.Functor.Foldable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified BitSetMap as BSM -- ( toList, fromList, fromVec, fromListWith, singleton, unzip )
-import PrettyCore
 
 --addBind :: Expr -> P.FnDef -> Expr
 --addBind jm newDef = jm
@@ -146,7 +144,7 @@ judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use this
     retExpr <- pure $ case popCount (freeVars + 1) == 1 of
       True -> rawRetExpr -- no need to rename
       False -> let -- trace ("TODO: rename captures" <> prettyTermRaw (rawRetExpr & \(Core t _) -> t))
-        patchBruijn i = popCount (setNBits i .&. freeVars)
+--      patchBruijn i = popCount (setNBits i .&. freeVars)
         in (rawRetExpr & \(Core t ty) -> Core (RenameCaptures freeVars t) ty)
 --      in rawRetExpr & \(Core t ty) -> Core (cata (\case { VBruijnF i | testBit freeVars i -> VBruijn (patchBruijn i) ; x -> embed x }) t) ty
     -- TODO Mark eraser args (ie. lazy VBruijn rename for simplifer)
@@ -164,10 +162,9 @@ getModBind iName letNest letName modBindName = do
   modIName <- use thisMod
   expr <- judgeBind letNest letName modBindName <&> \(Core _t ty) ->
     Core (Var (VQBind (mkQName modIName iName))) ty -- don't inline at this stage
-    -- also importantly we set the IName, not the modIName here;
-    -- QNames represent a module iname convention, not top-bind index
+    -- ^ QNames use INames, not the modBindName (top-bind index)
   use modBinds >>= (`MV.read` modBindName) <&> snd >>= \case
-    b@BindOK{} -> free b & \(ld , lc) ->
+    b@BindOK{} -> free b & \(_ld , lc) ->
 --    when ({-popCount (lc + 1) /= 0-} lc /= setNBits ld) (traceM "TODO rename captured VBruijns") *>
       explicitFreeVarApp lc expr -- ld doesn't matter since we dont β-reduce
     _ -> pure expr -- TODO handle mutuals that capture vars ; ie. spawn mutumorphisms
@@ -185,11 +182,9 @@ explicitFreeVarApp lc e@(Core t ty) = if lc == 0 then pure e else let
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
 -- ! we may have inferred some missing information in type holes
 checkAnnotation :: Type -> Type -> TCEnv s Type
-checkAnnotation inferredTy annTy =
---unaliased <- normaliseType mempty annTy
-  use loadedMs >>= \lBinds -> check lBinds inferredTy annTy >>= \case
-    True  -> pure annTy
-    False -> inferredTy <$ (errors . checkFails %= (CheckError inferredTy annTy:))
+checkAnnotation inferredTy annTy = check inferredTy annTy >>= \case
+  True  -> pure annTy -- inferredTy -- annTy TODO
+  False -> inferredTy <$ (errors . checkFails %= (CheckError inferredTy annTy:))
 
 -- App is the only place inference can fail (if an arg doesn't subtype its expected type)
 biUnifyApp :: Type -> [Type] -> TCEnv s (BiCast , Type)
@@ -230,7 +225,6 @@ inferF = let
  checkFails srcOff x = use tmpFails >>= \case
    [] -> pure x
    x  -> poisonExpr <$ (tmpFails .= []) <* (errors . biFails %= (map (BiSubError srcOff) x ++))
-
  inferApp srcOff f args = let
    castRet :: BiCast -> ([Term] -> BiCast -> [Term]) -> Expr -> Expr
    castRet biret castArgs = \case
@@ -249,9 +243,9 @@ inferF = let
    in if any isPoisonExpr (f : args) then pure poisonExpr else do
      (biret , retTy) <- biUnifyApp (exprType f) (exprType <$> args)
      use tmpFails >>= \case
-       [] -> castRet biret castArgs <$> ttApp retTy f args -- >>= checkRecApp
-       x  -> poisonExpr <$ -- trace ("problem fn: " <> show f :: Text)
-         ((tmpFails .= []) *> (errors . biFails %= (map (\biErr -> BiSubError srcOff biErr) x ++)))
+       [] -> pure $ castRet biret castArgs (Core (App (exprTerm f) (exprTerm <$> args)) retTy)
+       x  -> poisonExpr <$ ((tmpFails .= [])
+         *> (errors . biFails %= (map (BiSubError srcOff) x ++)))
 
  judgeLabel qNameL exprs = let
    labTy = TyGround [THTyCon $ THTuple $ V.fromList (exprType <$> exprs)]
@@ -268,8 +262,8 @@ inferF = let
   P.QuestionF -> pure $ Core Question tyBot
   P.WildCardF -> pure $ Core Question tyBot
   -- letin Nothing = module / record, need to type it
-  P.LetInF (P.Block _ _ lets) liftNames pInTT -> use topBindsCount >>= \top ->
-    inferBlock (top + liftNames) lets (Just pInTT)
+  P.LetInF (P.Block _ _ lets) liftNames pInTT -> use topBindsCount >>= \tc ->
+    inferBlock (tc + liftNames) lets (Just pInTT)
     <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
   P.ProdF pFields -> let -- duplicate the field name to both terms and types
     mkCore (ts , tys) = Core (Prod ts) (TyGround [THTyCon (THProduct tys)])
@@ -308,6 +302,8 @@ inferF = let
   P.PExprAppF src _prec q argsTT -> getQBind q >>= \f -> sequence argsTT >>= inferApp src f
   P.RawExprF t -> t
   P.MixfixPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . mixfixFails %= (t:))
+  P.MFExprF srcOff m -> let err = MixfixError srcOff ("Lone mixfix word: " <> show m)
+    in poisonExpr <$ (tmpFails .= []) <* (errors . mixfixFails %= (err:))
   P.QVarF q -> getQBind q
 
   P.TupleIdxF qN tt -> tt >>= \(Core tuple tupleTy) -> freshBiSubs 1 >>= \[i] -> let
@@ -360,9 +356,7 @@ inferF = let
     thisM <- use thisMod
     tys <- sequence (alts <&> \(l , params) -> (qName2Key (mkQName thisM l) ,) <$> sequence params)
     alts <- tys `forM` \(l , params) -> fmap ((l,) . tHeadToTy . THTyCon . THTuple . V.fromList)
-      $ params `forM` \p -> case exprToTy p of
-        Just t -> pure t
-        Nothing -> tyBot <$ expectedType p
+      $ params `forM` exprToTy
     pure $ Core (Ty (TyGround [THTyCon (THSumTy (BSM.fromList alts))])) (TySet 0) -- max of universe in alts
 
   -- TODO gadt must have a signature for the whole thing also!
@@ -391,18 +385,16 @@ inferF = let
     case b of { BiEQ -> pure () ; _ -> error "expected bieq" }
     pure $ Core (CaseB scrut retT (BSM.fromList (zip labels alts)) (fst <$> def)) retT
 
-  P.TypedF t ty    -> t >>= \(Core term gotT) -> ty >>= \rawAnn -> case exprToTy rawAnn of
-    Just annTy -> Core term <$> checkAnnotation gotT annTy
-    Nothing -> poisonExpr <$ expectedType rawAnn
+  P.TypedF t ty    -> t >>= \(Core term gotT) -> ty >>= exprToTy >>= \annTy ->
+    use blen >>= \bl -> use bis >>= \bis' -> lift (generalise bl bis' gotT)
+      -- Need to clear all tvars
+      >>= \genGotTy -> Core term <$> checkAnnotation genGotTy annTy
   P.InlineExprF e -> pure e
-  P.LitF l           -> pure $ Core (Lit l) (TyGround [typeOfLit l])
-  P.PLitArrayF ls    -> pure $ Core (Lit $ LitArray ls) (TyGround [THTyCon $ THArray $ mergeTypeHeadList True (typeOfLit <$> ls)])
+  P.LitF l        -> pure $ Core (Lit l) (TyGround [typeOfLit l])
+  P.PLitArrayF ls -> pure $ Core (Lit $ LitArray ls) (TyGround [THTyCon $ THArray $ mergeTypeHeadList True (typeOfLit <$> ls)])
   P.PArrayF ls    -> sequence ls <&> \exprs -> unzipExprs exprs & \(elems , tys) ->
     Core (Array (V.fromList elems)) (TyGround [THTyCon $ THArray $ mergeTypeList True tys])
   P.ScopePoisonF e   -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))
   P.DesugarPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . unpatternFails %= (t:))
   P.ScopeWarnF w t   -> (errors . scopeWarnings %= (w:)) *> t
   x -> error $ "not implemented: inference of: " <> show (embed $ P.WildCard <$ x)
-
-expectedType :: Expr -> TCEnv s ()
-expectedType notTy = (errors . checkFails %= (ExpectedType notTy :))

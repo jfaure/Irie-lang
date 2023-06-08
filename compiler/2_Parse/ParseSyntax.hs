@@ -134,7 +134,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  -- tmp mixfix vars
  | QVar QName
- | MFExpr CoreSyn.Mixfixy
+ | MFExpr SourceOffset CoreSyn.Mixfixy
  | App SourceOffset TT [TT] -- Used by unpattern and solveMixfixes once clear of precedence & mixfixes
  | PExprApp SourceOffset Prec QName [TT]
  | RawExpr TT -- Skip case for anamorphisms

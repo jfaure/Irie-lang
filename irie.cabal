@@ -64,7 +64,6 @@ executable irie-exe
       ShowCore
       SimplifyInstr
       TCState
-      TTCalculus
       TypeCheck
       MkSSA
       SSA

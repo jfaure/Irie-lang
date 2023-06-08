@@ -45,12 +45,27 @@ mergeRolls (Rolling a m r z) (Rolling a2 m2 _r2 _z2) = case compare m m2 of
   LT -> cata rollType (patchMu m2 m $ mergeTypes True a a2)
   GT -> cata rollType (patchMu m m2 $ mergeTypes True a2 a)
 mergeRolls a@BuildRoll{} b@Rolling{} = mergeRolls b a
-mergeRolls (Rolling noopRoll m r _z) (BuildRoll noopBuild builds) =
+mergeRolls (Rolling noopRoll m r _z) (BuildRoll noopBuild builds) = let
   -- * Attempt to continue the roll, if that fails fallback to the alternative build option
---trace @Text ("roll-build: " <> show m <> "\n" <> show builds <> "\n" <> show r <> "\n") $
-  let -- tbounds = NE.filter (\(n,_,_) -> n == m) builds <&> (\(_,_,b) -> b)
-      -- builds & \((bm , br , bty) :| []) -> on (==) (fmap voidMus) br r
-  in BuildRoll (mergeTypeList True (noopRoll : noopBuild : [])) builds -- TODO merged roll + build somehow
+  -- tbounds = NE.filter (\(n,_,_) -> n == m) builds <&> (\(_,_,b) -> b)
+  -- builds & \((bm , br , bty) :| []) -> on (==) (fmap voidMus) br r
+
+  clearMus :: Roller -> Roller -- Roller = [THead (Maybe Type)]
+  clearMus = fmap $ fmap $ \case
+    Just (TyGround [THMuBound _]) -> Nothing
+    x -> x
+  r' = clearMus r
+  builds' = (\(_,r,_) -> clearMus r) <$> builds
+  patchMu = mapTHeads $ \case
+    THMuBound i | i == m -> THMuBound (NE.head builds & \(n,_,_) -> n)
+    x -> x
+  -- TODO v need to also set Just (TyGround [THMuBound _]) to Nothing to continue rolling!
+--patchRoller = fmap $ fmap (\case { Just (TyGround [THMuBound _]) -> Nothing ; x->x})
+  in (if any (r' ==) builds'
+--   then Rolling noopRoll m r z
+     then BuildRoll (cata (embed . patchMu) noopBuild) (builds) --((\(m,r,t) -> (m , patchRoller r , t)) <$> builds)
+     else BuildRoll (mergeTypeList True (noopRoll : noopBuild : [])) builds)
+-- & trace @Text ("roll-build: " <> show m <> "\n" <> show r <> "\n" <> show builds <> "\n")
 
 -- compute typeRolls from a single THead (each sub-branch of tycons).
 -- if. μ-bound in hole start μ-build

@@ -8,8 +8,8 @@
 -- paddd xmm0, xmm1 ; Sum
 -- movd [sum], xmm0 ; Store sum
 
-zeros  = _mm256_xor_s256 _mm256_undefined_si256 _mm256_undefined_si256
-ones   = _mm256_cmpeq_epi8 _mm256_undefined_si256 _mm256_undefined_si256
+zeros  = _mm256_undefined_si256 > \x => _mm256_xor_s256  x x
+ones   = _mm256_undefined_si256 > \x => _mm256_cmpeq_epi8 x x
 set1_epi8_0 = _mm256_setzeros_si256
 set1_epi8_1 = _mm256_abs_epi8 ones
 set1_epi8_2 = set1_epi8-1 > \one -> _mm256_add_epi8 one one
@@ -22,3 +22,11 @@ mm256-shuffle x sel = let
   t = _mm256_shuffle_epi8 x sel
   tt = _mm256_permute2x128_si256 _mm256_undefined_si256 t 1 -- swap low and hi
   in _mm256_blendv_epi8 t tt (_mm256_cmpgt_epi8 sel (_mm256_set1_epi8 15))
+
+epi8go (i , a , b , c , d) r = if i <? 4 then (i + 1 , (a B<< i) B| r , b , c , d)
+  else if i <? 8  then (i + 1 , a , (b B<< i) B| r , c , d)
+  else if i <? 12 then (i + 1 , a , b , (c B<< i) B| r , d)
+  else                 (i + 1 , a , b , c , (d B<< i) B| r)
+
+import stream
+_mm256_fromStream_epi8 = \s => Sfoldl epi8go (0 , 0 , 0 , 0 , 0) s > \(idx , a , b , c , d) => _mm256_set_epi64x a b c d

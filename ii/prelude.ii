@@ -50,11 +50,13 @@ ifThenElse cond a b = case cond of
 if_then_else_ { l0 } = ifThenElse
 
 --identity : (a : Set) -> a
--- identity x = x
+identity x = x
 
 --Maybe a = data
 --  Nothing
 --  Just a
+
+_|||_ {r2} = \l r => \case { @Left x => l x ; @Right x => r x }
 
 fromMaybe a = \case
   @Nothing => a

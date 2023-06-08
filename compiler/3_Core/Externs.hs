@@ -1,6 +1,6 @@
 {-# Language TemplateHaskell #-}
 module Externs where
-import Builtins ( primBinds , primMap )
+import Builtins ( primBinds , primMap , readPrimExtern )
 import CoreSyn
 import ShowCore()
 import CoreUtils(bind2Expr , tHeadToTy)
@@ -80,14 +80,11 @@ readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m o
     -- vv don't like this
     then mkQName modNm iNm & \qNameL -> Just $ Core (Label qNameL [])
       (tHeadToTy $ THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) (TyGround [THTyCon $ THTuple mempty]))
-    else Just $ (readJudgedBind jm iNm) & \(Core t ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
+    else Just $ (readJudgedBind jm iNm) & \(Core _t ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
   _ -> Nothing
 
 readJudgedBind :: JudgedModule -> IName -> Expr
 readJudgedBind m iNm = snd (m.moduleTT V.! iNameToBindName (topINames m) iNm) & bind2Expr
-
-readPrimExtern :: IName -> Expr
-readPrimExtern i = snd (primBinds V.! i)
 
 lookupIName = lookupJM jmINames -- labelNames
 lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
@@ -97,7 +94,7 @@ lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
 lookupLabelBitSet lms mName = case _loadedImport (lms V.! mName) of
   JudgeOK _mI jm -> Just jm.labelINames
   _ -> Nothing
-lookupBindName :: V.Vector LoadedMod -> ModuleIName -> IName -> _
+lookupBindName :: V.Vector LoadedMod -> ModuleIName -> IName -> Maybe Bind
 lookupBindName lms mName iName = case _loadedImport (lms V.! mName) of
   JudgeOK _mI jm -> moduleTT jm & \v -> Just (snd $ v V.! iNameToBindName jm.topINames iName)
   _ -> Nothing
@@ -117,7 +114,7 @@ checkExternScope openMods thisModIName exts i = case exts.extNames V.! i of
   m@MixfixyVar{} -> m -- TODO
   x -> x
 
-mfw2qmfw topINames modNm = \case
+mfw2qmfw modNm = \case
   StartPrefix  m i -> QStartPrefix  m (mkQName modNm i)
   StartPostfix m i -> QStartPostfix m (mkQName modNm i)
   MFPart         i -> QMFPart         (mkQName modNm i)
@@ -137,7 +134,7 @@ resolveNames reg modIName p iNamesV = let
   fieldINames  = pd ^. P.fieldINames
   exposedINames = topINames .|. labelINames .|. fieldINames
   mfResolver = M.unionWith IM.union curMFWords $ M.unionsWith IM.union $
-    zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw topINames modIName) <$> mixfixHNames]
+    zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> mixfixHNames]
 
   resolver :: M.Map HName (IM.IntMap IName) -- HName -> Modules with that hname
   resolver = let
@@ -155,7 +152,7 @@ resolveNames reg modIName p iNamesV = let
     (Just [(modNm , iNm)] , Nothing) -> if
      | modNm == 0 -> case snd (primBinds V.! iNm) of
        Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
-       x -> Importable modNm iNm -- Imported x
+       x -> Imported 0 x -- Importable modNm iNm
 --   | testBit labelINames iNm -> ImportLabel (mkQName modNm iNm) -- (clearBit iNm labelBit))
 --   | testBit iNm labelBit -> ImportLabel (mkQName modNm (clearBit iNm labelBit))
 --   | True -> maybe (Importable modNm iNm) (Imported modNm) (readQName curMods modNm iNm)

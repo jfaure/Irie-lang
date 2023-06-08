@@ -27,7 +27,7 @@ data CmdLine = CmdLine
   , files          :: [FilePath]
   } deriving (Show)
 
-defaultObjDirName = ".irie-obj/"
+--defaultObjDirName = ".irie-obj/"
 defaultCmdLine = CmdLine -- Intended for use from ghci
   { printPass      = []
   , interpret      = False
@@ -86,7 +86,7 @@ cmdLineDecls = CmdLine
       <> value 0)
   <*> option auto
       (short 't' <> long "threads"
-      <> help "Number of threads >0 to run concurrently (should use far less RAM than forking the compiler on each file)"
+      <> help "Number of threads >0 to run concurrently (use far less RAM than forking on each file)"
       <> value 1)
   <*> switch
       (short 'n' <> long "no-prelude"
@@ -127,10 +127,10 @@ cmdLineDecls = CmdLine
   <*> many (argument str (metavar "FILE"))
 
 progDescription = "Compiler and Interpreter for the Irie language, a subtyping CoC for system level programming."
-cmdLineInfo =
-  let description = fullDesc
-        <> header "Irie compiler/interpreter"
-        <> progDesc progDescription
+cmdLineInfo = let
+  description = fullDesc
+    <> header "Irie compiler/interpreter"
+    <> progDesc progDescription
   in info (helper <*> cmdLineDecls) description
 
 parseCmdLine :: [String] -> IO CmdLine

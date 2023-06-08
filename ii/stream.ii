@@ -1,57 +1,134 @@
 import prelude
 
+--ListF a = data
+--  Done
+--  Skip r
+--  Yield a r
+
+tailRecurse fn = (identity ||| tailRecurse fn) << fn
+
 Sfuse next (@stream n0 s0) = @stream (next << n0) s0
 ana next seed = @stream next seed
+
+fmap f = \case { Done => Done ; Skip r => Skip r ; Yield x r => Yield (f x) r }
+map = Sfuse << fmap
+
+recMap f = \case { Done => Done ; Skip r => Skip (f r) ; Yield x r => Yield x (f r) }
 
 -- foldr/l/dfa = only way to eliminate streams
 foldrgo next c z s = case next s of
   @Done      => z
   @Skip r    => foldrgo next c z r
   @Yield x r => c x (foldrgo next c z r)
-foldr c z (@stream next seed) = foldrgo next c z seed
+Sfoldr c z (stream next seed) = foldrgo next c z seed
 
 foldlgo next f z s = case next s of
-  @Done      => z
-  @Skip r    => foldlgo next f z r
-  @Yield x r => foldlgo next f (f z x) r
-foldl f zz (@stream next seed) = foldlgo next f zz seed
+  Done      => z
+  Skip r    => foldlgo next f z r
+  Yield x r => foldlgo next f (f z x) r
+Sfoldl f zz (stream next seed) = foldlgo next f zz seed
 
-Sappend (@stream nextL sl0) (@stream nextR sr0) =
-  ana (SappendNext nextL nextR sr0) (@Left sl0)
+breakFoldlgo next f z s = case next s of
+  Done      => z
+  Skip r    => foldlgo next f z r
+  Yield x r => case f z x of
+    Left end   => end
+    Right cont => foldlgo next f cont r
+Sbreakfoldl f zz (stream next seed) = breakFoldlgo next f zz seed
+
+anyLoop p next s0 = case next s0 of
+  Done => False
+  Skip s => anyLoop p next s
+  Yield x s => if p x then True else anyLoop p next s
+any p (stream next s0) = anyLoop p next s0
+
+-- Most monadic list functions can be defined in terms of foldr so don't
+-- need explicit stream implementations. The one exception is foldM:
+--foldM :: Monad m => (b -> a -> m b) -> b -> Stream a -> m b
+--foldM f z0 (Stream next s0) = loop_foldl z0 s0
+--  where
+--    loop_foldl z !s = case next s of
+--      Done       -> Monad.return z
+--      Skip    s' -> expose s' $                  loop_foldl z  s'
+--      Yield x s' -> expose s' $ f z x >>= \z' -> loop_foldl z' s'
+
+SenumFromTo lo hi = ana (\i => if i >? hi then Done else Yield i (i + 1)) lo
+_.._ { n0 } = SenumFromTo
+
+--snoc :: Stream a -> a -> Stream a
+--snoc (Stream next0 xs0) w = Stream next (Just xs0)
+--SSnocnext (Just xs) = case next0 xs of
+--   Done        -> Yield w Nothing
+--   Skip xs'    -> Skip    (Just xs')
+--   Yield x xs' -> Yield x (Just xs')
+--SSnocnext Nothing = Done
+
+Scons w (stream next s0) = stream (consNext w next s0) Nothing
+consNext w next s0 s = case s of
+  Nothing => Yield w (Just s0)
+  Just s  => case next s of
+    Done => Done
+    Skip s => Skip (Just s)
+    Yield x s => Yield x (Just s)
+
 SappendNext nextL nextR sr0 = \case
-  @Left  sa => case nextL sa of
-    @Done      => Skip    (Right sr0)
-    @Skip s    => Skip    (Left s)
-    @Yield x s => Yield x (Left s)
-  @Right sb => case nextR sb of
-    @Done      => Done
-    @Skip s    => Skip    (Right s)
-    @Yield x s => Yield x (Right s)
+  Left  sa => case nextL sa of
+    Done      => Skip    (Right sr0)
+    Skip s    => Skip    (Left s)
+    Yield x s => Yield x (Left s)
+  Right sb => case nextR sb of
+    Done      => Done
+    Skip s    => Skip    (Right s)
+    Yield x s => Yield x (Right s)
+Sappend (@stream nextL sl0) (@stream nextR sr0) =
+  ana (SappendNext nextL nextR sr0) (Left sl0)
 
-SconcatMap f (@stream nexta seed) =
-  @stream (SConcatMapNext f nexta) {sa = seed , m = None}
 SConcatMapNext f nexta S = case S . m of
-  @None => case nexta S . sa of
-    @Done      => Done
-    @Skip s    => Skip { sa = s , m = @None}
-    @Yield a s => Skip { sa = s , m = @One (f a)}
-  @One (@stream nextb sb) => case nextb sb of
-    @Done      => Skip    {sa = S . sa , m = @None}
-    @Skip s    => Skip    {sa = S . sa , m = @One (stream nextb s)}
-    @Yield b s => Yield b {sa = S . sa , m = @One (stream nextb s)}
+  Nothing => case nexta S . sa of
+    Done      => Done
+    Skip s    => Skip { sa = s , m = Nothing}
+    Yield a s => Skip { sa = s , m = Just (f a)}
+  Just (stream nextb sb) => case nextb sb of
+    Done      => Skip    {sa = S . sa , m = Nothing}
+    Skip s    => Skip    {sa = S . sa , m = Just (stream nextb s)}
+    Yield b s => Yield b {sa = S . sa , m = Just (stream nextb s)}
+SconcatMap f (stream nexta seed) =
+  stream (SConcatMapNext f nexta) {sa = seed , m = Nothing}
+Sconcat = SconcatMap identity
 
-fmap f = \case
-  @Done      => Done
-  @Skip r    => Skip r
-  @Yield x r => Yield (f x) r
-map = Sfuse << fmap
 
-enumFromTo lo hi = ana (\i => if i >? hi then @Done else @Yield i (i + 1)) lo
-_.._ { n0 } = enumFromTo
+-- should make a list one longer than the input list.
+SscanlNext f next0 (z , s) = case next0 s of
+  Done      => Done
+  Skip    s => Skip (z , s)
+  Yield x s => f z x > \next => Yield next (next , s)
+Sscanl f z0 (stream next0 s0) = {-Scons z0-} (stream (SscanlNext f next0) (z0 , s0))
 
-t = foldr add 0 (0 .. 10) --55
-tt  = foldr add 0 (Sappend (enumFromTo 0 1) (enumFromTo 1 2)) --4
-ttt = foldr add 0 (SconcatMap (enumFromTo 10) (enumFromTo 5 10))-- 10
+stringToStream string = stream (\str => if nullString str then Done else (unConsString str > \(head , tail) => Yield head tail)) string
 
--- foldl setBit 0 (scanl _+_ 0 lens)
--- f pats = _mm256_fromList_epi8 (concat pats) -- string concat
+-- Stream -> %Str
+streamToString s = strBufToString (Sfoldl pushStrBuf (allocStrBuf 512) s)
+
+-- Only works with digits < 10
+showDigitStream = streamToString << map (chr << (add 48))
+
+-- only 64 bits
+listToBitset = Sfoldl setBit 0
+
+-- sz in bytes of elems
+-- Generates an array of sz n and returns the tail
+splitAt sz n (stream next seed) = splitAtLoop next n (0 , newArray (sz * n)) seed
+splitAtLoop next n (i , arr) s = case next s of
+  Done      => (arr , stream (\x => x) Done)
+  Skip s    => splitAtLoop next n (i , arr) s
+  Yield x s => if i <? n then (arr , stream next s) else splitAtLoop next n (i + 1 , writeArray arr i x) s
+
+t1 = Sfoldr add 0 (0 .. 10) --55
+t2 = Sfoldr add 0 (Sappend (SenumFromTo 0 1) (SenumFromTo 1 2)) --4
+t3 = Sfoldr add 0 (SconcatMap (SenumFromTo 10) (SenumFromTo 5 10))-- 10
+t4 = showDigitStream < Sscanl _+_ 0 (1 .. 5) -- [0,1,3,6,10,15]
+t5 = splitAt 4 3 (SenumFromTo 5 10)
+f = writeArray (newArray 1) 0 53
+
+--List a = Stream a | Array Int a | Build ((a -> r) -> r -> r)
+--mkStrPatternMatcher : List CString -> MiniScanner

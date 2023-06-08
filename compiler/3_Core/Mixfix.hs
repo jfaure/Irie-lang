@@ -55,20 +55,20 @@ parseExpr srcOff = SubParser $ let
   mkMFSubParsers :: ModuleIName -> [Maybe IName] -> [SubParser]
   mkMFSubParsers m = let
     parseMFWord q = SubParser $ stream %%= uncons' >>= \case
-      Just (MFExpr (Mixfixy _ qs)) | QMFPart q `elem` qs -> pure VoidExprF
+      Just (MFExpr _ (Mixfixy _ qs)) | QMFPart q `elem` qs -> pure VoidExprF
       m -> throwE ("Expected QMFPart " <> show q <> " , got: " <> show m)
     in map $ maybe (parseExpr srcOff) (parseMFWord . mkQName m)
   in stream %%= break isMF >>= \case
   []   -> stream %%= uncons' >>= \case -- TODO fix MFSyn: fixity of prefixes doesn't matter
     Nothing -> throwE "unexpected end of mixfix stream"
-    Just (MFExpr (Mixfixy _ qs)) -> asum $ qs <&> \case
+    Just (MFExpr _ (Mixfixy _ qs)) -> asum $ qs <&> \case
       QStartPrefix (MixfixDef mb mfws _fixityR) q
         -> pure $ AppF srcOff (Left (QVar (mkQName (modName q) mb))) (Right <$> mkMFSubParsers (modName q) (drop 1 mfws))
       m -> throwE ("UnexpectedPreMF: " <> show m)
   larg -> let
     parsePostfix = stream %%= uncons' >>= \case
       Nothing  -> pure (RawExprF (Left $ mkApp larg)) -- trivial no-mixfix case
-      Just (MFExpr (Mixfixy _ qs)) -> asum $ qs <&> \case
+      Just (MFExpr _ (Mixfixy _ qs)) -> asum $ qs <&> \case
         QStartPostfix (MixfixDef mb mfws fixityL) qL
           -> pure $ PExprAppF srcOff fixityL (mkQName (modName qL) mb) (Left (mkApp larg) : (Right <$> mkMFSubParsers (modName qL) (drop 2 mfws)))
         QMFPart q -> throwE ("Unexpected QMFPart: " <> show q) -- backtracks from here

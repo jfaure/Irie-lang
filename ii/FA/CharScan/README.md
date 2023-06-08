@@ -1,3 +1,5 @@
+Scanner = MiniScanner | Teddy | FDR
+
 1: Miniprefix: +1 to check bit carries through pattern
 2. Teddy: shuffle nybble lookup for n={1,2,3} prefixes of patterns
 3. FDR: Byte at a time, check if byte appears at all expected positions for any pattern in set

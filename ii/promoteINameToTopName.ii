@@ -1,3 +1,4 @@
+-- demonstration of IName being promoted to TopIname
 -- ! gg is IName 1, and is then later made a topiname
 -- but this is incompatible with its current IName
 z = let gg = "hello" in gg

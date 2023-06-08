@@ -2,7 +2,7 @@
 -- ! the Prelude supplies mixfixes and more convenient access to these primitives
 -- * constructs a vector of primitives
 -- * supplys a (Map HName IName) to resolve names to indexes
-module Builtins (primBinds , primMap , typeOfLit , builtinFalse , builtinTrue , builtinFalseQ , builtinTrueQ) where
+module Builtins (primBinds , primMap , typeOfLit , builtinFalse , builtinTrue , builtinFalseQ , builtinTrueQ , readPrimExtern , readPrimType) where
 import Prim
 import CoreSyn
 import qualified Data.Map.Strict as M ( (!?) , fromList )
@@ -15,6 +15,10 @@ mkExtTy x  = [mkExt x]
 --mkExt = THExt -- dodgy optimisation
 mkExt i | i <= V.length primTys = THPrim $ snd (primTys V.! i)
 mkExt i = THExt i
+
+readPrimExtern :: IName -> Expr
+readPrimExtern i = snd (primBinds V.! i)
+readPrimType i = snd (primBinds V.! (i + 3))
 
 getPrimTy :: HName -> IName
 getPrimTy nm = case primMap M.!? nm of
@@ -74,6 +78,10 @@ x86Intrinsics =
   , ("_mm256_subs_epi8" , [mm256 , mm256] , mm256)
   , ("_mm256_unpackhi_epi8" , [mm256 , mm256] , mm256)
   , ("_mm256_unpacklo_epi8" , [mm256 , mm256] , mm256)
+
+  , ("_mm256_set_epi16" , replicate 16 (THPrim (PrimInt 16)) , mm256)
+  , ("_mm256_set_epi32" , replicate 8 (THPrim (PrimInt 32)) , mm256)
+  , ("_mm256_set_epi64x" , replicate 4 (THPrim (PrimInt 64)) , mm256)
 
   , ("_mm256_undefined_si256" , [] , mm256)
   , ("_mm256_permute2x128_si256" , [mm256 , mm256 , primI32] , mm256)
@@ -184,9 +192,9 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("pushStrBuf" , (PushStrBuf , mkTHArrow [mkExt strBuf , charTy] (mkExt strBuf)))
   , ("strBufToString" , (StrBufToString , mkTHArrow [mkExt strBuf] (mkExt str)))
 
-  , ("newArray"  , (NewArray , [THBi 1 $ TyGround $ mkTHArrow [THExt i64 , THTyCon (THArray (tHeadToTy $ THBound 0))] (THTyCon (THArray (tHeadToTy $ THBound 0)))]))
+  , ("newArray"  , (NewArray , [THBi 1 $ TyGround $ mkTHArrow [THExt i64] (THTyCon (THArray (tHeadToTy (THBound 0))))]))
   , ("readArray"  , (ReadArray , [THBi 1 $ TyGround $ mkTHArrow [THTyCon (THArray (tHeadToTy $ THBound 0)) , THExt i64] (THBound 0)]))
-  , ("writeArray" , (WriteArray , [THBi 1 $ TyGround $ mkTHArrow [THTyCon (THArray (tHeadToTy $ THBound 0)) , THExt i64 , THBound 0] (THBound 0)]))
+  , ("writeArray" , (WriteArray , let arr = THTyCon (THArray (tHeadToTy $ THBound 0)) in [THBi 1 $ TyGround $ mkTHArrow [arr , THExt i64 , THBound 0] arr]))
 
   , ("readFile"  , (ReadFile  , mkTHArrow [mkExt str] (mkExt str)))
   , ("writeFile" , (WriteFile , mkTHArrow [mkExt str , mkExt str] (mkExt i64)))

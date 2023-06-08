@@ -31,5 +31,4 @@ go n z s0 s1 = case nextConcatMap n s0 s1 of
 
 -- Specialise
 sumAppend n = go n 0 1 N
-
---t = sumAppend 6 -- 55
+t = sumAppend 6 -- 55

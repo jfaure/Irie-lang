@@ -49,7 +49,7 @@ handleExtern :: Externs -> Int -> BitSet -> V.Vector (IName , Int , Int , Int) -
 handleExtern exts mod open lm i = case checkExternScope open mod exts i of
   ForwardRef b  -> Var (VLetBind (lm V.! b))
   Imported _ e  -> InlineExpr e
-  MixfixyVar m  -> MFExpr m -- TODO if ko, mixfix should report "mixfix word cannot be a binding: "
+  MixfixyVar m  -> MFExpr (-1) m -- TODO if ko, mixfix should report "mixfix word cannot be a binding: "
   -- (errors . scopeFails %= s)
   NotOpened m h -> ScopePoison (ScopeNotImported m h)
   NotInScope  h -> ScopePoison (ScopeError h)

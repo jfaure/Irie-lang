@@ -1,21 +1,20 @@
-{-
-https://hackage.haskell.org/package/optparse-applicative-0.18.1.0/docs/src/Options.Applicative.Types.html#runParserM
-Parser a = data
-  NilP (Maybe a)
-  OptP (Option a)
-  forall x . MultP (Parser (x -> a)) (Parser x)
-  AltP (Parser a) (Parser a)
-  forall x . BindP (Parser x) (x -> Parser a)
--}
+-- https://hackage.haskell.org/package/optparse-applicative-0.18.1.0/docs/src/Options.Applicative.Types.html#runParserM
 
---import prelude
-Flag = record
+import prelude
+FlagType = record
   short = Char
   long = CString
   help = CString
 --option = Maybe CString -- metavar
 
---OptDesc = Array [Opt Flag | Arg CString | Seq Flag Flag | KleeneStar Flag]
-parseOpts : OptDesc -> ?
+OptDesc Acc Data = data
+  Flag FlagType (Acc -> Acc)
+  Opt FlagType (CString -> Acc -> Data -> Acc)
+  Arg CString
 
-patSetMatcher = 
+-- Acc should usually be a record
+parseOpts : DataSet OptDesc -> Array CString -> Acc -> Acc
+parseOpts opts args zAcc = let
+  matcher = mkStrPatternMatcher (concatMap getFlags opts)
+  -- call acc function corresponding to arg found; TODO some accs need multiple args!
+  in foldl (\acc arg -> getAccFn (match matcher arg) acc) zAcc args

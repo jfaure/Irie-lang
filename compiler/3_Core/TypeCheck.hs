@@ -3,76 +3,59 @@ import Prim
 import CoreSyn as C
 import CoreUtils
 import TCState
-import PrettyCore
-import Externs
-import TTCalculus
+import Builtins (readPrimExtern)
 import qualified Data.Vector as V
 import qualified BitSetMap as BSM
 
 -- Biunification solves constraints `t+ <= t-` whereas subsumption compares t+ <:? t+
 -- Type annotations may be subtypes (less general) than inferred signatures
 -- Check must fill in any holes present in the type annotation
-check :: LoadedBinds -> Type -> Type -> TCEnv s Bool
-check e inferred gotRaw = let
-  go = check' e inferred gotRaw
-  in if global_debug -- True {-debug getGlobalFlags-}
-  then trace ("check: " <> prettyTyRaw inferred <> "\n   <?: " <> prettyTyRaw gotRaw) go else go
 
-check' :: LoadedBinds -> Type -> Type -> TCEnv s Bool
-check' es (TyGround inferred) (TyGround gotTy) = let
+checkAtomic :: forall s. TyHead -> TyHead -> TCEnv s Bool
+checkAtomic inferred gotTy = let
   readExt x = case readPrimExtern x of
     Core (Ty t) _ -> t
     c -> error $ "expected type, got: " <> show c
-  checkAtomic :: TyHead -> TyHead -> TCEnv s Bool
-  checkAtomic inferred gotTy = let
-    check'' = check' es
-    end x = pure $ if x then True else d_ (inferred , gotTy) False
-    in case (inferred , gotTy) of --trace (prettyTyRaw (TyGround [inferred]) <> " <?: " <> prettyTyRaw (TyGround [gotTy]))
-    (_ , THTop) -> end True
-    (THBot , _) -> end True
-    (THExt i , t)  -> check'' (readExt i) (TyGround [t])
-    (t , THExt i)  -> check'' (TyGround [t]) (readExt i)
-    (THBound x , THBound y)     -> pure (x == y)
-    (THMuBound x , THMuBound y) -> pure (x == y)
-    (THBi b1 x , THBi b2 y) -> if b1 == b2 then check'' x y else end False
-    (THPrim x , THPrim y) -> end (x `primSubtypeOf` y)
-    (THMu x _ , THMuBound y) -> end $ y == x
-    (THTyCon t1 , THTyCon t2) -> case (t1,t2) of
-      (THArrow a1 r1 , THArrow a2 r2) -> let -- differing arities may still match via currying
-        go (x:xs) (y:ys) = (&&) <$> check'' y x <*> go xs ys
-        go [] [] = check'' r1 r2
-        go [] y  = check'' r1 (TyGround [THTyCon (THArrow y r2)])
-        go x []  = check'' (TyGround [THTyCon (THArrow x r1)]) r2
-        in go a1 a2
---    (THSumTy x , THSumTy y)     -> allM (\case { (k , These a b) -> check'' a b ; _ -> pure False }) $ BSM.toList (align x y)
---    (THProduct x , THProduct y) -> allM (\case { (k , These a b) -> check'' a b ; _ -> pure False }) $ BSM.toList (align x y)
---    Check the annotation is exactly the same size as the inferred type
-      (THSumTy x , THSumTy y)     -> let inter = BSM.elems (BSM.intersectionWith check'' x y)
-        in if V.length inter == BSM.size x && BSM.size x == BSM.size y then all identity <$> sequence inter else pure False
-      (THProduct x , THProduct y) -> let inter = BSM.elems (BSM.intersectionWith check'' x y)
-        in if V.length inter == BSM.size x && BSM.size x == BSM.size y then all identity <$> sequence inter else pure False
-      (THTuple x , THTuple y)     -> allM (\case { These a b -> check'' a b ; _ -> pure False }) $ V.toList (align x y)
-      _ -> end False
+  end x = pure x -- d_ (inferred , gotTy) False
+  in case (inferred , gotTy) of --trace (prettyTyRaw (TyGround [inferred]) <> " <?: " <> prettyTyRaw (TyGround [gotTy]))
+  (_ , THTop) -> end True
+  (THBot , _) -> end True
+  (THExt i , t)  -> check (readExt i) (TyGround [t])
+  (t , THExt i)  -> check (TyGround [t]) (readExt i)
+  (THAlias q0 , THAlias q) | q0 == q -> pure True
+  (i , THAlias q) -> resolveTypeQName q >>= \g -> check (tHeadToTy i) g
+  (THAlias q , g) -> resolveTypeQName q >>= \i -> check i (tHeadToTy g)
 
-    -- for cases that reduce to `x <:? ⊤`
-    (a , THMu _ b) -> check'' (TyGround [a]) b
-    (THMu _ a , b) -> check'' a (TyGround [b])
+  (THBound x , THBound y)     -> pure (x == y)
+  (THMuBound x , THMuBound y) -> pure (x == y)
+  (THBi b1 x , THBi b2 y) -> if b1 == b2 then check x y else end False
+  (THPrim x , THPrim y) -> end (x `primSubtypeOf` y)
+  (THMu x _ , THMuBound y) -> end $ y == x
+  (THTyCon t1 , THTyCon t2) -> case (t1,t2) of
+    (THArrow a1 r1 , THArrow a2 r2) -> let -- differing arities may still match via currying
+      go (x:xs) (y:ys) = (&&) <$> check y x <*> go xs ys
+      go [] [] = check r1 r2
+      go [] y  = check r1 (TyGround [THTyCon (THArrow y r2)])
+      go x []  = check (TyGround [THTyCon (THArrow x r1)]) r2
+      in go a1 a2
+--  (THSumTy x , THSumTy y)     -> allM (\case { (k , These a b) -> check' a b ; _ -> pure False }) $ BSM.toList (align x y)
+--  (THProduct x , THProduct y) -> allM (\case { (k , These a b) -> check' a b ; _ -> pure False }) $ BSM.toList (align x y)
+--  Check the annotation is exactly the same size as the inferred type
+    (THSumTy x , THSumTy y)     -> let inter = BSM.elems (BSM.intersectionWith check x y)
+      in if V.length inter == BSM.size x && BSM.size x == BSM.size y then all identity <$> sequence inter else pure False
+    (THProduct x , THProduct y) -> let inter = BSM.elems (BSM.intersectionWith check x y)
+      in if V.length inter == BSM.size x && BSM.size x == BSM.size y then all identity <$> sequence inter else pure False
+    (THTuple x , THTuple y) -> allM (\case { These a b -> check a b ; _ -> pure False }) $ V.toList (align x y)
     _ -> end False
-  in case inferred of
-  []   -> pure False
-  tys  -> allM (\t -> anyM (checkAtomic t) gotTy) $ tys
 
-check' _es _t1 (TyGround [THTop]) = pure True
-check' es t1@(TyIndexed{}) t2 = normaliseType mempty t1 >>= \case
-  loop@TyIndexed{} -> error $ "cannot normalise TyIndexed: " <> show loop
-  unaliased        -> check' es unaliased t2
+  -- for cases that reduce to `x <:? ⊤`
+  (a , THMu _ b) -> check (TyGround [a]) b
+  (THMu _ a , b) -> check a (TyGround [b])
+  _ -> end False
 
--- TODO local type aliases
-check' _es (TyAlias q0) (TyAlias q) | q0 == q = pure True
-check' es t1 (TyAlias q) = case readQName es (modName q) (unQName q) of
-  Just expr | Just t2 <- exprToTy expr -> check' es t1 t2
-  Nothing -> error $ "TODO resolve local type aliases: π" <> showRawQName q
-
-check' es (TyAlias q) t2 = check' es t2 (TyAlias q)
-check' _es t1 (TyAlias q) = error $ "TODO resolve type aliases: π" <> showRawQName q
-check' _es t1 t2 = error $ show t1 <> "\n" <> show t2
+check :: forall s. Type -> Type -> TCEnv s Bool
+check inf got = let
+  --trace ("check: " <> prettyTyRaw inf <> "\n   <?: " <> prettyTyRaw got) $
+  in case (inf , got) of
+  (TyGround inferred , TyGround gotTy)  -> allM (\t -> anyM (checkAtomic t) gotTy) inferred
+  (t1 , t2) -> error $ show t1 <> "\n" <> show t2

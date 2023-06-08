@@ -1,12 +1,12 @@
--- let-bound mixfix
--- poly1 = let _<_ = \f a => f a in (\y => y.t) < { t = 1 }  -- %i1
+-- let-bound mixfix in scope outside, wrong IName/Letname
+-- poly1 = let _<_ = \f a => f a in (\y => y . t) < { t = 1 }  -- %i1
 
 -- bad type depending on order of mutuals
 --ii/SpecialisationTests/WrappedSimpleMutual.ii"
 
--- Let conflict "0"
---eq1 @x b = 2
---eq1 a b = 3
+-- Illegal pattern
+-- eq1 @x b = 2
+-- eq1 a b = 3
 
 -- ∃ type in optparse-applicative
 -- data Parser a
@@ -28,6 +28,9 @@
 --import mutumorphism -- avoid let-block
 --import Tee -- duplicate streams
 
+-- Cat records: V and ^
+-- set/get formal semantics, how to add a field?
+
 -- Need to re-app freeVars on recursive calls: letstream.ii
 -- pdep captures
 --foldr c z (@stream next seed) = let
@@ -42,33 +45,29 @@
 
 -- Libs: Optparse Lens List Eff DFA BitSet
 
--- Cat records: V and ^
+--import stream
 
--- Resolve type aliases
---Rectangle = { f = Int , g = Int }
---r : Rectangle
---r = \x y => { f = 3 , g = 10 }
+-- need full ttApp , termToTy can't handle Apps
+_->_ {r2} = Arrow
+double : Int -> Int
+double x = add x x
+
 --type params (conv fn to THBi or embed Core in types)
+--type application? THBi is an implicit app
 --Maybe a = data
 --  Nothing
 --  Just a
 
--- vv promoting inames to topNames breaks popcount lookup
--- but only when imported; should patch resolvenames?
-import odd
-f = gg
-
--- labels vs typed bindings returning labels
-
+-- Profunctor Lenses: lens|prims|iso|adapter|traversal|getter|fold
 -- 'x' field QName not imported.
--- should it be a lens|prims|iso|adapter|traversal|getter|fold ?
 -- import Maybe?
 -- f = rect . x
 
--- import stream.ii
+-- top scope: Typed bindings return labels
 
--- loops
--- sh "-p simple ii/SpecialisationTests/SimpleMutual"
-
--- Specialise
--- sh "-p simple ii/SpecialisationTests/SumOfSquares"
+-- * function Fix & mutu-fix
+-- * fixed functions don't have args applied
+-- * ERA: apply all env to fn, then reduce
+--import prelude
+--g2 z i = if z >? i then z else g1 z i
+--g1 z i = g2 (i + z) i

@@ -18,17 +18,6 @@ makeLabel q = let sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCo
 
 tHeadToTy t = TyGround [t]
 
-exprToTy :: Expr -> Maybe Type
-exprToTy (Core term _tyty) = termToTy term
-
-termToTy :: Term -> Maybe Type
-termToTy = \case
-  Ty t -> Just t
-  Prod xs -> traverse termToTy xs <&> \ts -> TyGround [THTyCon (THProduct ts)]
-  Var (VQBind q) -> Just (TyAlias q)
-  VBruijn i -> Just (tHeadToTy (THBound i))
-  x -> Nothing
-
 unzipExprs :: [Expr] -> ([Term] , [Type])
 unzipExprs = unzip . fmap (\(Core expr ty) -> (expr , ty))
 
@@ -66,7 +55,6 @@ partitionType = \case
   TyVars vs g -> (vs , g)
   TyGround g  -> (0  , g)
   TySet _n    -> (0 , [])
---TyVar v     -> (0 `setBit` v , [])
 --pi@TyPi{}   -> (0 , [pi]) -- TODO ok?
 --TyIndexed{} -> _
   t -> error $ show t
@@ -170,6 +158,7 @@ mergeTyHead pos t1 t2 = --(\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ " 
   in case join of
   [THTop , THTop] -> [THTop]
   [THBot , THBot] -> [THBot]
+  [THAlias q , THAlias q0] | q == q0 -> [THAlias q]
   [THPrim a , THPrim b]  -> if a == b then [t1] else case (a,b) of
 --  (PrimInt x , PrimInt y) -> [THPrim $ PrimInt $ max x y]
     (PrimBigInt , PrimInt _) -> [THPrim $ PrimBigInt]

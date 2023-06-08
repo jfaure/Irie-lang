@@ -11,7 +11,7 @@ import Control.Monad (fail)
 import Control.Lens
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S ( fromList, member )
-import qualified Data.Text as T ( all, any, append, concat, null, snoc, empty )
+import qualified Data.Text as T ( any, append, concat, null, snoc, empty )
 import Data.Functor.Foldable
 --import qualified Text.Megaparsec.Debug as DBG
 -- dbg i = DBG.dbg i
@@ -31,7 +31,7 @@ addMFWord h mfw = do
   sz <$ (moduleWIP . parseDetails . hNameMFWords %= M.insertWith (++) h [mfw sz])
 
 -- insertLookup is tricky but saves a log(n) operation
-insertOrRetrieve :: HName -> _ -> (IName , _)
+insertOrRetrieve :: HName -> HNameMap -> (IName , HNameMap)
 insertOrRetrieve h (sz , hList , mp) = {-let sz = M.size mp in-} case M.insertLookupWithKey (\_k _new old -> old) h sz mp of
   (Just x , mp) -> (x  , (sz     , hList     , mp)) -- retrieve
   (_      , mp) -> (sz , (sz + 1 , h : hList , mp)) -- insert
@@ -126,7 +126,7 @@ linefolds p = endLine *> scn *> do
 -----------
 reservedChars = "@(){};:,\"\\λ" -- \\ λ necessary?
 reservedNamesL = words "? _ let rec mut \\case λcase case # record data gadt as over of _ import use open = ? | => ⇒ in <-"
-reservedIMap = M.fromList (zip reservedNamesL [0..])
+--reservedIMap = M.fromList (zip reservedNamesL [0..])
 
 reservedNames = S.fromList reservedNamesL
 -- check the name isn't an iden which starts with a reservedWord
@@ -139,12 +139,16 @@ checkReserved x = x <$ when (x `S.member` reservedNames) (fail ("keyword '" <> t
 --checkLiteral x  = x <$ when (isDigit `T.all` x) -- TODO not good enough (1e3 , 2.0 etc..)
 --  (fail ("literal: '" <> toS x <> "' cannot be an identifier"))
 checkIden = checkReserved -- <=< checkLiteral
-anyIden = lexeme (idenChars <* notFollowedBy idenChars) -- incl. reserved
+--anyIden = lexeme (idenChars <* notFollowedBy idenChars) -- incl. reserved
 
 -- We must use 'try', to backtrack if we ended up parsing a reserved word
 iden :: Parser HName = lexeme . try $ (idenChars >>= checkIden)
 idenNo_ = lexeme idenNo_'
-idenNo_' = try (takeWhile1P Nothing (\x->isIdenChar x && x /= '_') >>= checkIden)
+idenNo_' = let
+  -- Allow '.' in names but only if name starts with '.' and isn't "."
+--dotIden = lookAhead (char '.' *> (char '.' <|> satisfy isIdenChar))
+--  *> takeWhile1P Nothing (\x -> isIdenChar x || x == '.')
+  in try ((takeWhile1P Nothing (\x -> isIdenChar x && x /= '_') {-<|> dotIden-}) >>= checkIden)
 
 -- separated and split on '_' (ie. argument holes)
 pMixfixWords :: Parser [Maybe Text] = lexeme $ do
@@ -193,9 +197,9 @@ pBlock :: Bool -> Bool -> LetQual -> Parser Block
 pBlock isTop isOpen letTy = Block isOpen letTy <$> parseBinds isTop
 
 parseBinds :: Bool -> Parser (V.Vector FnDef)
-parseBinds isTop = scn *> use indent >>= \prev -> L.indentLevel >>= \lvl ->  let
+parseBinds isTop = let
   sep = eof <|> (endLine *> scn) --  *> when (prev < lvl) (fail "unexpected top level indentation"))
-  in parseDecls isTop sep
+  in scn *> parseDecls isTop sep
 
 newtype SubParser = SubParser { unSubParser :: Parser (Maybe (FnDef , SubParser)) }
 parseDecls :: Bool -> Parser () -> Parser (V.Vector FnDef)

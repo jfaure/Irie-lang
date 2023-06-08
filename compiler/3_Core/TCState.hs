@@ -1,11 +1,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 module TCState where
-import CoreSyn ( tyBot, tyTop, BiSub(BiSub), Bind, LetMeta )
+import CoreSyn
+import CoreUtils
+import Prim
 import qualified Scope (Params)
 import Externs
-import Errors ( Errors, TmpBiSubError )
-import Control.Lens ( use, (.=), makeLenses )
-import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write )
+import Errors
+import Control.Lens
+import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write, read )
 import qualified ParseSyntax as P ( FnDef )
 import qualified Data.Vector as V ( Vector )
 
@@ -25,8 +27,8 @@ data TCEnvState s = TCEnvState {
  , _errors      :: Errors
 
  -- Biunification state
- , _topBindsCount :: Int
- , _topBindsMask  :: BitSet
+ , _topBindsCount :: Int    -- offset in modBinds where module binds end and their lifted let-bindings begin
+ , _topBindsMask  :: BitSet -- to lookup QName -> local Bind index
  , _bindsBitSet   :: BitSet -- mark inferred binds
  , _inferStack    :: BitSet -- To detect infer cycles: recursion / mutuals
  , _scopeParams   :: Scope.Params
@@ -55,3 +57,33 @@ freshBiSubs n = do
   bis .= bisubs
   tyVars `forM_` \i -> MV.write bisubs i (BiSub tyBot tyTop)
   pure tyVars
+
+expectedType :: Expr -> TCEnv s ()
+expectedType notTy = (errors . checkFails %= (ExpectedType notTy :))
+
+resolveTypeQName = exprToTy <=< resolveQName
+
+-- All forward/mutuals must be solved already! ie. don't use on TT QNames
+resolveQName :: forall s. QName -> TCEnv s Expr
+resolveQName q = use thisMod >>= \mI -> if modName q == mI
+  then use modBinds >>= \mBinds -> use topBindsMask >>= \topMask ->
+    MV.read mBinds (iNameToBindName topMask (unQName q)) <&> \(_lm , BindOK _ _ e) -> e
+  else use loadedMs <&> \lBinds -> fromMaybe (Core (Var (VQBind q)) tyBot)
+    (readQName lBinds (modName q) (unQName q))
+
+termToTy :: Term -> TCEnv s Type
+termToTy = \case
+  Ty t -> pure t
+  Prod xs -> traverse termToTy xs <&> \ts -> TyGround [THTyCon (THProduct ts)]
+  Var (VQBind q) -> pure (tHeadToTy (THAlias q))
+  VBruijn i -> pure (tHeadToTy (THBound i))
+  App (Var (VQBind q)) args -> resolveQName q >>= \case
+    Core (Instr (TyInstr MkIntN)) _ | [Lit (Fin _ i)] <- args ->
+      pure $ tHeadToTy (THPrim (PrimInt $ fromIntegral i))
+    Core (Instr (TyInstr Arrow)) _  | [arg , ret] <- args ->
+      (\a b -> tHeadToTy $ THTyCon (THArrow [a] b)) <$> termToTy arg <*> termToTy ret
+    x -> exprToTy x
+  t -> tyBot <$ expectedType (Core t tyBot)
+
+exprToTy :: Expr -> TCEnv s Type
+exprToTy (Core term _tyty) = termToTy term

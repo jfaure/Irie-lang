@@ -14,3 +14,5 @@ import Prelude
 :def emitC (\_->pure ":r\n emitC\n")
 :def interpret (\_->pure ":r\n interp\n")
 :def stream (\_->pure ":r\n sh \"ii/stream.ii -p simple\"\n")
+:def sumMul (\_->pure ":r\n sh \"ii/SpecialisationTests/SumOfSquares.ii -p simple\"\n")
+:def scan (\_->pure ":r\n sh \"ii/FA/CharScan/MiniPrefix.ii -p simple\"\n")

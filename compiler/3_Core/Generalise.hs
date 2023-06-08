@@ -133,25 +133,25 @@ buildType bis' handleVar loops pos = let
   in readBounds loops . partitionType
 
 -- Need to recursively read all tvar transitive bounds
-reconstructType :: forall s. MV.MVector s BiSub -> V.Vector VarSub -> Type -> G s Type
-reconstructType bis' varSubs ty = let
-  readBounds :: (Bool , BitSet , Type) -> G s (TypeF (Bool , BitSet , Type))
-  readBounds (pos , loops , seedTy) = let
-    readVars l ty = partitionType ty & \(vs , gs) -> (bitSet2IntList (vs .&. complement l) `forM` readVar)
-      <&> mergeTypeList pos . (TyGround gs :)
-    (vs , gs) = partitionType seedTy
-    readVar v = (MV.read bis' v <&> if pos then _pSub else _mSub) >>= readVars (setBit loops v)
-    negArrows = mapTHeads $ \case
-      THTyCon (THArrow ars ret) -> THTyCon (THArrow ((\(p,l,t) -> (not p,l,t)) <$> ars) ret)
-      x -> x
-    in do
-    varBounds <- bitSet2IntList (vs .&. complement loops) `forM` readVar
-    subs <- bitSet2IntList vs `forM` \v -> case varSubs V.! v of
-      DeleteVar  -> pure tyBot
-      GeneraliseVar -> generaliseVar v <&> \b -> TyGround [THBound b]
-      RecursiveVar  -> generaliseVar v <&> \m -> TyGround [THMuBound m]
-      SubVar w    -> readVar w
-      SubTy ty    -> pure ty
-    let r = mergeTypeList pos (TyGround gs : subs ++ varBounds)
-    pure $ negArrows $ (pos , loops .|. vs ,) <$> project r
-  in anaM readBounds (True , 0 , ty) -- track strictly positive tvar wraps?
+--reconstructType :: forall s. MV.MVector s BiSub -> V.Vector VarSub -> Type -> G s Type
+--reconstructType bis' varSubs ty = let
+--  readBounds :: (Bool , BitSet , Type) -> G s (TypeF (Bool , BitSet , Type))
+--  readBounds (pos , loops , seedTy) = let
+--    readVars l ty = partitionType ty & \(vs , gs) -> (bitSet2IntList (vs .&. complement l) `forM` readVar)
+--      <&> mergeTypeList pos . (TyGround gs :)
+--    (vs , gs) = partitionType seedTy
+--    readVar v = (MV.read bis' v <&> if pos then _pSub else _mSub) >>= readVars (setBit loops v)
+--    negArrows = mapTHeads $ \case
+--      THTyCon (THArrow ars ret) -> THTyCon (THArrow ((\(p,l,t) -> (not p,l,t)) <$> ars) ret)
+--      x -> x
+--    in do
+--    varBounds <- bitSet2IntList (vs .&. complement loops) `forM` readVar
+--    subs <- bitSet2IntList vs `forM` \v -> case varSubs V.! v of
+--      DeleteVar  -> pure tyBot
+--      GeneraliseVar -> generaliseVar v <&> \b -> TyGround [THBound b]
+--      RecursiveVar  -> generaliseVar v <&> \m -> TyGround [THMuBound m]
+--      SubVar w    -> readVar w
+--      SubTy ty    -> pure ty
+--    let r = mergeTypeList pos (TyGround gs : subs ++ varBounds)
+--    pure $ negArrows $ (pos , loops .|. vs ,) <$> project r
+--  in anaM readBounds (True , 0 , ty) -- track strictly positive tvar wraps?

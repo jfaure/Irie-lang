@@ -6,7 +6,7 @@ import Errors ( BiFail(..), TmpBiSubError(TmpBiSubError) )
 import CoreUtils
 import TCState
 import PrettyCore (prettyTyRaw)
-import Externs (readPrimExtern)
+import Builtins (readPrimExtern)
 import Data.Distributive
 import qualified BitSetMap as BSM ( (!?), elems, mergeWithKey', singleton, toList, traverseWithKey )
 import qualified Data.Vector.Mutable as MV ( read, write )
@@ -81,7 +81,7 @@ instantiateF tvars t pos = let
         _ -> _
     THBound i   -> thBound i
     THMuBound i -> thBound i
-    THBi{}      -> error $ "higher rank polymorphic instantiation"
+    THBi n _    -> error $ "higher rank polymorphic instantiation: " <> show n
     t -> let x = distribute t pos in (getRecs x , TyGround [snd <$> x])
   getRecs :: Foldable t => t (BitSet , a) -> BitSet
   getRecs = foldr (\a b -> fst a .|. b) 0
@@ -100,6 +100,8 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THExt a , THExt b) | a == b -> pure BiEQ
   (_ , THExt i) -> biSubType tyP     $ exprType (readPrimExtern i)
   (THExt i , _) -> (`biSubType` tyM) $ exprType (readPrimExtern i)
+  (_ , THAlias q) -> resolveTypeQName q >>= \m -> biSubType (tHeadToTy p) m
+  (THAlias q , _) -> resolveTypeQName q >>= \p -> biSubType p (tHeadToTy m)
 
   -- Bound vars (removed at +THBi, so should never be encountered during biunification)
   (THBound i , _) -> error $ "unexpected THBound: " <> show i

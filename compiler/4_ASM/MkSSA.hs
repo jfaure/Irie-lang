@@ -1,4 +1,5 @@
 module MkSSA where
+{-
 import SSA
 import Prim
 import CoreSyn hiding (Type , Expr)
@@ -245,4 +246,5 @@ emitMatchApp (SumData sumTy tag val) alts d = let
   brs ← traverse (uncurry emitBranch) (BSM.toList alts)
   pure (Switch tag brs Void)
 emitMatchApp x alts d = error $ show x
+-}
 -}

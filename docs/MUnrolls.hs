@@ -13,6 +13,9 @@ import Control.Monad.Fix
 tailRecurse :: (c -> Either b c) -> c -> b
 tailRecurse c = h where h = (identity ||| h) . c -- (|||) = codiagonal
 
+tailRecurse :: (c -> Σ b c) -> c -> b
+tailRecurse f = fix λself. -> identity Δ self ∘ c
+
 --hyloM :: (Functor f , Monad m , Traversable f) => (f b -> m b) -> (a -> m (f a)) -> a -> m b
 --hyloM f g = h where h = f <=< traverse h <=< g
 myhylo f g = h where h = f . fmap h . g
