@@ -24,7 +24,7 @@ inferType txt = let
     reg <- initRegistry False
     lm  <- compileText defaultCmdLine {noColor = True , printPass = [] , noCache = True , noFuse = True} reg txt
     r   <- readMVar reg
-    pure (lm , BindSource (lookupIName r._loadedModules))
+    pure (lm , BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules))
   in case lm of
   Just (JudgeOK _ jm) -> prettyJudgedModule False False ansiRender { bindSource = Just bindSrc , ansiColor = False } jm
   Just x  -> error $ "not judgeOK: " <> toS (showImportCon x)
@@ -139,13 +139,13 @@ goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
   readFile tmpFile -- If file does not exist, then irie failed before writing to it.
 
 tuple    = S.it "tuple.ii"        (goldenInfer "-p types --no-fuse --no-color" "ii/tuple.ii"       "tuple")
-list1    = S.it "list1.ii"        (goldenInfer "-p types --no-fuse --no-color" "ii/list1.ii"        "list")
+list1    = S.it "list1.ii"        (goldenInfer "-p types --no-fuse --no-color --no-put-letBinds" "ii/list1.ii" "list1")
 list2    = S.it "list2.ii"        (goldenInfer "-p types --no-fuse --no-color" "ii/list2.ii"       "list2")
 mutual   = S.it "mutual sumMul.ii"(goldenInfer "-p types --no-fuse --no-color" "ii/sumMul.ii"      "sumMul")
 tree     = S.it "tree.ii"         (goldenInfer "-p types --no-fuse --no-color" "ii/tree.ii"        "tree")
 intmap   = S.it "intmap.ii"       (goldenInfer "-p types --no-fuse --no-color" "ii/intmap.ii"      "intmap")
 mixfixes = S.it "mixfixTests.ii"  (goldenInfer "-p core  --no-fuse --no-color" "ii/mixfixTests.ii" "mixfixTests")
-testFuse = S.it "testBruijns.ii"  (goldenInfer "-p core  --no-color" "ii/testBruijns.ii" "bruijn fusion")
+testFuse = S.it "testBruijns.ii"  (goldenInfer "-p simple  --no-color" "ii/testBruijns.ii" "bruijn fusion")
 testCaptures = S.it "letCaptureTests.ii"  (goldenInfer "-p core  --no-color" "ii/letCaptureTests.ii" "let-capture")
 inversePats = S.it "patternTests.ii"  (goldenInfer "-p core --no-fuse --no-color" "ii/patternTests.ii" "invPat")
 

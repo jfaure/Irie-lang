@@ -1,18 +1,9 @@
 -- let-bound mixfix in scope outside, wrong IName/Letname
 -- poly1 = let _<_ = \f a => f a in (\y => y . t) < { t = 1 }  -- %i1
 
--- bad type depending on order of mutuals
---ii/SpecialisationTests/WrappedSimpleMutual.ii"
-
 -- Illegal pattern
 -- eq1 @x b = 2
 -- eq1 a b = 3
-
--- ∃ type in optparse-applicative
--- data Parser a
---   = NilP (Maybe a)
---   | OptP (Option a)
---   | forall x . MultP (Parser (x -> a)) (Parser x)
 
 --imports list list2 tree question ls foldr Free parsec intmap patternTests hash
 --import irieShell -- ideas for irie as shell
@@ -29,45 +20,43 @@
 --import Tee -- duplicate streams
 
 -- Cat records: V and ^
--- set/get formal semantics, how to add a field?
-
--- Need to re-app freeVars on recursive calls: letstream.ii
--- pdep captures
---foldr c z (@stream next seed) = let
---  go s = case next s of
---    @Done      => z
---    @Skip r    => go r
---    @Yield x r => c x (go r)
---  in go seed
+-- set/get formal semantics, adding new fields?
 
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
 -- Libs: Optparse Lens List Eff DFA BitSet
 
---import stream
-
--- need full ttApp , termToTy can't handle Apps
-_->_ {r2} = Arrow
-double : Int -> Int
-double x = add x x
-
---type params (conv fn to THBi or embed Core in types)
---type application? THBi is an implicit app
---Maybe a = data
---  Nothing
---  Just a
-
 -- Profunctor Lenses: lens|prims|iso|adapter|traversal|getter|fold
+-- * Set unconditionally adds a field (scoped-fields can stack)
+-- * Optic = p a b -> p s t
+-- * Lens = view : s -> a , update : (b , s) -> t
+-- ? GLens : (s -> (a -> b) -> (b , t)) => view s = fst (glens s identity) ; update s x = snd (glens s (const x))
 -- 'x' field QName not imported.
 -- import Maybe?
 -- f = rect . x
 
--- top scope: Typed bindings return labels
+-- recursive Tree Automata; enumerate data modulo (N constructors) and build a NFA transition table
+
+-- Allow less general annotations
+-- f : Arrow Int { x = Int }
+-- f x = { x = x }
+
+-- type params (conv fn to THBi or embed Core in types)
+-- type application vs implicit THBi
+-- Maybe a = data
+--   Nothing
+--   Just a
+
+-- gadt/data: emit constructor bindings and a type alias
+-- Choice = data
+--   S1 Int
+-- f = S1 -- should KO; S1 : Int -> [S1 {Int}]
 
 -- * function Fix & mutu-fix
--- * fixed functions don't have args applied
--- * ERA: apply all env to fn, then reduce
---import prelude
---g2 z i = if z >? i then z else g1 z i
---g1 z i = g2 (i + z) i
+-- * when fn references prev inference stack => cycle;
+-- ? everything between them is mutual
+--ii/SpecialisationTests/WrappedSimpleMutual.ii"
+import prelude
+g2 z i = if z >? i then z else g1 z i
+g1 z i = g2 (i + z) i

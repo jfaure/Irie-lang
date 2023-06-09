@@ -2,7 +2,7 @@
 module Scope (scopeTT , scopeApoF , initModParams , RequiredModules , OpenModules , Params , letMap , lets , findDups) where
 import ParseSyntax
 import QName
-import CoreSyn(ExternVar(..) , VName(VQBind))
+import CoreSyn(ExternVar(..) , VName(VQBindIndex))
 import Mixfix (solveMixfixes)
 import Externs ( checkExternScope , Externs )
 import Errors
@@ -103,10 +103,10 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
   unfoldCase :: TT -> [((TT {-, [TT]-}) , TT)] -> Params -> TT
   unfoldCase scrut rawAlts params = let
     scopeLayer pat = case pat of
-      Var (VExtern i) -> case checkExternScope params._open thisMod exts i of
+      VParseIName i -> case checkExternScope params._open thisMod exts i of
         ImportLabel q -> QLabel q
   --    ImportLit
-        x -> Var (VExtern i) -- new argument. (x is likely: `NotInScope sometxt`)
+        x -> VParseIName i -- new argument. (x is likely: `NotInScope sometxt`)
       Juxt o args -> solveMixfixes o (scopeLayer <$> args) -- TODO need to solveScope VExterns first
       tt -> tt
     isLabel = \case { QLabel{} -> True ; Label{} -> True ; App{} -> True; _ -> False }
@@ -115,7 +115,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
       QLabel q -> (qName2Key q , rhs) -- Guards openMatch guards rhs)
       Label i subPats -> (qName2Key (mkQName thisMod i) , GuardArgs subPats rhs)
       App _ (QLabel q) subPats -> (qName2Key q , GuardArgs subPats rhs)
-      App _ (Var (VExtern i)) ars -> (0 , ScopePoison (NoScopeLabel i (length ars)))
+      App _ (VParseIName i) ars -> (0 , ScopePoison (NoScopeLabel i (length ars)))
       x -> (0 , ScopePoison (ScopeError $ "bad pattern: " <> show x))
     openMatch = case rest of -- TODO could be guarded; another case
       [] -> Nothing
@@ -133,20 +133,20 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
     n = length args
     lvl = params._bruijnCount :: Int
     vbruijnLvls = [lvl .. lvl + n-1] -- [n-1 , n-2 .. 0]
-    argSubs = let getArgSub i = \case { Var (VExtern e) -> [(e , i)] ; x -> [] }
+    argSubs = let getArgSub i = \case { VParseIName e -> [(e , i)] ; x -> [] }
       in concat (zipWith getArgSub vbruijnLvls args)
     mkGuards pat vbl = case pat of
-      Var VExtern{} -> []
+      VParseIName{} -> []
       WildCard{} -> []
       pat -> [GuardPat pat (Var (VBruijnLevel vbl))]
     guards = concat (zipWith mkGuards args vbruijnLvls) :: [Guard]
     in doBruijnAbs $ BruijnAbsF n argSubs 0 (Guards Nothing (guards ++ nestGuards) rhs)
 
   in case {-d_ (embed $ Question <$ this) -} this of
+  VParseIName i -> Left <$> project (resolveExt i)
   Var v -> case v of
     VBruijnLevel i -> VarF (VBruijn $ params._bruijnCount - 1 - i) -- Arg-prod arg name
     VBruijn n -> VarF (VBruijn n) -- lambdaCaseF spawns (VBruijn 0) ; error "VBruijn n/=0 shouldn't be possible"
-    VExtern i -> Left <$> project (resolveExt i)
   -- TODO Not ideal; retype solvemixfix on (∀a. TTF a) ?
   Juxt o args   -> Left <$> project (solveMixfixes o $ scopeTT topBindsCount exts thisMod params <$> args)
 --Juxt o args   -> scopeApoF exts thisMod . (,params) $ solveMixfixes o $ _ $
@@ -158,7 +158,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
   -- v transpose ?
   FnEqns eqns -> case eqns of
     [GuardArgs pats rhs] -> guardArgs pats rhs []
-    fns -> DesugarPoisonF (IllegalPattern $ "TODO: desugar multiple function equations:\n" <> show fns)
+    fns -> DesugarPoisonF (IllegalPattern $ show (length fns) <> " function equations (This might be supported in the future):\n" <> show fns)
   GuardArgs pats rhs -> guardArgs pats rhs []
   Guards _ko [] rhs -> scopeApoF topBindsCount exts thisMod (rhs , params) -- RawExprF (Right (rhs , params)) -- skip
   Guards ko (g : guards) rhs -> let

@@ -18,6 +18,8 @@ mkExt i = THExt i
 
 readPrimExtern :: IName -> Expr
 readPrimExtern i = snd (primBinds V.! i)
+
+-- THExt
 readPrimType i = snd (primBinds V.! (i + 3))
 
 getPrimTy :: HName -> IName
@@ -192,9 +194,9 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("pushStrBuf" , (PushStrBuf , mkTHArrow [mkExt strBuf , charTy] (mkExt strBuf)))
   , ("strBufToString" , (StrBufToString , mkTHArrow [mkExt strBuf] (mkExt str)))
 
-  , ("newArray"  , (NewArray , [THBi 1 $ TyGround $ mkTHArrow [THExt i64] (THTyCon (THArray (tHeadToTy (THBound 0))))]))
-  , ("readArray"  , (ReadArray , [THBi 1 $ TyGround $ mkTHArrow [THTyCon (THArray (tHeadToTy $ THBound 0)) , THExt i64] (THBound 0)]))
-  , ("writeArray" , (WriteArray , let arr = THTyCon (THArray (tHeadToTy $ THBound 0)) in [THBi 1 $ TyGround $ mkTHArrow [arr , THExt i64 , THBound 0] arr]))
+  , ("newArray"  , (NewArray , [THBi 1 $ TyGround $ mkTHArrow [mkExt i64] (THTyCon (THArray (tHeadToTy (THBound 0))))]))
+  , ("readArray"  , (ReadArray , [THBi 1 $ TyGround $ mkTHArrow [THTyCon (THArray (tHeadToTy $ THBound 0)) , mkExt i64] (THBound 0)]))
+  , ("writeArray" , (WriteArray , let arr = THTyCon (THArray (tHeadToTy $ THBound 0)) in [THBi 1 $ TyGround $ mkTHArrow [arr , mkExt i64 , THBound 0] arr]))
 
   , ("readFile"  , (ReadFile  , mkTHArrow [mkExt str] (mkExt str)))
   , ("writeFile" , (WriteFile , mkTHArrow [mkExt str , mkExt str] (mkExt i64)))

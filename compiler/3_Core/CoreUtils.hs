@@ -30,7 +30,7 @@ mkLiteralEquality l x = case l of
 getArgShape :: Term -> ArgShape
 getArgShape = \case
   Label l params -> ShapeLabel l (getArgShape <$> params)
-  Var (VQBind q) -> ShapeQBind q
+  Var (VQBindIndex q) -> ShapeQBind q
   _ -> ShapeNone
 
 isPoisonExpr :: Expr -> Bool = (\case { Core (Poison{}) _ -> True ; _ -> False })

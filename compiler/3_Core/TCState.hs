@@ -61,28 +61,34 @@ freshBiSubs n = do
 expectedType :: Expr -> TCEnv s ()
 expectedType notTy = (errors . checkFails %= (ExpectedType notTy :))
 
-resolveTypeQName = exprToTy <=< resolveQName
+-- !
+--resolveTypeQName = exprToTy <=< (\q -> use topBindsMask >>= \top -> resolveQIndex $ mkQName (modName q) (iNameToBindName top (unQName q)))
+resolveTypeQName = exprToTy <=< resolveQIndex
 
 -- All forward/mutuals must be solved already! ie. don't use on TT QNames
-resolveQName :: forall s. QName -> TCEnv s Expr
-resolveQName q = use thisMod >>= \mI -> if modName q == mI
-  then use modBinds >>= \mBinds -> use topBindsMask >>= \topMask ->
-    MV.read mBinds (iNameToBindName topMask (unQName q)) <&> \(_lm , BindOK _ _ e) -> e
-  else use loadedMs <&> \lBinds -> fromMaybe (Core (Var (VQBind q)) tyBot)
-    (readQName lBinds (modName q) (unQName q))
+resolveQIndex :: forall s. QName -> TCEnv s Expr
+resolveQIndex q = use thisMod >>= \mI -> if modName q == mI
+  then use modBinds >>= \mBinds -> -- use topBindsMask >>= \topMask -> letbindName = iNameToBindName topMask (unQName q)
+    MV.read mBinds (unQName q) <&> \(_lm , BindOK _ e) -> e
+  else use loadedMs <&> \lBinds -> fromMaybe (Core (Var (VQBindIndex q)) tyBot)
+    (readQIName lBinds (modName q) (unQName q))
 
 termToTy :: Term -> TCEnv s Type
-termToTy = \case
+termToTy = let
+  reduceInstr t args = case t of
+    TyInstr MkIntN | [Lit (Fin _ i)] <- args -> pure $ tHeadToTy (THPrim (PrimInt $ fromIntegral i))
+    TyInstr Arrow  | [arg , ret] <- args ->
+      (\a b -> tHeadToTy $ THTyCon (THArrow [a] b)) <$> termToTy arg <*> termToTy ret
+    x -> error $ "bad ty instr: " <> show x
+  in \case
   Ty t -> pure t
   Prod xs -> traverse termToTy xs <&> \ts -> TyGround [THTyCon (THProduct ts)]
-  Var (VQBind q) -> pure (tHeadToTy (THAlias q))
+  Var (VQBindIndex q) -> pure (tHeadToTy (THAlias q))
   VBruijn i -> pure (tHeadToTy (THBound i))
-  App (Var (VQBind q)) args -> resolveQName q >>= \case
-    Core (Instr (TyInstr MkIntN)) _ | [Lit (Fin _ i)] <- args ->
-      pure $ tHeadToTy (THPrim (PrimInt $ fromIntegral i))
-    Core (Instr (TyInstr Arrow)) _  | [arg , ret] <- args ->
-      (\a b -> tHeadToTy $ THTyCon (THArrow [a] b)) <$> termToTy arg <*> termToTy ret
+  App (Var (VQBindIndex q)) args -> resolveQIndex q >>= \case
+    Core (Instr t) _ -> reduceInstr t args
     x -> exprToTy x
+  App (Instr t) args -> reduceInstr t args
   t -> tyBot <$ expectedType (Core t tyBot)
 
 exprToTy :: Expr -> TCEnv s Type

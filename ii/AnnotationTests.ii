@@ -1,0 +1,8 @@
+-- need full ttApp , termToTy can't handle Apps
+_->_ {r2} = Arrow
+double : Int -> Int -> Int
+double x y = add x y
+
+--f : Int -> { x = Int }
+--f y = { x = y }
+f = Int

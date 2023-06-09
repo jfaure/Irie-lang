@@ -20,8 +20,8 @@ traceTerm t x = trace (prettyTermRaw t) x
 -- <a href="#Marker></a>
 -- <h1 id="Marker">There's a link to here!</h1>
 data Annotation
- = ANone | AArg IName | AQRawName QName | AQBindName QName | AQSpecName QName| AQLabelName QName | AQFieldName QName -- Names
- | ARawFieldName HName | ARawLabelName HName
+ = ANone | AArg IName | AQRawName QName
+ | AQBindName QName | AQSpecName QName| AQLabelName QName | AQFieldName QName | AQBindIndex QName -- Names 
  | AInstr | ALiteral | AType  | AAbs | AKeyWord
 -- | ASrcLoc -- for clickable html
 
@@ -56,7 +56,8 @@ prettyJudgedModule showLetBinds showRhs flags j = render flags . layoutPretty de
 pJM showLetBinds showRhs jm = let
   jmINms = jmINames jm
   binds = toList (if showLetBinds then moduleTT jm else V.takeWhile (isTop . fst) (moduleTT jm))
-  in vsep ((\(letMeta , b) -> pBind (jmINms V.! unQName (letName letMeta)) showRhs b) <$> binds)
+  in vsep $ (\(letMeta , b) -> (if isTop letMeta then "" else "letBound ")
+    <> pBind (jmINms V.! unQName (letIName letMeta)) showRhs b) <$> binds -- TODO yolo assumption that QName == thisMod
 
 --------------
 -- Renderer --
@@ -93,14 +94,14 @@ render flags = let
     AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
     AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
     AQRawName   q -> addColor (getColor a) $ fromText (showRawQName q)
-    AQBindName  q -> addColor (getColor a) $ case srcINames <$> bindSource flags of
+    AQBindName  q -> addColor (getColor a) $ b <> case srcINames <$> bindSource flags of
       Nothing  -> "π(" <> (fromText (showRawQName q)) <> ")"
       Just fn -> fromText (fromMaybe (showRawQName q) $ fn (modName q) (unQName q))
+--  AQBindIndex q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False Nothing q)
+    AQBindIndex q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcBindNames <$> bindSource flags) q)
     AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcINames <$> bindSource flags) q)
     AQFieldName q -> -- if modName q == 0 then "!" <> fromText (show (unQName q)) else
       {-addColor ansiCLYellow $-} b <> fromText (prettyQName True (srcINames <$> bindSource flags) q)
-    ARawFieldName q -> fromText q
-    ARawLabelName q -> fromText q
     ALiteral      -> addColor (getColor a) b
     AInstr        -> addColor (getColor a) b
     AAbs          -> addColor (getColor a) b
@@ -194,10 +195,14 @@ pBind :: HName -> Bool -> Bind -> Doc Annotation
 pBind nm showRhs bind = pretty nm <> " = " <> case bind of
   Guard m tvar      -> "GUARD : " <> viaShow m <> viaShow tvar
   Mut{}             -> "Mut{} "
-  BindOK _n (nFree , free) expr -> let
+  BindOK _n {-(nFree , free)-} expr -> let
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
     letW  = "" -- if lbound then "let " else ""
-    in letW <> {-viaShow n <+> -} recKW <> (if 0 == free then "" else viaShow (nFree , bitSet2IntList free)) <> pExpr showRhs expr
+    in letW <> {-viaShow n <+> -} recKW <> {-(if 0 == free then "" else viaShow (nFree , bitSet2IntList free)) <>-}
+      pExpr showRhs expr
+  BindRenameCaptures lc freeVars expr ->
+    "Rename-captures:" <+> viaShow lc <> ":" <+> viaShow freeVars <+> "in" <+> pExpr showRhs expr
+
 
 pExpr :: Bool -> Expr -> Doc Annotation
 pExpr showRhs (Core term ty) = let pos = True in case term of
@@ -208,8 +213,9 @@ pExpr showRhs (Core term ty) = let pos = True in case term of
 pTerm :: Bool -> Term -> Doc Annotation
 pTerm showRhs = let
   pVName = \case
-    VQBind q   -> annotate (AQBindName q) ""
-    VForeign i -> "foreign " <> viaShow i
+--  VQBind q       -> annotate (AQBindName q) ""
+    VQBindIndex q  -> annotate (AQBindIndex q) "" -- ?! this can't be stable
+--  VForeign i -> "foreign " <> viaShow i
   prettyLabel l = annotate (AQLabelName l) ""
 --prettyField f = annotate (AQFieldName f) ""
   prettyMatch prettyLam _caseTy ts d = let
@@ -222,11 +228,13 @@ pTerm showRhs = let
     TyF t -> pTy True t -- TODO polarity
     QuestionF -> " ? "
     VarF     v -> pVName v
+    CapturesF (VQBindIndex q) -> annotate (AQBindIndex q) "AddCaptures."
     VBruijnF b -> "B" <> viaShow b
     VBruijnLevelF b -> "BL" <> viaShow b
     LitF     l -> annotate ALiteral $ parens (viaShow l)
     BruijnAbsF n body -> parens $ "λb(" <> viaShow n <> ")" <+> body
     BruijnAbsTypedF n body argMetas retTy -> parens $ "λB(" <> viaShow n <> ")" <+> body
+--  BruijnCapturesF lc freeVars body -> "λ" <> viaShow lc <> "[" <> viaShow (bitSet2IntList freeVars) <> "]" <+> body
     CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing ts d
     CaseSeqF _n arg _ty ts d -> arg <+> " caseSeq> " <+> prettyMatch identity Nothing ts d
     AppF f args    -> parens (f <+> nest 2 (sep args))
@@ -245,14 +253,14 @@ pTerm showRhs = let
       prettyField q = annotate (AQFieldName (QName q)) ""
       in parens $ r <> " . " <> hsep (punctuate "." $ prettyField <$> target) <> pLens ammo
     LetSpecF q sh -> "let-spec: " <> viaShow q <> "(" <> viaShow sh <> ")"
-    RenameCapturesF freeVars t -> "Rename-captures: " <> viaShow freeVars <> " in " <> t
     PoisonF t    -> parens $ "poison " <> unsafeTextWithoutNewlines t
     ProdF ts     -> braces $ hsep $ punctuate " ," (BSM.toList ts <&> \(l , rhs) -> annotate (AQFieldName (QName l)) "" <> " = " <> rhs)
 
     ArrayF ts    -> parens $ "#" <+> hsep (V.toList ts)
     TupleF ts    -> parens $ hsep $ punctuate " ," (V.toList ts)
-    LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
-      <> hardline <> "in" <+> t
+--  LetBindsF bs t -> "let" <> nest 2 (hardline <> vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs))
+--    <> hardline <> "in" <+> t
+    LetsF ls t -> "let" <+> viaShow (bitSet2IntList ls) <+> "in" <> hardline <> t
 --  LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 

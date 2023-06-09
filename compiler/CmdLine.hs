@@ -100,8 +100,8 @@ cmdLineDecls = CmdLine
   <*> switch
       (             long "put-dependents"
       <> help "Should print-pass apply to imported modules")
-  <*> switch
-      (             long "put-letBinds"
+  <*> flag True False 
+      (             long "no-put-letBinds"
       <> help "Should print-pass apply to imported modules")
   <*> switch
       (             long "recompile"

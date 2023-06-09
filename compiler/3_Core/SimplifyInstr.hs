@@ -2,12 +2,11 @@ module SimplifyInstr where
 import CoreSyn
 import Prim
 import Builtins
---import Data.Bits
 import qualified Data.Vector as V
 import qualified System.Directory as Dir
 import System.IO.Unsafe
-import PrettyCore
-import qualified Data.Text as T
+--import Data.Bits
+--import qualified Data.Text as T
 
 interpretBinaryIntInstr = \case
   Add  -> (+)

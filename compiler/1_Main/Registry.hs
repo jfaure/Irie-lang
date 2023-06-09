@@ -170,9 +170,9 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      -- iMap2Vector (pm ^. P.parseDetails . P.hNamesToINames)
      (resolver , mfResolver , exts) = resolveNames reg' mI pm iNamesV
      getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
-       BindSource (lookupIName r._loadedModules)
+       BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules)
      srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ pm ^. P.parseDetails . P.newLines))
-     putModVerdict = False -- TODO should only print at repl?
+     putModVerdict = True -- TODO should only print at repl?
      (warnings , jmResult) = judge importINames reg' exts mI pm iNamesV
      in case simplify cmdLine mI reg'._loadedModules <$> jmResult of
      -- Note. we still register the module even though its is partially broken, esp. for putErrors to lookup names

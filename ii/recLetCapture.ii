@@ -1,0 +1,22 @@
+--f1 x y = let g z = add y (add x z) in g
+--f2 x y = let g z = \s => add s (add x z) in g 3
+--f3 c z ignored seed = let go s = c z in go seed -- f3 = go 3 2 0 ; go = 2 1
+
+--foldrgo c z next s = case next s of
+--  @Done      => z
+--  @Skip r    => foldrgo c z next r
+--  @Yield x r => c x (foldrgo c z next r)
+--Sfoldr c z (@stream next seed) = foldrgo c z next seed
+
+t = foldr add 0 (@stream (\x => x) Done)
+
+foldr c z (@stream next seed) = let
+  go s = case next s of
+    @Done      => z
+    @Skip r    => go r
+    @Yield x r => c x (go r)
+  in go seed
+
+--import prelude
+--SenumFromTo lo hi = stream (\i => if i >? hi then Done else Yield i (i + 1)) lo
+--t = foldr _+_ 0 (SenumFromTo 5 10)

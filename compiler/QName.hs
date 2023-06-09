@@ -1,6 +1,5 @@
 module QName where -- Qualified names; module + iname as a machine integer
 newtype QName = QName Int deriving (Show , Eq , Ord)
-data LetMeta = LetMeta { isTop :: Bool , letName :: QName , hName :: HName , srcLoc :: Int }
 
 -- the lower `moduleBits` of are reserved as module identifiers.
 -- The idea is to always deal with native Ints, particularly for use as IntMap keys

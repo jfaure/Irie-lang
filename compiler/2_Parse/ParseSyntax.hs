@@ -53,12 +53,10 @@ data FnDef = FnDef {
 
 data LetQual = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show)
 
-data TTName
+data ScopedName
  = VBruijnLevel IName
  | VBruijn  IName
--- | VBind IName -- bound in this module , also lifted lets
  | VLetBind (IName , Int , Int , Int) -- iName , letnest , letidx , modiname (lifted name)
- | VExtern  IName -- ! Parser only parses VExterns
 
 data LensOp a = LensGet | LensSet a | LensOver a deriving (Show , Functor , Foldable , Traversable)
 data DoStmt  = Sequence TT | Bind IName TT -- | Let
@@ -74,7 +72,8 @@ data CaseSplits = CaseSplits TT [(TT , TT)] -- deliberately wrapped so unaffecte
 data CaseSplits' = CaseSplits' [(TT , TT)] -- deliberately wrapped so unaffected by solveScopes initial cata
 data Block      = Block { open :: Bool , letType :: LetQual , binds :: V.Vector FnDef }
 data TT -- Type | Term; Parser Expressions (types and terms are syntactically equivalent)
- = Var !TTName
+ = Var !ScopedName
+ | VParseIName IName -- all text names are parsed to an IName
  | Lin QName -- modName used to differentiate dups
 
  | WildCard           -- "_" implicit lambda argument
@@ -133,7 +132,8 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | InlineExpr CoreSyn.Expr
 
  -- tmp mixfix vars
- | QVar QName
+ | QVar  QName
+ | IQVar QName
  | MFExpr SourceOffset CoreSyn.Mixfixy
  | App SourceOffset TT [TT] -- Used by unpattern and solveMixfixes once clear of precedence & mixfixes
  | PExprApp SourceOffset Prec QName [TT]
@@ -177,7 +177,7 @@ prettyParseDetails p = Prelude.concatMap ("\n  " <>)
 
 deriving instance Show ParseDetails
 deriving instance Show FnDef
-deriving instance Show TTName
+deriving instance Show ScopedName
 deriving instance Show Block
 deriving instance Show TT
 deriving instance Show Guard

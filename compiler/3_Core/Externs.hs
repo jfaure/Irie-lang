@@ -71,20 +71,22 @@ builtinRegistry = let
 
 --newtype BindName = BindName IName
 -- TODO enforce type safety here
+
 iNameToBindName :: BitSet -> IName -> IName -- BindName
 iNameToBindName topINames iNm = popCount (topINames .&. setNBits iNm :: Integer)
 
-readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
-readQName curMods modNm iNm = case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
-  JudgeOK _ jm -> if testBit jm.labelINames iNm                   
+readQIName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
+readQIName curMods modNm iNm = let
+  readJudgedBind :: JudgedModule -> IName -> Expr
+  readJudgedBind m iNm = snd (m.moduleTT V.! iNm) & bind2Expr
+  in case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
+  JudgeOK _ jm -> let bindINm = iNameToBindName (topINames jm) iNm
+    in if testBit jm.labelINames iNm                   
     -- vv don't like this
     then mkQName modNm iNm & \qNameL -> Just $ Core (Label qNameL [])
       (tHeadToTy $ THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) (TyGround [THTyCon $ THTuple mempty]))
-    else Just $ (readJudgedBind jm iNm) & \(Core _t ty) -> Core (Var (VQBind (mkQName modNm iNm))) ty
+    else Just $ (readJudgedBind jm bindINm) & \(Core _t ty) -> Core (Var (VQBindIndex (mkQName modNm bindINm))) ty
   _ -> Nothing
-
-readJudgedBind :: JudgedModule -> IName -> Expr
-readJudgedBind m iNm = snd (m.moduleTT V.! iNameToBindName (topINames m) iNm) & bind2Expr
 
 lookupIName = lookupJM jmINames -- labelNames
 lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
@@ -94,9 +96,19 @@ lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
 lookupLabelBitSet lms mName = case _loadedImport (lms V.! mName) of
   JudgeOK _mI jm -> Just jm.labelINames
   _ -> Nothing
-lookupBindName :: V.Vector LoadedMod -> ModuleIName -> IName -> Maybe Bind
+
+lookupBind :: V.Vector LoadedMod -> ModuleIName -> IName -> Maybe Bind
+lookupBind lms mName iName = case _loadedImport (lms V.! mName) of
+  JudgeOK _mI jm -> moduleTT jm & \v -> Just (snd (v V.! iName))
+  _ -> Nothing
+
+lookupBindName :: V.Vector LoadedMod -> ModuleIName -> IName -> Maybe HName
 lookupBindName lms mName iName = case _loadedImport (lms V.! mName) of
-  JudgeOK _mI jm -> moduleTT jm & \v -> Just (snd $ v V.! iNameToBindName jm.topINames iName)
+  JudgeOK _mI jm -> moduleTT jm & \v -> if V.length v < iName then d_ (V.length v , mName , iName) Nothing -- error "what"
+    else letIName (fst (v V.! iName)) & \q ->
+    if modName q /= mName then _
+    else Just $ jmINames jm V.! unQName q
+    -- lookupIName lms (modName q) (unQName q)
   _ -> Nothing
 
 -- TODO not pretty

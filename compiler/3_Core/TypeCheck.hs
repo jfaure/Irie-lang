@@ -3,7 +3,7 @@ import Prim
 import CoreSyn as C
 import CoreUtils
 import TCState
-import Builtins (readPrimExtern)
+import Builtins (readPrimType)
 import qualified Data.Vector as V
 import qualified BitSetMap as BSM
 
@@ -13,7 +13,7 @@ import qualified BitSetMap as BSM
 
 checkAtomic :: forall s. TyHead -> TyHead -> TCEnv s Bool
 checkAtomic inferred gotTy = let
-  readExt x = case readPrimExtern x of
+  readExt x = case readPrimType x of
     Core (Ty t) _ -> t
     c -> error $ "expected type, got: " <> show c
   end x = pure x -- d_ (inferred , gotTy) False

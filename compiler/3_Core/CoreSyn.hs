@@ -30,10 +30,13 @@ type CaseID    = Int
 -- Bruijns vs QBinds => QBinds are mutually in scope & Lens
 -- Note. lifted let binds are appended to the module and become VQBinds
 data VName
- = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
+-- = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
  -- IMPORTANT: QBinds qualify INames (they are no different to record field names)
  --   within a module, their index is obtained from (Externs.iNameToBindName: (topBinds : BitSet) -> QName -> Int)
- | VForeign HName -- opaque name resolved at linktime
+ = VQBindIndex QName -- VQBind but a direct index into modBinds
+-- | VForeign HName -- opaque name resolved at linktime
+
+data LetMeta = LetMeta { isTop :: Bool , letIName :: QName , letBindIndex :: VName {-QName-} , srcLoc :: Int }
 
 data Term -- β-reducable (possibly to a type)
  = Var     !VName
@@ -53,6 +56,8 @@ data Term -- β-reducable (possibly to a type)
  | BruijnAbsEra Int BitSet Term -- Pass in captured variables without needing to rename all VBruijns in term
  | BruijnAbsTyped Int Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]
+ | Captures VName -- rec/mut: Read bind and app its captures, can't know them in one pass
+-- | BruijnCaptures Int BitSet Term
 
 -- {}
  | Array    (V.Vector Term)
@@ -60,6 +65,7 @@ data Term -- β-reducable (possibly to a type)
  | Prod     (BSM.BitSetMap Term)
 -- | LetBlock (V.Vector (LetMeta , Bind)) -- RM
  | LetBinds (V.Vector (LetMeta , Bind)) Term -- change; all lets are lifted
+ | Lets BitSet Term
  | TTLens  Term [IField] LensOp
 
 -- []
@@ -69,7 +75,6 @@ data Term -- β-reducable (possibly to a type)
 
 -- Simplifier
  | LetSpec QName [ArgShape]
- | RenameCaptures BitSet Term
  | Skip Term
 -- | ApoStop Term -- embedded Left node in standard apo (its awkward and sometimes insufficient to: fmap Left << project)
 -- | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
@@ -156,7 +161,8 @@ data Bind
  | Mut    { naiveExpr :: Expr , mutuals :: BitSet , letCaptured :: (Int , BitSet) , tvar :: IName }
 
  -- free has the atLen of all capturable vars: the reference for where the bitset bruijns are valid
- | BindOK { optLevel :: OptBind , free :: (Int , BitSet) , naiveExpr :: Expr }
+ | BindOK { optLevel :: OptBind , {-free :: (Int , BitSet) ,-} naiveExpr :: Expr }
+ | BindRenameCaptures Int BitSet Expr
 
 data OptBind = OptBind
   { optId :: Int
@@ -220,7 +226,10 @@ data JudgedModule = JudgedModule {
 data SrcInfo = SrcInfo Text (VU.Vector Int)
 
 -- Used by prettyCore functions and the error formatter
-data BindSource = BindSource { srcINames :: ModIName -> IName -> Maybe HName }
+data BindSource = BindSource
+  { srcINames :: ModIName -> IName -> Maybe HName
+  , srcBindNames :: ModIName -> IName -> Maybe HName
+  }
 
 makeBaseFunctor ''Expr
 makeBaseFunctor ''Term

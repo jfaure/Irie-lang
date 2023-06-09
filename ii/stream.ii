@@ -96,13 +96,18 @@ SconcatMap f (stream nexta seed) =
   stream (SConcatMapNext f nexta) {sa = seed , m = Nothing}
 Sconcat = SconcatMap identity
 
-
--- should make a list one longer than the input list.
+-- makes a list one longer than the input list.
 SscanlNext f next0 (z , s) = case next0 s of
   Done      => Done
   Skip    s => Skip (z , s)
   Yield x s => f z x > \next => Yield next (next , s)
 Sscanl f z0 (stream next0 s0) = {-Scons z0-} (stream (SscanlNext f next0) (z0 , s0))
+
+takeWhileNext p next s = case next s of
+  Done      => Done
+  Skip    s => Skip s
+  Yield x s => if p x then Yield x s else @EndStream x s
+takeWhile p (stream next0 s0) = stream (takeWhileNext p next0) s0
 
 stringToStream string = stream (\str => if nullString str then Done else (unConsString str > \(head , tail) => Yield head tail)) string
 

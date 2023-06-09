@@ -73,16 +73,17 @@ judgeModule pm importedModules modIName exts loaded topBindsMask' = let
 judgeBind :: forall s. Int -> IName -> IName -> TCEnv s Expr
 judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use thisMod >>= \modIName -> let
   inferParsed :: P.FnDef -> TCEnv s Expr
-  inferParsed abs = freshBiSubs 1 >>= \[tvarIdx] -> do -- [tvarIdx] <- freshBiSubs 1
-    inferStack %= (`setBit` modBindName) --  bindStack %= ((letDepth , bindINm) :)
-    let letMeta = LetMeta (letDepth == 0) (mkQName modIName (abs ^. P.fnIName)) (const "" $ abs ^. P.fnNm) (abs ^. P.fnSrc)
+  inferParsed abs = freshBiSubs 1 >>= \[tvarIdx] -> do
+    inferStack %= (`setBit` modBindName)
+    let bindIdx = VQBindIndex (mkQName modIName modBindName)
+        letMeta = LetMeta (letDepth == 0) (mkQName modIName (abs ^. P.fnIName)) bindIdx (abs ^. P.fnSrc)
     MV.write modBinds' modBindName (letMeta , Guard emptyBitSet tvarIdx)
     svlc  <- letCaptures <<.= 0
     argVars <- use bruijnArgVars
     atLen <- V.length <$> use bruijnArgVars -- all capturable vars (reference where the letCaptures are valid bruijns)
     (captureRenames .=) =<< MV.new atLen
 
-    rawExpr <- case letDepth of -- need to solve scopes on top bindings:
+    expr <- case letDepth of -- need to solve scopes on top bindings:
       -- the hypo (scopeApo) can't see through LetBinds vectors, so doing it per module bind is way more optimal
       0 -> use scopeParams >>= \sp -> use externs >>= \exts ->
           use thisMod >>= \modIName -> use topBindsCount >>= \tc ->
@@ -91,11 +92,9 @@ judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use this
 
 --  inferStack %= (`clearBit` modBindName) --  bindStack %= drop 1
     lcVars <- letCaptures <<%= (.|. svlc)
-    argTVs <- use captureRenames >>= \cr -> bitSet2IntList lcVars `forM` \l -> (argVars V.! l ,) <$> MV.read cr l
+    argTVs <- use captureRenames >>= \cr -> reverse (bitSet2IntList lcVars) `forM` \l -> (argVars V.! l ,) <$> MV.read cr l
     let freeVarCopies = snd <$> argTVs :: [Int]
         lc = (atLen , lcVars)
-        expr = if True || lcVars == 0 then rawExpr else
-          rawExpr & \(Core t ty) -> Core t (prependArrowArgsTy (tyVar <$> freeVarCopies) ty)
 
     -- generalise: Collect mutuals by learning which binds had to be inferred as dependencies
     MV.read modBinds' modBindName >>= \case
@@ -109,7 +108,7 @@ judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use this
         hasMutual <- let isMut i = MV.read modBinds' i <&> (\case { Guard ms _ -> refs .&. ms /= 0 ; _ -> False }) . snd
           in anyM isMut (bitSet2IntList refs)
         if hasMutual
-          then Core (Var (VQBind (mkQName modIName modBindName))) (tyVar tVar)
+          then Core (Var (letBindIndex lm)) (tyVar tVar)
            <$ MV.write modBinds' modBindName (lm , Mut expr ms lc tVar)
            <* bisub (exprType expr) (tyVar tVar) -- ! recursive => bisub with -τ (itself)
            <* when (not (null freeVarCopies)) (error "mutual free vars")
@@ -120,70 +119,63 @@ judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use this
   -- reference to inference stack (forward ref | recursive | mutual)
   preInferred :: (LetMeta , Bind) -> TCEnv s Expr
   preInferred (lm , bind) = case bind of
-    BindOK _ _f e  -> pure e -- don't inline the expr
+    BindOK _ e  -> pure (Core (Var (letBindIndex lm)) (exprType e)) -- don't inline the expr
+    BindRenameCaptures _ free e -> pure (Core (Var (letBindIndex lm)) (exprType e))
     Mut e _ms lc tvar -> genExpr lm e [] lc tvar
     -- v Stacked bind means it could be Mutual | recursive (also weird recursive: r = { a = r })
     Guard mutuals tvar -> do
-      -- mark as stacked on top of all binds at this lvl
-      -- mark it as mutual with all bind at its level
+      -- mark as stacked on top of all binds at this lvl, to help detect mutuals
       mbs <- use inferStack
-      Core (Var (VQBind (mkQName modIName modBindName))) (tyVar tvar)
-        <$ MV.write modBinds' modBindName (lm , Guard (mutuals .|. mbs) tvar)
+      Core (Captures (letBindIndex lm)) (tyVar tvar) <$ MV.write modBinds' modBindName (lm , Guard (mutuals .|. mbs) tvar)
 
   genExpr :: LetMeta -> Expr -> [Int] -> (Int , BitSet) -> Int -> TCEnv s Expr
-  genExpr lm (Core t ty) freeVarCopies letCapture@(_atLen,freeVars) tvarIdx = do
+  genExpr lm (Core t ty) freeVarCopies letCapture@(atLen,freeVars) tvarIdx = do
     gTy  <- do
       _cast <- use bis >>= \v -> (v `MV.read` tvarIdx) <&> _mSub >>= \case
         TyGround [] -> BiEQ <$ MV.write v tvarIdx (BiSub ty (TyGround []))
         _t -> bisub ty (tyVar tvarIdx) -- ! recursive => bisub with -τ (itself)
       let copyFreeVarsTy = prependArrowArgsTy (tyVar <$> freeVarCopies) (tyVar tvarIdx)
       use blen >>= \bl -> use bis >>= \bis' -> lift (generalise bl bis' copyFreeVarsTy)
-      -- <* when (free == 0 && null (drop 1 ms)) (clearBiSubs recTVar) -- ie. no mutuals and no escaped vars
-    let rawRetExpr = Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
---  retExpr <- pure rawRetExpr -- explicitFreeVarApp freeVars rawRetExpr
-    retExpr <- pure $ case popCount (freeVars + 1) == 1 of
-      True -> rawRetExpr -- no need to rename
-      False -> let -- trace ("TODO: rename captures" <> prettyTermRaw (rawRetExpr & \(Core t _) -> t))
---      patchBruijn i = popCount (setNBits i .&. freeVars)
-        in (rawRetExpr & \(Core t ty) -> Core (RenameCaptures freeVars t) ty)
---      in rawRetExpr & \(Core t ty) -> Core (cata (\case { VBruijnF i | testBit freeVars i -> VBruijn (patchBruijn i) ; x -> embed x }) t) ty
-    -- TODO Mark eraser args (ie. lazy VBruijn rename for simplifer)
-    -- HACK partial letCapture will break β
+    let rawRetExpr = Core t gTy -- Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
     (inferStack <%= (`clearBit` modBindName)) >>= \is -> when (is == 0) (clearBiSubs 0)
-    retExpr <$ MV.write modBinds' modBindName (lm , BindOK optInferred letCapture retExpr)
+    let noInlineExpr = rawRetExpr & \(Core _t ty) -> let q = Var (letBindIndex lm) in
+          Core (if freeVars == 0 then q else BruijnAbs (popCount freeVars) q) ty
+        -- v TODO captures don't need renaming if they are in range [0..n] already
+        bind = if freeVars == 0 --popCount (freeVars + 1) == setNBits atLen -- better than freeVars == 0
+        then BindOK optInferred rawRetExpr
+        else BindRenameCaptures atLen freeVars rawRetExpr
+    noInlineExpr {-retExpr-} <$ MV.write modBinds' modBindName (lm , bind)
   in use bindsBitSet >>= \b -> case testBit b modBindName of
     True  -> MV.read modBinds' modBindName >>= preInferred
     False -> (bindsBitSet %= (`setBit` modBindName))
-      *> use letBinds >>= (`MV.read` letDepth)
-        >>= \wip -> (wip `MV.read` bindINm) >>= inferParsed
+      *> use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm)
+      >>= inferParsed
 
 -- judgeBind then uninline and add + biunify any captured arguments
-getModBind iName letNest letName modBindName = do
-  modIName <- use thisMod
-  expr <- judgeBind letNest letName modBindName <&> \(Core _t ty) ->
-    Core (Var (VQBind (mkQName modIName iName))) ty -- don't inline at this stage
-    -- ^ QNames use INames, not the modBindName (top-bind index)
+getModBind letNest letName modBindName = do
+  expr <- judgeBind letNest letName modBindName
   use modBinds >>= (`MV.read` modBindName) <&> snd >>= \case
-    b@BindOK{} -> free b & \(_ld , lc) ->
+    b@BindOK{} -> pure expr
+    BindRenameCaptures atLen free _ -> 
 --    when ({-popCount (lc + 1) /= 0-} lc /= setNBits ld) (traceM "TODO rename captured VBruijns") *>
-      explicitFreeVarApp lc expr -- ld doesn't matter since we dont β-reduce
+      explicitFreeVarApp atLen free expr -- ld doesn't matter since we dont β-reduce
     _ -> pure expr -- TODO handle mutuals that capture vars ; ie. spawn mutumorphisms
 
-explicitFreeVarApp :: BitSet -> Expr -> TCEnv s Expr
-explicitFreeVarApp lc e@(Core t ty) = if lc == 0 then pure e else let
-  bruijnArs = bitSet2IntList lc
+explicitFreeVarApp :: Int -> BitSet -> Expr -> TCEnv s Expr
+explicitFreeVarApp atLen lc e@(Core t ty) = if lc == 0 then pure e else let
+  bruijnArs = reverse $ bitSet2IntList lc {-[atLen - 1 , atLen - 2 .. 0] -} 
   appFree = App t (VBruijn <$> bruijnArs)
   in do
   atvs <- use bruijnArgVars
-  (_cast , appTy) <- biUnifyApp ty (tyVar . (atvs V.!) <$> bruijnArs)
-  pure (Core appFree appTy)
+  (cast , appTy) <- biUnifyApp ty (tyVar . (atvs V.!) <$> bruijnArs)
+  pure (retCast cast (Core appFree appTy))
   -- trace (prettyTermRaw t <> "\n" <> prettyTermRaw (exprTerm c) <> "\n" <> prettyTyRaw ty) c
 
 -- Prefer user's type annotation (it probably contains type aliases) over the inferred one
--- ! we may have inferred some missing information in type holes
+-- ! TODO we may have inferred some missing information in type holes
 checkAnnotation :: Type -> Type -> TCEnv s Type
 checkAnnotation inferredTy annTy = check inferredTy annTy >>= \case
-  True  -> pure annTy -- inferredTy -- annTy TODO
+  True  -> pure annTy
   False -> inferredTy <$ (errors . checkFails %= (CheckError inferredTy annTy:))
 
 -- App is the only place inference can fail (if an arg doesn't subtype its expected type)
@@ -207,11 +199,14 @@ inferBlock :: Int -> V.Vector P.FnDef -> Maybe (TCEnv s Expr) -> TCEnv s (Expr ,
 inferBlock liftNames letBindings inExpr = withLetNest $ \nest -> do
   newFreeVarEnv $ do
     use letBinds >>= \lvl -> V.thaw letBindings >>= MV.write lvl nest
+
     [0 .. V.length letBindings - 1] `forM_` \i -> judgeBind nest i (liftNames + i)
 
   ret <- fromMaybe (pure poisonExpr) inExpr
   lets <- use modBinds >>= \v -> V.freeze (MV.slice liftNames (V.length letBindings) v) -- freeze copies it
   pure (ret , lets)
+
+retCast rc tt@(Core f ty) = case rc of { BiEQ -> tt ; c -> Core (Cast c f) ty }
 
 inferF :: P.TTF (TCEnv s Expr) -> TCEnv s Expr
 inferF = let
@@ -219,8 +214,6 @@ inferF = let
  withBruijnArgTVars n go = freshBiSubs n >>= \argTVars -> do
    (bruijnArgVars %= (V.fromList argTVars <>))
    (reverse $ tyVar <$> argTVars , ) <$> go <* (bruijnArgVars %= V.drop n)
-
- retCast rc tt@(Core f ty) = case rc of { BiEQ -> tt ; c -> Core (Cast c f) ty }
 
  checkFails srcOff x = use tmpFails >>= \case
    [] -> pure x
@@ -252,11 +245,15 @@ inferF = let
    es = exprs <&> \(Core t _ty) -> t
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
- -- result of mixfix solves
- getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
-   then use topBindsMask >>= \topMask -> iNameToBindName topMask (unQName q) & \i -> getModBind (unQName q) 0 i i
-   else use loadedMs <&> \ls -> readQName ls (modName q) (unQName q)
+ -- result of mixfix solves; QVar, PExprApp
+ -- These are IQNames !
+ getIQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
+   then use topBindsMask >>= \topMask -> iNameToBindName topMask (unQName q) & \i -> getModBind 0 i i
+   else use loadedMs <&> \ls -> readQIName ls (modName q) (unQName q)
      & fromMaybe (error (showRawQName q))
+-- else use loadedMs <&> \ls -> case lookupBind ls (modName q) (unQName q) of
+--   Just (BindOK _ e) -> e
+--   x -> error (showRawQName q)
 
  in \case
   P.QuestionF -> pure $ Core Question tyBot
@@ -264,12 +261,14 @@ inferF = let
   -- letin Nothing = module / record, need to type it
   P.LetInF (P.Block _ _ lets) liftNames pInTT -> use topBindsCount >>= \tc ->
     inferBlock (tc + liftNames) lets (Just pInTT)
-    <&> \(Core t ty , lets) -> Core (LetBinds lets t) ty
+--  <&> \(Core t ty , lets) -> Core (Lets (intList2BitSet . toList $ lets <&> unQName . letName . fst) t) ty
+    <&> \(Core t ty , _lets) -> Core t ty
   P.ProdF pFields -> let -- duplicate the field name to both terms and types
     mkCore (ts , tys) = Core (Prod ts) (TyGround [THTyCon (THProduct tys)])
     in fmap (mkCore . BSM.unzip . BSM.fromVec)
       $ pFields `forM` \(i , s) -> s <&> \(Core t ty) -> (i , (t , ty))
 
+  P.VParseINameF e  -> error $ "panic: Unresolved IName: " <> show e
   P.VarF v -> case v of -- vars : lookup in appropriate environment
     P.VBruijn b -> do
       argTVars <- use bruijnArgVars
@@ -284,12 +283,8 @@ inferF = let
           else freshBiSubs 1 >>= \[t] -> t <$ MV.write cr bruijnAtBind t
         else pure (argTVars V.! b) -- local arg
       pure $ Core (VBruijn b) (tyVar tv)
-    P.VLetBind (iName , letNest , letIdx , i) -> getModBind iName letNest letIdx i
-    P.VExtern e  -> error $ "Unresolved VExtern: " <> show e
+    P.VLetBind (_iName , letNest , letIdx , i) -> getModBind letNest letIdx i
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
-
-  P.ForeignF{} {- isVA i tt-} -> error "not ready for foreign"
---  tt <&> \(Core _ttExpr ty) -> Core (Var (VForeign i)) ty
 
   P.BruijnLamF (P.BruijnAbsF argCount argMetas _nest rhs) ->
     withBruijnArgTVars argCount rhs <&> \(argTVars , Core term retTy) -> if argCount == 0 then Core term retTy else
@@ -299,12 +294,13 @@ inferF = let
       in  Core (BruijnAbsTyped argCount term (alignWith alignArgs argMetas argTVars) retTy) fnTy
 
   P.AppF src fTT argsTT  -> fTT  >>= \f -> sequence argsTT >>= inferApp src f
-  P.PExprAppF src _prec q argsTT -> getQBind q >>= \f -> sequence argsTT >>= inferApp src f
+  P.PExprAppF src _prec q argsTT -> getIQBind q >>= \f -> sequence argsTT >>= inferApp src f
   P.RawExprF t -> t
   P.MixfixPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . mixfixFails %= (t:))
   P.MFExprF srcOff m -> let err = MixfixError srcOff ("Lone mixfix word: " <> show m)
     in poisonExpr <$ (tmpFails .= []) <* (errors . mixfixFails %= (err:))
-  P.QVarF q -> getQBind q
+  P.IQVarF q -> getIQBind q
+  P.QVarF q -> getIQBind q -- ?!!
 
   P.TupleIdxF qN tt -> tt >>= \(Core tuple tupleTy) -> freshBiSubs 1 >>= \[i] -> let
     expectedTy = TyGround [THTyCon $ THProduct (BSM.singleton qN (tyVar i))]
@@ -397,4 +393,6 @@ inferF = let
   P.ScopePoisonF e   -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))
   P.DesugarPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . unpatternFails %= (t:))
   P.ScopeWarnF w t   -> (errors . scopeWarnings %= (w:)) *> t
+  P.ForeignF{} {- isVA i tt-} -> error "not ready for foreign"
+--  tt <&> \(Core _ttExpr ty) -> Core (Var (VForeign i)) ty
   x -> error $ "not implemented: inference of: " <> show (embed $ P.WildCard <$ x)

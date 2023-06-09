@@ -6,7 +6,7 @@ import Errors ( BiFail(..), TmpBiSubError(TmpBiSubError) )
 import CoreUtils
 import TCState
 import PrettyCore (prettyTyRaw)
-import Builtins (readPrimExtern)
+import Builtins (readPrimType)
 import Data.Distributive
 import qualified BitSetMap as BSM ( (!?), elems, mergeWithKey', singleton, toList, traverseWithKey )
 import qualified Data.Vector.Mutable as MV ( read, write )
@@ -98,8 +98,8 @@ atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
   (THBot , _) -> pure (CastInstr MkBot)
   (THPrim p1 , THPrim p2) -> primBiSub p1 p2
   (THExt a , THExt b) | a == b -> pure BiEQ
-  (_ , THExt i) -> biSubType tyP     $ exprType (readPrimExtern i)
-  (THExt i , _) -> (`biSubType` tyM) $ exprType (readPrimExtern i)
+  (_ , THExt i) -> biSubType tyP     $ exprType (readPrimType i)
+  (THExt i , _) -> (`biSubType` tyM) $ exprType (readPrimType i)
   (_ , THAlias q) -> resolveTypeQName q >>= \m -> biSubType (tHeadToTy p) m
   (THAlias q , _) -> resolveTypeQName q >>= \p -> biSubType p (tHeadToTy m)
 

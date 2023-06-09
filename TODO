@@ -2,6 +2,7 @@
 # captures inside inExprs are inacurrate (They are a pdep of their freeVars)!
 # open modules / records (qualify names on it?)
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
+  * Add let-capture tests
   * module import-sig (will help with mutual modules)
   * subtypes: Identity Iso "a <: Identity a" "Identity a <: a" & typeClass dict "{ ret : A } <: A"
   * leaf bicasts ; subtype tycon trees (traversals)
@@ -46,17 +47,21 @@
     vlength : {n : Nat} -> Vect n a -> Nat
     vlength _ = n
 ## !?
+  * prec/assoc as partial order
+  * Higher kinded polymorphism: abstracting over type constructors
   * short-circuit fns: _&&_
   * named arguments (perhaps by subtype from a record arg)
   * shared streams (eg. MUL)
   * derived streams: splitAt creates 2 streams from 1, but the second is only available after the first
-  * dynamic fuse pap: (+1) << (+1) => (+2)
+  * reflection; dynamic fuse pap: (+1) << (+1) => (+2)
   * type application (eg. perfect tree) `PTree a = Leaves a | Cons (PTree (a , a))` (μ insufficient here)
   * Sum of record [l : { f : int } | l2 : { f : int }] <: { f : int }
   * expand lambda-mixfixes with explicit holes
   * mixfix re-arrange let-ins `if y then let x = 3 in x else y` (Juxt x else y) or (; Juxt else y)
+  * typecase: inspect type arg; eg. if arg : t1 return t2 , else if T1 , return T2
+    This function has type (t1 → t2) u (T1 → T2), but not (t1 ^ T1) → (t2 U T2)
+  * subsumption requires initiality and distributivity of ⊓ and ⊔ over → and ×
 ## Parse / Pretty
-  * pat guards
   * lambda case type annotation: \case : scrut -> ret
   * Parse Intrinsics (eg. readConstFile , getFnName , getSourceLine , getSourceFile etc..)
   * repl parser: multiline case / let
@@ -69,7 +74,6 @@
     '<<' in let f : [a] -> [a] -> Int ; g : Bool -> [a] -> [a] in f << g
   * Linear types; dependent types required to quantify relative linearity `Lin t >= Lin f => t -> u`
 ## Beta-optimality: Specialise paps (tough to detect paps on polymorphic data)
-  * SOA data
   * λ Minimise normal forms: λ-encoding + lifting + sharing
   * λ-lifting: if all subterms of App or Match share λ, lift it
   * case-splitters as data for runtime optimisation
@@ -77,8 +81,6 @@
   * fns that do case-splits lazy in arguments they may not need
 ## Error messages
   * Warn nonsense type joins | dependent case?
-  * mixfix parser errors & locations
-  * Literal is out of Int range: cast Literals
 ## Unimportant
   * Use System.OsPath instead of FilePath: System.File.OsPath.readFile
   * let-scope depends on mixfix parse: "letscopeAfterMixfix y = if y then let x = 3 in x else y"
@@ -94,14 +96,11 @@
   * don't assume injectivity! (or. distinguish between type constructors and type-functions)
   * equality constraints are central to GADTs `Gabriel Scherer and Didier Rémy. GADTs meet subtyping.` `https://okmij.org/ftp/ML/first-class-modules/#GADT`
   * switch to codeberg
-  * List comprehensions
-  * cache version
   * Allow dynamic inspection of papped args
   * Pattern PTT: custom unPat function to support any patterns eg. `fact (<? 2) = 1`
   * error messages via prettyprinter Doc
   * language server
   * mergetyhead indicates if merge was a noop (so bisub knows it has already seen that input)
-  * after function with no free-vars generalised, can trim but not fully clear bisubs!
   * Function = Constructor + rewrite rules ?
   * `typeOf : (t : Type) -> Type` shortcut to access (and alias) an inferred type
   * surround notes: cs"' cs'<q> cst" ds" ysiw] cs]{ yssb ds{ds) ysiw<em>

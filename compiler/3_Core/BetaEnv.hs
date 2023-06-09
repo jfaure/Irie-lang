@@ -70,7 +70,7 @@ mkBruijnArgSubs l n = let env = mempty -- doesn't matter since bruijnLevel termi
 -- ! seed term and trailingArgs may have different envs
 -- ! inlining needs to watch free-vars and VBruijn level differences
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
-fuse seed {-(lvl , env@(argEnv , trailingArgs) , term)-} = use thisMod >>= \modIName -> let
+fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. term)) $ let
   sLvl = seed ^. lvl
   (argEnv , trailingArgs) = seed ^. env
   continue       tt = Right (seed & term .~ tt)
@@ -113,38 +113,32 @@ fuse seed {-(lvl , env@(argEnv , trailingArgs) , term)-} = use thisMod >>= \modI
       & env  .~ (prevEnv , trailingArgs)
 
   -- inlineLetBind: lvl == 0 means this fully reduces (won't produce a function)
-  Var (VQBind q) | sLvl == 0 {-&& not (null trailingArgs)-} -> let -- Have to inline all bindings on full β-reduce
+  Var (VQBindIndex q) | sLvl == 0 {-&& not (null trailingArgs)-} -> let -- Have to inline all bindings on full β-reduce
     doSimpleBind = \case -- bind = simpleBind lvl (argEnv , []) bind >>= \b -> case b of
-      BindOK _ (nL , letCapture) (Core inlineF _ty) ->
+--    BindOK o (Core (Var (VQBindIndex qq)) _ty) | q == qq -> d_ "error bind contains itself" $ noop (Var (VQBindIndex q))
+      BindOK o (Core inlineF _ty) -> -- d_ inlineF $ -- if optId o /= 0 then noop inlineF else
+--      if null trailingArgs then noop (Var (VQBind q)) else
 --      if && null trailingArgs then pure (Left <$> VarF (VQBind q)) -- may need to inline constants
         fuse $ seed
         & term .~ inlineF
-        & env  .~ (V.drop (V.length argEnv - nL) argEnv , trailingArgs)
-        -- MV.write bindVec bindName b *> -- if first time seeing the bind
+        & env  .~ ({-V.drop (V.length argEnv - nL)-} {-argEnv-} mempty , trailingArgs)
       x -> error (show x)
     in if modName q == modIName
-    then use topINames >>= \top -> let bindName = iNameToBindName top (unQName q)
-      in use localBinds >>= \bindVec -> MV.read bindVec bindName
---      >>= simpleBind bindName sLvl (seed ^. env . _1 , []) >>= doSimpleBind
-        >>= simpleBind q bindName >>= doSimpleBind
-    else use loadedMods >>= \lm -> case lookupBindName lm (modName q) (unQName q) of
+    then runSimpleBind q >>= doSimpleBind
+    else use loadedMods >>= \lm -> case lookupBind lm (modName q) (unQName q) of
       Just b  -> doSimpleBind b
-      Nothing -> noop (Var (VQBind q))
+      Nothing -> noop (Var (VQBindIndex q))
 
-  Var (VQBind q) | modName q == modIName -> do
-    -- TODO runSimpleTerm here may duplicates work (the simpleExprF in the cata)
-    -- should make custom hypo with a Left and a Skip embedded in TermF
-    args <- trailingArgs `forM` \(TSub e l t) -> if null e then pure t else runSimpleTerm (Seed l (e , []) t)
-    specApp sLvl (argEnv , []) q args
+  Var (VQBindIndex q) | modName q == modIName ->
+--  runSimpleBind q *>
+    (trailingArgs `forM` \(TSub e l t) -> if null e then pure t else runSimpleTerm (Seed l (e , []) t))
+    >>= specApp sLvl (argEnv , []) q
 
-  LetSpec q sh | sLvl == 0 && modName q == modIName -> use localBinds >>= \bindVec -> use topINames >>= \top ->
-    let bindName = iNameToBindName top (unQName q) in
-    MV.read bindVec bindName
-    >>= simpleBind q bindName >>= \case
-      BindOK (OptBind _ shps) _ _ -> case shps M.!? sh of
-        Nothing -> error $ show (modName q , unQName q) <> ": " <> show shps -- pure (LetSpecF q sh) -- ?! error
-        Just t  -> if null trailingArgs then pure (SkipF (Left t)) else fuse (seed & term .~ t)
-      x -> error $ show x
+  LetSpec q sh | sLvl == 0 && modName q == modIName -> runSimpleBind q >>= \case
+    BindOK (OptBind _ shps) _ -> case shps M.!? sh of
+      Nothing -> error $ show (modName q , unQName q) <> ": " <> show shps -- pure (LetSpecF q sh) -- ?! error
+      Just t  -> if null trailingArgs then pure (SkipF (Left t)) else fuse (seed & term .~ t)
+    x -> error $ show x
 
   Label l ars -> pure $ LabelF l ((continueNoArgs <$> ars) <> (unSub <$> trailingArgs))
 
@@ -168,8 +162,22 @@ fuse seed {-(lvl , env@(argEnv , trailingArgs) , term)-} = use thisMod >>= \modI
       Tuple l -> pure $ SkipF $ Left $ (l V.! unQName (QName f))
       Prod  l -> pure $ SkipF $ Left $ (fromMaybe (error "panic: absent field") $ l BSM.!? f)
       opaque -> pure $ TTLensF (Left opaque) [f] LensGet
+    opaque -> pure $ TTLensF (continue opaque) [f] LensGet
 
-  RenameCaptures free inExpr -> error ("Rename captures: " <> show free <> " in\n" <> show inExpr)
+  Captures (VQBindIndex q) | modName q == modIName -> let bindName = unQName q
+    -- use topINames >>= \top -> let bindName = iNameToBindName top (unQName q)
+   in use localBinds >>= \bindVec -> MV.read bindVec bindName >>= \case
+     BindOK{} -> fuse $ seed & term .~ Var (VQBindIndex q) -- recursive def doesn't capture anything
+     BindRenameCaptures atLen letCaptures _ -> let
+       -- v capture in recursive position: need to find the args and adjust them to this lvl
+       -- perhaps ideally should let the top-level renameCaptures rename them for us..
+       new = popCount letCaptures
+       captures = bitSet2IntList letCaptures <&> \i -> VBruijnLevel $
+--       sLvl - (sLvl - atLen) - new - renameVBruijn atLen letCaptures i
+--       same thing vv
+         atLen - new - renameVBruijn atLen letCaptures i
+       in fuse $ seed & term .~ App (Var (VQBindIndex q)) (reverse captures)
+     x -> error (show x)
   x -> noop x
 
 --fuseCase lvl argEnv trailingArgs retT branches d tt = let
@@ -199,17 +207,40 @@ fuseCase seed retT branches d = let
 simpleBindings :: ModuleIName -> BitSet -> V.Vector LoadedMod -> V.Vector (LetMeta , Bind)
   -> ST s (V.Vector (LetMeta , Bind))
 simpleBindings modIName topINames loadedMods lets = let
-  go = lets `iforM` \bindName (lm , bind) -> (lm ,) <$> simpleBind (letName lm) bindName bind
+  go = lets `iforM` \bindName (lm , bind) -> (lm ,) <$> simpleBind (letBindIndex lm) bindName bind
   in V.thaw (snd <$> lets) >>= \locals -> go `evalStateT` FEnv modIName topINames loadedMods locals
+
+runSimpleBind q = let bindName = unQName q -- use topINames >>= \top -> let bindName = iNameToBindName top (unQName q)
+  in use localBinds >>= \bindVec -> MV.read bindVec bindName >>= simpleBind q bindName
 
 -- simplifies a binding by itself in a void env (captures must be explicitly applied to bindings)
 simpleBind q bindName bind = use localBinds >>= \bindVec -> case bind of
-  BindOK (OptBind optLvl specs) free (Core t ty) -> if optLvl /= 0 then pure bind else do
-    MV.write bindVec bindName (BindOK (OptBind 1 specs) free (Core (Var (VQBind q)) ty))
+  BindOK (OptBind optLvl specs) (Core t ty) -> if optLvl /= 0 then pure bind else do
+--  MV.write bindVec bindName (BindOK (OptBind 1 specs) (Core (Var (VQBind q)) ty))
     newT <- runSimpleTerm (Seed 0 (mempty , mempty) t)
-    let b = BindOK (OptBind ({-optLvl +-} 1) specs) free (Core newT ty)
+    let b = BindOK (OptBind ({-optLvl +-} 1) specs) (Core newT ty)
     b <$ MV.write bindVec bindName b
+  BindRenameCaptures atLen free (Core inExpr ty) -> let
+    nCaptures = popCount free
+    renameEnv = V.generate atLen
+      (\i -> TSub mempty nCaptures (VBruijnLevel (nCaptures - 1 - renameVBruijn atLen free i)))
+    seed = Seed nCaptures (renameEnv , mempty) inExpr
+    in do
+      term <- BruijnAbs nCaptures <$> runSimpleTerm seed
+      let b = BindOK (OptBind 1 mempty) (Core term ty) -- Any recursive captures were sorted
+     --   b = BindRenameCaptures atLen free (Core term ty)
+      b <$ MV.write bindVec bindName b
   x -> error (show x)
+
+-- Renaming vbruijns within functions that capture part of the environment:
+--vv free = 26 , bitset2IntList 26 = [1,3,4] means (1 => 0 , 3 => 1 , 4 => 2)
+--eg. on free=26: renamedVBruijn[0..atlen-1] = [(0,-1),(1,0),(2,0),(3,1),(4,2),(5,2)],
+--  -- (atLen is the ref lvl where captures are valid bruijnidxs)
+renameVBruijn :: Int -> BitSet -> Int -> Int
+renameVBruijn atLen free i = if
+  | i >= atLen     -> error "impossible"
+  | testBit free i -> popCount (setNBits (i + 1) .&. free) - 1 -- & \r -> d_ (i , r , free) r
+  | True -> i
 
 runSimpleTerm :: Seed -> SimplifierEnv s Term
 runSimpleTerm seed = let
@@ -217,10 +248,11 @@ runSimpleTerm seed = let
   termFHypoM :: (Monad m , Recursive b , Base b ~ TermF)
     => (TermF b -> b) -> (c -> m (TermF (Either b c))) -> c -> m b
   termFHypoM f g = let
-    go = (\case { SkipF s -> (pure . cata f ||| h) s ; x -> fmap f (traverse (pure . cata f ||| h) x) })
-    h  = go <=< g
+    h = g >=> \case
+      SkipF s -> (pure . cata f ||| h) s
+      x       -> f <$> traverse (pure . cata f ||| h) x
     in h
-  in {-hypoM-} termFHypoM constFoldF fuse seed
+  in termFHypoM constFoldF fuse seed
 
 --simpleExpr :: Expr -> ST s Expr
 --simpleExpr (Core t ty) = simpleTerm t <&> (`Core` ty)
@@ -243,11 +275,7 @@ destructureArgs args = let
    = unzip3 ret
   solveArg :: Term -> State Int ([Term] , [Term] , ArgShape)
   solveArg arg = case arg of
-    Var (VQBind q)   -> pure ([] , [arg] , ShapeQBind q)
---  Var (VLetBind q) -> pure ([] , [arg] , ShapeLetBind q)
-    -- avoid specialising on builtins, which can never fuse
---  App (Var (VLetBind q)) ars -> traverse solveArg ars <&> \ars ->
---    unzip3 ars & \(uL , rL , shL) -> (concat uL , [App (Var (VLetBind q)) (concat rL)] , ShapePAPLet q shL)
+    Var (VQBindIndex q)   -> pure ([] , [arg] , ShapeQBind q)
     Label l ars -> traverse solveArg ars <&> \case
       [] -> ([] , [Label l []] , ShapeLabel l []) -- lone label is like a constant VQBind
       ars -> unzip3 ars & \(uL , rL , shL) -> (concat uL , [Label l (concat rL)] , ShapeLabel l shL)
@@ -258,18 +286,19 @@ destructureArgs args = let
 -- TODO atm only specialises current module
 specApp :: forall s. Lvl -> Env -> QName -> [Term] -> SimplifierEnv s (TermF (Either Term Seed))
 specApp seedLvl env q args = let
-  noInline = SkipF (Left (App (Var (VQBind q)) args))
+  noInline = SkipF (Left (App (Var (VQBindIndex q)) args))
   (bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
   in -- d_ args $ d_ argShapes $ d_ repackedArgs $ d_ unstructuredArgs $ d_ "" $
   if all (== ShapeNone) argShapes {- note. all _ [] = True -} then pure noInline else
-  use localBinds >>= \bindVec -> use topINames >>= \top -> let bindNm = iNameToBindName top (unQName q)
-  in MV.read bindVec (bindNm) >>= \case
-  BindOK o _free expr@(Core inlineF _ty) -> case bindSpecs o M.!? argShapes of
+  use localBinds >>= \bindVec -> -- use topINames >>= \top -> let bindNm = iNameToBindName top (unQName q)
+    let bindNm = unQName q
+  in MV.read bindVec bindNm >>= \case
+  BindOK o expr@(Core inlineF _ty) -> case bindSpecs o M.!? argShapes of
     Just cachedSpec -> pure $ SkipF $ Left (App cachedSpec unstructuredArgs)
     Nothing -> if all (\case { ShapeNone -> True ; _ -> False }) argShapes then pure noInline else do
       let recGuard = LetSpec q argShapes
-      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) free _t)
-        -> BindOK (OptBind oLvl (M.insert argShapes recGuard oSpecs)) free expr) bindNm
+      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) _t)
+        -> BindOK (OptBind oLvl (M.insert argShapes recGuard oSpecs)) expr) bindNm
 
       -- ! repackedArgs are at lvl, inlineF is at (lvl + bruijnN)
       -- fully simplify the specialised partial application (if it recurses then this spec is extremely valuable)
@@ -280,8 +309,8 @@ specApp seedLvl env q args = let
         traceM $ "raw spec " <> show bindNm <> " " <> show argShapes <> "\n => " <> prettyTermRaw rawAbs <> "\n"
         traceM $ "simple spec " <> prettyTermRaw specFn <> "\n"
 
-      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) free _t)
-        -> BindOK (OptBind oLvl (M.insert argShapes specFn oSpecs)) free expr) bindNm
+      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) _t)
+        -> BindOK (OptBind oLvl (M.insert argShapes specFn oSpecs)) expr) bindNm
 
       let fn = if seedLvl == 0 then specFn else recGuard
       pure $ SkipF $ Left $ if null unstructuredArgs then fn else App fn unstructuredArgs

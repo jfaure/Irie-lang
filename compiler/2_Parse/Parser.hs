@@ -15,7 +15,7 @@ import qualified Data.Text as T ( any, append, concat, null, snoc, empty )
 import Data.Functor.Foldable
 --import qualified Text.Megaparsec.Debug as DBG
 -- dbg i = DBG.dbg i
-showN n = try ((takeP Nothing n >>= traceShowM) *> fail "debug parser") <|> pure () :: Parser ()
+--showN n = try ((takeP Nothing n >>= traceShowM) *> fail "debug parser") <|> pure () :: Parser ()
 
 -- The initial parse is context-insensitive: forward | mutual definitions and mixfixes are resolved later
 -- Parsing converts all text names to INames (Int) and doesn't depend on imports
@@ -32,14 +32,20 @@ addMFWord h mfw = do
 
 -- insertLookup is tricky but saves a log(n) operation
 insertOrRetrieve :: HName -> HNameMap -> (IName , HNameMap)
-insertOrRetrieve h (sz , hList , mp) = {-let sz = M.size mp in-} case M.insertLookupWithKey (\_k _new old -> old) h sz mp of
+insertOrRetrieve h (sz , hList , mp) = case M.insertLookupWithKey (\_k _new old -> old) h sz mp of
   (Just x , mp) -> (x  , (sz     , hList     , mp)) -- retrieve
   (_      , mp) -> (sz , (sz + 1 , h : hList , mp)) -- insert
 
 addName :: HName -> Parser IName
 addName h = moduleWIP . parseDetails . hNamesToINames %%= insertOrRetrieve h
-addNewName h = moduleWIP . parseDetails . hNamesToINames %%= \(sz , hList , mp) ->
-  (sz , (sz + 1 , h : hList , M.insert h sz mp))
+-- promote INames to topINames by assigning a new IName from hereon out
+-- if an IName is already a topIName then the IName can be reassigned everywhere:
+--  topINames bitset resolves its bind index correctly, duplicate topbind names are caught by scope
+addNewName h = use (moduleWIP . parseDetails . topINames) >>= \top ->
+  moduleWIP . parseDetails . hNamesToINames %%= \(sz , hList , mp) ->
+  case M.insertLookupWithKey (\_k new old -> if testBit top old then old else new) h sz mp of
+    (x , mp) | Just v <- x , testBit top v -> (v , (sz , hList , mp))
+    (_ , mp) -> (sz , (sz + 1 , h : hList , mp))
 
 addTopName h = addNewName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames   %= \top -> setBit top i)
 newFLabel h  = addName h >>= \i -> i <$ (moduleWIP . parseDetails . fieldINames %= \top -> setBit top i)
@@ -193,9 +199,6 @@ pImport = choice
  , reserved "use"     <* (iden >>= addImport)
  ]
 
-pBlock :: Bool -> Bool -> LetQual -> Parser Block
-pBlock isTop isOpen letTy = Block isOpen letTy <$> parseBinds isTop
-
 parseBinds :: Bool -> Parser (V.Vector FnDef)
 parseBinds isTop = let
   sep = eof <|> (endLine *> scn) --  *> when (prev < lvl) (fail "unexpected top level indentation"))
@@ -277,22 +280,22 @@ tt :: Parser TT
 -- , reserved "do" *> doExpr
    , reserved "record" *> conMultiline <&> Prod . V.fromList <?> "Record"
    , reserved "case"   *> casePat   <?> "Case_of__"
-   , reserved "data"   *> tySumData <?> "Data declaration"
-   , reserved "gadt"   *> tyGadt    <?> "Gadt declaration"
+   , reserved "data"   *> pData <?> "Data declaration"
+   , reserved "gadt"   *> pGadt    <?> "Gadt declaration"
    , reserved "##" *> (PLitArray <$> lineFoldArgs literalP) <?> "Literal array"
    , reserved "#" *> (PArray <$> lineFoldArgs ttArg) <?> "Literal array"
    , reservedChar '@' *> idenNo_ >>= newSLabel <&> \l -> P.Label l []
    , braces conBraces <&> Prod . V.fromList <?> "record"
    , parens ((tt >>= \t -> option t (tuple t <|> typedTT t)) <|> scn $> Tuple []) >>= catchUnderscoreAbs
    , literalP <&> Lit -- ! before iden parser
-   , iden >>= addName <&> Var . VExtern
+   , iden >>= addName <&> VParseIName
      -- (? support partial mixfix aps eg. if_then a else b)
    ] <?> "TT Argument"
-  tySumData = Data <$> let
+  pData = Data <$> let
     labelDecl = (,) <$> (iden >>= newSLabel) <*> many arg
     in pIndentedItems labelDecl (fail "")
 -- , brackets tt <&> TyListOf
-  tyGadt = Gadt <$> let -- vec : (n : Nat) ~> Vector n x = gadt
+  pGadt = Gadt <$> let -- vec : (n : Nat) ~> Vector n x = gadt
     gadtDecl = (,) <$> (iden >>= newSLabel) <*> tyAnn
     in pIndentedItems gadtDecl (fail "")
 
@@ -313,7 +316,7 @@ tt :: Parser TT
   casePat = (\tt splits -> CasePat (CaseSplits tt splits)) <$> tt <* reserved "of" <*> caseSplits
 
   letIn letQual = do
-    block <- pBlock False True letQual
+    block <- Block True letQual <$> parseBinds False 
     liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= V.length (binds block)
     LetIn block liftLetStart <$> (scn *> reserved "in" *> tt)
 
