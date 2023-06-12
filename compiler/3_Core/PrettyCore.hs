@@ -188,13 +188,13 @@ pTyHead pos = let
     in gs <> pTy' t
 --THPi pi  -> "∏(" <> viaShow pi <> ")"
 --THSi pi arsMap -> "Σ(" <> viaShow pi <> ") where (" <> viaShow arsMap <> ")"
---THSet   uni -> "Set" <> pretty uni
+  THSet   uni -> "Set" <> pretty uni
   x -> viaShow x
 
 pBind :: HName -> Bool -> Bind -> Doc Annotation
 pBind nm showRhs bind = pretty nm <> " = " <> case bind of
-  Guard m tvar      -> "GUARD : " <> viaShow m <> viaShow tvar
-  Mut{}             -> "Mut{} "
+  Guard tvar      -> "GUARD : τ" <> viaShow tvar
+  Mutu e free tv  -> "Mut τ" <> viaShow tv <+> viaShow (bitSet2IntList free) <+> pExpr showRhs e
   BindOK _n {-(nFree , free)-} expr -> let
     recKW = "" -- if isRec && case expr of {Core{} -> True ; _ -> False} then annotate AKeyWord "rec " else ""
     letW  = "" -- if lbound then "let " else ""
@@ -202,7 +202,6 @@ pBind nm showRhs bind = pretty nm <> " = " <> case bind of
       pExpr showRhs expr
   BindRenameCaptures lc freeVars expr ->
     "Rename-captures:" <+> viaShow lc <> ":" <+> viaShow freeVars <+> "in" <+> pExpr showRhs expr
-
 
 pExpr :: Bool -> Expr -> Doc Annotation
 pExpr showRhs (Core term ty) = let pos = True in case term of

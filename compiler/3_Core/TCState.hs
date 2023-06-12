@@ -18,7 +18,6 @@ data TCEnvState s = TCEnvState {
    _externs     :: Externs     -- vector ExternVars
  , _loadedMs    :: V.Vector LoadedMod
  , _thisMod     :: ModuleIName -- used to make the QName for local bindings
- , _openModules :: BitSet
 
  -- out
  , _modBinds    :: MV.MVector s (LetMeta , Bind) -- all lets lifted, the P.FnDef is saved in letBinds
@@ -31,6 +30,7 @@ data TCEnvState s = TCEnvState {
  , _topBindsMask  :: BitSet -- to lookup QName -> local Bind index
  , _bindsBitSet   :: BitSet -- mark inferred binds
  , _inferStack    :: BitSet -- To detect infer cycles: recursion / mutuals
+ , _cyclicDeps    :: BitSet
  , _scopeParams   :: Scope.Params
  , _bruijnArgVars :: V.Vector Int       -- bruijn arg -> TVar map
  , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
@@ -40,7 +40,7 @@ data TCEnvState s = TCEnvState {
  -- Free vars => any VBruijns from outside the let-binding must be explicitly passed as new VBruijns
  , _freeLimit   :: Int
  , _letCaptures :: BitSet
- , _captureRenames :: MV.MVector s Int -- unset unless letCaptures bit set!
+ , _captureRenames :: MV.MVector s Int -- undef unless letCaptures bit set!
 }; makeLenses ''TCEnvState
 
 clearBiSubs :: Int -> TCEnv s ()

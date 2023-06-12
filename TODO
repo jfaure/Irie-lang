@@ -22,6 +22,7 @@
   * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
   * scope of field/label names: topnames or label names?
       {x = 3} . x .~ "hello" -- { x : Int } -> { x : String }
+  ? `setBit` infix syntax
   ? Sum-of-Record
   ? argCase => f = \argCase { a b => _ }
 ### Linearity ; free variables (type must be known) ; β vs always-inline

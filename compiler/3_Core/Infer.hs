@@ -47,7 +47,6 @@ judgeModule pm importedModules modIName exts loaded topBindsMask' = let
     { _externs  = exts
     , _loadedMs = loaded
     , _thisMod  = modIName
-    , _openModules = importedModules
 
     , _modBinds = modBinds'
     , _letBinds = letBinds'
@@ -55,6 +54,7 @@ judgeModule pm importedModules modIName exts loaded topBindsMask' = let
     , _errors   = emptyErrors
 
     , _inferStack = 0
+    , _cyclicDeps = 0
     , _topBindsCount = topBindsCount
     , _topBindsMask  = topBindsMask'
     , _scopeParams = scopeParams'
@@ -72,97 +72,99 @@ judgeModule pm importedModules modIName exts loaded topBindsMask' = let
 -- This stacks inference of forward references and let-binds and identifies mutual recursion
 judgeBind :: forall s. Int -> IName -> IName -> TCEnv s Expr
 judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use thisMod >>= \modIName -> let
+  -- reference to inference stack (forward ref | recursive | mutual)
+  preInferred :: (LetMeta , Bind) -> TCEnv s Expr
+  preInferred (lm , bind) = let noop t = Core (Var (letBindIndex lm)) t
+    in case bind of
+    BindOK _ e  -> pure (noop (exprType e))
+    BindRenameCaptures _ _ e -> pure (noop (exprType e))
+    Guard tvar -> (cyclicDeps %= (`setBit` modBindName)) $> Core (Captures (letBindIndex lm)) (tyVar tvar)
+    Mutu _ _ tvar -> (cyclicDeps %= (`setBit` modBindName)) $> Core (Captures (letBindIndex lm)) (tyVar tvar)
+
   inferParsed :: P.FnDef -> TCEnv s Expr
   inferParsed abs = freshBiSubs 1 >>= \[tvarIdx] -> do
+    -- setup recursion/mutual guards and capture detection
     inferStack %= (`setBit` modBindName)
     let bindIdx = VQBindIndex (mkQName modIName modBindName)
         letMeta = LetMeta (letDepth == 0) (mkQName modIName (abs ^. P.fnIName)) bindIdx (abs ^. P.fnSrc)
-    MV.write modBinds' modBindName (letMeta , Guard emptyBitSet tvarIdx)
+    MV.write modBinds' modBindName (letMeta , Guard tvarIdx) -- recs/mutuals will biunify with our tvar
     svlc  <- letCaptures <<.= 0
     argVars <- use bruijnArgVars
     atLen <- V.length <$> use bruijnArgVars -- all capturable vars (reference where the letCaptures are valid bruijns)
     (captureRenames .=) =<< MV.new atLen
 
-    expr <- case letDepth of -- need to solve scopes on top bindings:
-      -- the hypo (scopeApo) can't see through LetBinds vectors, so doing it per module bind is way more optimal
-      0 -> use scopeParams >>= \sp -> use externs >>= \exts ->
-          use thisMod >>= \modIName -> use topBindsCount >>= \tc ->
+    -- run inference, need to solve scopes on top bindings (letdepth 0):
+    -- the infer part of (hypo infer scopeApo) can't see through LetBind vectors, so per top-bind will fuse more
+    expr <- case letDepth of
+      0 -> use scopeParams >>= \sp -> use externs >>= \exts -> use topBindsCount >>= \tc ->
           hypo inferF (Scope.scopeApoF tc exts modIName) (abs ^. P.fnRhs , sp)
-      _ -> cata inferF (abs ^. P.fnRhs)
+      _ -> cata inferF (abs ^. P.fnRhs) -- let-binds were already scoped, since they depend on nesting context
 
---  inferStack %= (`clearBit` modBindName) --  bindStack %= drop 1
     lcVars <- letCaptures <<%= (.|. svlc)
-    argTVs <- use captureRenames >>= \cr -> reverse (bitSet2IntList lcVars) `forM` \l -> (argVars V.! l ,) <$> MV.read cr l
-    let freeVarCopies = snd <$> argTVs :: [Int]
-        lc = (atLen , lcVars)
+    freeVarCopies <- use captureRenames >>= \cr -> reverse (bitSet2IntList lcVars) `forM`
+      \l -> (argVars V.! l ,) <$> MV.read cr l
 
-    -- generalise: Collect mutuals by learning which binds had to be inferred as dependencies
-    MV.read modBinds' modBindName >>= \case
-      (_ , b@BindOK{}) -> pure (bind2Expr b)
-      (lm , Guard ms tVar) -> do
-        when (tVar /= tvarIdx) (error $ show (tVar , tvarIdx))
+    -- level mutuality: let a = { f = b.g } ; b = { g = a.f }
+    -- "is" are backward refs depending on this binding; if this bind depends on any of them, they are mutual
+    is <- use inferStack
+    cycles <- use cyclicDeps
+    if (cycles .&. clearBit is modBindName /= 0) && head (bitSet2IntList cycles) /= Just modBindName
+    then MV.write modBinds' modBindName (letMeta , Mutu expr lcVars tvarIdx)
+--    *> traceShowM ("mutu: " , modBindName , bitSet2IntList is , bitSet2IntList cycles)
+      $> Core (Captures (letBindIndex letMeta)) (tyVar tvarIdx)
+    else do
+      let mutuals = is .&. complement (setNBits modBindName)
+--    traceShowM ("generalise: " , modBindName , bitSet2IntList mutuals , bitSet2IntList is , bitSet2IntList cycles)
+      inferStack %= (.&. complement mutuals)
+      cyclicDeps %= (.&. complement mutuals)
 
-        -- level mutuality: let a = { f = b.g } ; b = { g = a.f }
-        -- check if any prev binds mutual with this one at its level
-        let refs = setNBits modBindName .&. ms
-        hasMutual <- let isMut i = MV.read modBinds' i <&> (\case { Guard ms _ -> refs .&. ms /= 0 ; _ -> False }) . snd
-          in anyM isMut (bitSet2IntList refs)
-        if hasMutual
-          then Core (Var (letBindIndex lm)) (tyVar tVar)
-           <$ MV.write modBinds' modBindName (lm , Mut expr ms lc tVar)
-           <* bisub (exprType expr) (tyVar tVar) -- ! recursive => bisub with -τ (itself)
-           <* when (not (null freeVarCopies)) (error "mutual free vars")
-          -- can generalise once all mutuals & associated tvars are fully constrained
-          else genExpr lm expr freeVarCopies lc tVar
-      b -> error $ "panic: " <> show b
-
-  -- reference to inference stack (forward ref | recursive | mutual)
-  preInferred :: (LetMeta , Bind) -> TCEnv s Expr
-  preInferred (lm , bind) = case bind of
-    BindOK _ e  -> pure (Core (Var (letBindIndex lm)) (exprType e)) -- don't inline the expr
-    BindRenameCaptures _ free e -> pure (Core (Var (letBindIndex lm)) (exprType e))
-    Mut e _ms lc tvar -> genExpr lm e [] lc tvar
-    -- v Stacked bind means it could be Mutual | recursive (also weird recursive: r = { a = r })
-    Guard mutuals tvar -> do
-      -- mark as stacked on top of all binds at this lvl, to help detect mutuals
-      mbs <- use inferStack
-      Core (Captures (letBindIndex lm)) (tyVar tvar) <$ MV.write modBinds' modBindName (lm , Guard (mutuals .|. mbs) tvar)
-
-  genExpr :: LetMeta -> Expr -> [Int] -> (Int , BitSet) -> Int -> TCEnv s Expr
-  genExpr lm (Core t ty) freeVarCopies letCapture@(atLen,freeVars) tvarIdx = do
-    gTy  <- do
-      _cast <- use bis >>= \v -> (v `MV.read` tvarIdx) <&> _mSub >>= \case
+      -- Mutuals must be fully constrained then all generalised together
+      (mFree , mutus) <- fmap unzip $ bitSet2IntList (clearBit mutuals modBindName) `forM` \mut ->
+        MV.read modBinds' mut <&> \(mLetMeta , Mutu mExpr mFree mtv) -> (mFree , (mut , mLetMeta , mExpr , mtv))
+      let unionFree = lcVars -- TODO
+          unionFreeVarCopies = snd <$> freeVarCopies -- TODO
+          tvs = ((tvarIdx , exprType expr) :) $ mutus <&> \(_,_,mexpr,t) -> (t , exprType mexpr)
+      -- generalise reads from tvarIdx , also recursive functions/mutuals must be bisubbed with themselves
+      use bis >>= \v -> tvs `forM_` \(tvarIdx , ty) -> (v `MV.read` tvarIdx) <&> _mSub >>= \case
         TyGround [] -> BiEQ <$ MV.write v tvarIdx (BiSub ty (TyGround []))
         _t -> bisub ty (tyVar tvarIdx) -- ! recursive => bisub with -τ (itself)
-      let copyFreeVarsTy = prependArrowArgsTy (tyVar <$> freeVarCopies) (tyVar tvarIdx)
-      use blen >>= \bl -> use bis >>= \bis' -> lift (generalise bl bis' copyFreeVarsTy)
-    let rawRetExpr = Core t gTy -- Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
-    (inferStack <%= (`clearBit` modBindName)) >>= \is -> when (is == 0) (clearBiSubs 0)
-    let noInlineExpr = rawRetExpr & \(Core _t ty) -> let q = Var (letBindIndex lm) in
-          Core (if freeVars == 0 then q else BruijnAbs (popCount freeVars) q) ty
-        -- v TODO captures don't need renaming if they are in range [0..n] already
-        bind = if freeVars == 0 --popCount (freeVars + 1) == setNBits atLen -- better than freeVars == 0
-        then BindOK optInferred rawRetExpr
-        else BindRenameCaptures atLen freeVars rawRetExpr
-    noInlineExpr {-retExpr-} <$ MV.write modBinds' modBindName (lm , bind)
-  in use bindsBitSet >>= \b -> case testBit b modBindName of
-    True  -> MV.read modBinds' modBindName >>= preInferred
-    False -> (bindsBitSet %= (`setBit` modBindName))
+
+      mutus `forM_` \(mb , mlm , mexpr , mtv) ->
+        genExpr mb mlm (exprTerm mexpr) unionFreeVarCopies (atLen , unionFree) mtv
+      genExpr modBindName letMeta (exprTerm expr) unionFreeVarCopies (atLen , unionFree) tvarIdx
+      <* clearBiSubs tvarIdx
+
+  in use bindsBitSet >>= \b -> if testBit b modBindName
+    then MV.read modBinds' modBindName >>= preInferred
+    else (bindsBitSet %= (`setBit` modBindName))
       *> use letBinds >>= (`MV.read` letDepth) >>= \wip -> (wip `MV.read` bindINm)
       >>= inferParsed
+
+genExpr :: IName -> LetMeta -> Term -> [Int] -> (Int , BitSet) -> Int -> TCEnv s Expr
+genExpr modBindName lm term freeVarCopies (atLen , freeVars) tvarIdx = use modBinds >>= \modBinds' -> let
+  rawTy = prependArrowArgsTy (tyVar <$> freeVarCopies) (tyVar tvarIdx)
+  in use blen >>= \bl -> use bis >>= \bis' ->
+    lift (generalise bl bis' rawTy) >>= \gTy -> let
+    rawRetExpr = Core term gTy -- Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
+    noInlineExpr = let q = Var (letBindIndex lm) in
+      Core (if freeVars == 0 then q else BruijnAbs (popCount freeVars) q) gTy
+    bind = if freeVars == 0
+    then BindOK optInferred rawRetExpr
+    else BindRenameCaptures atLen freeVars rawRetExpr -- Recursive binds need their free-env backpatched in
+  in noInlineExpr <$ MV.write modBinds' modBindName (lm , bind)
 
 -- judgeBind then uninline and add + biunify any captured arguments
 getModBind letNest letName modBindName = do
   expr <- judgeBind letNest letName modBindName
   use modBinds >>= (`MV.read` modBindName) <&> snd >>= \case
-    b@BindOK{} -> pure expr
+    BindOK{} -> pure expr
     BindRenameCaptures atLen free _ -> 
 --    when ({-popCount (lc + 1) /= 0-} lc /= setNBits ld) (traceM "TODO rename captured VBruijns") *>
       explicitFreeVarApp atLen free expr -- ld doesn't matter since we dont β-reduce
     _ -> pure expr -- TODO handle mutuals that capture vars ; ie. spawn mutumorphisms
 
 explicitFreeVarApp :: Int -> BitSet -> Expr -> TCEnv s Expr
-explicitFreeVarApp atLen lc e@(Core t ty) = if lc == 0 then pure e else let
+explicitFreeVarApp _atLen lc e@(Core t ty) = if lc == 0 then pure e else let
   bruijnArs = reverse $ bitSet2IntList lc {-[atLen - 1 , atLen - 2 .. 0] -} 
   appFree = App t (VBruijn <$> bruijnArs)
   in do
@@ -245,7 +247,7 @@ inferF = let
    es = exprs <&> \(Core t _ty) -> t
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
- -- result of mixfix solves; QVar, PExprApp
+ -- result of mixfix solves; IQVar, PExprApp
  -- These are IQNames !
  getIQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
    then use topBindsMask >>= \topMask -> iNameToBindName topMask (unQName q) & \i -> getModBind 0 i i
@@ -300,7 +302,7 @@ inferF = let
   P.MFExprF srcOff m -> let err = MixfixError srcOff ("Lone mixfix word: " <> show m)
     in poisonExpr <$ (tmpFails .= []) <* (errors . mixfixFails %= (err:))
   P.IQVarF q -> getIQBind q
-  P.QVarF q -> getIQBind q -- ?!!
+--P.QVarF q -> getIQBind q
 
   P.TupleIdxF qN tt -> tt >>= \(Core tuple tupleTy) -> freshBiSubs 1 >>= \[i] -> let
     expectedTy = TyGround [THTyCon $ THProduct (BSM.singleton qN (tyVar i))]

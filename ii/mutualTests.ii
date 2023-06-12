@@ -1,0 +1,17 @@
+import ifThenElse
+g2 z i = ifThenElse (gt z i) z (g1 z i)
+g1 z i = g2 (add i z) i
+--import prelude
+
+-- β-env looping
+--one = two -- forward ref
+--two = three -- mut
+--three = two -- mut
+
+fib n = ifThenElse (lt n 0) n (add (fib (sub n 1)) (fib (sub n 2)))
+
+-- forward decl , not mutu
+g x = add x 3
+f x = g x
+
+--ii/SpecialisationTests/WrappedSimpleMutual.ii"

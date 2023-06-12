@@ -29,17 +29,12 @@ type CaseID    = Int
 
 -- Bruijns vs QBinds => QBinds are mutually in scope & Lens
 -- Note. lifted let binds are appended to the module and become VQBinds
-data VName
--- = VQBind   QName -- external qualified name (modulename << moduleBits | IName)
- -- IMPORTANT: QBinds qualify INames (they are no different to record field names)
- --   within a module, their index is obtained from (Externs.iNameToBindName: (topBinds : BitSet) -> QName -> Int)
- = VQBindIndex QName -- VQBind but a direct index into modBinds
--- | VForeign HName -- opaque name resolved at linktime
-
-data LetMeta = LetMeta { isTop :: Bool , letIName :: QName , letBindIndex :: VName {-QName-} , srcLoc :: Int }
+-- (qualified IName -> bind index) obtained via Externs.iNameToBindName: (topBinds : BitSet) -> QName -> Int
+newtype VName = VQBindIndex QName
+data LetMeta = LetMeta { isTop :: Bool , letIName :: QName , letBindIndex :: VName , srcLoc :: Int }
 
 data Term -- β-reducable (possibly to a type)
- = Var     !VName
+ = Var !VName -- Direct index into modBinds rather than a qualified IName
  | Lit     !Literal
  | Question      -- attempt to infer this TT
  | Poison  !Text -- typecheck inconsistency
@@ -98,7 +93,6 @@ data Type
  | TyVars   BitSet GroundType -- vars generalise to THBound if survive simplification
 
  -- vv User type annotations
--- | TyAlias  QName
  | TyTerm   Term Type       -- term should be lambda calculus or product/sum calculus
  | TyPi Pi                  -- dependent functions, implicit args (explicit as: Arg → T)
  | TySi Pi (IM.IntMap Expr) -- Existential: some TT and a function of them (~partial app)
@@ -127,7 +121,7 @@ data THead ty
  = THPrim     PrimType
  | THExt      IName -- ix to builtins (use getExprType to get Type from Expr) -- rm
  | THAlias    QName
--- | THSet      Uni
+ | THSet      Uni
  | THPoison         -- marker for inconsistencies found during inference
  | THTop | THBot
 
@@ -156,9 +150,9 @@ data ArgShape
  deriving (Ord , Eq , Show , Generic)
 
 data Bind
- = Guard  { mutuals :: BitSet , tvar :: IName } -- being inferred; if met again, is recursive/mutual
+ = Guard  { tvar :: IName } -- being inferred; if met again, is recursive/mutual
  -- generalising mutual types must wait for all tvars to be constrained (all mutual block to be inferred)
- | Mut    { naiveExpr :: Expr , mutuals :: BitSet , letCaptured :: (Int , BitSet) , tvar :: IName }
+ | Mutu Expr BitSet IName -- tvarIdx
 
  -- free has the atLen of all capturable vars: the reference for where the bitset bruijns are valid
  | BindOK { optLevel :: OptBind , {-free :: (Int , BitSet) ,-} naiveExpr :: Expr }

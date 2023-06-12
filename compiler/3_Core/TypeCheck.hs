@@ -11,6 +11,9 @@ import qualified BitSetMap as BSM
 -- Type annotations may be subtypes (less general) than inferred signatures
 -- Check must fill in any holes present in the type annotation
 
+--Subsumption with subtyping is harder, as it requires checking that for every instance of the user-annotated type, there exists a compatible instance of the inferred one. (A ∀∃… question, not just a ∃)
+--The point of initiality and distributivity of ⊓ and ⊔ over → and × is to enable a solution for subsumption
+
 checkAtomic :: forall s. TyHead -> TyHead -> TCEnv s Bool
 checkAtomic inferred gotTy = let
   readExt x = case readPrimType x of

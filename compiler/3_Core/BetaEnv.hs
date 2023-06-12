@@ -221,6 +221,8 @@ simpleBind q bindName bind = use localBinds >>= \bindVec -> case bind of
     let b = BindOK (OptBind ({-optLvl +-} 1) specs) (Core newT ty)
     b <$ MV.write bindVec bindName b
   BindRenameCaptures atLen free (Core inExpr ty) -> let
+    -- v TODO captures don't need renaming if they are in range [0..n] for some n < atLen
+    -- namesOK = 1 + freeVars == 1 .<<. atLen
     nCaptures = popCount free
     renameEnv = V.generate atLen
       (\i -> TSub mempty nCaptures (VBruijnLevel (nCaptures - 1 - renameVBruijn atLen free i)))

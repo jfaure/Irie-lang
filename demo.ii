@@ -21,6 +21,7 @@
 
 -- Cat records: V and ^
 -- set/get formal semantics, adding new fields?
+-- Presence variables
 
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
@@ -53,10 +54,10 @@
 --   S1 Int
 -- f = S1 -- should KO; S1 : Int -> [S1 {Int}]
 
--- * function Fix & mutu-fix
--- * when fn references prev inference stack => cycle;
--- ? everything between them is mutual
---ii/SpecialisationTests/WrappedSimpleMutual.ii"
-import prelude
-g2 z i = if z >? i then z else g1 z i
-g1 z i = g2 (i + z) i
+t9 (a , b) (c , d) = @add (@add (@add a b) c) d
+t = t9 (1 , 2) (3 , 4)
+
+-- β-env looping
+--one = two -- forward ref
+--two = three -- mut
+--three = two -- mut

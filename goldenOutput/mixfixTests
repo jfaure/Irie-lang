@@ -1,14 +1,16 @@
 plus = _+_ : %i32 → %i32 → %i32
-zero = (_+_ (Int 0) (Int 0)) : %i32
-one = (_+_ (Int 0) (_+_ (Int 1) (Int 2))) : %i32
-prec1 = (_+_ (Int 0) (_*_ (Int 1) (Int 2))) : %i32
-prec2 = (_+_ (_*_ (Int 0) (Int 1)) (Int 2)) : %i32
-prec3 = (_+_ (_*_ (Int 0) (_+_ (Int 1) (Int 2))) (Int 3)) : %i32
-lassoc = (_+_ (_+_ (Int 0) (Int 1)) (Int 2)) : %i32
+zero = (_+_ (Fin 1 0) (Fin 1 0)) : %i32
+one = (_+_ (Fin 1 0) (_+_ (Fin 1 1) (Fin 8 2))) : %i32
+prec1 = (_+_ (Fin 1 0) (_*_ (Fin 1 1) (Fin 8 2))) : %i32
+prec2 = (_+_ (_*_ (Fin 1 0) (Fin 1 1)) (Fin 8 2)) : %i32
+prec3 = (_+_ (_*_ (Fin 1 0) (_+_ (Fin 1 1) (Fin 8 2))) (Fin 8 3)) : %i32
+lassoc = (_+_ (_+_ (Fin 1 0) (Fin 1 1)) (Fin 8 2)) : %i32
 rassoc = (_->_ %i32 (_->_ %fDoubleTy %i1)) : Set0
-if1 = (if_then_else_ @!False (Int 3) (Int 4)) : %i32
-if2 = (if_then_else_ @!False (Int 1) (if_then_else_ @!True (Int 3) (Int 4))) : (%i1 ⊔ %i32)
-if3 = (if_then_else_ @!True (Int 5) (_*_ (_*_ (Int 0) (Int 2)) (Int 9))) : %i32
-if4 = (if_then_else_ (_and_ @!True @!False) (_+_ (Int 5) (Int 1)) (_*_ (_*_ (Int 0) (Int 7)) (Int 9))) : %i32
-math1 = (_-_ (_*_ (_*_ (Int 1) (Int 9)) (Int 6)) (Int 2)) : %i32
-math2 = (_+_ (_+_ (Int 1) (_*_ (Int 2) (Int 3))) (Int 4)) : %i32
+if1 = (if_then_else_ @!False (Fin 8 3) (Fin 8 4)) : %i8
+if2 = (if_then_else_ @!False (Fin 1 1) (if_then_else_ @!True (Fin 8 3) (Fin 8 4))) : (%i1 ⊔ %i8)
+if3 = (if_then_else_ @!True (Fin 8 5) (_*_ (_*_ (Fin 1 0) (Fin 8 2)) (Fin 8 9))) : (%i8 ⊔ %i32)
+if4 = (if_then_else_ (_and_ @!True @!False)
+  (_+_ (Fin 8 5) (Fin 1 1))
+  (_*_ (_*_ (Fin 1 0) (Fin 8 7)) (Fin 8 9))) : %i32
+math1 = (_-_ (_*_ (_*_ (Fin 1 1) (Fin 8 9)) (Fin 8 6)) (Fin 8 2)) : %i32
+math2 = (_+_ (_+_ (Fin 1 1) (_*_ (Fin 8 2) (Fin 8 3))) (Fin 8 4)) : %i32
