@@ -5,7 +5,7 @@ import prelude
 --  Cons A (List A)
 --Str = List Char
 
-length = foldr (\a b => b + 1) 0
+--length = foldr (\a b => b + 1) 0
 
 --printList : List Int -> Int
 printList l = case l of

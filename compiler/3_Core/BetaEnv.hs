@@ -1,7 +1,7 @@
 {-# Language TemplateHaskell #-}
 module BetaEnv where
 import CoreSyn hiding (JudgedModule(..))
-import Externs-- (iNameToBindName , LoadedMod)
+import Externs
 import Data.Functor.Foldable as RS
 import PrettyCore
 import BitSetMap as BSM
@@ -19,7 +19,6 @@ debug_fuse = True
 
 data FEnv s = FEnv
  { _thisMod    :: ModuleIName
- , _topINames  :: BitSet
  , _loadedMods :: V.Vector LoadedMod
  , _localBinds :: MV.MVector s Bind
  }; makeLenses ''FEnv
@@ -165,7 +164,6 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
     opaque -> pure $ TTLensF (continue opaque) [f] LensGet
 
   Captures (VQBindIndex q) | modName q == modIName -> let bindName = unQName q
-    -- use topINames >>= \top -> let bindName = iNameToBindName top (unQName q)
    in use localBinds >>= \bindVec -> MV.read bindVec bindName >>= \case
      BindOK{} -> fuse $ seed & term .~ Var (VQBindIndex q) -- recursive def doesn't capture anything
      BindRenameCaptures atLen letCaptures _ -> let
@@ -204,13 +202,13 @@ fuseCase seed retT branches d = let
   CaseSeq{} -> error "" -- CaseSeq should be dealt with almost immediately after spawning
   opaqueScrut -> pure $ CaseBF (Left opaqueScrut) retT (continue <$> branches) (continue <$> d)
 
-simpleBindings :: ModuleIName -> BitSet -> V.Vector LoadedMod -> V.Vector (LetMeta , Bind)
+simpleBindings :: ModuleIName -> V.Vector LoadedMod -> V.Vector (LetMeta , Bind)
   -> ST s (V.Vector (LetMeta , Bind))
-simpleBindings modIName topINames loadedMods lets = let
+simpleBindings modIName loadedMods lets = let
   go = lets `iforM` \bindName (lm , bind) -> (lm ,) <$> simpleBind (letBindIndex lm) bindName bind
-  in V.thaw (snd <$> lets) >>= \locals -> go `evalStateT` FEnv modIName topINames loadedMods locals
+  in V.thaw (snd <$> lets) >>= \locals -> go `evalStateT` FEnv modIName loadedMods locals
 
-runSimpleBind q = let bindName = unQName q -- use topINames >>= \top -> let bindName = iNameToBindName top (unQName q)
+runSimpleBind q = let bindName = unQName q
   in use localBinds >>= \bindVec -> MV.read bindVec bindName >>= simpleBind q bindName
 
 -- simplifies a binding by itself in a void env (captures must be explicitly applied to bindings)
@@ -292,7 +290,7 @@ specApp seedLvl env q args = let
   (bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
   in -- d_ args $ d_ argShapes $ d_ repackedArgs $ d_ unstructuredArgs $ d_ "" $
   if all (== ShapeNone) argShapes {- note. all _ [] = True -} then pure noInline else
-  use localBinds >>= \bindVec -> -- use topINames >>= \top -> let bindNm = iNameToBindName top (unQName q)
+  use localBinds >>= \bindVec ->
     let bindNm = unQName q
   in MV.read bindVec bindNm >>= \case
   BindOK o expr@(Core inlineF _ty) -> case bindSpecs o M.!? argShapes of

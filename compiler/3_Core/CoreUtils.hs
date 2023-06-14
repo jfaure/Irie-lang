@@ -107,8 +107,6 @@ expr2Ty e = case e of
  Core (Ty x) (TySet _n) -> pure x
  x -> error $ "raw term cannot be a type: " ++ show x
 
-bind2Expr = naiveExpr
-
 ------------------------
 -- Type Manipulations --
 ------------------------

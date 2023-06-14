@@ -120,8 +120,8 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  -- type primitives
  | TyListOf TT
- | Gadt [(LName , TT)]    -- Parameters and constructor signature (return type must be a subtype of the Gadt sig)
- | Data [(LName , [TT])]  -- Parameters
+ | Data Int [(LName , [TT])] -- lifted let start and Parameters
+ | Gadt [(LName , TT)]       -- type signature (return type must be a subtype of the Gadt sig)
 
  | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat =>'
 

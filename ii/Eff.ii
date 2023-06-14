@@ -1,3 +1,14 @@
+TreeBuild = CQueue Tree
+Tree = Leaf | Node TreeBuild TreeBuild
+subTree : Tree -> TreeBuild -> Tree
+subTree (Node l r) y = Node (l |><| y) (r |><| y)
+-- v not recursive and also constant time to view the head of tree
+forceTree : TreeExp -> Tree
+forceTree s = case viewl s of
+  EmptyL -> Leaf
+  h <| t -> subTree h t
+unforceTree : Tree -> TreeExp = singleton
+
 -- See also Effnotes.txt
 -- Monad , foldM , and array write
 foldM f z xs = foldl (\acc x => acc >>= \b => f b x) (pure z) xs

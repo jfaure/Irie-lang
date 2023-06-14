@@ -1,3 +1,4 @@
+import prelude
 -- sum256 =
 -- ; Example 13.15a. Add 16 elements in vector of 8-bit unsigned integers
 -- ; (SSE2)
@@ -8,16 +9,16 @@
 -- paddd xmm0, xmm1 ; Sum
 -- movd [sum], xmm0 ; Store sum
 
-zeros  = _mm256_undefined_si256 > \x => _mm256_xor_s256  x x
+zeros  = _mm256_undefined_si256 > \x => _mm256_xor_si256  x x
 ones   = _mm256_undefined_si256 > \x => _mm256_cmpeq_epi8 x x
-set1_epi8_0 = _mm256_setzeros_si256
+set1_epi8_0 = _mm256_setzero_si256
 set1_epi8_1 = _mm256_abs_epi8 ones
-set1_epi8_2 = set1_epi8-1 > \one -> _mm256_add_epi8 one one
+set1_epi8_2 = set1_epi8_1 > \one => _mm256_add_epi8 one one
 set1_epi8_-1 = ones
-set1_epi8_-2 = ones > \m1 -> _mm256_add_epi8 m1 m1
+set1_epi8_-2 = ones > \m1 => _mm256_add_epi8 m1 m1
 
 -- proper shuffle, expects sel to be a 128 duplicated to both lanes
-mm256 : __m256i -> __m256i -> __m256i
+--mm256-shuffle : m256 -> m256 -> m256
 mm256-shuffle x sel = let
   t = _mm256_shuffle_epi8 x sel
   tt = _mm256_permute2x128_si256 _mm256_undefined_si256 t 1 -- swap low and hi
@@ -27,6 +28,3 @@ epi8go (i , a , b , c , d) r = if i <? 4 then (i + 1 , (a B<< i) B| r , b , c , 
   else if i <? 8  then (i + 1 , a , (b B<< i) B| r , c , d)
   else if i <? 12 then (i + 1 , a , b , (c B<< i) B| r , d)
   else                 (i + 1 , a , b , c , (d B<< i) B| r)
-
-import stream
-_mm256_fromStream_epi8 = \s => Sfoldl epi8go (0 , 0 , 0 , 0 , 0) s > \(idx , a , b , c , d) => _mm256_set_epi64x a b c d

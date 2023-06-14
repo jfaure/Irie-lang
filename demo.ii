@@ -5,6 +5,10 @@
 -- eq1 @x b = 2
 -- eq1 a b = 3
 
+-- Type = record
+--   theads : Vector [THead]
+--   δ : Vector (NonEmpty Int)
+
 --imports list list2 tree question ls foldr Free parsec intmap patternTests hash
 --import irieShell -- ideas for irie as shell
 --import imports/TreeStream
@@ -39,6 +43,19 @@
 
 -- recursive Tree Automata; enumerate data modulo (N constructors) and build a NFA transition table
 
+-- β-env looping
+--one = two -- forward ref
+--two = three -- mut
+--three = two -- mut
+-- also v
+-- f = g
+-- g = f
+
+-- weird thing with "->" alias resolving to itself
+--import prelude
+--f : Int -> Int -> Int
+--f a b = add a b
+
 -- Allow less general annotations
 -- f : Arrow Int { x = Int }
 -- f x = { x = x }
@@ -49,15 +66,10 @@
 --   Nothing
 --   Just a
 
--- gadt/data: emit constructor bindings and a type alias
--- Choice = data
---   S1 Int
--- f = S1 -- should KO; S1 : Int -> [S1 {Int}]
+-- gadt/data: patterns should use declared type of constructors
+--Choice = data
+--  S1 Int
+--unS1 = \case { S1 x => x }
+--t = unS1 (S1 3)
 
-t9 (a , b) (c , d) = @add (@add (@add a b) c) d
-t = t9 (1 , 2) (3 , 4)
-
--- β-env looping
---one = two -- forward ref
---two = three -- mut
---three = two -- mut
+--import FA/CharScan/MiniPrefix

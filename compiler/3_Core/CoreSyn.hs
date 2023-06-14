@@ -155,7 +155,7 @@ data Bind
  | Mutu Expr BitSet IName -- tvarIdx
 
  -- free has the atLen of all capturable vars: the reference for where the bitset bruijns are valid
- | BindOK { optLevel :: OptBind , {-free :: (Int , BitSet) ,-} naiveExpr :: Expr }
+ | BindOK { optLevel :: OptBind , {-free :: (Int , BitSet) ,-} bindToExpr :: Expr }
  | BindRenameCaptures Int BitSet Expr
 
 data OptBind = OptBind
@@ -207,13 +207,9 @@ type ModuleBinds = V.Vector (LetMeta , Bind)
 data JudgedModule = JudgedModule {
    modIName   :: IName
  , modHName   :: HName
- -- * JudgedModule saves its own HName list to save the Registry the trouble of maintaining them
--- , labelNames :: V.Vector HName -- fromMap $ parseDetails . labels
  , jmINames   :: V.Vector HName -- fromMap $ parseDetails . hNamesToINames
  , topINames  :: BitSet -- These allow QName -> TopBind vec lookup
  , labelINames:: BitSet
---, fieldINames :: anything not top and not label
- -- (modBinds and lets (these will be lifted) are set here)
  , moduleTT   :: ModuleBinds
 }
 

@@ -161,10 +161,11 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
   JudgeOK mI _j -> setBit deps mI <$ registerDeps reg mI deps dependents
   ParseOK progText mI pm -> do
    when ("parseTree" `elem` printPass cmdLine) (putStrLn (P.prettyModule pm))
-   reg' <-  readMVar reg
+   regPreImports <- readMVar reg
    importINames <- let
-     go acc f = findModule searchPath (toS f) <&> (const acc ||| setBit acc . resolveModuleHName reg' . toS)
+     go acc f = findModule searchPath (toS f) <&> (const acc ||| setBit acc . resolveModuleHName regPreImports . toS)
      in foldM go 0 (pm ^. P.imports)
+   reg' <-  readMVar reg
    setBit deps mI <$ let -- setBit dependents mI
      iNamesV = V.fromList (reverse (pm ^. P.parseDetails . P.hNamesToINames . _2))
      -- iMap2Vector (pm ^. P.parseDetails . P.hNamesToINames)
@@ -172,7 +173,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
        BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules)
      srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ pm ^. P.parseDetails . P.newLines))
-     putModVerdict = True -- TODO should only print at repl?
+     putModVerdict = False -- TODO should only print at repl?
      (warnings , jmResult) = judge importINames reg' exts mI pm iNamesV
      in case simplify cmdLine mI reg'._loadedModules <$> jmResult of
      -- Note. we still register the module even though its is partially broken, esp. for putErrors to lookup names
@@ -190,8 +191,8 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
   ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
   NoJudge _mI _jm -> pure deps
   IRoot -> error "root"
-  ImportQueued m -> deps <$ readMVar m
-  -- Wait. TODO IMPORTANT! This will hang if ImportQueued thread fails to putMVar (call registerJudgedMod)
+  ImportQueued m -> deps <$ readMVar m -- Wait.
+  -- IMPORTANT! This will hang if ImportQueued thread fails to putMVar (call registerJudgedMod)
 
 --tryLockFile "/path/to/directory/.lock" >>= maybe (ko) (ok *> unlockFile)
 isCachedFileFresh fName cache =
@@ -203,7 +204,7 @@ judge deps reg exts modIName p iNamesV = let
 --  bindNames   = p ^. P.bindings <&> P._fnNm
   labelINames = p ^. P.parseDetails . P.labelINames
   bindINames  = p ^. P.parseDetails . P.topINames
-  (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules bindINames
+  (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules
   jm = JudgedModule modIName (p ^. P.moduleName) iNamesV bindINames labelINames modTT
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails) && null (errors ^. checkFails)
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails) && null (errors ^. unpatternFails)
@@ -217,7 +218,7 @@ simplify cmdLine thisMod loadedMods jm = let
   mL :: F.Lens' JudgedModule ModuleBinds
   mL = F.lens moduleTT (\u new -> u { moduleTT = new })
   in if noSimplify then jm else
-    jm & mL F.%~ (\e -> runST (BetaEnv.simpleBindings thisMod jm.topINames loadedMods e))
+    jm & mL F.%~ (\e -> runST (BetaEnv.simpleBindings thisMod loadedMods e))
 
 putJudgedModule :: CmdLine -> Maybe BindSource -> JudgedModule -> IO ()
 putJudgedModule cmdLine bindSrc jm = let

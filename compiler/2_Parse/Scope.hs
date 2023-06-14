@@ -2,7 +2,7 @@
 module Scope (scopeTT , scopeApoF , initModParams , RequiredModules , OpenModules , Params , letMap , lets , findDups) where
 import ParseSyntax
 import QName
-import CoreSyn(ExternVar(..) , VName(VQBindIndex))
+import CoreSyn(ExternVar(..))
 import Mixfix (solveMixfixes)
 import Externs ( checkExternScope , Externs )
 import Errors
@@ -20,7 +20,7 @@ type OpenModules = BitSet
 type RequiredModules = BitSet
 data Params = Params
   { _open        :: OpenModules
-  , _req         :: RequiredModules
+--  , _req         :: RequiredModules
   , _lets        :: BitSet
   , _args        :: BitSet
   , _bruijnMap   :: V.Vector Int -- pre-built by mkCase: text IName -> BruijnArg TODO merge with letMap
@@ -32,7 +32,7 @@ data Params = Params
 
 initParams open required = let
   sz = 2048 -- TODO max number of let-nests and / or bruijn args
-  in Params open required emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 (V.create (MV.new sz)) 0
+  in Params open {-required-} emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 (V.create (MV.new sz)) 0
 
 initModParams open required bindNms = initParams open required & \params -> params
   & lets %~ (.|. intList2BitSet bindNms)
@@ -54,9 +54,8 @@ handleExtern exts mod open lm i = case checkExternScope open mod exts i of
   NotOpened m h -> ScopePoison (ScopeNotImported m h)
   NotInScope  h -> ScopePoison (ScopeError h)
   AmbiguousBinding h ms -> ScopePoison (AmbigBind h ms)
-  ImportLabel q -> QLabel q
-  Importable m i  -> IQVar (mkQName m i)
-  x -> error (show x)
+  ImportLabel q   -> QLabel q
+  Importable m i  -> QVar (mkQName m i)
 
 -- Pattern (TT) inversion: case-alts can introduce VBruijns and thus change the scope environment
 -- Parse > resolve mixfixes > resolve cases > check arg scopes?
@@ -106,7 +105,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
       VParseIName i -> case checkExternScope params._open thisMod exts i of
         ImportLabel q -> QLabel q
   --    ImportLit
-        x -> VParseIName i -- new argument. (x is likely: `NotInScope sometxt`)
+        _ -> VParseIName i -- new argument. (x is likely: `NotInScope sometxt`)
       Juxt o args -> solveMixfixes o (scopeLayer <$> args) -- TODO need to solveScope VExterns first
       tt -> tt
     isLabel = \case { QLabel{} -> True ; Label{} -> True ; App{} -> True; _ -> False }
@@ -133,7 +132,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
     n = length args
     lvl = params._bruijnCount :: Int
     vbruijnLvls = [lvl .. lvl + n-1] -- [n-1 , n-2 .. 0]
-    argSubs = let getArgSub i = \case { VParseIName e -> [(e , i)] ; x -> [] }
+    argSubs = let getArgSub i = \case { VParseIName e -> [(e , i)] ; _ -> [] }
       in concat (zipWith getArgSub vbruijnLvls args)
     mkGuards pat vbl = case pat of
       VParseIName{} -> []

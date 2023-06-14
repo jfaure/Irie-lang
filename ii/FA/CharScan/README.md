@@ -8,3 +8,10 @@ Scanner = MiniScanner | Teddy | FDR
 
 -- more scans
 https://github.com/geofflangdale/scans/tree/master
+
+parsing:
+1. cmp against all structural characters, in json: "[]{}:,\"
+2. find start/end points of strings, then switch off all structural chars within it
+3. start from colon locations, scan backwards and forwards for key/values
+
+blsr, clear lowest set bit : s = s & (s - 1)

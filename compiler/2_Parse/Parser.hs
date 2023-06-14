@@ -47,7 +47,7 @@ addNewName h = use (moduleWIP . parseDetails . topINames) >>= \top ->
     (x , mp) | Just v <- x , testBit top v -> (v , (sz , hList , mp))
     (_ , mp) -> (sz , (sz + 1 , h : hList , mp))
 
-addTopName h = addNewName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames   %= \top -> setBit top i)
+addTopName h = addNewName h >>= \i -> i <$ (moduleWIP . parseDetails . topINames%= \top -> setBit top i)
 newFLabel h  = addName h >>= \i -> i <$ (moduleWIP . parseDetails . fieldINames %= \top -> setBit top i)
 newSLabel h  = addName h >>= \i -> i <$ (moduleWIP . parseDetails . labelINames %= \top -> setBit top i)
 
@@ -291,9 +291,17 @@ tt :: Parser TT
    , iden >>= addName <&> VParseIName
      -- (? support partial mixfix aps eg. if_then a else b)
    ] <?> "TT Argument"
-  pData = Data <$> let
-    labelDecl = (,) <$> (iden >>= newSLabel) <*> many arg
-    in pIndentedItems labelDecl (fail "")
+  letIn letQual = do
+    block <- Block True letQual <$> parseBinds False 
+    liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= V.length (binds block)
+    LetIn block liftLetStart <$> (scn *> reserved "in" *> tt)
+
+  pData = do
+    let labelDecl = (,) <$> (iden >>= newSLabel) <*> many arg
+    alts <- pIndentedItems labelDecl (fail "")
+    liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= length alts
+    pure (Data liftLetStart alts)
+
 -- , brackets tt <&> TyListOf
   pGadt = Gadt <$> let -- vec : (n : Nat) ~> Vector n x = gadt
     gadtDecl = (,) <$> (iden >>= newSLabel) <*> tyAnn
@@ -314,11 +322,6 @@ tt :: Parser TT
      in option [] (pIndentedItems split finishEarly)
   lambdaCase = LambdaCase . CaseSplits' <$> caseSplits
   casePat = (\tt splits -> CasePat (CaseSplits tt splits)) <$> tt <* reserved "of" <*> caseSplits
-
-  letIn letQual = do
-    block <- Block True letQual <$> parseBinds False 
-    liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= V.length (binds block)
-    LetIn block liftLetStart <$> (scn *> reserved "in" *> tt)
 
   typedTT t = option t (Typed t <$> tyAnn)
 

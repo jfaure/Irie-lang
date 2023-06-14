@@ -26,8 +26,8 @@ import qualified BitSetMap as BSM -- ( toList, fromList, fromVec, fromListWith, 
 -- 2. read/write everything to modBinds vec isntead of letBinds/letNest
 -- 3. rm VLetNames: mkQName thisMod (translate name)
 -- ? mutu
-judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> BitSet -> (ModuleBinds , Errors)
-judgeModule pm importedModules modIName exts loaded topBindsMask' = let
+judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (ModuleBinds , Errors)
+judgeModule pm importedModules modIName exts loaded = let
   letCount = pm ^. P.parseDetails . P.letBindCount
   binds = pm ^. P.bindings
   topBindsCount = V.length binds
@@ -56,7 +56,6 @@ judgeModule pm importedModules modIName exts loaded topBindsMask' = let
     , _inferStack = 0
     , _cyclicDeps = 0
     , _topBindsCount = topBindsCount
-    , _topBindsMask  = topBindsMask'
     , _scopeParams = scopeParams'
     , _bindsBitSet = 0
     , _bruijnArgVars = mempty
@@ -132,7 +131,8 @@ judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use this
       mutus `forM_` \(mb , mlm , mexpr , mtv) ->
         genExpr mb mlm (exprTerm mexpr) unionFreeVarCopies (atLen , unionFree) mtv
       genExpr modBindName letMeta (exprTerm expr) unionFreeVarCopies (atLen , unionFree) tvarIdx
-      <* clearBiSubs tvarIdx
+--    <* clearBiSubs tvarIdx
+      <* when (is == 0) (clearBiSubs 0)
 
   in use bindsBitSet >>= \b -> if testBit b modBindName
     then MV.read modBinds' modBindName >>= preInferred
@@ -201,9 +201,7 @@ inferBlock :: Int -> V.Vector P.FnDef -> Maybe (TCEnv s Expr) -> TCEnv s (Expr ,
 inferBlock liftNames letBindings inExpr = withLetNest $ \nest -> do
   newFreeVarEnv $ do
     use letBinds >>= \lvl -> V.thaw letBindings >>= MV.write lvl nest
-
     [0 .. V.length letBindings - 1] `forM_` \i -> judgeBind nest i (liftNames + i)
-
   ret <- fromMaybe (pure poisonExpr) inExpr
   lets <- use modBinds >>= \v -> V.freeze (MV.slice liftNames (V.length letBindings) v) -- freeze copies it
   pure (ret , lets)
@@ -247,15 +245,11 @@ inferF = let
    es = exprs <&> \(Core t _ty) -> t
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
- -- result of mixfix solves; IQVar, PExprApp
- -- These are IQNames !
- getIQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
-   then use topBindsMask >>= \topMask -> iNameToBindName topMask (unQName q) & \i -> getModBind 0 i i
+ -- result of mixfix solves; QVar, PExprApp
+ getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
+   then unQName q & \i -> getModBind 0 i i
    else use loadedMs <&> \ls -> readQIName ls (modName q) (unQName q)
      & fromMaybe (error (showRawQName q))
--- else use loadedMs <&> \ls -> case lookupBind ls (modName q) (unQName q) of
---   Just (BindOK _ e) -> e
---   x -> error (showRawQName q)
 
  in \case
   P.QuestionF -> pure $ Core Question tyBot
@@ -263,8 +257,8 @@ inferF = let
   -- letin Nothing = module / record, need to type it
   P.LetInF (P.Block _ _ lets) liftNames pInTT -> use topBindsCount >>= \tc ->
     inferBlock (tc + liftNames) lets (Just pInTT)
---  <&> \(Core t ty , lets) -> Core (Lets (intList2BitSet . toList $ lets <&> unQName . letName . fst) t) ty
     <&> \(Core t ty , _lets) -> Core t ty
+--  <&> \(Core t ty , lets) -> Core (Lets (intList2BitSet . toList $ lets <&> unQName . letName . fst) t) ty
   P.ProdF pFields -> let -- duplicate the field name to both terms and types
     mkCore (ts , tys) = Core (Prod ts) (TyGround [THTyCon (THProduct tys)])
     in fmap (mkCore . BSM.unzip . BSM.fromVec)
@@ -296,24 +290,23 @@ inferF = let
       in  Core (BruijnAbsTyped argCount term (alignWith alignArgs argMetas argTVars) retTy) fnTy
 
   P.AppF src fTT argsTT  -> fTT  >>= \f -> sequence argsTT >>= inferApp src f
-  P.PExprAppF src _prec q argsTT -> getIQBind q >>= \f -> sequence argsTT >>= inferApp src f
+  P.PExprAppF src _prec q argsTT -> getQBind q >>= \f -> sequence argsTT >>= inferApp src f
   P.RawExprF t -> t
   P.MixfixPoisonF t -> poisonExpr <$ (tmpFails .= []) <* (errors . mixfixFails %= (t:))
   P.MFExprF srcOff m -> let err = MixfixError srcOff ("Lone mixfix word: " <> show m)
     in poisonExpr <$ (tmpFails .= []) <* (errors . mixfixFails %= (err:))
-  P.IQVarF q -> getIQBind q
---P.QVarF q -> getIQBind q
+  P.IQVarF q -> getQBind q
+  P.QVarF q  -> getQBind q
 
   P.TupleIdxF qN tt -> tt >>= \(Core tuple tupleTy) -> freshBiSubs 1 >>= \[i] -> let
     expectedTy = TyGround [THTyCon $ THProduct (BSM.singleton qN (tyVar i))]
     in bisub tupleTy expectedTy <&> \cast ->
       let obj = TTLens tuple [qN] LensGet in Core (case cast of { BiEQ -> obj ; cast -> Cast cast obj }) (tyVar i)
   P.TTLensF o tt fieldsLocal maybeSet -> tt >>= \record -> use thisMod >>= \iM -> let
-    fields = qName2Key . mkQName iM <$> fieldsLocal -- readField ext <$> fieldsLocal
+    fields = qName2Key . mkQName iM <$> fieldsLocal
     recordTy = exprType record
     mkExpected :: Type -> Type
     mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton f ty)]) dest fields
---  mkExpected dest = foldr (\f ty -> TyGround [THTyCon $ THProduct (BSM.singleton f ty)]) dest fields
     in checkFails o =<< case record of
     Core object objTy -> case maybeSet of
       P.LensGet    -> freshBiSubs 1 >>= \[i] -> bisub recordTy (mkExpected (tyVar i)) <&> \cast ->
@@ -350,12 +343,23 @@ inferF = let
   P.QLabelF q -> {-sequence tts <&>-} pure (judgeLabel q [])
  -- sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
 
-  P.DataF alts  -> do
+  P.DataF liftedLetStart alts  -> do
     thisM <- use thisMod
-    tys <- sequence (alts <&> \(l , params) -> (qName2Key (mkQName thisM l) ,) <$> sequence params)
-    alts <- tys `forM` \(l , params) -> fmap ((l,) . tHeadToTy . THTyCon . THTuple . V.fromList)
-      $ params `forM` exprToTy
-    pure $ Core (Ty (TyGround [THTyCon (THSumTy (BSM.fromList alts))])) (TySet 0) -- max of universe in alts
+    modBinds' <- use modBinds
+    tc <- use topBindsCount
+    tys <- sequence (alts <&> \(l , params) -> ({-qName2Key (mkQName thisM l)-} l ,) <$> sequence params)
+    alts <- let
+      doAlt letName (lI , params) = do
+        altTy <- params `forM` exprToTy
+        let lm = LetMeta False qL (VQBindIndex (mkQName thisM letName)) (-1)
+            qL = mkQName thisM lI
+            l  = qName2Key qL
+            labTy = tHeadToTy $ THTyCon (THTuple (V.fromList altTy))
+            arrowTy = tHeadToTy $ THTyCon (THArrow altTy (tHeadToTy $ THTyCon $ THSumTy (BSM.singleton l labTy)))
+        MV.write modBinds' letName (lm , BindOK optInferred (Core (Label qL []) arrowTy))
+        pure (l , labTy)
+      in zipWithM doAlt [tc + liftedLetStart .. ] tys
+    pure $ Core (Ty (tHeadToTy $ THTyCon (THSumTy (BSM.fromList alts)))) (TySet 0) -- max of universe in alts
 
   -- TODO gadt must have a signature for the whole thing also!
 --P.GadtF alts -> do

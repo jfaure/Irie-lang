@@ -26,8 +26,12 @@ checkAtomic inferred gotTy = let
   (THExt i , t)  -> check (readExt i) (TyGround [t])
   (t , THExt i)  -> check (TyGround [t]) (readExt i)
   (THAlias q0 , THAlias q) | q0 == q -> pure True
-  (i , THAlias q) -> resolveTypeQName q >>= \g -> check (tHeadToTy i) g
-  (THAlias q , g) -> resolveTypeQName q >>= \i -> check i (tHeadToTy g)
+  (i , THAlias q) -> resolveTypeQName q >>= \case
+    TyGround [THAlias q2] | q2 == q -> pure False
+    g -> check (tHeadToTy i) g
+  (THAlias q , g) -> resolveTypeQName q >>= \case
+    TyGround [THAlias q2] | q2 == q -> pure False
+    i -> check i (tHeadToTy g)
 
   (THBound x , THBound y)     -> pure (x == y)
   (THMuBound x , THMuBound y) -> pure (x == y)
