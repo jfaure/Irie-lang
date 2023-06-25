@@ -8,7 +8,6 @@ import Errors (ScopeError , MixfixError , UnPatError , ScopeWarning)
 import Text.Megaparsec.Pos ( Pos , mkPos )
 import Control.Lens ( (^.), makeLenses )
 import Data.Functor.Foldable.TH (makeBaseFunctor)
-import qualified BitSetMap as BSM
 import qualified Data.Map.Strict as M ( Map )
 import qualified CoreSyn (Expr , Mixfixy)
 import qualified Data.Vector as V
@@ -17,15 +16,17 @@ type FName        = IName -- record  fields
 type LName        = IName -- sumtype labels
 type NameMap      = M.Map HName IName
 type SourceOffset = Int
+data PImport = POpen HName | PImport HName | POpenData IName [IName] deriving Show
+getImportFile = \case { POpen h -> Just h ; PImport h -> Just h ; _ -> Nothing }
 
 data Module = Module { -- Contents of a File (Module = Function : _ → Record | Record)
    _moduleName   :: HName   -- fileName
- , _imports      :: [HName] -- all imports used at any scope
+ , _imports      :: [PImport] -- all imports used at any scope
  , _bindings     :: V.Vector FnDef -- TT
  , _parseDetails :: ParseDetails
 }
 
-emptyParsedModule h = Module h [] mempty (ParseDetails mempty (0,mempty,mempty) 0 0 0 [] 0)
+emptyParsedModule h = Module h [] mempty (ParseDetails mempty (0,mempty,mempty) 0 0 0 [] 0 0)
 
 -- sz , rev list of (Int->HNames) and HName->IName. !NameMap may be smaller than the rev-list
 --  ; when INames are promoted to topNames, need to spawn a new IName so topBinds bitset works directly
@@ -34,19 +35,20 @@ type HNameMap = (Int , [HName] , NameMap)
 -- HNames and local scope
 data ParseDetails = ParseDetails {
    _hNameMFWords   :: M.Map HName [MFWord] -- keep count to handle overloads (bind & mfword)
--- , _hNameBinds     :: M.Map HName IName -- top-level and let-bound assignments TODO list is sufficient here
  , _hNamesToINames :: HNameMap -- INames (module-local HName equivalents)
  , _topINames      :: BitSet -- the fields of the module record
  , _fieldINames    :: BitSet
  , _labelINames    :: BitSet
  , _newLines       :: [Int]
  , _letBindCount   :: Int
+
+ , _thisBind       :: IName -- so data/gadt can mark themselves open
 }
 data FnDef = FnDef {
    _fnNm         :: HName -- TODO rm, isos with the fnIName given an IConv
  , _fnIName      :: IName
  , _fnRecType    :: !LetQual
- , _fnMixfixName :: Maybe MixfixDef -- rm (mixfixes are aliases)
+ , _fnMixfixName :: Maybe MixfixDef
  , _fnRhs        :: TT
  , _fnSrc        :: SourceOffset
 }
@@ -63,7 +65,7 @@ data DoStmt  = Sequence TT | Bind IName TT -- | Let
 data BruijnAbsF tt = BruijnAbsF
  { _nBound      :: Int
  , _bruijnMetas :: BruijnSubs
- , _bruijnNest  :: Int -- how many args bound above this level
+ , _bruijnLvl   :: Int -- how many args bound above this level
  , _bruijnBody  :: tt
  } deriving (Show , Functor , Foldable , Traversable)
 type BruijnAbs = BruijnAbsF TT
@@ -91,13 +93,13 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | TupleIdx FName TT -- clearer than directly TTLens
  | ArgProd TT -- argument; used only by UnPattern within case expressions
  | TTLens SourceOffset TT [FName] (LensOp TT)
- | Label  LName [TT]
+ | Label  LName [TT] -- parsed labels "@"
  | QLabel QName
+ | LabelDecl Int Int -- IName in this module + its let-offset
 
  | Guards (Maybe TT) [Guard] TT -- ko-branch (if open case above) , guards , rhs
  | GuardArgs [TT] TT -- Spawn fresh args and pattern-match according to [TT]. no KO branch to jump out of fails
  | FnEqns [TT]
- | Typed TT TT
 
  -- These negative-position TTs must be inverted first before solveScopes
  -- The newtypes hide this to allow interleaving UnPattern with solveScopes
@@ -106,7 +108,8 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | CasePat CaseSplits -- unsolved patterns
  | LambdaCase CaseSplits'
 
- | MatchB TT (BSM.BitSetMap TT) (Maybe TT) -- solved patterns UnPattern.patternsToCase
+-- | MatchB TT (BSM.BitSetMap TT) (Maybe TT) -- solved patterns UnPattern.patternsToCase
+ | MatchB TT [(Either (QName , Int) Int , TT)] (Maybe TT) -- solved patterns UnPattern.patternsToCase
 
  | List   [TT]
  | LetIn Block Int TT
@@ -120,8 +123,9 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  -- type primitives
  | TyListOf TT
- | Data Int [(LName , [TT])] -- lifted let start and Parameters
+ | Data [(LName , [TT])] -- lifted let start and Parameters
  | Gadt [(LName , TT)]       -- type signature (return type must be a subtype of the Gadt sig)
+ | Typed TT TT
 
  | DoStmts [DoStmt] -- '\n' stands for '*>' , 'pat <- x' stands for '>>= \pat =>'
 
@@ -158,11 +162,7 @@ makeLenses ''ParseState ; makeLenses ''ParseDetails ; makeLenses ''Module ; make
 makeBaseFunctor ''TT
 
 mkBruijnLam (BruijnAbsF 0 _       _    rhs) = rhs
-mkBruijnLam (BruijnAbsF n argSubs nest rhs) = case rhs of
---BruijnLam (BruijnAbsF n2 argSubs2 nest2 rhs2) -> d_ rhs $
---  if nest /= 0 || nest2 /= 0 then error "what is nest"
---  else mkBruijnLam (BruijnAbsF (n + n2) ((argSubs <&> \(i,b) -> (i , b + n2)) ++ argSubs2) 0 rhs2)
-  _ -> BruijnLam (BruijnAbsF n argSubs nest rhs)
+mkBruijnLam (BruijnAbsF n argSubs nest rhs) = BruijnLam (BruijnAbsF n argSubs nest rhs)
 
 showL ind = Prelude.concatMap $ (('\n' : ind) <>) . show
 prettyModule m = show (m^.moduleName) <> " {\n"

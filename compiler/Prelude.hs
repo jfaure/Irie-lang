@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo)
+ , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo , vecArgSort)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -19,6 +19,15 @@ import Data.These
 import Text.Printf
 import Control.Arrow ((|||) , (&&&) , (***) , (>>>) , (<<<))
 import Data.Functor.Foldable
+
+import Data.Ord (comparing)
+import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Algorithms.Intro as VAlgo
+
+vecArgSort :: (Ord a, VU.Unbox a) => VU.Vector a -> VU.Vector Int
+vecArgSort xs = VU.map fst $ VU.create $ do
+  xsi <- VU.thaw $ VU.indexed xs
+  xsi <$ VAlgo.sortBy (comparing snd) xsi
 
 type BitSet = Integer
 type String = [Char]
@@ -50,7 +59,7 @@ bitSet2IntList b = let
   idxs    = unfoldr (\b -> let c = count b in if c == 64 then Nothing else Just (c , clearBit b c)) <$> i64List
   in concat (zipWith (\off i -> map (+off) i) [0,64..] idxs)
 
-intList2BitSet :: [Int] -> Integer
+intList2BitSet :: Foldable t => t Int -> Integer
 intList2BitSet = foldl setBit 0
 
 argSort :: M.Map HName IName -> VU.Vector IName
@@ -96,6 +105,7 @@ hypoM f g = h where h = fmap f <<< traverse (pure . cata f ||| h) <=< g
 
 hyloM :: (Functor f , Monad m , Traversable f) => (f b -> b) -> (a -> m (f a)) -> a -> m b
 hyloM f g = h where h = fmap f <<< traverse h <=< g
+
 
 {-# INLINE imap #-}
 {-# INLINE anyM #-}

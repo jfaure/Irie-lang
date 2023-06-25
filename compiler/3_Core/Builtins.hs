@@ -30,7 +30,7 @@ getPrimTy nm = case primMap M.!? nm of
 primMap = M.fromList $ Prelude.imap (\i (nm,_val) -> (nm,i)) primTable
 primBinds :: V.Vector (HName , Expr) = V.fromList primTable
 
-primType2Type x = Core (Ty (TyGround [THPrim x])) (TySet 0)
+primType2Type x = Core (Ty (TyGround [THPrim x])) (tySet 0)
 
 primTable :: [(HName , Expr)]
 primTable = concat
@@ -39,7 +39,7 @@ primTable = concat
   , let tys2TyHead  (args , t) = TyGround $ mkTyArrow (TyGround . mkExtTy <$> args) (TyGround $ mkExtTy t) in
     (\(nm , (i , tys)) -> (nm , Core (Instr i) (tys2TyHead tys)))         <$> primInstrs
   , (\(nm , (i , t))   -> (nm , Core (Instr i) (TyGround t)))             <$> instrs
-  , [("Set" , Core (Ty (TySet 0)) (TySet 1))]
+  , [("Set" , Core (Ty (tySet 0)) (tySet 1))]
   , (\(nm , aTs , retT)   -> let
     ty = case aTs of
       []  -> tHeadToTy retT
@@ -53,7 +53,6 @@ primTable = concat
 mm256 = THPrim (X86Vec 256)
 mm128 = THPrim (X86Vec 128)
 primI32 = THPrim (PrimInt 32)
--- TODO ? '-' name is replaced by '-' in irie to avoid confusion with mixfixes
 x86Intrinsics =
   [ ("_mm256_abs_epi8"     , [mm256] , mm256)
   , ("_mm256_add_epi8"     , [mm256 , mm256] , mm256)

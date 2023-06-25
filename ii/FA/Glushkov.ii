@@ -50,11 +50,12 @@ NFA = record
 --   * states of D are accepting
 -- * linearisation means that a char may map to multiple states
 glushkov : Re -> NFA
--- compute pair (P , D , F). : Set Char -> Set Char -> Set 2xChar
+
+-- compute pair (P , D , F). : (Set Char , Set Char , Set 2xChar)
 -- Δ tracks if empty language or singleton language with empty word
 -- /0 = empty language , matches nothing
 -- ε singleton language containing empty word, matches only ""
-cataF = \case
+getCharSetsF = \case
   Char c -> ([c] , [d] , [])
 --NotChar c -> _
 --And (p,d,f) (p1,d1,f1) ->

@@ -5,6 +5,11 @@ import prelude
 --  Skip r
 --  Yield a r
 
+listF f = \case
+  Done => Done
+  Yield x r => Yield x (f r)
+  Skip r => Skip (f r)
+
 tailRecurse fn = (identity ||| tailRecurse fn) << fn
 
 Sfuse next (@stream n0 s0) = @stream (next << n0) s0

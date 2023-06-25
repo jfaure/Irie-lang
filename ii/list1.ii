@@ -1,8 +1,8 @@
 import prelude
 
 --List A = data
---  Nil
---  Cons A (List A)
+-- @Nil
+-- @Cons A (List A)
 --Str = List Char
 
 length = foldr (\a b => b + 1) 0
@@ -13,34 +13,34 @@ printList l = case l of
   @Cons i ll => add (putNumber i) (printList ll)
 
 -- scansum: muroll & type intersection simplification
-scanSum n l = if n <? 0 then l else scanSum (sub n 1) (Cons n l)
+scanSum n l = if n <? 0 then l else scanSum (sub n 1) (@Cons n l)
 
 take n xs = if n <=? 0 then @Nil else case xs of
   @Nil => @Nil
   @Cons x xs => @Cons x (take (n - 1) xs)
 
 takeWhile p = \case
-  Nil => Nil
-  Cons x xs => if p x then Cons x (takeWhile p xs) else Nil
+ @Nil =>@Nil
+ @Cons x xs => if p x then@Cons x (takeWhile p xs) else@Nil
 
--- At some point irie inferred: ∏ A B → %i32 → (µa.[Nil | Cons {⊤ , a}] ⊓ B) → ([Nil] ⊔ B)
+-- At some point irie inferred: ∏ A B → %i32 → (µa.[Nil |@Cons {⊤ , a}] ⊓ B) → ([Nil] ⊔ B)
 drop n xs = if n <=? 0 then xs else case xs of
-  Nil => Nil
-  Cons x ys => drop (n - 1) ys
+ @Nil =>@Nil
+ @Cons x ys => drop (n - 1) ys
 
 null l = case l of
-  Cons x xs => 0
-  Nil       => 1
+ @Cons x xs => 0
+ @Nil       => 1
 
-singleton x = Cons x Nil
+singleton x =@Cons x@Nil
 
-repeat x = let xss = Cons x xss in xss
+repeat x = let xss =@Cons x xss in xss
 
--- can produce different types depending on Nil case
+-- can produce different types depending on@Nil case
 -- Int -> [a] -> ([a] , [a])
 --splitAt n xs = if n <=? 0 then { l = @Nil , r = xs } else case xs of
---  @Nil =>  { l = Nil , r = Nil } -- { l = xs , r = xs }
---  @Cons x xs => let z = splitAt (n - 1) xs in { l = Cons x z.l , r = z.r }
+--  @Nil =>  { l =@Nil , r =@Nil } -- { l = xs , r = xs }
+--  @Cons x xs => let z = splitAt (n - 1) xs in { l =@Cons x z.l , r = z.r }
 
 splitAt n xs = if n <=? 0 then (@Nil , xs) else case xs of
   @Cons x xs => splitAt (n - 1) xs > \(l , r) => ( @Cons x l , r )
@@ -51,96 +51,96 @@ splitAt n xs = if n <=? 0 then (@Nil , xs) else case xs of
 span p xs = case xs of
   @Nil => { l = xs , r = xs }
 
-  @Cons x xs2 => if p x then (span p xs2 > \s => { l = Cons x s . l , r = s . r }) else { l = Nil , r = xs }
+  @Cons x xs2 => if p x then (span p xs2 > \s => { l =@Cons x s . l , r = s . r }) else { l =@Nil , r = xs }
   -- TODO something wrong with let-in
---@Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s . l , r = s . r }) else { l = Nil , r = xs }
+--@Cons x xs2 => if p x then (let s = span p xs2 in { l =@Cons x s . l , r = s . r }) else { l =@Nil , r = xs }
 
 foldr f s l = case l of
-  Cons x xs => f x (foldr f s xs)
-  Nil       => s
+ @Cons x xs => f x (foldr f s xs)
+ @Nil       => s
 
 foldl f s l = case l of
-  Cons x xs => foldl f (f s x) xs
-  Nil => s
+ @Cons x xs => foldl f (f s x) xs
+ @Nil => s
 
-append front back = foldr Cons back front
+append front back = foldr@Cons back front
 _++_ = append
-concat = foldr (append) Nil
--- n = Cons '\n' Nil
-consF f x xs = Cons (f x) xs
-mapFold f l = foldr (consF f) Nil l -- simple muroll test case
+concat = foldr (append)@Nil
+-- n =@Cons '\n'@Nil
+consF f x xs =@Cons (f x) xs
+mapFold f l = foldr (consF f)@Nil l -- simple muroll test case
 map = mapFold
-concatMap f xs = foldr (\x b => foldr Cons b (f x)) Nil xs
---unlines ls = concat (mapFold (\l => append l (c '\n' Nil)) ls)
-unlines = concatMap (\l => append l (Cons '\n' Nil))
+concatMap f xs = foldr (\x b => foldr@Cons b (f x))@Nil xs
+--unlines ls = concat (mapFold (\l => append l (c '\n'@Nil)) ls)
+unlines = concatMap (\l => append l (@Cons '\n'@Nil))
 
 unfoldr f b0 = case f b0 of
---Just ({ val as a , seed as b1 }) => Cons a (unfoldr f b1)
+--Just ({ val as a , seed as b1 }) =>@Cons a (unfoldr f b1)
   @Just r   => @Cons  r . val (unfoldr f r . seed)
   @Nothing  => @Nil
 
 filter pred l = case l of
-  Nil => Nil
-  Cons x xs => if pred x then Cons x (filter pred xs) else filter pred xs
+ @Nil =>@Nil
+ @Cons x xs => if pred x then@Cons x (filter pred xs) else filter pred xs
 
 {-
 -- String conversion
 fromCString str = let
-  go (ok , val , str2) = if ok then Cons val (go (nextElem str2)) else Nil
+  go (ok , val , str2) = if ok then@Cons val (go (nextElem str2)) else@Nil
   in go (nextElem str)
 
 --toCString str = let
 -- unravel seed = case seed of
---   Nil       => (False , ? , ?)
---   Cons x xs => (True , x , xs)
+--  @Nil       => (False , ? , ?)
+--  @Cons x xs => (True , x , xs)
 -- in unfoldArray unravel str
 
 -- Note. type was:
--- ∏ A B → (A → [!False | !True]) → µb.[Nil | Cons {A , b}]
---      → { l : µb.[Nil | Cons {A , b}]
---        , r : µb.[Nil | Cons {A , b}]}
--- ∏ A B → (A → [!False | !True]) → µb.[Nil | Cons {A , b}] → {l : b , r : b}
+-- ∏ A B → (A → [!False | !True]) → µb.[Nil |@Cons {A , b}]
+--      → { l : µb.[Nil |@Cons {A , b}]
+--        , r : µb.[Nil |@Cons {A , b}]}
+-- ∏ A B → (A → [!False | !True]) → µb.[Nil |@Cons {A , b}] → {l : b , r : b}
 -- TODO Should we copy the μ-type ?
 span p xs = case xs of
-  Nil => { l = xs , r = xs }
-  Cons x xs2 => if p x then (let s = span p xs2 in { l = Cons x s.l , r = s.r }) else { l = Nil , r = xs }
+ @Nil => { l = xs , r = xs }
+ @Cons x xs2 => if p x then (let s = span p xs2 in { l =@Cons x s.l , r = s.r }) else { l =@Nil , r = xs }
 -}
 
-reverse = foldl (\x xs => Cons xs x) Nil
+reverse = foldl (\x xs =>@Cons xs x)@Nil
 
-scanl f q ls = (Cons q) case ls of
-  @Nil => Nil
+scanl f q ls = (@Cons q) case ls of
+  @Nil =>@Nil
   @Cons x xs => scanl f (f q x) xs
 
 enumFromTo a b = if a >? b then @Nil else @Cons a (enumFromTo (1 + a) b)
 
 --nubBy eq l = let
 --  nub l xs = case l of
---    Nil => Nil
---    Cons y ys => if elemBy eq y xs then nub ys xs else Cons y (nub ys (Cons y xs))
---  in nub l Nil
+--   @Nil =>@Nil
+--   @Cons y ys => if elemBy eq y xs then nub ys xs else@Cons y (nub ys (@Cons y xs))
+--  in nub l@Nil
 
 elemBy eq y = \case
-  Nil => True
-  Cons x xs => boolOR (eq x y) (elemBy eq y xs)
+ @Nil => True
+ @Cons x xs => boolOR (eq x y) (elemBy eq y xs)
 
 {-
-groupBy _ Nil = Nil
-groupBy eq (Cons x xs) = let
+groupBy _@Nil =@Nil
+groupBy eq (@Cons x xs) = let
   (ys , zs) = span (eq x) xs
-  in Cons (Cons x ys) (groupBy eq zs)
+  in@Cons (@Cons x ys) (groupBy eq zs)
 -}
 
 -- -- partition a list into sequence of intervals starting at the 1s in the boolean fretlist
 --partition fretsList = case fretsList of
---  Nil => Nil
---  Cons x xs => if x.fret then Cons
+-- @Nil =>@Nil
+-- @Cons x xs => if x.fret then@Cons
 
 
 -- go sep l = case l of
---   Nil => Nil
---   Cons x xs => Cons sep (Cons x xs)
+--  @Nil =>@Nil
+--  @Cons x xs =>@Cons sep (@Cons x xs)
 --
 -- intersperse sep l = case l of
---   Nil => Nil
---   Cons x xs => Cons x (go sep xs)
+--  @Nil =>@Nil
+--  @Cons x xs =>@Cons x (go sep xs)

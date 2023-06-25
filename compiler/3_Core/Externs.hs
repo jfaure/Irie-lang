@@ -70,8 +70,8 @@ builtinRegistry = let
 --readLabel {-, readField-} :: Externs -> IName -> QName
 --readLabel exts l = if l < 0 then mkQName 0 (-1 - l) else exts.importLabels V.! l
 
-readQIName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
-readQIName curMods modNm iNm = let
+readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
+readQName curMods modNm iNm = let
   readJudgedBind :: JudgedModule -> IName -> Expr
   readJudgedBind m iNm = snd (m.moduleTT V.! iNm) & bindToExpr
   in case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
@@ -79,7 +79,7 @@ readQIName curMods modNm iNm = let
     -- vv don't like this
     then mkQName modNm iNm & \qNameL -> Core (Label qNameL [])
       (tHeadToTy $ THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) (TyGround [THTyCon $ THTuple mempty]))
-    else (readJudgedBind jm iNm) & \(Core _t ty) -> Core (Var (VQBindIndex (mkQName modNm iNm))) ty
+    else readJudgedBind jm iNm -- & \(Core _t ty) -> Core (Var (VQBindIndex (mkQName modNm iNm))) ty
   _ -> Nothing
 
 lookupIName = lookupJM jmINames -- labelNames
@@ -133,7 +133,7 @@ resolveNames reg modIName p iNamesV = let
   topINames    = pd ^. P.topINames
   labelINames  = pd ^. P.labelINames
   fieldINames  = pd ^. P.fieldINames
-  exposedINames = topINames .|. labelINames .|. fieldINames
+  exposedINames = topINames .|. {-labelINames .|.-} fieldINames
   mfResolver = M.unionWith IM.union reg._globalMixfixWords $ M.unionsWith IM.union $
     zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> (pd ^. P.hNameMFWords)]
 
@@ -160,7 +160,7 @@ resolveNames reg modIName p iNamesV = let
        Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
        x -> Imported 0 x -- inline builtins
      | True -> case if modNm == modIName then Just labelINames else lookupLabelBitSet reg._loadedModules modNm of
-       Just ls | testBit ls iNm -> ImportLabel (mkQName modNm iNm)
+--     Just ls | testBit ls iNm -> ImportLabel (mkQName modNm iNm)
        _ -> if modNm == modIName then ForwardRef iNm
          else case getTopINames modNm of
          Just top -> Importable modNm (iNameToBindName top iNm)

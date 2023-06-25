@@ -1,0 +1,4 @@
+Choice = data
+  S1 Int
+
+unS1 = \case { S1 x => x }

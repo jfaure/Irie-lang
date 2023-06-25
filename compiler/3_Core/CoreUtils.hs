@@ -38,12 +38,10 @@ isPoisonExpr :: Expr -> Bool = (\case { Core (Poison{}) _ -> True ; _ -> False }
 mapTHeads fn = \case
   TyVarsF vs g -> TyVarsF vs (fn <$> g)
   TyGroundF g  -> TyGroundF  (fn <$> g)
-  x -> x
 
 mapTHeads' fn = \case
   TyVars vs g -> TyVars vs (fn <$> g)
   TyGround g  -> TyGround  (fn <$> g)
-  x -> x
 
 hasMu = partitionType >>> \(_ , gs) -> hasMuTHead gs
 hasMuTHead = find (\case { THMuBound{} -> True ; _ -> False})
@@ -54,10 +52,6 @@ partitionType :: Type -> (BitSet , GroundType)
 partitionType = \case
   TyVars vs g -> (vs , g)
   TyGround g  -> (0  , g)
-  TySet _n    -> (0 , [])
---pi@TyPi{}   -> (0 , [pi]) -- TODO ok?
---TyIndexed{} -> _
-  t -> error $ show t
 
 tyLatticeEmpty pos = \case
   TyGround [] -> TyGround [if pos then THBot else THTop] -- pure ty
@@ -104,7 +98,7 @@ isTyCon = \case
 -- expr2Ty :: _ -> Expr -> TCEnv s Type
 -- Expression is a type (eg. untyped lambda calculus is both a valid term and type)
 expr2Ty e = case e of
- Core (Ty x) (TySet _n) -> pure x
+ Core (Ty x) _TySet -> pure x
  x -> error $ "raw term cannot be a type: " ++ show x
 
 ------------------------
@@ -156,6 +150,7 @@ mergeTyHead pos t1 t2 = --(\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ " 
   in case join of
   [THTop , THTop] -> [THTop]
   [THBot , THBot] -> [THBot]
+  [THSet l , THSet k] -> [THSet (max l k)]
   [THAlias q , THAlias q0] | q == q0 -> [THAlias q]
   [THPrim a , THPrim b]  -> if a == b then [t1] else case (a,b) of
 --  (PrimInt x , PrimInt y) -> [THPrim $ PrimInt $ max x y]
@@ -213,13 +208,11 @@ mergeTypeGroundType pos a b = mergeTypes pos a (TyGround b)
 mergeTVar v = \case
   TyVars ws g -> TyVars (ws `setBit` v) g
   TyGround g  -> TyVars (0  `setBit` v) g
-  TySet n     -> error $ "TODO: Set " <> show n -- TODO
 mergeTypes pos a b = {-d_ (a , b) $-} mergeTypes' pos a b
 mergeTypes' pos (TyGround a) (TyGround b)     = TyGround (mergeTyUnions pos a b)
 mergeTypes' pos (TyVars vs g1) (TyVars ws g2) = TyVars (vs .|. ws) (mergeTyUnions pos g1 g2)
 mergeTypes' pos (TyVars vs g1) (TyGround g2)  = TyVars vs (mergeTyUnions pos g1 g2)
 mergeTypes' pos (TyGround g1) (TyVars vs g2)  = TyVars vs (mergeTyUnions pos g1 g2)
-mergeTypes' pos a b = error $ "attempt to merge weird types at " <> if pos then "+" else "-" <> ": " <> show (a , b)
 
 -- TODO check at the same time if this did anything
 mergeTysNoop :: Bool -> Type -> Type -> Maybe Type = \pos a b -> Just $ mergeTypes pos a b

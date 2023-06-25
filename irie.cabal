@@ -36,6 +36,9 @@ executable irie-exe
     , base hiding (Prelude)
   main-is: Main.hs
   other-modules:
+      X86
+      Elf
+      CMMap
       Registry
       Scope
       BitSetMap
@@ -78,6 +81,8 @@ executable irie-exe
       compiler/4_ASM/
       compiler/5_Backends/
   default-extensions:
+      NumericUnderscores
+      BinaryLiterals
       StrictData
       LambdaCase
       EmptyCase
@@ -130,6 +135,7 @@ executable irie-exe
     , binary
     , vector
     , vector-binary-instances
+    , vector-algorithms
     , raw-strings-qq
     , sydtest
     , temporary
@@ -147,7 +153,11 @@ executable irie-exe
     , filelock
     , repline
     , edit-distance
---  , fused-effects
+    , process
+    , mmap
+    , derive-storable
+    , derive-storable-plugin
+    , split
   default-language: Haskell2010
 
 --test-suite irie-test

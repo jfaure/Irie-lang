@@ -67,7 +67,7 @@ resolveQIndex :: forall s. QName -> TCEnv s Expr
 resolveQIndex q = use thisMod >>= \mI -> if modName q == mI
   then use modBinds >>= \mBinds -> MV.read mBinds (unQName q) <&> \(_lm , BindOK _ e) -> e
   else use loadedMs <&> \lBinds -> fromMaybe _ -- (Core (Var (VQBindIndex q)) tyBot)
-    (readQIName lBinds (modName q) (unQName q))
+    (readQName lBinds (modName q) (unQName q))
 
 termToTy :: Term -> TCEnv s Type
 termToTy = let

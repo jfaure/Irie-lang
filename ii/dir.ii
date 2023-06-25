@@ -1,0 +1,31 @@
+import stream
+
+-- lessons: Need to allow less general type ascriptions
+-- else legit but unweildy types..
+-- [DocCat {[DocStr {A}] , µd.[DocCat {C , d} | DocEmpty]}]
+
+--Doc r = data
+--  DocEmpty
+--  DocStr CString
+--  DocCat r r
+
+cat c c2 = @DocCat c c2
+
+-- TODO: flatDoc, unroll a string from a tree using explicit stack
+
+--ana g = embed << fmap (ana g) << g
+--cata f = f << fmap (cata f) << project
+hylo fmap f g = f << fmap (hylo fmap f g) << g
+
+-- Dir* -> ListF String Dir*
+nextDirEnt = readdir >> \(ok , nextDirp , name) =>
+  if ok then Yield name nextDirp else Done
+lsF = \case { Yield name r => r + puts name ; Skip r => r ; Done => 0 }
+ls = hylo listF lsF nextDirEnt
+
+-- Need map on Streams, so trivially: TreeF (Stream a) r -> TreeF (Stream b) r
+--FileName -> NodeF FileName (Stream FileName)
+treeFmap f (NodeF root s) = NodeF root (map f s)
+nextTree root = @NodeF root (stream nextDirEnt (opendir root))
+treeCat (NodeF root s) = cat (@DocStr root) (Sfoldr cat @DocEmpty s)
+tree root = hylo treeFmap treeCat nextTree root

@@ -192,11 +192,11 @@ addMixfixWords m mfdef = let
     _ -> fail "panic: internal parse error with mixfixes"
 
 pImport = choice
- [ reserved "import"  <* (iden >>= addImport)
- , reserved "imports" <* some (iden >>= addImport)
- , reserved "open"    <* (iden >>= addImport)
- , reserved "opens"   <* some (iden >>= addImport)
- , reserved "use"     <* (iden >>= addImport)
+ [ reserved "import"  <* (iden <&> PImport >>= addImport)
+ , reserved "imports" <* some (iden <&> PImport >>= addImport)
+ , reserved "open"    <* (iden <&> POpen >>= addImport)
+ , reserved "opens"   <* some (iden <&> POpen >>= addImport)
+-- , reserved "use"     <* (iden >>= addImport)
  ]
 
 parseBinds :: Bool -> Parser (V.Vector FnDef)
@@ -225,6 +225,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
   in option Nothing $ getOffset >>= \srcOff -> optional (reserved "rec") *> lexeme pMixfixWords >>= \case
     [Just nm] -> let pArgs = many (lexeme singlePattern) in do
       iNm <- if isTop then addTopName nm else addName nm
+      moduleWIP . parseDetails . thisBind .= iNm
       sig <- optional (tyAnn <* try (endLine *> scn *> pName nm))
       rhsTT <- mkFnEqns <$> pEqns pArgs (pName nm *> pArgs)
       let rhs = maybe rhsTT (Typed rhsTT) sig
@@ -237,6 +238,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       in mdo -- for mfdef
       let mfDef = MixfixDef iNm mfDefINames prec
       iNm  <- if isTop then addTopName nm else addName nm -- <* when isTop (void $ addTopName nm)
+      moduleWIP . parseDetails . thisBind .= iNm
       prec <- fromMaybe defaultPrec <$> optional (braces parsePrec)
       mfDefINames <- addMixfixWords mfDefHNames mfDef
       sig <- optional (tyAnn <* try (endLine *> scn *> pName nm))
@@ -299,8 +301,10 @@ tt :: Parser TT
   pData = do
     let labelDecl = (,) <$> (iden >>= newSLabel) <*> many arg
     alts <- pIndentedItems labelDecl (fail "")
-    liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= length alts
-    pure (Data liftLetStart alts)
+    let altINames = alts <&> \(l , _) -> l
+--  liftLetStart <- moduleWIP . parseDetails . letBindCount <<+= length alts
+    use (moduleWIP . parseDetails . thisBind) >>= \this -> addImport (POpenData this{-liftLetStart-} altINames)
+    pure (Data alts)
 
 -- , brackets tt <&> TyListOf
   pGadt = Gadt <$> let -- vec : (n : Nat) ~> Vector n x = gadt

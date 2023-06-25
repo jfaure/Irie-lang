@@ -1,21 +1,19 @@
 # Libs Lens List Eff BitSet ; DFA NFA glushkov Charscan
-# captures inside inExprs are inacurrate (They are a pdep of their freeVars)!
-# open modules / records (qualify names on it?)
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
+  * mkSimd + maybe version, attempt to convert functions to parallel version
+  * prevent β-env loops
   * Add let-capture tests
   * module import-sig (will help with mutual modules)
   * subtypes: Identity Iso "a <: Identity a" "Identity a <: a" & typeClass dict "{ ret : A } <: A"
   * leaf bicasts ; subtype tycon trees (traversals)
   * Case call stream.next to recover nice syntax (? subtype @stream to open top layer)
-  * WrappedSimpleMutual.g1 should not have polymorphic type (mutual generalistation bug)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * generalise all lambda types (unless inlineable?) + check not-recursive (avoid inf β-reduction eg. Y-comb)
-  * label/constant name-conv: importing new labels can break code: eg. f a = _ ; then import an 'a' label
   * edit-distance
 ## New primitives + Syntax
   * '.' , reservedChar for "r.f" , but want ".&." , ".." names => reserve '.' but words can start with "."?
   * ~> = implicit arg: A ~> A -> A ; ~ for app of implicit: "identity ~Int 3"
-  * quantify over fields / labels (dependent type)
+  * quantify over presences in fields / labels
      decomp : Label A -> [A _ | ..] -> ([A _] , [..])
   * record type syntax: { x = Int , y } -- indicates y = ? (only makes sense as a type, but legal syntax)
   * record union (| : |) , difference (\\ : \\)

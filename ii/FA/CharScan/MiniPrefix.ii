@@ -24,7 +24,7 @@ MiniScanner = record
 --scanMini : 16x8 -> (32x8 , 32x8) -> i32
 -- 4 instrs (insertf128 is slow though)
 scanMini 16Bytes (catPatterns , patShuf) = _mm256_movemask_epi8
-  (_mm256_cmpeq_epi8 catPatterns
+  (_mm256_cmpeq_epi8 catPatterns -- cmpgt? , sub?
     (_mm256_shuffle_epi8 (_mm256_insertf128_si256 (_mm256_castsi128_si256 16Bytes) 16Bytes 1) patShuf))
   -- copy prefixes of len P.i from 16byte input for direct cmp with catPatterns
 

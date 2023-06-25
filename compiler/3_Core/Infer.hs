@@ -16,26 +16,19 @@ import Control.Lens
 import Data.Functor.Foldable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import qualified BitSetMap as BSM -- ( toList, fromList, fromVec, fromListWith, singleton, unzip )
+import qualified BitSetMap as BSM ( (!?), fromList, fromVec, singleton, unzip )
 
---addBind :: Expr -> P.FnDef -> Expr
---addBind jm newDef = jm
-
--- lift lets:
--- 1. rm LetIn Nothing
--- 2. read/write everything to modBinds vec isntead of letBinds/letNest
--- 3. rm VLetNames: mkQName thisMod (translate name)
--- ? mutu
 judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (ModuleBinds , Errors)
 judgeModule pm importedModules modIName exts loaded = let
   letCount = pm ^. P.parseDetails . P.letBindCount
   binds = pm ^. P.bindings
   topBindsCount = V.length binds
-  scopeParams' = Scope.initModParams importedModules emptyBitSet (toList (binds <&> (^. P.fnIName))) -- TODO Rm toList
+  modOpens = pm ^. P.imports
+  scopeParams' = Scope.initModParams letCount modOpens importedModules (binds <&> (^. P.fnIName))
   -- sadly have to dup codepath for this warning: letBinds vectors stops the hylo (infer cata must setup some things)
   warnTopDups :: forall s. TCEnv s ()
   warnTopDups = let topDups = Scope.findDups (binds <&> (^. P.fnIName))
-    in when (topDups /= 0) ((\e -> errors . scopeFails %= (e:)) $ LetConflict modIName topDups)
+    in when (topDups /= 0) ((\e -> errors . scopeFails %= (e:)) (LetConflict modIName topDups))
   inferModule :: TCEnv s ModuleBinds
   inferModule = inferBlock 0 binds Nothing >>= \(_inExpr , _lets) -> use modBinds >>= V.freeze
   in runST $ do
@@ -75,7 +68,7 @@ judgeBind letDepth bindINm modBindName = use modBinds >>= \modBinds' -> use this
   preInferred :: (LetMeta , Bind) -> TCEnv s Expr
   preInferred (lm , bind) = let noop t = Core (Var (letBindIndex lm)) t
     in case bind of
-    BindOK _ e  -> pure (noop (exprType e))
+    BindOK _ e  -> pure e -- pure (noop (exprType e))
     BindRenameCaptures _ _ e -> pure (noop (exprType e))
     Guard tvar -> (cyclicDeps %= (`setBit` modBindName)) $> Core (Captures (letBindIndex lm)) (tyVar tvar)
     Mutu _ _ tvar -> (cyclicDeps %= (`setBit` modBindName)) $> Core (Captures (letBindIndex lm)) (tyVar tvar)
@@ -151,7 +144,8 @@ genExpr modBindName lm term freeVarCopies (atLen , freeVars) tvarIdx = use modBi
     bind = if freeVars == 0
     then BindOK optInferred rawRetExpr
     else BindRenameCaptures atLen freeVars rawRetExpr -- Recursive binds need their free-env backpatched in
-  in noInlineExpr <$ MV.write modBinds' modBindName (lm , bind)
+--in noInlineExpr <$ MV.write modBinds' modBindName (lm , bind)
+  in rawRetExpr <$ MV.write modBinds' modBindName (lm , bind)
 
 -- judgeBind then uninline and add + biunify any captured arguments
 getModBind letNest letName modBindName = do
@@ -246,9 +240,10 @@ inferF = let
    in Core (Label qNameL es) (TyGround [THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) labTy])
 
  -- result of mixfix solves; QVar, PExprApp
+ getQBind :: QName -> TCEnv s Expr
  getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
    then unQName q & \i -> getModBind 0 i i
-   else use loadedMs <&> \ls -> readQIName ls (modName q) (unQName q)
+   else use loadedMs <&> \ls -> readQName ls (modName q) (unQName q)
      & fromMaybe (error (showRawQName q))
 
  in \case
@@ -343,23 +338,12 @@ inferF = let
   P.QLabelF q -> {-sequence tts <&>-} pure (judgeLabel q [])
  -- sumTy = THSumTy (BSM.singleton (qName2Key q) (TyGround [THTyCon $ THTuple mempty]))
 
-  P.DataF liftedLetStart alts  -> do
+  P.DataF alts -> do
     thisM <- use thisMod
-    modBinds' <- use modBinds
-    tc <- use topBindsCount
     tys <- sequence (alts <&> \(l , params) -> ({-qName2Key (mkQName thisM l)-} l ,) <$> sequence params)
-    alts <- let
-      doAlt letName (lI , params) = do
-        altTy <- params `forM` exprToTy
-        let lm = LetMeta False qL (VQBindIndex (mkQName thisM letName)) (-1)
-            qL = mkQName thisM lI
-            l  = qName2Key qL
-            labTy = tHeadToTy $ THTyCon (THTuple (V.fromList altTy))
-            arrowTy = tHeadToTy $ THTyCon (THArrow altTy (tHeadToTy $ THTyCon $ THSumTy (BSM.singleton l labTy)))
-        MV.write modBinds' letName (lm , BindOK optInferred (Core (Label qL []) arrowTy))
-        pure (l , labTy)
-      in zipWithM doAlt [tc + liftedLetStart .. ] tys
-    pure $ Core (Ty (tHeadToTy $ THTyCon (THSumTy (BSM.fromList alts)))) (TySet 0) -- max of universe in alts
+    alts <- tys `forM` \(lI , params) -> (params `forM` exprToTy) <&> \altTy ->
+      (qName2Key (mkQName thisM lI) , tHeadToTy $ THTyCon (THTuple (V.fromList altTy)))
+    pure $ Core (Ty (tHeadToTy $ THTyCon (THSumTy (BSM.fromList alts)))) (tySet 0) -- max of universe in alts
 
   -- TODO gadt must have a signature for the whole thing also!
 --P.GadtF alts -> do
@@ -368,28 +352,39 @@ inferF = let
 --    pure (l , TyGround [THTyCon $ THTuple $ V.fromList params])
 --  pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
 
-  P.MatchBF pscrut caseSplits catchAll -> pscrut >>= \(Core scrut gotScrutTy) -> do
-    let convAbs :: Expr -> (Term , Type) = \(Core t ty) -> (t , ty)
-    (labels , elems) <- sequenceA caseSplits <&> unzip . BSM.toList . fmap convAbs
-    def <- sequenceA catchAll <&> fmap convAbs
-    let (alts , _rawAltTs) = unzip elems
-        branchTys = elems <&> \case
-          (BruijnAbsTyped _ _ _ retTy , _) -> retTy -- alts are functions of their label params
-          (_ , ty) -> ty
-        retTy  = mergeTypeList False $ maybe branchTys ((: branchTys) . snd) def -- ? TODO why negative merge
-        altTys = alts <&> \case
-          BruijnAbsTyped _ _t ars _retTy -> TyGround [THTyCon $ THTuple (V.fromList $ snd <$> ars)]
-          _x -> TyGround [THTyCon $ THTuple mempty]
-        scrutSum = BSM.fromList (zip labels altTys)
-        scrutTy  = TyGround [THTyCon $ if isJust def then THSumOpen scrutSum else THSumTy scrutSum]
-        matchTy = TyGround (mkTyArrow [scrutTy] retTy)
-    (b , retT) <- biUnifyApp matchTy [gotScrutTy]
-    case b of { BiEQ -> pure () ; _ -> error "expected bieq" }
-    pure $ Core (CaseB scrut retT (BSM.fromList (zip labels alts)) (fst <$> def)) retT
+  -- Convert a declared label to a function TODO this is not pretty, should improve collecting labels from a data decl
+  P.LabelDeclF l iNm -> use thisMod >>= \thisM -> getModBind 0 0 iNm >>= \(Core term _ty) -> case term of
+    Ty (TyGround [THTyCon (THSumTy ts)]) | qL <- mkQName thisM l
+      , Just labTy@(TyGround [THTyCon (THTuple paramTys)]) <- ts BSM.!? qName2Key qL -> pure $
+         -- Term label apps are extensible
+         Core (Label qL []) (tHeadToTy $ THTyCon (THArrow (V.toList paramTys) labTy))
 
-  P.TypedF t ty    -> t >>= \(Core term gotT) -> ty >>= exprToTy >>= \annTy ->
-    use blen >>= \bl -> use bis >>= \bis' -> lift (generalise bl bis' gotT)
-      -- Need to clear all tvars
+  P.MatchBF mkScrut caseSplits catchAll -> mkScrut >>= \(Core scrut gotScrutTy) -> do
+    (branches , rhsTys) <- fmap unzip $ caseSplits `forM` \(pat , mkRhs) -> do
+      Core rhs rawRhsTy <- mkRhs
+      let rhsTy = case rhs of { BruijnAbsTyped _ _ _ rT -> rT ; _ -> rawRhsTy }
+          altFnTy = case rhs of
+            BruijnAbsTyped _ _t ars _retT -> tHeadToTy (THTyCon $ THTuple (V.fromList $ snd <$> ars))
+            _ -> tHeadToTy (THTyCon (THTuple mempty))
+      (l , patTy) <- case pat of -- Either infer whatever the rhs function expects, or use the sumtype declaration
+        Right l -> pure (l , altFnTy)
+        Left  (l , iNm) -> getModBind 0 0 iNm >>= \(Core term _ty) -> case term of
+          Ty (TyGround [THTyCon (THSumTy ts)])
+            -- vv Biunify the rhs function and the expected label type
+            | qL <- qName2Key l , Just t <- ts BSM.!? qL -> (qL , t) <$ bisub t altFnTy
+          x -> error $ show x
+      pure ((l , (rhs , patTy)) , rhsTy)
+    def <- sequenceA catchAll
+    -- mvp: 2 bitsetmaps, for rhs and types
+    let (alts , altTys) = BSM.unzip (BSM.fromList branches)
+        retTy   = mergeTypeList False $ maybe rhsTys ((: rhsTys) . exprType) def -- ? TODO why negative merge
+        scrutTy = TyGround [THTyCon $ if isJust def then THSumOpen altTys else THSumTy altTys]
+    (b , matchTy) <- biUnifyApp (TyGround (mkTyArrow [scrutTy] retTy)) [gotScrutTy]
+    case b of { BiEQ -> pure () ; CastApp [BiEQ] Nothing BiEQ -> pure () ; c -> error $ "expected bieq; " <> show c }
+    pure $ Core (CaseB scrut matchTy alts (exprTerm <$> def)) matchTy
+
+  P.TypedF t ty -> t >>= \(Core term gotT) -> ty >>= exprToTy >>= \annTy ->
+    generaliseType gotT
       >>= \genGotTy -> Core term <$> checkAnnotation genGotTy annTy
   P.InlineExprF e -> pure e
   P.LitF l        -> pure $ Core (Lit l) (TyGround [typeOfLit l])
@@ -402,3 +397,6 @@ inferF = let
   P.ForeignF{} {- isVA i tt-} -> error "not ready for foreign"
 --  tt <&> \(Core _ttExpr ty) -> Core (Var (VForeign i)) ty
   x -> error $ "not implemented: inference of: " <> show (embed $ P.WildCard <$ x)
+
+generaliseType :: Type -> TCEnv s Type
+generaliseType ty = use blen >>= \bl -> use bis >>= \bis' -> lift (generalise bl bis' ty)

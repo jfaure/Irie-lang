@@ -1,0 +1,20 @@
+-- Each buffer can hold up to five elements
+Pre = Suf = Buffer
+Buffer = data
+  Color -- red < yellow < green
+D A = (Pre , Child (D A) , Suf)
+
+-- elems of d are elems of A, elems of child(d) are pairs of elems of A
+
+-- regular DQ has top level green/yellow
+-- ! topmost red DQ may be arbitrarily deep (separated by many yellows)
+-- Need constant time access to it, so don't use obvious stack of prefix-suffix pairs
+-- Instead, break stack into substacks, 1 substack for top level and 1 for each non-yellow descendent dq. each substack has a top-level/non-yellow DQ and all consecutive yellow proper descendent DQ
+
+Stack of substacks of prefix-suffix pairs
+Node. with 4 pointers for each non-empty descendant
+2 ptrs to this lvl prefix/suffix
+1 to node for child if this is non-empty and yellow
+1 to nearest non-yellow proper descendant, if ∃ and descendent is non-yellow or top-level
+
+1 op will require access to at most top 3 substacks, and top 2 elems in any such substack

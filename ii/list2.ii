@@ -2,16 +2,16 @@ import list1
 -- Tricker to simplify than list.ii
 
 -- prependToAll has more flexible type than a -> [a] -> [a]
--- : ∏ A B C D → A → µc.[Nil | Cons {B , c}] → µd.[Nil | Cons {A , [Cons {B , d}]}]
+-- : ∏ A B C D → A → µc.[Nil |@Cons {B , c}] → µd.[Nil |@Cons {A , [Cons {B , d}]}]
 prependToAll sep = \case
-  Nil => Nil
-  Cons x xs => Cons sep (Cons x (prependToAll sep xs))
+ @Nil => @Nil
+ @Cons x xs => @Cons sep (@Cons x (prependToAll sep xs))
 
--- [Nil | Cons {B , µe.[Nil | Cons {A , [Cons {C , e}]}]}]
+-- [Nil |@Cons {B , µe.[Nil |@Cons {A , [Cons {C , e}]}]}]
 -- a -> [a] -> [a]
 intersperse sep = \case
-  Nil => Nil
-  Cons x xs => Cons x (prependToAll sep xs)
+ @Nil => @Nil
+ @Cons x xs => @Cons x (prependToAll sep xs)
 
 -- [a] -> [[a]] -> [a]
 intercalate xs xss = concat (intersperse xs xss)
@@ -21,8 +21,8 @@ intercalate xs xss = concat (intersperse xs xss)
 -- lost some bounds
 --import foldr
 --nonEmptySubSequences = \case -- [a] -> [[a]]
---  @Nil       => Nil
---  @Cons x xs => Cons (Cons x Nil) (foldr (\ys r => Cons ys (Cons (Cons x ys) r)) Nil (nonEmptySubSequences xs))
+--  @Nil       =>@Nil
+--  @Cons x xs =>@Cons (Cons x@Nil) (foldr (\ys r =>@Cons ys (Cons (Cons x ys) r))@Nil (nonEmptySubSequences xs))
 
 --intersectBy          :: (a -> a -> Bool) -> [a] -> [a] -> [a]
 --intersectBy _  [] _  =  []
@@ -46,12 +46,12 @@ intercalate xs xss = concat (intersperse xs xss)
 -- dropWhileEnd : (a -> Bool) -> [a] -> [a]
 --   = \p -> foldr (\x xs -> if p x && null xs then [] else x : xs) []
 
---qsort p s Nil          = Empty
---qsort p s (Cons x Nil) = Single x
+--qsort p s@Nil          = Empty
+--qsort p s (Cons x@Nil) = Single x
 --qsort p s (Cons x xs)  =
---  split p s (Cons x xs) Nil Nil
+--  split p s (Cons x xs)@Nil@Nil
 ---- Splits list in two partitions
---split p s Nil min max =
+--split p s@Nil min max =
 --  let s'   = shiftR s 1
 --      min' = qsort (p - s') s' min
 --      max' = qsort (p + s') s' max

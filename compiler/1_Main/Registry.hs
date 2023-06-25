@@ -123,7 +123,7 @@ readDeps reg (ds , input) = let
   inText :: IName -> FilePath -> Text -> IO (TreeF (Dependents , Import) MISeed)
   inText iM fPath txt = case parseModule fPath txt of
     Left parseKO -> pure (NodeF (ds , NoParse (T.pack fPath) parseKO) [])
-    Right p -> ((fmap InFilePath . findModule searchPath . toS) `mapM` (p ^. P.imports)) <&> \imports ->
+    Right p -> ((fmap InFilePath . findModule searchPath . toS) `mapM` (catMaybes $ P.getImportFile <$> (p ^. P.imports))) <&> \imports ->
 --    <&> \imports -> let hackImports = concatMap (\case {InText{}->[] ; InFilePath e -> (const [] ||| (\x->[toS x])) e}) imports
       NodeF (ds , ParseOK txt iM p) ((setBit ds iM , ) <$> imports)
   in case input of
@@ -163,7 +163,9 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
    when ("parseTree" `elem` printPass cmdLine) (putStrLn (P.prettyModule pm))
    regPreImports <- readMVar reg
    importINames <- let
-     go acc f = findModule searchPath (toS f) <&> (const acc ||| setBit acc . resolveModuleHName regPreImports . toS)
+     go acc f = case P.getImportFile f of
+       Nothing -> pure acc
+       Just h -> findModule searchPath (toS h) <&> (const acc ||| setBit acc . resolveModuleHName regPreImports . toS)
      in foldM go 0 (pm ^. P.imports)
    reg' <-  readMVar reg
    setBit deps mI <$ let -- setBit dependents mI

@@ -135,12 +135,6 @@ pTy pos = let
   TyVars i [] -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i))
   TyVars i g  -> "τ" <> parens (hsep $ punctuate "," (viaShow <$> bitSet2IntList i)) <+> latChar <+> parens (pTyUnion g)
   TyGround u  -> pTyUnion u
---TyIndexed t ars -> pTy' t <+> (hsep $ parens . pExpr False <$> ars)
---TyTerm term ty -> parens $ pTerm True term <+> ":" <+> pTy' ty
---TyPi (Pi args ty) -> let pPiArg (arg , ty) = viaShow arg <+> ":" <+> pTy' ty
---  in "Π" <> parens (hsep $ pPiArg <$> args) <+> pTy' ty
-  TySet n -> "Set" <> viaShow n
---TySi{} -> "TySi{}"
 
 pTyHeadParens pos t = case t of
   THTyCon THArrow{} -> parens (pTyHead pos t)

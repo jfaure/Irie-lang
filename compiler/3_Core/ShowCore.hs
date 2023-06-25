@@ -12,7 +12,6 @@ deriving instance Show JudgedModule
 deriving instance Show Expr
 deriving instance Show BiSub
 deriving instance Show Kind
-deriving instance Show Pi
 deriving instance Show BiCast
 deriving instance Show ExternVar
 deriving instance Show Mixfixy

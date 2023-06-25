@@ -27,8 +27,7 @@ biSubTVars p m = BiEQ <$ (bitSet2IntList p `forM` \v -> biSubTVarTVar v `mapM` b
 biSubTVarTVar p m = use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
   when debug_biunify (traceM ("bisubττ: " <> prettyTyRaw (tyVar p) <> " <=> " <> prettyTyRaw (tyVar m)))
   MV.write v p (BiSub (mergeTVar m p') (mergeTVar m m')) -- TODO is ok? intended to fix recursive type unification
-  unless (hasVar m' m) $ void (biSubType p' (TyVars (setBit 0 m) [])) -- Avoid loops
-  pure BiEQ
+  if (hasVar m' m) then pure BiEQ else biSubType p' (TyVars (setBit 0 m) []) -- Avoid loops
 
 biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let mMerged = mergeTypes True m m'
@@ -54,12 +53,24 @@ biSubType tyP tyM = let
   unless (null pTs) $ bitSet2IntList mVs `forM_` \v -> biSubTVarM (TyGround pTs) v
   biSub pTs mTs
 
+isBiEq = \case { BiEQ -> True ; _ -> False }
+
 -- bisub on ground types
 biSub :: [TyHead] -> [TyHead] -> TCEnv s BiCast
 biSub a b = case (a , b) of
   ([] ,  _)  -> pure BiEQ
   (_  , [])  -> pure BiEQ
-  (p , m)    -> BiEQ <$ (p `forM` \aP -> atomicBiSub aP `mapM` m)
+  (p , m)    -> (p `forM` \aP -> atomicBiSub aP `mapM` m)
+    <&> \casts -> case mergeCasts $ dropWhile isBiEq (concat casts) of
+    x : xs -> if all isBiEq xs then x else error $ "TODO: cast merge: " <> show (x : xs)
+    [] -> BiEQ
+
+mergeCasts :: [BiCast] -> [BiCast]
+mergeCasts (x : xs) = let
+  mergeCast (CastZext n) ((CastZext m) : xs) = CastZext (max n m) : xs
+  mergeCast a b = a : b
+  in foldr mergeCast [x] xs
+mergeCasts [] = []
 
 -- Instantiation; substitute quantified variables with fresh type vars;
 -- Note. weird special case (A & {f : B}) typevars as produced by lens over
@@ -127,7 +138,7 @@ data KeySubtype
 
 -- This is complicated slightly by needing to recover the necessary subtyping casts
 biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
-  (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1,args2) (ret1,ret2)
+  (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1 , args2) (ret1 , ret2)
   (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSubType x y
   (THArray x , THArray y) -> BiEQ <$ biSubType x y
   (THProduct x , THProduct y) -> let --use normFields >>= \nf -> let -- record: fields in the second must all be in the first
@@ -163,9 +174,13 @@ arrowBiSub (argsp,argsm) (retp,retm) = let
   bsArgs x  [] = ([] , Just x  , ) <$> biSubType (prependArrowArgsTy x retp) retm  -- Partial application
   bsArgs []  x = ([] , Nothing , ) <$> biSubType retp (prependArrowArgsTy x retm)  -- Returns a function
   bsArgs (p : ps) (m : ms) = (\arg (xs,pap,retbi) -> (arg:xs , pap , retbi)) <$> biSubType m p <*> bsArgs ps ms
-  in (\(argCasts, pap, retCast) -> CastApp argCasts pap retCast) <$> bsArgs argsp argsm
+  in bsArgs argsp argsm <&> \(argCasts, pap, retCast) -> -- TODO keep the papCast ?
+    if all isBiEq argCasts && isNothing pap then retCast else CastApp argCasts {- pap -} Nothing retCast
 
 primBiSub p1 m1 = case (p1 , m1) of
-  (PrimInt p , PrimInt m) -> if p == m then pure BiEQ else if m > p then pure (CastInstr Zext) else BiEQ <$ failBiSub (TextMsg "Primitive Finite Int") (TyGround [THPrim p1]) (TyGround [THPrim m1])
+  (PrimInt p , PrimInt m) -> case compare p m of
+    EQ -> pure BiEQ
+    LT -> pure (CastZext m)
+    GT -> BiEQ <$ failBiSub (TextMsg "Primitive Finite Int") (TyGround [THPrim p1]) (TyGround [THPrim m1])
   (PrimInt p , PrimBigInt) -> pure (CastInstr (GMPZext p))
   (p , m) -> if p /= m then failBiSub (TextMsg "primitive types") (TyGround [THPrim p1]) (TyGround [THPrim m1]) else pure BiEQ

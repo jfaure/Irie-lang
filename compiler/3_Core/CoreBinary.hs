@@ -17,7 +17,6 @@ deriving instance Generic JudgedModule
 deriving instance Generic Expr
 deriving instance Generic BiSub
 deriving instance Generic Kind
-deriving instance Generic Pi
 deriving instance Generic BiCast
 deriving instance Generic ExternVar
 deriving instance Generic QMFWord
@@ -56,7 +55,6 @@ instance Binary JudgedModule
 instance Binary Expr
 instance Binary BiSub
 instance Binary Kind
-instance Binary Pi
 instance Binary BiCast
 instance Binary ExternVar
 instance Binary QMFWord

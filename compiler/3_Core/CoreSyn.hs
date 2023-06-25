@@ -1,4 +1,4 @@
--- Core Language. compiler pipeline = Text >> Parse >> Core >> STG >> SSA
+-- Core Language. compiler pipeline = Text >> Parse >> Infer >> Simplify >> Asm
 {-# LANGUAGE TemplateHaskell #-}
 module CoreSyn (module CoreSyn , module QName , ModIName) where
 import Control.Lens ( makeLenses )
@@ -6,7 +6,6 @@ import MixfixSyn ( ModIName , QMFWord )
 import Prim ( Literal, PrimInstr, PrimType )
 import QName
 import qualified BitSetMap as BSM ( BitSetMap )
-import qualified Data.IntMap.Strict as IM ( IntMap )
 import qualified Data.Map.Strict as M ( Map )
 import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
@@ -42,13 +41,10 @@ data Term -- β-reducable (possibly to a type)
  | X86Intrinsic Text
  | Cast    !BiCast Term -- it's useful to be explicit about inferred subtyping casts
 
- | Ty Type -- to embed (TermF Type): `-> {} [] let-in` may contain types
-
 -- ->
  | VBruijn IName
  | VBruijnLevel Int
  | BruijnAbs Int Term
- | BruijnAbsEra Int BitSet Term -- Pass in captured variables without needing to rename all VBruijns in term
  | BruijnAbsTyped Int Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]
  | Captures VName -- rec/mut: Read bind and app its captures, can't know them in one pass
@@ -58,8 +54,7 @@ data Term -- β-reducable (possibly to a type)
  | Array    (V.Vector Term)
  | Tuple    (V.Vector Term)
  | Prod     (BSM.BitSetMap Term)
--- | LetBlock (V.Vector (LetMeta , Bind)) -- RM
- | LetBinds (V.Vector (LetMeta , Bind)) Term -- change; all lets are lifted
+ | LetBinds (V.Vector (LetMeta , Bind)) Term -- change to Lets bitset (lets are lifted now)
  | Lets BitSet Term
  | TTLens  Term [IField] LensOp
 
@@ -71,9 +66,24 @@ data Term -- β-reducable (possibly to a type)
 -- Simplifier
  | LetSpec QName [ArgShape]
  | Skip Term
--- | ApoStop Term -- embedded Left node in standard apo (its awkward and sometimes insufficient to: fmap Left << project)
--- | Case CaseID Term -- term is the scrutinee. This cheapens inlining by splitting functions | NoSub Term -- indicates an expr (or raw VBruijn) that will loop if β-reduced (eg. y-comb | mutual let-bind)
---              -- Note if meet this than any contained bruijns | lets must not be unwrapped
+
+ | Ty Type -- to embed (TermF Type): `-> {} [] let-in` may contain types
+
+-- Π types are "normal" term functions
+-- | Ty2 Type2
+ | SigmaApp Term Term -- basically a PAp (no immediate β-reduction)
+ | Meet Term Term | Join Term Term -- ^ v lattice operators
+ | Mu Int Term -- deBruijn variable is marked as a fixpoint
+-- factorial = fix (\rec n -> if n <= 1 then 1 else n * rec (n-1)) 5
+-- squishTree : fix b [Node (A , fix C [Cons (b , c) | Nil])] -> d -> fix d [Cons (A , d)]
+type TInt = Int -- index into thead & flow vectors
+type Type2 = TyCon TInt -- tree branches are indices into THead & tvar vectors
+type FlowVec  = V.Vector (BitSet , BitSet) -- + - flow edges
+type THeadVec = V.Vector (THead Int) -- tycons?
+-- ? Instantiation: Term -> Type2 ; (VBruijn -> TInt)
+-- ? Generalisation: Type2 -> Term
+-- ? Checking: ([Type2 | Term] <:? Term) -> Term
+-- - handle better (label <-> function) types isomorphism
 
 -- lensover needs idx for extracting field (??)
 data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr
@@ -85,26 +95,9 @@ type GroundType = [THead Type]
 tyTop = TyGround []
 tyBot = TyGround []
 
--- the Theory requires TVars have their own presence in the profinite distributive lattice of types
-data Pi = Pi [(IName , Type)] Type deriving Eq -- pi binder Π (x : T) → F T
 data Type
  = TyGround GroundType
- -- vv tvars are temporary artifacts of inference
- | TyVars   BitSet GroundType -- vars generalise to THBound if survive simplification
-
- -- vv User type annotations
- | TyTerm   Term Type       -- term should be lambda calculus or product/sum calculus
- | TyPi Pi                  -- dependent functions, implicit args (explicit as: Arg → T)
- | TySi Pi (IM.IntMap Expr) -- Existential: some TT and a function of them (~partial app)
- | TyIndexed Type [Expr]    -- Indexed family (raw Terms can only exist here after normalisation)
- | TySet Uni
-
-tyVar v = TyVars (setBit 0 v) []
--- equality of types minus dependent normalisation
-instance Eq Type where
-  TyGround g1 == TyGround g2 = g1 == g2
-  TyVars i g1 == TyVars j g2 = i == j && g1 == g2
-  _           == _           = False
+ | TyVars   BitSet GroundType -- tvars are temp artefacts of inference: generalise to THBound if survive simplification
 
 data TyCon t -- Type constructors
  = THArrow    [t] t   -- degenerate case of THPi (bot → top is the largest)
@@ -130,14 +123,21 @@ data THead ty
 
  | THBi Int ty -- Π A → F(A) polymorphic type to be instantiated on each use
  | THMu Int ty -- µx.F(x) recursive type is instantiated as Π A → A & F(A)`
-               -- recursive types must be strictly covariant (avoid curry paradox)
 
  | THBound   IName  -- Π-bound tvar; instantiating Π-binder involves sub with fresh tvars
  | THMuBound IName  -- µ-bound tvar; semantically identical to THBound (must be guarded and covariant)
  deriving (Eq , Functor , Traversable , Foldable)
 
+tyVar v = TyVars (setBit 0 v) []
+-- equality of types minus dependent normalisation
+instance Eq Type where -- To union/intersect THeads ...
+  TyGround g1 == TyGround g2 = g1 == g2
+  TyVars i g1 == TyVars j g2 = i == j && g1 == g2
+  _           == _           = False
+
 data Expr = Core { exprTerm :: Term , exprType :: Type }
-ty t = Core (Ty t) (TySet 0)
+tySet l = TyGround [THSet l]
+ty t = Core (Ty t) (tySet 0)
 poisonExpr = Core (Poison "") tyTop -- TODO top or bot? (they're defined the same atm)
 
 data ArgShape
@@ -153,10 +153,8 @@ data Bind
  = Guard  { tvar :: IName } -- being inferred; if met again, is recursive/mutual
  -- generalising mutual types must wait for all tvars to be constrained (all mutual block to be inferred)
  | Mutu Expr BitSet IName -- tvarIdx
-
- -- free has the atLen of all capturable vars: the reference for where the bitset bruijns are valid
- | BindOK { optLevel :: OptBind , {-free :: (Int , BitSet) ,-} bindToExpr :: Expr }
- | BindRenameCaptures Int BitSet Expr
+ | BindOK { optLevel :: OptBind , bindToExpr :: Expr }
+ | BindRenameCaptures Int BitSet Expr -- atLen and freeVars bitset (@ the atLen)
 
 data OptBind = OptBind
   { optId :: Int
@@ -182,10 +180,12 @@ data Mixfixy = Mixfixy
  }
 
 type ASMIdx = IName -- Field|Label→ Idx in sorted list (the actual index used at runtime)
+data BiSub = BiSub { _pSub :: Type , _mSub :: Type }
 -- Various casts inserted by inference
 data BiCast
  = BiEQ
  | CastInstr PrimInstr
+ | CastZext Int
  | CastProduct Int [(ASMIdx , BiCast)] -- number of drops, and indexes into parent struct
  | CastLeaf    ASMIdx BiCast -- Lens
  | CastLeaves  [BiCast]
@@ -194,8 +194,6 @@ data BiCast
  | CastFnRet Int BiCast -- arg count (needed by code gen)
  | BiInst  [BiSub] BiCast -- instantiate polytypes
  | CastOver ASMIdx BiCast Expr Type
-
-data BiSub = BiSub { _pSub :: Type , _mSub :: Type }; makeLenses ''BiSub
 
 -- label for the different head constructors.
 data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTuple | KArray
@@ -207,7 +205,7 @@ type ModuleBinds = V.Vector (LetMeta , Bind)
 data JudgedModule = JudgedModule {
    modIName   :: IName
  , modHName   :: HName
- , jmINames   :: V.Vector HName -- fromMap $ parseDetails . hNamesToINames
+ , jmINames   :: V.Vector HName
  , topINames  :: BitSet -- These allow QName -> TopBind vec lookup
  , labelINames:: BitSet
  , moduleTT   :: ModuleBinds
@@ -225,3 +223,4 @@ makeBaseFunctor ''Expr
 makeBaseFunctor ''Term
 makeBaseFunctor ''Type
 makeLenses ''Type
+makeLenses ''BiSub

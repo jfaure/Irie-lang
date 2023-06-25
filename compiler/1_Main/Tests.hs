@@ -69,8 +69,8 @@ printList l = case l of
 
   let e :: Text = [r|
 filter pred l = case l of
-  @Nil => Nil
-  @Cons x xs => ifThenElseInt1 (pred x) (Cons x (filter pred xs)) (filter pred xs)
+  @Nil => @Nil
+  @Cons x xs => ifThenElseInt1 (pred x) (@Cons x (filter pred xs)) (filter pred xs)
  |]
       in S.describe "filter" $ S.it (toS e) $ UniText (inferType e)
         `S.shouldBe` UniText "filter = ∏ A B C → (A → %i1) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]"
@@ -148,6 +148,7 @@ mixfixes = S.it "mixfixTests.ii"  (goldenInfer "-p core  --no-fuse --no-color" "
 testFuse = S.it "testBruijns.ii"  (goldenInfer "-p simple  --no-color" "ii/testBruijns.ii" "bruijn fusion")
 testCaptures = S.it "letCaptureTests.ii"  (goldenInfer "-p core  --no-color" "ii/letCaptureTests.ii" "let-capture")
 inversePats = S.it "patternTests.ii"  (goldenInfer "-p core --no-fuse --no-color" "ii/patternTests.ii" "invPat")
+labelDecl = S.it "labelDecl.ii"  (goldenInfer "-p types --no-fuse --no-color" "ii/labelDecl.ii" "labelDecls")
 
 specialise = S.it "simpleMutual.ii" (goldenInfer "-p simple  --no-color" "ii/SpecialisationTests/SimpleMutual.ii" "simpleMutual")
 
@@ -169,6 +170,7 @@ tInfer = do
   list2
   mutual
   tree
+  labelDecl
 --intmap
 allTests = S.sydTest $ do
   tMixfixes

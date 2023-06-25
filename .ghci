@@ -1,8 +1,11 @@
 :load Prelude
 import Prelude
+import Data.Bits
 :set -XImplicitPrelude
 
+-- can't set breakpoints with this enabled
 -- :set -fobject-code
+
 :set -ferror-spans
 :set -fbreak-on-error
 
@@ -16,3 +19,5 @@ import Prelude
 :def stream (\_->pure ":r\n sh \"ii/stream.ii -p simple\"\n")
 :def sumMul (\_->pure ":r\n sh \"ii/SpecialisationTests/SumOfSquares.ii -p simple\"\n")
 :def scan (\_->pure ":r\n sh \"ii/FA/CharScan/MiniPrefix.ii -p simple\"\n")
+
+:def jit (\_->pure ":r\n X86.testJIT\n")

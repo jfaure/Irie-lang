@@ -2,6 +2,7 @@
 module BetaEnv where
 import CoreSyn hiding (JudgedModule(..))
 import Externs
+import Prim(Literal(..))
 import Data.Functor.Foldable as RS
 import PrettyCore
 import BitSetMap as BSM
@@ -115,7 +116,7 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
   Var (VQBindIndex q) | sLvl == 0 {-&& not (null trailingArgs)-} -> let -- Have to inline all bindings on full β-reduce
     doSimpleBind = \case -- bind = simpleBind lvl (argEnv , []) bind >>= \b -> case b of
 --    BindOK o (Core (Var (VQBindIndex qq)) _ty) | q == qq -> d_ "error bind contains itself" $ noop (Var (VQBindIndex q))
-      BindOK o (Core inlineF _ty) -> -- d_ inlineF $ -- if optId o /= 0 then noop inlineF else
+      BindOK _o (Core inlineF _ty) -> -- d_ inlineF $ -- if optId o /= 0 then noop inlineF else
 --      if null trailingArgs then noop (Var (VQBind q)) else
 --      if && null trailingArgs then pure (Left <$> VarF (VQBind q)) -- may need to inline constants
         fuse $ seed
@@ -205,14 +206,14 @@ fuseCase seed retT branches d = let
 simpleBindings :: ModuleIName -> V.Vector LoadedMod -> V.Vector (LetMeta , Bind)
   -> ST s (V.Vector (LetMeta , Bind))
 simpleBindings modIName loadedMods lets = let
-  go = lets `iforM` \bindName (lm , bind) -> (lm ,) <$> simpleBind (letBindIndex lm) bindName bind
+  go = lets `iforM` \bindName (lm , bind) -> (lm ,) <$> simpleBind bindName bind
   in V.thaw (snd <$> lets) >>= \locals -> go `evalStateT` FEnv modIName loadedMods locals
 
-runSimpleBind q = let bindName = unQName q
-  in use localBinds >>= \bindVec -> MV.read bindVec bindName >>= simpleBind q bindName
+runSimpleBind q = let bindName = unQName q -- only works in this module!
+  in use localBinds >>= \bindVec -> MV.read bindVec bindName >>= simpleBind bindName
 
 -- simplifies a binding by itself in a void env (captures must be explicitly applied to bindings)
-simpleBind q bindName bind = use localBinds >>= \bindVec -> case bind of
+simpleBind bindName bind = use localBinds >>= \bindVec -> case bind of
   BindOK (OptBind optLvl specs) (Core t ty) -> if optLvl /= 0 then pure bind else do
 --  MV.write bindVec bindName (BindOK (OptBind 1 specs) (Core (Var (VQBind q)) ty))
     newT <- runSimpleTerm (Seed 0 (mempty , mempty) t)
@@ -261,6 +262,7 @@ constFoldF :: TermF Term -> Term
 constFoldF = \case
   AppF (Instr i) args -> simpleInstr i args
   AppF (App g args) brgs -> constFoldF (AppF g (args <> brgs))
+  CastF (CastZext n) (Lit (Fin m i)) | m < n -> Lit (Fin n i)
   x -> embed x
 
 ------------------
