@@ -9,6 +9,8 @@ import CoreBinary()
 import PrettyCore
 import Infer(judgeModule)
 import qualified BetaEnv(simpleBindings)
+import qualified Elf
+import qualified CoreToX86
 import Text.Megaparsec (errorBundlePretty)
 import ModulePaths
 import Errors
@@ -177,7 +179,9 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ pm ^. P.parseDetails . P.newLines))
      putModVerdict = False -- TODO should only print at repl?
      (warnings , jmResult) = judge importINames reg' exts mI pm iNamesV
-     in case simplify cmdLine mI reg'._loadedModules <$> jmResult of
+
+     shouldSimplify = not $ (noFuse cmdLine || elem "core" (printPass cmdLine) || elem "types" (printPass cmdLine))
+     in case if shouldSimplify then simplify cmdLine mI reg'._loadedModules <$> jmResult else jmResult of
      -- Note. we still register the module even though its is partially broken, esp. for putErrors to lookup names
      Left (errs , jm) -> registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
        *> getBindSrc >>= \bindSrc ->
@@ -186,9 +190,15 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      Right jm -> let
        shouldPutJM = (dependents == 0 || putDependents cmdLine)
                       && any (`elem` printPass cmdLine) ["core", "simple", "types"]
+       -- TODO when to do elf stuff
+       shouldMkElf = shouldSimplify
+       disassElf = True
+       runElf = True
+       coreToAsm curReg = CoreToX86.mkAsmBindings mI curReg._loadedModules jm.moduleTT
        in registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
        *> maybe (pure ()) putStrLn warnings
        *> when shouldPutJM (getBindSrc >>= \bindSrc -> putJudgedModule cmdLine (Just bindSrc) jm)
+       *> when shouldMkElf (readMVar reg >>= \r' -> Elf.mkElf (disassElf , runElf) (coreToAsm r'))
        *> when putModVerdict (putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
   ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
   NoJudge _mI _jm -> pure deps
@@ -216,11 +226,9 @@ judge deps reg exts modIName p iNamesV = let
 
 simplify :: CmdLine -> ModuleIName -> V.Vector LoadedMod -> JudgedModule -> JudgedModule
 simplify cmdLine thisMod loadedMods jm = let
-  noSimplify = noFuse cmdLine || elem "core" (printPass cmdLine) || elem "types" (printPass cmdLine)
-  mL :: F.Lens' JudgedModule ModuleBinds
+  mL :: F.Lens' JudgedModule ModuleBinds -- Fresnel experiment
   mL = F.lens moduleTT (\u new -> u { moduleTT = new })
-  in if noSimplify then jm else
-    jm & mL F.%~ (\e -> runST (BetaEnv.simpleBindings thisMod loadedMods e))
+  in jm & mL F.%~ (\e -> runST (BetaEnv.simpleBindings thisMod loadedMods e))
 
 putJudgedModule :: CmdLine -> Maybe BindSource -> JudgedModule -> IO ()
 putJudgedModule cmdLine bindSrc jm = let

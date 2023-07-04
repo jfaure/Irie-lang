@@ -91,7 +91,6 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | Prod   (V.Vector (FName , TT)) -- can be used to type itself
  | Tuple   [TT] -- Cartesian product
  | TupleIdx FName TT -- clearer than directly TTLens
- | ArgProd TT -- argument; used only by UnPattern within case expressions
  | TTLens SourceOffset TT [FName] (LensOp TT)
  | Label  LName [TT] -- parsed labels "@"
  | QLabel QName

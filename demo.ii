@@ -61,19 +61,15 @@
 --   Nothing
 --   Just a
 
--- Meta-record: { ret : A , ... } <: A
+-- Sort out import label scopes, incl '@' version
+--import Maybe
+--f = Just 3
 
--- ? Choice = tysum | opened record?
--- ? opens: resolver has all possible let-bound INames, solveScopes filters those in scope
--- ! Open keyword: machinery for qualifying names on Records
+-- Allow recursive data types; μ?
+--IntList = data
+--  Nil
+--  Cons Int -- IntList
+--g (Cons x) = x
+--f = Cons 3
 
---f = let choice = data [S2 Int] in S2
-
-IntList = data
-  Nil
-  Cons Int -- IntList
-
-g (Cons x) = x
-f = Cons 3
-
--- Rm THead list
+main = add 5 2

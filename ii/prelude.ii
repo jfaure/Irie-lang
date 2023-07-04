@@ -66,7 +66,6 @@ fst (a , b) = a
 snd (a , b) = b
 
 --setBit bits pos   = bitOR (bits (bitSHL 1 pos))
--- TODO mixfixes defined and used in same module appear to be broken
 setBit bits pos   = bitOR bits (bitSHL 1 pos)
 clearBit bits pos = bitAND bits (bitNOT (bitSHL 1 pos))
 testBit  bits pos = bitAND bits (bitSHL 1 pos)

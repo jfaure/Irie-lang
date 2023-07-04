@@ -2,12 +2,9 @@
 module X86 where
 import Data.Bits
 import Foreign.C.String
---import Foreign.ForeignPtr
---import Foreign.C.Types
 import Foreign.Storable
 import Foreign.Ptr
 import System.Posix.DynamicLinker
---import System.Posix.Types
 import Unsafe.Coerce
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Unsafe as BSU
@@ -46,14 +43,6 @@ newtype YMM = YMM Word8
 -- Displacement (1, 2, 4 or 8 bytes, if required)
 -- Immediate (1, 2, 4 or 8 bytes, if required)
 
--- Rex: 64-bit op size (64-bit not default) , extended registers (8..15) uniform byte regs
--- No rex: using high byte registers AH CH BH DH
--- rex prefix: 7..0bits = 0100WRXB
--- W = use 64 bit operand , else default (32-bit for most)
--- R = extension of MODRM.reg field
--- X = SIB.index field
--- B = MODRM.rm field or SIB.base field
-
 -- Opcode maps (opcode can be 1|2|3 bytes length). Some opcodes are extendable via the ModR/M.reg field
 -- <op>
 -- 0x0F <op>
@@ -69,7 +58,15 @@ data Immediate = B Word8 | W Word16 | D Word32 | Q Word64 -- | X | Y | Z -- byte
 
 fromReg :: Reg -> Word8 = fromIntegral . fromEnum
 
-long = B 0x48 -- 64-bit long mode: operate on 64-bit registers and enable optional rex prefix
+-- Rex: request 64-bit op size (32-bit usually default)
+-- rex = 0100 | W | R | X | B
+-- W = request 64-bit op size (if not set may default to 64)
+-- R,X,B = 1-bit extensions for (8..15) registers: MODRM.reg , SIB index , ModRM.rm
+mkRex w r x b = let
+  w' = if w then 0b1000 else 0 ; r' = if r then 0b100 else 0
+  x' = if x then 0b10 else 0 ; b' = if b then 0b1 else 0
+  in 0b0100_0000 .|. w' .|. r' .|. x' .|. b'
+long = B 0b0100_1000 -- simplest rex byte requesting 64-bit op size
 
 -- ModR/M , encode up to 2 operands of instr: direct register or mem address
 -- fieldNames. mode , register , register/memory
@@ -89,26 +86,39 @@ long = B 0x48 -- 64-bit long mode: operate on 64-bit registers and enable option
 --   ! (if index=rsp , scale*index = 0) or (if modRM.mod=00 & base=rbp , base=0)
 mrmRegAddrMode = 0xc0 -- 11000000 -- else register-indirect + optional displacement
 -- /n means setting r2 to n as a 1 operand opcode extension
-mkModRM_RR dst src = B (mrmRegAddrMode .|. fromReg dst `shiftL` 3 .|. fromReg src)
+mkModRM_RR dst src = B (mrmRegAddrMode .|. fromReg src `shiftL` 3 .|. fromReg dst)
 -- v unset high bits
 --mkModRM_rr00 dst src = B (dst `shiftL` 3 .|. src)
 mkModRM_rr dst src = B (mrmRegAddrMode .|. dst `shiftL` 3 .|. src)
 mkModRM_Dest r1 = B (mrmRegAddrMode .|. fromReg r1) -- specify destination register
 mkModRM_digit n src = B (mrmRegAddrMode .|. n `shiftL` 3 .|. fromReg src)
 
-single x = [x]
-ret    = single $ B 0xc3
-push r = single $ B (0x50 + fromReg r)
-pop r  = single $ B (0x58 + fromReg r)
-noop   = single $ B 0x90
+ret    = [B 0xc3]
+push r = [B (0x50 + fromReg r)]
+pushImm8 c = [B 0x6A , B c] -- Note these things are sign extended to operating size
+pushImm32 c = [B 0x68 , D c] -- push16, push32 have same opcode
+pushImm64 c = [long , B 0x68 , D c] -- push16, push32 have same opcode
+pop32 r = [B (0x58 + fromReg r)]
+pop64 r | reg <- fromReg r , reg < 8 = [long , B (0x58 + reg)] -- TODO rex
+noop   = [B 0x90]
+hlt    = [B 0xf4]
 
-addRaxImm w32 = [long , B 0x05 , D w32] -- add to rax
-subRaxImm w32 = [long , B 0x2D , D w32]
+addRaxImm w32 = [B 0x05 , D w32] -- add to rax
+subRaxImm w32 = [B 0x2D , D w32]
 addReg r l    = [long , B 0x01 , mkModRM_RR r l]
 subReg r l    = [long , B 0x29 , mkModRM_RR r l]
 inc r         = [long , B 0xFF , B $ 0xc0 + fromReg r] -- modR/M byte.. make clearer
 dec r         = [long , B 0xFF , B $ 0xc0 + (fromReg r + 8)]
 xorR r l      = [long , B 0x33 , mkModRM_RR r l] -- 33 /r
+addImm32 RAX i = [long , B 0x05 , D i]
+addImm32 r i   = [long , B 0x81 , mkModRM_digit 0 r , D i]
+add8 r l       = [long , B 0x00 , mkModRM_RR r l]
+addMem32 r l   = [long , B 0x01 , mkModRM_RR r l]
+add32 r l      = [long , B 0x03 , mkModRM_RR r l]
+
+subImm32 RAX i = [long , B 0x2D , D i]
+subImm32 r i   = [long , B 0x81 , mkModRM_digit 5 r , D i]
+
 --syscall       = [B 0x0f , B 0x05]
 
 -- vex is usually 3 bytes, but 2 byte possible:
@@ -173,15 +183,18 @@ callRelative32 dstA = [B 0xE8 , DRelative dstA] -- relative to end of call instr
 -- recall: /digit means ModRM.reg field is used as instruction-opcode extension [0..7]
 callAbsolute reg = [B 0xFF , mkModRM_digit 2 reg] -- FF /2
 
-movImm64 dst imm64 = [B 0x48 , B 0xC7 , mkModRM_Dest dst , Q imm64]
---movImm64 dst imm64 = [B 0x48 , B 0xC7 , B (0xC0 .|. fromReg dst .&. 7) , Q imm64]
---movImm32 dst imm32 = let r = fromReg dst
---  in if r < 8 then [long , B (0xB8 + r) , D imm32] -- B8 +rd id
---  else error "TODO use rex prefix"
---movImm32 dst imm32 = [long , B 0xc7 , B 0xc7 , D imm32]
---movImm32 dst imm32 = [long , B 0xc7 , B 0xc7 , D imm32]
+-- Mov. (b8..bf) are only ones supporting 64-bit operand
+-- +r[b|w|d|q] means add register value to hex byte on the left
+-- 8: B0 +rb ib ; 16: B8 +rw iw ; 32: B8 +rd id ; 64: B8 + rq iq
+
+-- v MOV reg64,imm64 = B8 +rq iq. (+rq not quite 1:1 with normal registers!)
+movImm64 dst imm64 | d <- fromReg dst , d < 8
+  = [long , B (0xB8 + d) , Q imm64]
+
 movImm32 dst imm32 = [B 0xc7 , mkModRM_Dest dst , D imm32]
+movDollar32 dst = [B 0xc7 , mkModRM_Dest dst , DRelative 0]
 movR64 dst src = [long , B 0x89 , mkModRM_RR dst src]
+
 interrupt = B 0xCD
 syscall = [B 0x0f , B 0x05]
 
@@ -189,7 +202,7 @@ heapPtr :: Ptr a -> Word32
 heapPtr = fromIntegral . ptrToIntPtr
 
 type Prog = [[Immediate]]
-mkAsm :: Int -> Ptr Word8 -> Prog -> IO Int
+mkAsm :: Int -> Ptr Word8 -> [Immediate] -> IO Int
 mkAsm len mem prog = let
   go i = \case
     B c -> i + 1 <$ pokeByteOff mem i c
@@ -197,7 +210,8 @@ mkAsm len mem prog = let
     D d -> i + 4 <$ pokeByteOff mem i d
     Q q -> i + 8 <$ pokeByteOff mem i q
     DRelative d -> i + 4 <$ pokeByteOff mem i (d - heapPtr mem - 4 - fromIntegral i)
-  in foldM go 0 (concat prog) >>= \i -> (i + 1) <$ pokeByteOff mem i '\0'
+  in foldM go 0 prog -- >>= \i -> (i + 1) <$ pokeByteOff mem i '\0'
+mkAsm' l mem prog = mkAsm l mem prog <&> \len -> plusPtr mem len
 
 ---------
 -- JIT --
@@ -213,10 +227,9 @@ runJIT prog = let
   jitsz = 0x40000 -- 256 * 1024
   iJitsz = fromIntegral jitsz :: Int
   in do
-  ptrExecutable <- mmap nullPtr jitsz (protRead .|. protWrite)
+  ptrExecutable <- mmap nullPtr jitsz (protRead .|. protWrite .|. protExec)
     (mmapAnon .|. mmapPrivate) (-1) 0
-  len <- mkAsm iJitsz ptrExecutable prog
-  -- try Foreign.StablePtr.newStablePtr?
+  len <- mkAsm iJitsz ptrExecutable (concat prog)
 
   -- objdump disassembly, TODO Should memcpy ptr (copyBytes : Ptr -> Ptr -> Int -> IO ())
   bs <- BSU.unsafePackCStringLen (castPtr ptrExecutable , len)
@@ -246,16 +259,30 @@ callPuts = do
     , ret
     ]
 
-writeSysCall = do
-  cstr <- newCString "Hello\n\0"
-  pure
-    [ movImm64 RAX 1 -- write syscall
-    , movImm32 RDI 1 -- stdout fd
-    , movImm32 RSI (heapPtr cstr)
-    , movImm32 RDX 7 -- msg len
-    , syscall
-    , ret
-    ]
+readSysCall = 
+  [ subImm32 RSP 16
+  , movImm32 RAX (fromIntegral (fromEnum SysRead))
+  , movImm32 RDI 0 -- stdin fd
+  , movR64 RSI RSP
+  , movImm32 RDX 4 -- 4 bytes
+  , syscall
+  , addImm32 RSP 16
+  , ret
+  ]
+
+exit42SysCall = [ movImm32 RAX 60 , movImm32 RDI 42 , syscall ]
+exitSysCall = [ movR64 RDI RAX , movImm32 RAX 60{-SysExit-} , syscall ]
+
+writeSysCall =
+  [ movImm32 RAX (fromIntegral (fromEnum SysWrite)) -- movImm64 RAX 1 -- write syscall
+  , movImm32 RDI 1 -- stdout fd
+  , pushImm32 0x6f6c6548 -- "helo"
+  , movR64 RSI RSP
+  , movImm32 RDX 4 -- msg len
+  , syscall
+  , pop32 RDI
+  ]
+  ++ exitSysCall
 
 testVecs =
    [ vinserti128 (YMM 0) (YMM 0) (XMM 1) 0x1
@@ -266,23 +293,7 @@ testVecs =
    , ret
    ]
 
-testJIT = writeSysCall >>= runJIT
+--testJIT = runJIT writeSysCall
 --testJIT = callPuts >>= runJIT
 --testJIT = pure testVecs >>= runJIT
-
--- Generating x86: 
--- * Track types always
--- * product: loose collection of registers?
--- * coproduct: header encoding alts?
--- * rectypes: mk automata?
--- * Fns: paps , tail-call , loops + forward refs
--- * Collect Elf64_Rel info, (addresses to insert extern symbols), can store relative to offset start
-
--- regalloc: life interference
--- unfoldr ASM
-data ASMSeed = ASMSeed
- { labels :: [(Int , Word32)] -- labels +offset to patch up when defined
- , freshLabelNames :: Int
- , regs :: V.Vector (Maybe Word64 , Int) -- register state (track constants + lives)
--- G[v]:  the set of variables that interfere with variable v
- }
+testJIT = runJIT writeSysCall

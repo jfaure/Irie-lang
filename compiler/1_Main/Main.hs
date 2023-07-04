@@ -7,8 +7,6 @@ import qualified Data.List (words)
 import qualified Data.Text as T
 import System.Console.Repline
 import Control.Lens
---import X86
---import System.Process (callCommand)
 
 data ReplState = ReplState { _replCmdLine :: CmdLine , _replRegistry :: Registry }; makeLenses ''ReplState
 type Repl = HaskelineT (StateT ReplState IO)

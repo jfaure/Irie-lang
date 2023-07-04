@@ -82,6 +82,7 @@ readQName curMods modNm iNm = let
     else readJudgedBind jm iNm -- & \(Core _t ty) -> Core (Var (VQBindIndex (mkQName modNm iNm))) ty
   _ -> Nothing
 
+lookupIName :: V.Vector LoadedMod -> Int -> Int -> Maybe HName
 lookupIName = lookupJM jmINames -- labelNames
 lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
   JudgeOK _mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName)

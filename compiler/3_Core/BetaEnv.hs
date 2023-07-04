@@ -172,8 +172,6 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
        -- perhaps ideally should let the top-level renameCaptures rename them for us..
        new = popCount letCaptures
        captures = bitSet2IntList letCaptures <&> \i -> VBruijnLevel $
---       sLvl - (sLvl - atLen) - new - renameVBruijn atLen letCaptures i
---       same thing vv
          atLen - new - renameVBruijn atLen letCaptures i
        in fuse $ seed & term .~ App (Var (VQBindIndex q)) (reverse captures)
      x -> error (show x)

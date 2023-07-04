@@ -20,8 +20,6 @@ import Text.Printf
 import Control.Arrow ((|||) , (&&&) , (***) , (>>>) , (<<<))
 import Data.Functor.Foldable
 
-import Data.Ord (comparing)
-import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Algorithms.Intro as VAlgo
 
 vecArgSort :: (Ord a, VU.Unbox a) => VU.Vector a -> VU.Vector Int

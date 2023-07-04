@@ -51,7 +51,7 @@ data Term -- β-reducable (possibly to a type)
 -- | BruijnCaptures Int BitSet Term
 
 -- {}
- | Array    (V.Vector Term)
+ | Array    (V.Vector Term) -- All have same type
  | Tuple    (V.Vector Term)
  | Prod     (BSM.BitSetMap Term)
  | LetBinds (V.Vector (LetMeta , Bind)) Term -- change to Lets bitset (lets are lifted now)
@@ -159,6 +159,7 @@ data Bind
 data OptBind = OptBind
   { optId :: Int
   , bindSpecs :: M.Map [ArgShape] Term -- opt-level , specialisations
+--  , doAsm :: Bool -- iff more primitives than type constructor operations & is used
   }
 optInferred = OptBind 0 mempty
 
@@ -187,12 +188,9 @@ data BiCast
  | CastInstr PrimInstr
  | CastZext Int
  | CastProduct Int [(ASMIdx , BiCast)] -- number of drops, and indexes into parent struct
- | CastLeaf    ASMIdx BiCast -- Lens
- | CastLeaves  [BiCast]
+ | CastFields  [BiCast]
 
  | CastApp [BiCast] (Maybe [Type]) BiCast -- argcasts , maybe papcast , retcast
- | CastFnRet Int BiCast -- arg count (needed by code gen)
- | BiInst  [BiSub] BiCast -- instantiate polytypes
  | CastOver ASMIdx BiCast Expr Type
 
 -- label for the different head constructors.
