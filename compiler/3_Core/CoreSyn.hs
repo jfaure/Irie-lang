@@ -99,6 +99,9 @@ data Type
  = TyGround GroundType
  | TyVars   BitSet GroundType -- tvars are temp artefacts of inference: generalise to THBound if survive simplification
 
+-- Suitable for sending off to codegen
+--data BasicType = BTPrim PrimType | BTTyCon BasicType | BTEra
+
 data TyCon t -- Type constructors
  = THArrow    [t] t   -- degenerate case of THPi (bot → top is the largest)
  | THTuple    (V.Vector t) -- ordered form of THproduct

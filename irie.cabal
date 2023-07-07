@@ -38,6 +38,7 @@ executable irie-exe
   other-modules:
       X86
       CoreToX86
+      LinuxSyscalls
       Elf
       CMMap
       Registry
@@ -69,10 +70,6 @@ executable irie-exe
       SimplifyInstr
       TCState
       TypeCheck
-      MkSSA
-      SSA
-      C
-      PrettySSA
       Paths_irie
   hs-source-dirs:
       compiler/

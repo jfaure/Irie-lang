@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo , vecArgSort)
+ , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo , vecArgSort , unfoldrExactN')
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -26,6 +26,13 @@ vecArgSort :: (Ord a, VU.Unbox a) => VU.Vector a -> VU.Vector Int
 vecArgSort xs = VU.map fst $ VU.create $ do
   xsi <- VU.thaw $ VU.indexed xs
   xsi <$ VAlgo.sortBy (comparing snd) xsi
+
+-- return seed also
+unfoldrExactN' :: Int -> (b -> (a , b)) -> b -> (V.Vector a , b)
+unfoldrExactN' n fU seed = runST $ do
+  v <- MV.new n
+  endSeed <- foldM (\s i -> fU s & \(val , seed2) -> seed2 <$ MV.write v i val) seed [0 .. n-1]
+  (, endSeed) <$> V.unsafeFreeze v
 
 type BitSet = Integer
 type String = [Char]

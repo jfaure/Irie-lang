@@ -4,7 +4,7 @@
 -- fromList O(n)
 -- (!?) O(log n)
 -- union , intersection , mergeWithKey O(n)
-module BitSetMap (BitSetMap(..) , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , singleton , (!?) , BitSetMap.elems , BitSetMap.keys
+module BitSetMap (BitSetMap(..) , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , singleton , (!?) , findIndex , BitSetMap.elems , BitSetMap.keys
   , unionWith , intersectionWith , traverseWithKey , mergeWithKey' , mergeWithKey , mapAccum , mapWithKey , BitSetMap.unzip , fromVec) where
 
 -- For oneshot built ordered lists, dichotomy lookup on a (Vector (Int , a)) is a clear improvement vs Data.IntMap
@@ -40,7 +40,8 @@ fromListWith f l = let
   combine l = l
   in BSM $ V.fromList (combine (sortOn fst l))
 
-read = \(BSM v) i -> v V.! binarySearch v i 0 (V.length v - 1)
+findIndex (BSM v) i = binarySearch v i 0 (V.length v - 1) & \idx -> (idx , v V.! idx)
+read (BSM v) i = v V.! binarySearch v i 0 (V.length v - 1)
 (!?) = \v i -> let r = read v i in if fst r == i then Just (snd r) else Nothing
 
 binarySearch :: V.Vector (Int , a) -> Int -> Int -> Int -> Int

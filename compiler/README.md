@@ -1,7 +1,7 @@
 # Compiler Commentary
 
 ## Compiler pipeline
-command line >> parse >> core >> STG >> llvm IR
+command line >> parse >> core >> simplifier >> x86Asm
 
 1. Main parses the commandline and guides the compiler.
 2. Parser : (Text -> PSyn) parses a single file; does not read import files.

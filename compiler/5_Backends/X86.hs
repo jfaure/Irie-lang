@@ -29,6 +29,10 @@ data Reg -- The order is vital, so fromEnum produces the right int for each regi
   | RDI  -- Destination Index Pointer
   | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15
   deriving (Eq, Show , Enum)
+
+ccall_scratchRegs    = [RDI , RSI , RDX , RCX , R8 , R9 , R10 , R11 , R12 , R13 , R14 , R15]
+ccall_calleSavedRegs = [RSP , RBP , R12 , R13 , R14 , R15]
+
 data LinuxSyscalls = SysRead | SysWrite | SysOpen | SysClose | SysNewStat | SysNewFStat | SysNewIStat | SysPoll | SysLSeek | SysMMap | SysMProtect | SysMUnMap deriving (Eq , Show , Enum)
 
 -- multimedia registers, also max at 15 (4-bits)
@@ -115,6 +119,31 @@ addImm32 r i   = [long , B 0x81 , mkModRM_digit 0 r , D i]
 add8 r l       = [long , B 0x00 , mkModRM_RR r l]
 addMem32 r l   = [long , B 0x01 , mkModRM_RR r l]
 add32 r l      = [long , B 0x03 , mkModRM_RR r l]
+
+bytesToD a b = W (b .<<. 8 .|. a) -- TODO only on Little endian..
+
+jmpImm32Sz  = 6 :: Word32 -- jmps are relative to end of instructions
+joImm32 i   = [bytesToD 0x0F 0x80 , D i] -- not overflow; OF=0
+jnoImm32 i  = [bytesToD 0x0F 0x81 , D i] -- not overflow; OF=0
+jcImm32 i   = [bytesToD 0x0F 0x82 , D i] -- jc/jnae
+jncImm32 i  = [bytesToD 0x0F 0x83 , D i] -- jnb/jnc/jae
+jzImm32 i   = [bytesToD 0x0F 0x84 , D i] -- jz/je
+jnzImm32 i  = [bytesToD 0x0F 0x85 , D i] -- jnz / jne
+jbeImm32 i  = [bytesToD 0x0F 0x86 , D i] -- jbe / jna
+jnbeImm32 i = [bytesToD 0x0F 0x87 , D i] -- jnbe / ja
+jsImm32 i   = [bytesToD 0x0F 0x88 , D i]
+jnsImm32 i  = [bytesToD 0x0F 0x89 , D i]
+jpImm32 i   = [bytesToD 0x0F 0x8A , D i] -- jp/jpe
+jnpImm32 i  = [bytesToD 0x0F 0x8B , D i] -- jp/jpo
+jlImm32 i   = [bytesToD 0x0F 0x8C , D i] -- jl/jnge
+jnlImm32 i  = [bytesToD 0x0F 0x8D , D i] -- jnl/jge
+jleImm32 i  = [bytesToD 0x0F 0x8E , D i] -- jle/jng
+jnleImm32 i = [bytesToD 0x0F 0x8F , D i] -- jnle/jg
+
+cmpImm8 RAX ib = [B 0x3C , B ib]
+cmpImm8 r ib   = [B 0x80 , mkModRM_digit 7 r , B ib]
+cmpImm32 RAX ib = [B 0x3D , D ib]
+cmpImm32 r ib   = [B 0x81 , mkModRM_digit 7 r , D ib]
 
 subImm32 RAX i = [long , B 0x2D , D i]
 subImm32 r i   = [long , B 0x81 , mkModRM_digit 5 r , D i]

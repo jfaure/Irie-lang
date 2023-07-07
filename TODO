@@ -1,4 +1,6 @@
 # Libs Lens List Eff BitSet ; DFA NFA glushkov Charscan
+# Codegen prep
+  * eta-expand paps
 ## Top Priority (PathNames , cross-level mutuality , machine-code)
   * Meta-record: { ret : A , ... } <: A
   * mkSimd, maybe convert functions to parallel version

@@ -72,4 +72,11 @@
 --g (Cons x) = x
 --f = Cons 3
 
-main = add 5 2
+--import Maybe
+--plus1 x y = add x y
+--plus2 (x , y) = add x y
+
+--fib n = ifThenElse (lt n 0) n (add (fib (sub n 1)) (fib (sub n 2)))
+ifThenElse cond a b = case cond of
+  True  => add 0 a
+  False => add 0 b
