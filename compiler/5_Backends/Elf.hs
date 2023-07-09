@@ -466,7 +466,8 @@ mkElf (disassElf , runElf) mkProg' = let
   B.writeFile outFile bs
   void $ readProcess "chmod" ["+x", outFile] ""
 --readProcess "readelf" ["-all", "-s" , outFile] "" >>= putStrLn
-  when disassElf $ readProcess "objdump" ["-d" , "-Mintel" , outFile] "" >>= putStrLn
+  when disassElf $ readProcess "objdump" ["-d" , "-Mintel" , "--visualize-jumps=color" , "--disassembler-color=on", outFile] "" >>= putStrLn
+--visualize-jumps[=color
   when runElf $ do
     (exitCode , asmStdout , asmStderr) <- readProcessWithExitCode outFile [] ""
     putStrLn asmStdout

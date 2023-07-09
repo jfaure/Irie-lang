@@ -8,7 +8,6 @@ import System.Posix.DynamicLinker
 import Unsafe.Coerce
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Unsafe as BSU
-import qualified Data.Vector as V
 import System.Process
 import CMMap
 
@@ -120,9 +119,28 @@ add8 r l       = [long , B 0x00 , mkModRM_RR r l]
 addMem32 r l   = [long , B 0x01 , mkModRM_RR r l]
 add32 r l      = [long , B 0x03 , mkModRM_RR r l]
 
+iMul64Reg RAX l = [B 0xF7 , mkModRM_digit 5 l]
+iMul64Reg r   l = [B 0x0F , B 0xAF , mkModRM_RR r l]
+
+-- flags
+stc = [B 0xF9]
+
 bytesToD a b = W (b .<<. 8 .|. a) -- TODO only on Little endian..
 
-jmpImm32Sz  = 6 :: Word32 -- jmps are relative to end of instructions
+-- set_ work on reg/mem8
+mkSet_ n r = [bytesToD 0xF (90 + n) , mkModRM_digit 0 r]
+[setO , setNO , setB{-B/C/NAE-} , setNB{-NB/NC/AE-} , setZ{-Z/E-} , setNZ{-NZ/NE-}
+ , setBE{-BE/NA-} , setNBE{-NBE/A-} , setS , setNS , setP{-P/PE-} , setNP{-NP/PO-}
+ , setL{-L/NGE-} , setNL{-NL/GE-} , setLE{-LE/NG-} , setNLE{-NLE/G-}]
+ = mkSet_ <$> [0..0xF]
+
+
+jmpImm8 i = [B 0xEB , B i]
+jmpImm32 i = [B 0xE9 , D i]
+jmpReg r = [B 0xFF , mkModRM_digit 4 r]
+
+jmpCondImm32Sz  = 6 :: Word32 -- jmps are relative to end of instructions
+jmpImm32Sz  = 5 :: Word32 -- jmps are relative to end of instructions
 joImm32 i   = [bytesToD 0x0F 0x80 , D i] -- not overflow; OF=0
 jnoImm32 i  = [bytesToD 0x0F 0x81 , D i] -- not overflow; OF=0
 jcImm32 i   = [bytesToD 0x0F 0x82 , D i] -- jc/jnae
@@ -144,6 +162,8 @@ cmpImm8 RAX ib = [B 0x3C , B ib]
 cmpImm8 r ib   = [B 0x80 , mkModRM_digit 7 r , B ib]
 cmpImm32 RAX ib = [B 0x3D , D ib]
 cmpImm32 r ib   = [B 0x81 , mkModRM_digit 7 r , D ib]
+cmpReg8 r l  = [B 0x38 , mkModRM_rr r l]
+cmpReg r l  = [B 0x39 , mkModRM_RR r l]
 
 subImm32 RAX i = [long , B 0x2D , D i]
 subImm32 r i   = [long , B 0x81 , mkModRM_digit 5 r , D i]
@@ -208,9 +228,11 @@ vInstr3 l256 idef (YMM destRaw) (YMM src) (YMM src2Raw) = let
   ]) ++ [ B (vopcode idef) , mkModRM_rr dst src2 ]  -- no matter the prefix, add opcode and ModR/M byte
 
 -- Call-relative instr needs its addr, DRelative will be patched in
+callRelativeSz = 5 :: Word32
 callRelative32 dstA = [B 0xE8 , DRelative dstA] -- relative to end of call instr (just after 0xE8)
 -- recall: /digit means ModRM.reg field is used as instruction-opcode extension [0..7]
 callAbsolute reg = [B 0xFF , mkModRM_digit 2 reg] -- FF /2
+callImm32 dstA = [B 0xE8 , D dstA]
 
 -- Mov. (b8..bf) are only ones supporting 64-bit operand
 -- +r[b|w|d|q] means add register value to hex byte on the left
@@ -223,6 +245,8 @@ movImm64 dst imm64 | d <- fromReg dst , d < 8
 movImm32 dst imm32 = [B 0xc7 , mkModRM_Dest dst , D imm32]
 movDollar32 dst = [B 0xc7 , mkModRM_Dest dst , DRelative 0]
 movR64 dst src = [long , B 0x89 , mkModRM_RR dst src]
+
+lea dst srcMem = [B 0x8D , mkModRM_RR dst srcMem] -- 8D \r (Can request SIB byte!)
 
 interrupt = B 0xCD
 syscall = [B 0x0f , B 0x05]
@@ -267,9 +291,9 @@ runJIT prog = let
     >>= putStrLn
 
   res <- if execJIT then getFunction ptrExecutable else pure (-1) -- an (IO Int)
-  c_munmap ptrExecutable jitsz >>= \case -- returns -1 on error; need to deepseq the res !
+  c_munmap ptrExecutable jitsz >>= \case
     -1 -> error "failed to munmap ?"
-    x  -> pure ()
+    _  -> pure ()
   pure res
 
 extern :: String -> IO Word32

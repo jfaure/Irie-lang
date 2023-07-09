@@ -33,7 +33,7 @@
   ? compute containement
 ## Notes. Modules / records
   export list & bind Import list
-  Cap field number to 64 (use pdep to mark subtyping frets), large records mk list
+  Cap field number?
   Eraser argument is a form of function subtyping
   add-specs to imported binds
   unInline case-branch lambdas

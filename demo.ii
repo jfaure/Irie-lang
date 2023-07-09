@@ -76,7 +76,14 @@
 --plus1 x y = add x y
 --plus2 (x , y) = add x y
 
---fib n = ifThenElse (lt n 0) n (add (fib (sub n 1)) (fib (sub n 2)))
-ifThenElse cond a b = case cond of
-  True  => add 0 a
-  False => add 0 b
+--ifThenElse cond a b = case cond of
+--  True  => add 0 a
+--  False => add 0 b
+--fib n = case lt n 0 of
+--  True  => add n 3
+--  False => add (fib (sub n 1)) 1 -- (fib (sub n 2))
+
+f x y z = add x (mul y z)
+
+-- * Fns may use regs in their calling conv
+-- ! if retloc is live, need to sv/move that as well

@@ -145,6 +145,9 @@ primInstr2Nm = \case
   i          -> show i
 -- MemInstr   !ArrayInstrs
 
+isAssoc = \case
+  NumInstr (IntInstr i) -> case i of { Add->True ; Mul->True ; _ -> False }
+
 deriving instance Show Literal
 deriving instance Show PrimType
 deriving instance Show FloatTy
