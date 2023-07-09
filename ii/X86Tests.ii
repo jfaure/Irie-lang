@@ -1,0 +1,6 @@
+fMulAdd x y z = add x (mul y z)
+algebra x y z = add 5 (add x (mul (sub y 2) z))
+
+fac n = case lt n 1 of
+  True  => n
+  False => fac (mul n n)

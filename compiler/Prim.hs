@@ -147,6 +147,7 @@ primInstr2Nm = \case
 
 isAssoc = \case
   NumInstr (IntInstr i) -> case i of { Add->True ; Mul->True ; _ -> False }
+  _ -> False
 
 deriving instance Show Literal
 deriving instance Show PrimType

@@ -74,6 +74,7 @@ data Term -- β-reducable (possibly to a type)
  | SigmaApp Term Term -- basically a PAp (no immediate β-reduction)
  | Meet Term Term | Join Term Term -- ^ v lattice operators
  | Mu Int Term -- deBruijn variable is marked as a fixpoint
+ | Top Term -- tmp node for mkasm
 -- factorial = fix (\rec n -> if n <= 1 then 1 else n * rec (n-1)) 5
 -- squishTree : fix b [Node (A , fix C [Cons (b , c) | Nil])] -> d -> fix d [Cons (A , d)]
 type TInt = Int -- index into thead & flow vectors

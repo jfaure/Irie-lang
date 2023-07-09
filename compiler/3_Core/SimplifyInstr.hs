@@ -73,12 +73,16 @@ simpleInstr i args = let
 --GMPInstr j -> simpleGMPInstr j args
   Zext -- | [Lit ( i)]   <- args -> Lit (Fin 64 i)
        | [Lit (Fin _ i)] <- args -> Lit (Fin 64 i)
+
   NumInstr (IntInstr Chr) | [Lit (Fin _ i) ] <- args -> Lit (Char (chr (fromIntegral i)))
   NumInstr (IntInstr Ord) | [Lit (Char c)] <- args -> Lit (Fin 32 (fromIntegral $ ord c))
 --NumInstr (IntInstr i)  | [Lit (I32 a) , Lit (I32 b)] <- args ->
   NumInstr (IntInstr i)  | [Lit (Fin n a) , Lit (Fin m b)] <- args -> Lit (Fin (max m n) (interpretBinaryIntInstr i a b))
   NumInstr (BitInstr i)  | [Lit (Fin n a) , Lit (Fin m b)] <- args -> Lit (Fin (max m n) (interpretBinaryBitInstr i a b))
   NumInstr (PredInstr p) | [Lit (Fin _ a) , Lit (Fin _ b)] <- {-trace (T.intercalate "," $ prettyTermRaw <$> args)-} args -> boolToLabel (interpretBinaryPredInstr p a b)
+
+  -- Re-associate for x86-codegen, which expects immediates on the right
+  NumInstr (IntInstr Add) | [imm@(Lit (Fin _ iVal)) , x] <- args -> if iVal == 0 then x else App (Instr i) [x , imm]
 
   -- cannot use posix types directly due to hidden constructors preventing deriving Binary for Literal
   OpenDir | [Lit (String fName)] <- args -> let

@@ -65,11 +65,13 @@ fromReg :: Reg -> Word8 = fromIntegral . fromEnum
 -- rex = 0100 | W | R | X | B
 -- W = request 64-bit op size (if not set may default to 64)
 -- R,X,B = 1-bit extensions for (8..15) registers: MODRM.reg , SIB index , ModRM.rm
-mkRex w r x b = let
-  w' = if w then 0b1000 else 0 ; r' = if r then 0b100 else 0
-  x' = if x then 0b10 else 0 ; b' = if b then 0b1 else 0
-  in 0b0100_0000 .|. w' .|. r' .|. x' .|. b'
-long = B 0b0100_1000 -- simplest rex byte requesting 64-bit op size
+-- R,B fields extend ModRM
+long , longB , longX , longW , longR :: Word8
+long  = 0b0100_0000 -- simplest rex byte requesting 64-bit op size
+longB = 0b0001 -- extend MODRM.rm
+longX = 0b0010 -- extend SIB
+longR = 0b0100 -- extend MODRM.reg
+longW = 0b1000 -- request 64-bit op size
 
 -- ModR/M , encode up to 2 operands of instr: direct register or mem address
 -- fieldNames. mode , register , register/memory
@@ -89,7 +91,7 @@ long = B 0b0100_1000 -- simplest rex byte requesting 64-bit op size
 --   ! (if index=rsp , scale*index = 0) or (if modRM.mod=00 & base=rbp , base=0)
 mrmRegAddrMode = 0xc0 -- 11000000 -- else register-indirect + optional displacement
 -- /n means setting r2 to n as a 1 operand opcode extension
-mkModRM_RR dst src = B (mrmRegAddrMode .|. fromReg src `shiftL` 3 .|. fromReg dst)
+mkModRM_RR dst src = B (mrmRegAddrMode .|. fromReg dst `shiftL` 3 .|. fromReg src)
 -- v unset high bits
 --mkModRM_rr00 dst src = B (dst `shiftL` 3 .|. src)
 mkModRM_rr dst src = B (mrmRegAddrMode .|. dst `shiftL` 3 .|. src)
@@ -97,30 +99,49 @@ mkModRM_Dest r1 = B (mrmRegAddrMode .|. fromReg r1) -- specify destination regis
 mkModRM_digit n src = B (mrmRegAddrMode .|. n `shiftL` 3 .|. fromReg src)
 
 ret    = [B 0xc3]
-push r = [B (0x50 + fromReg r)]
+-- PUSH reg64 = 50 +rq (REX.B extension)
+push r = fromReg r & \i -> if i < 8 then [B (0x50 + i)] else [B (long .|. longB) , B (0x50 + i - 8)]
 pushImm8 c = [B 0x6A , B c] -- Note these things are sign extended to operating size
 pushImm32 c = [B 0x68 , D c] -- push16, push32 have same opcode
-pushImm64 c = [long , B 0x68 , D c] -- push16, push32 have same opcode
+pushImm64 c = [B 0x68 , D c] -- push16, push32 have same opcode
 pop32 r = [B (0x58 + fromReg r)]
-pop64 r | reg <- fromReg r , reg < 8 = [long , B (0x58 + reg)] -- TODO rex
+--pop64 r | reg <- fromReg r , reg < 8 = [long , B (0x58 + reg)] -- TODO rex
 noop   = [B 0x90]
 hlt    = [B 0xf4]
 
-addRaxImm w32 = [B 0x05 , D w32] -- add to rax
-subRaxImm w32 = [B 0x2D , D w32]
-addReg r l    = [long , B 0x01 , mkModRM_RR r l]
-subReg r l    = [long , B 0x29 , mkModRM_RR r l]
-inc r         = [long , B 0xFF , B $ 0xc0 + fromReg r] -- modR/M byte.. make clearer
-dec r         = [long , B 0xFF , B $ 0xc0 + (fromReg r + 8)]
-xorR r l      = [long , B 0x33 , mkModRM_RR r l] -- 33 /r
-addImm32 RAX i = [long , B 0x05 , D i]
-addImm32 r i   = [long , B 0x81 , mkModRM_digit 0 r , D i]
-add8 r l       = [long , B 0x00 , mkModRM_RR r l]
-addMem32 r l   = [long , B 0x01 , mkModRM_RR r l]
-add32 r l      = [long , B 0x03 , mkModRM_RR r l]
+-- need Rex prefix to extend to 16 register set
+-- TODO also can set REX.W to make default 64 bit mode
+mkBinInstr opCode r l = let rI = fromReg r ; lI = fromReg l in if
+  | rI < 8 -> if lI < 8 then [B opCode , mkModRM_rr rI lI] -- both < 8
+              else [B (long .|. longB) , B opCode , mkModRM_rr rI (lI - 8)] -- (lI >= 8)
+  | lI < 8 -> [B (long .|. longR) , B opCode , mkModRM_rr rI (lI - 8)] -- (rI >= 8)
+  | True   -> [B (long .|. longR .|. longB) , B opCode , mkModRM_rr (rI - 8) (lI - 8)] -- both >= 8
 
-iMul64Reg RAX l = [B 0xF7 , mkModRM_digit 5 l]
-iMul64Reg r   l = [B 0x0F , B 0xAF , mkModRM_RR r l]
+inc r          = [B 0xFF , B $ 0xc0 + fromReg r] -- modR/M byte.. make clearer
+dec r          = [B 0xFF , B $ 0xc0 + (fromReg r + 8)]
+addReg         = mkBinInstr 0x03
+subReg         = mkBinInstr 0x2B
+addMem32       = mkBinInstr 0x01
+add32          = mkBinInstr 0x03
+xorR           = mkBinInstr 0x33
+addImm32 RAX i = [B 0x05 , D i]
+addImm32 r i   = [B 0x81 , mkModRM_digit 0 r , D i]
+add8 r l       = mkBinInstr 0x00 r l
+
+cmpImm8 RAX ib  = [B 0x3C , B ib]
+cmpImm8 r ib    = mkBinInstr 0x80 (toEnum 7) r ++ [B ib]
+cmpImm32 RAX ib = [B 0x3D , D ib]
+cmpImm32 r ib   = mkBinInstr 0x81 (toEnum 7) r ++ [D ib]
+cmpReg8         = mkBinInstr 0x3A
+cmpReg32        = mkBinInstr 0x3B
+
+subImm32 RAX i = [B 0x2D , D i]
+subImm32 r i   = [B 0x81 , mkModRM_digit 5 r , D i]
+
+iMul64Reg r   l = B 0x0F : mkBinInstr 0xAF r l -- IMUL reg64, reg/mem64 0F AF /r
+-- iDiv: Signed div: EDX:EAX / r; store the quotient in EAX and the remainder in EDX.
+-- ! ie. clobbers EAX & EDX
+iDiv            = mkBinInstr 0xF7 (toEnum 7)   -- IDIV reg/mem32 F7 /7
 
 -- flags
 stc = [B 0xF9]
@@ -134,43 +155,18 @@ mkSet_ n r = [bytesToD 0xF (90 + n) , mkModRM_digit 0 r]
  , setL{-L/NGE-} , setNL{-NL/GE-} , setLE{-LE/NG-} , setNLE{-NLE/G-}]
  = mkSet_ <$> [0..0xF]
 
-
-jmpImm8 i = [B 0xEB , B i]
+jmpImm8 i  = [B 0xEB , B i]
 jmpImm32 i = [B 0xE9 , D i]
-jmpReg r = [B 0xFF , mkModRM_digit 4 r]
+jmpReg r   = [B 0xFF , mkModRM_digit 4 r]
 
+-- Jmp conditionally: 0x0F prefix then this enum occupies opcodes [0x80..0x8F]
+data JmpCond = JO | JNO | JC{-jnae-} | JNC | JZ{-je-} | JNZ | JBE{-jna-} | JNBE
+  | JS | JNS | JP | JNP | JL | JNL | JLE | JNLE deriving (Enum , Eq , Show)
 jmpCondImm32Sz  = 6 :: Word32 -- jmps are relative to end of instructions
-jmpImm32Sz  = 5 :: Word32 -- jmps are relative to end of instructions
-joImm32 i   = [bytesToD 0x0F 0x80 , D i] -- not overflow; OF=0
-jnoImm32 i  = [bytesToD 0x0F 0x81 , D i] -- not overflow; OF=0
-jcImm32 i   = [bytesToD 0x0F 0x82 , D i] -- jc/jnae
-jncImm32 i  = [bytesToD 0x0F 0x83 , D i] -- jnb/jnc/jae
-jzImm32 i   = [bytesToD 0x0F 0x84 , D i] -- jz/je
-jnzImm32 i  = [bytesToD 0x0F 0x85 , D i] -- jnz / jne
-jbeImm32 i  = [bytesToD 0x0F 0x86 , D i] -- jbe / jna
-jnbeImm32 i = [bytesToD 0x0F 0x87 , D i] -- jnbe / ja
-jsImm32 i   = [bytesToD 0x0F 0x88 , D i]
-jnsImm32 i  = [bytesToD 0x0F 0x89 , D i]
-jpImm32 i   = [bytesToD 0x0F 0x8A , D i] -- jp/jpe
-jnpImm32 i  = [bytesToD 0x0F 0x8B , D i] -- jp/jpo
-jlImm32 i   = [bytesToD 0x0F 0x8C , D i] -- jl/jnge
-jnlImm32 i  = [bytesToD 0x0F 0x8D , D i] -- jnl/jge
-jleImm32 i  = [bytesToD 0x0F 0x8E , D i] -- jle/jng
-jnleImm32 i = [bytesToD 0x0F 0x8F , D i] -- jnle/jg
+jmpImm32Sz      = 5 :: Word32 -- jmps are relative to end of instructions
+jmpCondImm32 jmpCond i = [bytesToD 0x0F (fromIntegral (fromEnum jmpCond) + 0x80) , D i]
 
-cmpImm8 RAX ib = [B 0x3C , B ib]
-cmpImm8 r ib   = [B 0x80 , mkModRM_digit 7 r , B ib]
-cmpImm32 RAX ib = [B 0x3D , D ib]
-cmpImm32 r ib   = [B 0x81 , mkModRM_digit 7 r , D ib]
-cmpReg8 r l  = [B 0x38 , mkModRM_rr r l]
-cmpReg r l  = [B 0x39 , mkModRM_RR r l]
-
-subImm32 RAX i = [long , B 0x2D , D i]
-subImm32 r i   = [long , B 0x81 , mkModRM_digit 5 r , D i]
-
---syscall       = [B 0x0f , B 0x05]
-
--- vex is usually 3 bytes, but 2 byte possible:
+-- vex is usually 3 bytes, but 2 byte sometimes possible:
 -- vex3 = 0xc4 | ~R , ~X , ~B , 5xmap_select | W/E , ~vvvv , L , pp
 -- vex2(0xc5) implies Vex.~X=1 , Vex.~B=1 , VEX.W/E=0 & map_select = 0b00001
 --   Also , nstead of W/E, the next byte has a ~R
@@ -240,13 +236,13 @@ callImm32 dstA = [B 0xE8 , D dstA]
 
 -- v MOV reg64,imm64 = B8 +rq iq. (+rq not quite 1:1 with normal registers!)
 movImm64 dst imm64 | d <- fromReg dst , d < 8
-  = [long , B (0xB8 + d) , Q imm64]
+  = [B (0xB8 + d) , Q imm64]
 
 movImm32 dst imm32 = [B 0xc7 , mkModRM_Dest dst , D imm32]
 movDollar32 dst = [B 0xc7 , mkModRM_Dest dst , DRelative 0]
-movR64 dst src = [long , B 0x89 , mkModRM_RR dst src]
+movR64 dst src = mkBinInstr 0x89 src dst -- = [B 0x89 , mkModRM_RR src dst] -- X86 flips src and dest
 
-lea dst srcMem = [B 0x8D , mkModRM_RR dst srcMem] -- 8D \r (Can request SIB byte!)
+lea dst srcMem = [B 0x8D , mkModRM_RR srcMem dst] -- 8D \r (Can request SIB byte!)
 
 interrupt = B 0xCD
 syscall = [B 0x0f , B 0x05]
