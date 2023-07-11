@@ -84,11 +84,6 @@ longW = 0b1000 -- request 64-bit op size
 --   when r/m=101 specifies a base+offset addressing mode with rBP as base
 -- reg: 3bit opcode extension | 3bit register reference: Rex.R|Vex.~R can extend 1 bit
 -- rm:  3bit direct/indirect register, optional displacement. Rex.B|Vex.~B 1bit ext
--- SIB(scale index base), present whem ModR/M requests it: (mod/=11 & .r/m=100)
---   called indexed register-indirect addressing
---   0b_ss_iii_bbb = scale_index_base (scale left shifts)
---   index and base encode registers => effective_addr = scale*index + base + offset
---   ! (if index=rsp , scale*index = 0) or (if modRM.mod=00 & base=rbp , base=0)
 mrmRegAddrMode = 0xc0 -- 11000000 -- else register-indirect + optional displacement
 -- /n means setting r2 to n as a 1 operand opcode extension
 mkModRM_RR dst src = B (mrmRegAddrMode .|. fromReg dst `shiftL` 3 .|. fromReg src)
@@ -98,13 +93,21 @@ mkModRM_rr dst src = B (mrmRegAddrMode .|. dst `shiftL` 3 .|. src)
 mkModRM_Dest r1 = B (mrmRegAddrMode .|. fromReg r1) -- specify destination register
 mkModRM_digit n src = B (mrmRegAddrMode .|. n `shiftL` 3 .|. fromReg src)
 
+-- SIB(scale index base), present whem ModR/M requests it: (mod/=11 & .r/m=100)
+--   called indexed register-indirect addressing
+--   0b_ss_iii_bbb = scale_index_base (scale left shifts)
+--   REX.X exents iii , REX.B extends base
+--   index and base encode registers => effective_addr = scale*index + base + offset
+--   ! (if index=rsp , scale*index = 0) or (if modRM.mod=00 & base=rbp , base=0)
+mkSIB scale index base = scale .<<. 6 .|. index .<<. 3 .|. base
+
 ret    = [B 0xc3]
 -- PUSH reg64 = 50 +rq (REX.B extension)
 push r = fromReg r & \i -> if i < 8 then [B (0x50 + i)] else [B (long .|. longB) , B (0x50 + i - 8)]
 pushImm8 c = [B 0x6A , B c] -- Note these things are sign extended to operating size
 pushImm32 c = [B 0x68 , D c] -- push16, push32 have same opcode
 pushImm64 c = [B 0x68 , D c] -- push16, push32 have same opcode
-pop32 r = [B (0x58 + fromReg r)]
+pop64 r = [B (0x58 + fromReg r)]
 --pop64 r | reg <- fromReg r , reg < 8 = [long , B (0x58 + reg)] -- TODO rex
 noop   = [B 0x90]
 hlt    = [B 0xf4]
@@ -127,6 +130,13 @@ xorR           = mkBinInstr 0x33
 addImm32 RAX i = [B 0x05 , D i]
 addImm32 r i   = [B 0x81 , mkModRM_digit 0 r , D i]
 add8 r l       = mkBinInstr 0x00 r l
+
+andImm32 RAX i = [B 0x25 , D i]
+andImm32 r   i = [B 0x81 , mkModRM_digit 4 r , D i]
+andImm8  RAX i = [B 0x24 , B i]
+andImm8  r   i = [B 0x83 , mkModRM_digit 4 r , B i]
+andR32         = mkBinInstr 0x23
+-- andN is a BMI1 VEX instruction
 
 cmpImm8 RAX ib  = [B 0x3C , B ib]
 cmpImm8 r ib    = mkBinInstr 0x80 (toEnum 7) r ++ [B ib]
@@ -239,8 +249,14 @@ movImm64 dst imm64 | d <- fromReg dst , d < 8
   = [B (0xB8 + d) , Q imm64]
 
 movImm32 dst imm32 = [B 0xc7 , mkModRM_Dest dst , D imm32]
+movzx32_8  dst = [B 0x0F , B 0xB6 , mkModRM_Dest dst]
+movzx32_16 dst = [B 0x0F , B 0xB7 , mkModRM_Dest dst]
+--movzx32_8  dst = [B 0x0F , B 0xBE , mkModRM_Dest dst]
+--movzx32_16 dst = [B 0x0F , B 0xBF , mkModRM_Dest dst]
+movsxd dst src = mkBinInstr 0x63
 movDollar32 dst = [B 0xc7 , mkModRM_Dest dst , DRelative 0]
 movR64 dst src = mkBinInstr 0x89 src dst -- = [B 0x89 , mkModRM_RR src dst] -- X86 flips src and dest
+(movs8 , movs32) = (B 0xA4 , B 0xA5) -- move at RSI to RDI
 
 lea dst srcMem = [B 0x8D , mkModRM_RR srcMem dst] -- 8D \r (Can request SIB byte!)
 
@@ -329,7 +345,7 @@ writeSysCall =
   , movR64 RSI RSP
   , movImm32 RDX 4 -- msg len
   , syscall
-  , pop32 RDI
+  , pop64 RDI
   ]
   ++ exitSysCall
 

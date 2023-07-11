@@ -194,11 +194,12 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
        shouldMkElf = shouldSimplify
        disassElf = True
        runElf = True
-       coreToAsm curReg = CoreToX86.mkAsmBindings mI curReg._loadedModules jm.moduleTT
+       coreToAsm curReg maybeMain = CoreToX86.mkAsmBindings mI curReg._loadedModules maybeMain jm.moduleTT
+       lookupMain r' = findBindIndex r' mI "main"
        in registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
        *> maybe (pure ()) putStrLn warnings
        *> when shouldPutJM (getBindSrc >>= \bindSrc -> putJudgedModule cmdLine (Just bindSrc) jm)
-       *> when shouldMkElf (readMVar reg >>= \r' -> Elf.mkElf (disassElf , runElf) (coreToAsm r'))
+       *> when shouldMkElf (readMVar reg >>= \r' -> Elf.mkElf (disassElf , runElf) (coreToAsm r' (lookupMain r')))
        *> when putModVerdict (putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
   ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
   NoJudge _mI _jm -> pure deps

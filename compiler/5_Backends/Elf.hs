@@ -425,9 +425,8 @@ test prog = do
   -- Version References ? VERNEEDED VERSYM
 
 -- ! Programs must call exit syscall at some point
-mkElf :: (Bool , Bool) -> ((Ptr Word8 , Int) -> IO (Ptr Word8 , (Maybe Word64 , [(Word64 , ByteString)]))) -> IO ()
-mkElf (disassElf , runElf) mkProg' = let
-  mkProg = mkProg'
+mkElf :: (Bool , Bool) -> ((Ptr Word8 , Int) -> IO (Ptr Word8 , (Word64 , [(Word64 , ByteString)]))) -> IO ()
+mkElf (disassElf , runElf) mkProg = let
 --mkProg (ptr , memSz) = X86.mkAsm memSz ptr (concat X86.writeSysCall) <&> \sz -> (plusPtr ptr sz , Just 0)
   jitsz = 0x40000
 --rPathName = 1 ; libcName  = 1 ; syms = mempty ; interpreter = "" ; nHashBuckets = 1
@@ -442,7 +441,7 @@ mkElf (disassElf , runElf) mkProg' = let
       shstrTabShdr = emptySHdr { sName = 7 , sType = fromIntegral (fromEnum SHT_STRTAB) , sFlags = shfAlloc }
       txtOff = minusPtr (elfM ^. elfEndPtr) (elfM ^. elfptr)
       shstrs = V.fromList [".text" , ".shstrtab" , ".strtab" , ".symtab"] -- TODO let finaliseElf handle this one
-  (elfM1 , (_phent , syms)) <- addSection elfM (Just (0{-phdrIdx-} , txtPhdr)) txtShdr (\inp -> mkProg inp)
+  (elfM1 , (phent , syms)) <- addSection elfM (Just (0{-phdrIdx-} , txtPhdr)) txtShdr (\inp -> mkProg inp)
   (elfM2 , ()) <- addSection elfM1 Nothing shstrTabShdr (\(inp,_) -> (,()) <$> writeStrTab inp shstrs)
   let symStrs = V.fromList (snd <$> syms)
   (elfM3 , ()) <- let
@@ -460,7 +459,7 @@ mkElf (disassElf , runElf) mkProg' = let
       , sInfo = fromIntegral (V.length symStrs)
       , sLink = 3 } -- ! the strtable for these syms
     in addSection elfM3 Nothing symTabShdr (\(inp,_) -> (,()) <$> writeSymTab inp (V.fromList elfSyms))
-  filesz <- finaliseElf elfM4 2{-shstrndx-} (fromIntegral txtOff)
+  filesz <- finaliseElf elfM4 2{-shstrndx-} (fromIntegral txtOff + phent)
 
   bs <- BSU.unsafePackCStringLen (castPtr ptr , filesz)
   B.writeFile outFile bs

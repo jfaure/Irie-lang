@@ -73,20 +73,31 @@
 --f = Cons 3
 
 --import Maybe
---plus1 x y = add x y
---plus2 (x , y) = add x y
 
 --ifThenElse cond a b = case lt cond 0 of
 --  True  => add 0 a
 --  False => add 0 b
 
--- ret:
--- * call -> ret
--- * end function
--- * cases
+-- builtin withUnfoldLStack : (s -> Maybe (Char , s)) -> s -> ((Nat , CString) -> a) -> a
+-- nextDigitU n = divMod n 10 & \(q , r) -> if q == 0 && r == 0 then Nothing else Just (chr (48 + r) , q)
+-- itoa n = withUnfoldLStack n (write 0 len)
+
+-- Dups & sv/restore function state
+-- * Calls Force a specific register allocation + sv/restore anything clobbered by cc
+-- ↓ Calls force some register alloc
+-- ↑ physical registers based on RNames
 fac n = case lt n 1 of
   True  => n
-  False => fac (mul n n)
+--False => add n (fac (mul n n)) -- need to push n
+  False => add (fac (mul n n)) n -- need to push n
+-- ? rax collisions among branches
+-- ? duplications => back to sharing
 
--- * Fns may use regs in their calling conv
--- ! if retloc is live, need to sv/move that as well
+-- ? regspan , regpack (sum tags & regs)
+
+--plus1 x y = add x y
+--plus2 (x , y) = add x y
+
+-- * mk UnfoldStack builtin, to push to stack directly
+-- !? Can require some functions to return their args in same registers , in case that reg is needed again
+--main = 3

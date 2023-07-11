@@ -25,7 +25,8 @@ data Value
   | VSum Value Value deriving (Show , Eq)
 
 data AsmType
- = Bits Int -- can be any size and may span multiple registers / spill. (16 ymm regs = 4096 bits)
+ = Bits NBits -- can be any size and may span multiple registers / spill. (16 ymm regs = 4096 bits)
+-- | Span NBits (V.Vector Int) -- offset vector to recover VBruijns
  | ProdTy ProdType
  | SumTy Int (BSM.BitSetMap AsmType) Int -- number of alts, possible alts , largest Alt
  deriving (Show , Eq)
@@ -34,17 +35,18 @@ type ProdType = (Int , BSM.BitSetMap AsmType) -- total bits needed
 
 -- 0. pre-name the arg and return registers
 -- 1. ↓ Convert to register machine, max overlap registers, rm {} and [] types, assign reg types
+--    * calling convention forces retlocs; ana pushes retlocs down as far as possible when can overlap
 -- 2. ↑ allocate registers|flags|stack insert call/jmp addresses
+--    * Some nodes
 type RName = Int -- Encode different reg types and enumerate separately
 data MiniCore
-  = SetLit    RName Literal
-  | ArgReg    Int
-  | RenameArg RName Int
-  | Dup       RName RName
-  | CallQName Bool {- tailCall -} (Maybe RName) QName [MiniCore]
-  | Instr2    PrimInstr MiniCore MiniCore -- ret reg is the left one , will be overwritten
+  = SetLit    (Maybe Value) Literal
+  | ArgReg    (Maybe Value) Int
+  | NoClobber Value MiniCore
+  | CallQName Bool (Maybe Value) {- tailCall -} QName [MiniCore]
+  | Instr2    PrimInstr MiniCore MiniCore -- ret reg is the right one , since last to run
   | InstrImm2 PrimInstr MiniCore Literal
-  | IfElse Bool MiniCore MiniCore MiniCore -- TODO How to merge return types ? Need to ensure all subtyped properly
+  | IfElse Bool MiniCore MiniCore MiniCore -- retLoc passed to rightmost instr (calls may force our hand though)
 --  | Switch    RName MiniCore [Int] [MiniCore] -- scrut , register surviving , alts
   | Ret MiniCore
   deriving Show; makeBaseFunctor ''MiniCore
@@ -52,7 +54,9 @@ deriving instance Show (MiniCoreF ())
 --data IRFunction = IRFunction CallingConv QName
 
 data RegMachineState = RegMachineState
-  { _freshReg :: Int , _retLoc :: Maybe Int }; makeLenses ''RegMachineState
+  { -- _freshReg :: Int
+    _retLoc   :: Maybe Value -- Int
+  }; makeLenses ''RegMachineState
 -- ↓ Convert to register machine (rm {} []). re-use regs as much as possible
 -- At leaves, the cata will find register names indicating how many distinct registers the sequence needs
 mkRegMachineU :: Bool -> (RegMachineState , Term) -> MiniCoreF (RegMachineState , Term)
@@ -61,22 +65,24 @@ mkRegMachineU isTop (st , term) = case term of
     CaseB{}     -> mkRegMachineU True (st , t)
     App Var{} _ -> mkRegMachineU True (st , t)
     t       -> RetF (st , t)
-  Lit l       -> SetLitF (fromMaybe (st ^. freshReg) (st ^. retLoc)) l
-  VBruijn i   -> maybe (ArgRegF i) (\r -> RenameArgF r i) (st ^. retLoc)
+  Lit l       -> SetLitF (st ^. retLoc) l
+  VBruijn i   -> ArgRegF (st ^. retLoc) i -- maybe (ArgRegF i) (\r -> RenameArgF r i) (st ^. retLoc)
   -- v First branch may re-use ret-reg , second branch must find itself a new reg
+  --   (calling convs are likely to cause overlap)
   -- also push down the retLoc for the lOp to use
-  -- TODO rename all Instr1 to Casts
+  -- !
   App (Instr i) [lOp , rOp] -- may assume immediates are in rOp , simplifier reassociates if possible
     | Lit imm <- rOp -> InstrImm2F i (st , lOp) imm
-    | otherwise -> Instr2F i (st , lOp) (st & freshReg %~ (1+) & retLoc .~ Nothing , rOp)
+--  | otherwise -> Instr2F i (st , lOp) (st & freshReg %~ (1+) & retLoc .~ Nothing , rOp)
+    | otherwise -> Instr2F i (st & retLoc .~ Nothing , lOp) (st , rOp)
   App (Var (VQBindIndex q)) args -> let -- TODO prepare retloc for arg slots?
     st' = st & retLoc .~ Nothing
-    in CallQNameF isTop (st ^. retLoc) q (zipWith (\i arg -> (st' & freshReg %~ (i+) , arg)) [0..] args)
+    in CallQNameF isTop (st ^. retLoc) q ((st', ) <$> args) -- TODO read calling conv!
+      -- (zipWith (\i arg -> (st' & freshReg %~ (i+) , arg)) [0..] args)
 
   -- v Case alts are sorted by BSM , so first alt is always 0
-  CaseB mkScrut _t alts Nothing | BSM.size alts == 2 , [ok , ko] <- V.toList (BSM.elems alts) ->
-    -- Branches share same initial states since will run disjoint
-    IfElseF isTop (st & retLoc .~ Nothing , mkScrut) (st , Top ok) (st , Top ko)
+  CaseB mkScrut _t alts Nothing | BSM.size alts == 2 , [ok , ko] <- V.toList (BSM.elems alts) -> let top = if isTop then Top else identity in -- Branches share same initial states since will run disjoint
+    IfElseF isTop (st & retLoc .~ Nothing , mkScrut) (st , top ok) (st , top ko)
 
   x -> error $ show x
 
@@ -100,11 +106,19 @@ writeAsm prog = use memPtr >>= \ptr -> use memLen >>= \len -> liftIO (X86.mkAsm 
   \wroteLen -> memPtr %= \p -> plusPtr p wroteLen
 writeAsmAt ptr prog = liftIO (X86.mkAsm 15 {-max len for an instruction-} ptr prog)
 
-allocReg :: RName -> MkX86M X86.Reg
-allocReg i = liveRegs %%= \l -> if l == 0 then error "no free regs"
+allocReg :: MkX86M X86.Reg
+allocReg = liveRegs %%= \l -> if l == 0 then error "no free regs: TODO push to stack"
   else countTrailingZeros l & \r -> (toEnum r , clearBit l r)
 freeReg :: X86.Reg -> MkX86M ()
 freeReg r = liveRegs %= (`setBit` fromEnum r)
+regIsFree :: X86.Reg -> MkX86M Bool
+regIsFree r = use liveRegs <&> \live -> live `testBit` fromEnum r
+getLiveRegs :: MkX86M [X86.Reg]
+getLiveRegs = use liveRegs <&> \lv -> bitSet2IntList (fromIntegral (complement lv) `clearBit` fromEnum X86.RSP) <&> toEnum
+-- TODO sometimes need to alloc multiple regs
+allocValue ty = allocReg <&> \r -> Reg r ty
+allocMReg :: AsmType -> Maybe Value -> MkX86M Value
+allocMReg ty = maybe (allocValue ty) pure
 
 -- Finally inverse the AST: @leaf: regName - argRegs = number of registers needed to compute the branch
 -- There is some conflict between retLoc and argRegs
@@ -113,11 +127,12 @@ freeReg r = liveRegs %= (`setBit` fromEnum r)
 --mkX86F :: MiniCoreF (MkX86M X86.Reg) -> MkX86M X86.Reg
 mkX86F :: MiniCoreF (MkX86M Value) -> MkX86M Value
 mkX86F = \case
-  SetLitF r (Fin n imm) | n <= 32 -> allocReg r >>= \reg -> writeAsm (X86.movImm32 reg (fromIntegral imm))
-    $> Reg reg (Bits 32)
-  ArgRegF i      -> use argRegs <&> (V.! i) -- <&> \(Reg r _) -> r
-  RenameArgF r i -> use argRegs <&> (V.! i) >>= \(Reg argReg rty) ->
-    allocReg r >>= \reg -> Reg reg rty <$ freeReg argReg <* writeAsm (X86.movR64 reg argReg)
+  SetLitF r (Fin n imm) | n <= 32 -> allocMReg (Bits 32) r >>= \r@(Reg reg (Bits rN)) ->
+    r <$ writeAsm (X86.movImm32 reg (fromIntegral imm)) <* (when (rN /= n) (error $ show (n , rN)))
+  ArgRegF mV i -> use argRegs <&> (V.! i) >>= \av@(Reg argReg argTy) -> case mV of
+    Nothing -> pure av
+    Just rv@(Reg rg retTy) | argTy == retTy -> rv <$ writeAsm (X86.movR64 rg argReg)
+--RenameArgF r i -> allocReg r >>= \reg -> Reg reg rty <$ freeReg argReg <* writeAsm (X86.movR64 reg argReg)
   -- v ret reg is l, can free mkR reg
   InstrImm2F i mkL (Fin n imm) | n <= 32 -> mkL >>= \lV@(Reg l _) -> case i of
     NumInstr (IntInstr Add)  -> writeAsm (X86.addImm32 l (fromIntegral imm)) $> lV
@@ -132,19 +147,31 @@ mkX86F = \case
       NumInstr (IntInstr Mul) -> X86.iMul64Reg
       NumInstr (IntInstr Add) -> X86.addReg
       NumInstr (IntInstr Sub) -> X86.subReg
-    in mkL >>= \lv@(Reg l _) -> mkR >>= \rv@(Reg r _) -> writeAsm (x86Instr l r) *> freeReg r $> lv
+    -- TODO its possible that rBranch overwrites registers from lBranch
+    in mkL >>= \lv@(Reg l _) -> mkR >>= \rv@(Reg r _) -> writeAsm (x86Instr r l) *> freeReg l $> rv
 --  NumInstr (IntInstr Sub)  -> v <$ writeAsm (X86.subImm32 l (fromIntegral imm))
 --  PredInstr LTCmp -> VFlag ZFlag <$ writeAsm (X86.cmpImm32 l (fromIntegral imm))
 
   CallQNameF tailCall maybeRL q mkArgs {-| modName q == thisM-} -> use modBinds >>= \v ->
     liftIO (MV.read v (unQName q)) >>= \case
-    (cc , Left{}    ) -> error ("forward ref: " <> showRawQName q) -- TODO topological sort?
-    (cc@(argCC , retVal@(Reg retR _)) , Right addr) -> do
+    (cc , Left{}) -> error ("forward ref: " <> showRawQName q) -- TODO topological sort?
+    (cc@(argCC , retVal@(Reg retReg retTy)) , Right addr) -> do
       sequence mkArgs
-      ref <- use memPtr
-      retVal <$ if tailCall
-      then writeAsm (X86.jmpImm32 (fromIntegral (minusPtr addr ref) - X86.jmpImm32Sz))
-      else writeAsm (X86.callImm32 (fromIntegral (minusPtr addr ref) - X86.callRelativeSz))
+      if tailCall
+      then use memPtr >>= \ref -> retVal <$ writeAsm (X86.jmpImm32 (fromIntegral (minusPtr addr ref) - X86.jmpImm32Sz))
+      else do
+        spilledRegs <- getLiveRegs
+        spilledRegs `forM` \r -> writeAsm (X86.push r)
+        ref <- use memPtr
+        writeAsm (X86.callImm32 (fromIntegral (minusPtr addr ref) - X86.callRelativeSz))
+        -- Its possible a different arg wanted to write to RAX/our ret-conv, in which case rename our ret here
+        retValue@(Reg retReg retTy) <- regIsFree retReg >>= \case
+          True -> pure retVal
+          False -> allocReg >>= \cp -> Reg cp retTy <$ writeAsm (X86.movR64 cp retReg)
+        spilledRegs `forM` \r -> writeAsm (X86.pop64 r)
+        case maybeRL of
+          Just (rv@(Reg r t)) | r /= retReg -> rv <$ writeAsm (X86.movR64 r retReg)
+          _                   -> pure retValue
 
   IfElseF canRet cond ok ko -> let
     patchLabel jmpSz comeFrom ref jmpTy = writeAsmAt comeFrom
@@ -172,9 +199,14 @@ mkX86F = \case
   x -> error $ show (() <$ x)
 
 -- retReg is assigned to [V.length argRegs ..]
+-- TODO pass-down callingConvs: RName <=> X86.Reg constraints
+-- So at leaves allocReg can rename collisions
+mhylo :: (Monad m , Traversable f) => (f a -> m a) -> (s -> m (f s)) -> s -> m a
+mhylo alg coalg c = coalg c >>= sequence . fmap (mhylo alg coalg) >>= alg
+
 genAsm argVals retVal term = let
-  start = (RegMachineState (V.length argVals + 1) (Just (V.length argVals)) , Top term)
-  in -- d_ (ana mkRegMachineU start :: MiniCore) $
+  start = (RegMachineState (Just retVal) , Top term)
+  in -- d_ (ana (mkRegMachineU False) start :: MiniCore) $
     hylo mkX86F (mkRegMachineU False) start
 
 -- * Convert types to asmTypes
@@ -229,77 +261,6 @@ asmSizeOf = \case
   SumTy n p sz -> sizeOfTagBits n + sz -- sizeof gets number of bytes in an int
 sizeOfTagBits n = Foreign.Storable.sizeOf n * 8 - countLeadingZeros n
 
---mkAsmF :: ModuleIName -> V.Vector LoadedMod -> TermF (AsmM s Value) -> AsmM s Value
---mkAsmF thisM loadedMods = let
---  in \case
---  VBruijnF i -> use bruijnArgs <&> (V.! i)
---  VarF (VQBindIndex q) | modName q == thisM -> use modBinds >>= \v -> liftIO (MV.read v (unQName q)) >>= \case
---    (cc , Right addr) -> pure (VAddr addr cc)
---    (cc , Left{}    ) -> error ("forward ref: " <> showRawQName q) -- TODO topological sort?
---  LitF l -> use topExpr >>= \canRet -> if canRet then respectRetLoc (VLit l) *> writeAsm X86.ret $> Ret else pure (VLit l)
---  CastF c t -> _f
---  InstrF i -> pure (VInstr i)
---
---  -- Setup arg retLocs , push clobbered regs & generate args
---  AppF mkFn mkArgs -> (topExpr <<.= False) >>= \isTop -> mkFn >>= \case
---    VInstr i -> do
---      svRetLoc <- use retLoc
---      -- TODO type for retloc?!
---      args <- mkArgs `forM` \mkArg -> ((liveRegs %%= allocReg) >>= \r -> retLoc .= Reg r (Bits 32)) *> mkArg
---      retLoc .= svRetLoc
---      case args of
---        [l , r] -> mkAsmBinInstr i l r >>= \case
---          v@VFlag{} -> pure v
---          x -> respectRetLoc x
---    VAddr addr (ccArgs , ccRet) -> do
---      svRetLoc <- use retLoc
---      -- arg retLocs will overwrite things we may be using
---      let genArg = \case
---            These cc mkVal -> (retLoc .= cc) *> mkVal
---            _ -> error "calling conv arity mismatch"
---        in sequence $ alignWith genArg (V.toList ccArgs) mkArgs
---      retLoc .= svRetLoc
---      liveRegs <- getLiveRegs <$> use liveRegs
---      liveRegs `forM` \r -> writeAsm (X86.push r)
---
---      ref <- use memPtr
---      writeAsm (X86.callImm32 (fromIntegral (minusPtr addr ref) - X86.callRelativeSz))
---      liveRegs `forM_` \r -> writeAsm (X86.pop32 r) -- TODO 32?
---      respectRetLoc ccRet
---    fn -> _f
---
---  ArrayF ars -> _f
---  TupleF ars -> _f
---  TTLensF scrut [field] LensGet -> scrut >>= \case
---    VProd regs (_ , tys) -> pure (regs V.! fst (BSM.findIndex tys field))
---    x -> error $ show x
---
---  LabelF l ars -> _f -- do what tuple does, mk label only when subcasted into sumtype
---
---  -- switches = cmp je , cmp je ..
---  -- TODO cmov cases
---  -- TODO can save the last jmp instruction
---  -- TODO if top-level, can jmp out of the case
---  CaseBF mkScrut _t alts Nothing -> let
---    patchLabel comeFrom ref jmpTy = writeAsmAt comeFrom
---      (jmpTy (fromIntegral (minusPtr ref comeFrom) - X86.jmpCondImm32Sz))
---    patchJmp comeFrom ref = writeAsmAt comeFrom (X86.jmpImm32 (fromIntegral (minusPtr ref comeFrom) - X86.jmpImm32Sz))
---    in use topExpr >>= \canRet -> mkScrut >>= \case
---    -- flags are already set
---    VFlag ZFlag | BSM.size alts == 2 , [ok , ko] <- V.toList (BSM.elems alts) -> do
---      startPtr <- use memPtr <* writeAsm (X86.jnzImm32 0)
---      ok
---      use memPtr >>= \koPtr -> patchLabel startPtr koPtr X86.jnzImm32
---      endbr <- if canRet then Nothing <$ writeAsm X86.ret else Just <$> (use memPtr <* writeAsm (X86.jmpImm32 0))
---      ko -- TODO restore cpu state to beginning of switch case for alts!
---      endPtr <- use memPtr
---      for_ endbr $ \e -> patchLabel e endPtr X86.jmpImm32
---      if canRet then Ret <$ writeAsm X86.ret else use retLoc
-----  Reg r (Bits s) -> mkSwitch r Nothing
-----  VSum (Reg r (Bits s)) datum -> mkSwitch r (Just datum)
---    x -> error $ show x
---  x -> error $ show (embed (Question <$ x))
---
 getRhs :: Int -> Expr -> Term
 getRhs nArgs (Core term ty) = case term of
   BruijnAbs n body -> case compare nArgs n of
@@ -318,7 +279,7 @@ did_LiveRegs live = trace @String (printf "%b\n" live) live
 bindToAsm :: ModuleIName -> V.Vector LoadedMod -> MV.IOVector _ -> (Ptr Word8 , Int) -> Int -> Expr -> IO (Ptr Word8)
 bindToAsm thisM loadedMods mb (memPtr' , memLen') bindINm expr = let
   -- Get calling convention from the function
-  (argValues , retValue@(Reg X86.RAX _)) = getCallingConv expr
+  (argValues , retValue) = getCallingConv expr
   liveRegsStart = complement 0 `clearBit` fromEnum X86.RSP -- All Except RSP
   liveArgs = V.foldl (\live (Reg r _) -> clearBit live (fromEnum r)) (complement 0) argValues
   rhs = getRhs (V.length argValues) expr
@@ -326,7 +287,7 @@ bindToAsm thisM loadedMods mb (memPtr' , memLen') bindINm expr = let
     { _memPtr = memPtr' , _memLen = memLen'
     , _modBinds = mb
     , _liveRegs = did_LiveRegs (liveArgs .&. liveRegsStart)
-    , _argRegs  = did_ argValues
+    , _argRegs  = argValues
     }
   cgBind = genAsm argValues retValue rhs
   in do
@@ -336,9 +297,10 @@ bindToAsm thisM loadedMods mb (memPtr' , memLen') bindINm expr = let
 
 -- * cg a module asm and write to a ptr
 -- * track symbols = offset & strName
-mkAsmBindings :: ModuleIName -> V.Vector LoadedMod -> V.Vector (LetMeta , Bind) -> (Ptr Word8 , Int)
-  -> IO (Ptr Word8 , (Maybe Word64 , [(Word64 , ByteString)])) -- return endPtr and entrypoint relative to start of .txt section
-mkAsmBindings modIName loadedMods lets (memPtr , memLen) = let
+mkAsmBindings :: ModuleIName -> V.Vector LoadedMod -> Maybe IName
+  -> V.Vector (LetMeta , Bind) -> (Ptr Word8 , Int)
+  -> IO (Ptr Word8 , (Word64 , [(Word64 , ByteString)])) -- return endPtr and entrypoint relative to start of .txt section
+mkAsmBindings modIName loadedMods maybeMain lets (memPtr , memLen) = let
   -- sequentially write out all functions & collect their offsets for strtable purposes
   appendBind modBinds (ptr , offs) (lm , bind) = let
     bindQName = (letBindIndex lm) & \(VQBindIndex q) -> q
@@ -353,4 +315,7 @@ mkAsmBindings modIName loadedMods lets (memPtr , memLen) = let
   entryEndPtr <- X86.mkAsm' memLen memPtr (concat X86.exitSysCall) -- (concat X86.writeSysCall)
   let entrySym = [(0 , "start")]
   (endPtr , syms) <- foldM (appendBind modBinds) (entryEndPtr , entrySym) lets
-  pure (endPtr , (Just (fromIntegral $ minusPtr endPtr memPtr) , syms)) -- main entry is our exit syscall
+  mainEntry <- fromIntegral <$> case maybeMain of
+    Nothing -> pure 0
+    Just i  -> MV.read modBinds i <&> \(_ , Right addr) -> minusPtr addr memPtr
+  pure (endPtr , (mainEntry , syms)) -- main entry is our exit syscall

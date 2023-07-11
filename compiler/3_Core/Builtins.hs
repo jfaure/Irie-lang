@@ -6,7 +6,7 @@ module Builtins (primBinds , primMap , typeOfLit , builtinFalse , builtinTrue , 
 import Prim
 import CoreSyn
 import qualified Data.Map.Strict as M ( (!?) , fromList )
-import qualified Data.Vector as V ( Vector, fromList , (!) , toList , length )
+import qualified Data.Vector as V ( Vector, fromList , (!) , toList , length , singleton )
 import qualified BitSetMap as BSM
 
 tHeadToTy t = TyGround [t]
@@ -20,12 +20,13 @@ readPrimExtern :: IName -> Expr
 readPrimExtern i = snd (primBinds V.! i)
 
 -- THExt
-readPrimType i = snd (primBinds V.! (i + 3))
+nBuiltinLabelTypes = 6 -- 3
+readPrimType i = snd (primBinds V.! (i + nBuiltinLabelTypes))
 
 getPrimTy :: HName -> IName
 getPrimTy nm = case primMap M.!? nm of
   Nothing -> panic $ "panic: badly setup primtables; " <> nm <> " not in scope"
-  Just i  -> i - 3 -- since this indexes primTys directly, leave space for boolLabel that wants 0.0 and 0.1
+  Just i  -> i - nBuiltinLabelTypes -- since this indexes primTys directly, leave space for boolLabel that wants 0.0 and 0.1
 
 primMap = M.fromList $ Prelude.imap (\i (nm,_val) -> (nm,i)) primTable
 primBinds :: V.Vector (HName , Expr) = V.fromList primTable
@@ -34,7 +35,7 @@ primType2Type x = Core (Ty (TyGround [THPrim x])) (tySet 0)
 
 primTable :: [(HName , Expr)]
 primTable = concat
-  [ boolLabel -- ! This must come first since explicitly: False = 0.0 and True = 0.1
+  [ builtinLabels -- ! This must come first since explicitly: False = 0.0 and True = 0.1
   , (\(nm , x)         -> (nm , primType2Type x)) <$> V.toList primTys
   , let tys2TyHead  (args , t) = TyGround $ mkTyArrow (TyGround . mkExtTy <$> args) (TyGround $ mkExtTy t) in
     (\(nm , (i , tys)) -> (nm , Core (Instr i) (tys2TyHead tys)))         <$> primInstrs
@@ -104,11 +105,15 @@ x86Intrinsics =
 
 -- Primitive Labels
 -- * Predicates must return labels so if_then_else_ can fuse
-boolLabel :: [(HName , Expr)]
-boolLabel =
+builtinLabels :: [(HName , Expr)]
+builtinLabels =
   [ ("False" , Core (Label builtinFalseQ mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
   , ("True"  , Core (Label builtinTrueQ  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
   , ("BoolL" , ty (TyGround [boolL]))
+
+  , ("L" , Core (Label builtinLQ mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [lLabelT]))]))
+  , ("R" , Core (Label builtinRQ mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [rLabelT]))]))
+  , ("Either" , ty (tHeadToTy (THTyCon (THSumTy (BSM.fromList [lLabelT , rLabelT])))))
   ]
 builtinTrue  = Label builtinTrueQ  mempty
 builtinFalse = Label builtinFalseQ mempty
@@ -117,6 +122,11 @@ builtinTrueQ = mkQName 0 1 -- 0.1
 falseLabelT = (qName2Key builtinFalseQ , TyGround [THTyCon (THTuple mempty)])
 trueLabelT  = (qName2Key builtinTrueQ  , TyGround [THTyCon (THTuple mempty)])
 boolL       = THTyCon (THSumTy (BSM.fromList [trueLabelT , falseLabelT]))
+
+builtinLQ = mkQName 0 2
+builtinRQ = mkQName 0 3
+lLabelT = (qName2Key builtinLQ , TyGround [THTyCon (THTuple (V.singleton (tHeadToTy THTop)))])
+rLabelT = (qName2Key builtinLQ , TyGround [THTyCon (THTuple (V.singleton (tHeadToTy THTop)))])
 
 -- ! Indexes here are of vital importance: THExts are assigned to these to speed up comparisons
 -- If anything here is changed, type of lit and the getPrimTy list below may also need to be changed

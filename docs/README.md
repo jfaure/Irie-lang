@@ -29,6 +29,16 @@ Subtyping examples:
 * Extra subtyping relations can enable custom optimisations
 
 ## Performance
+### Limitations of C (and LLVM)
+The initial plan was to emit C directly. Several annoyances with C later and irie now emits asm directly:
+* Functions with multiple entrypoints: particularly important for specialisations of cases
+* builtin unfoldStack : (b -> Maybe (Char , b)) -> b -> CString
+
+C won't allow this since it reserves the right to spill registers to the stack, even for cases like this where it is guaranteed not to happen
+* Calling conventions. stdcall/ccall and also fastcall/regcall don't make nearly as much use of registers as a functional language would like. SIMD registers and the vpshufb instruction are particularly important for records and record subtyping.
+* Dynamic linking is messy and slow, requiring actual textual function names inside binaries with no oversight. It also doesn't mesh well with JIT.
+* Dependent types require a JIT, and writing directly to mem then calling that is orders of magnitudes faster than emitting C/LLVM is very slow and not too useful besides suport for many obscure CPU architectures and some peephole optimisations.
+
 ### SIMD
 The operation `x * y : Float` is wasting almost 90% of CPU potential, because you could have done 8 floating point multiplications at once (16 with AVX-512). AVX can perform 32 bytewise operations in a single instruction. Vector instructions are far too powerful to ignore but also too painful to write manually all the time: These must be emitted automatically following fusion and subtyping.
 

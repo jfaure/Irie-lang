@@ -106,6 +106,12 @@ lookupBindName lms mName iName = case _loadedImport (lms V.! mName) of
     -- lookupIName lms (modName q) (unQName q)
   _ -> Nothing
 
+findBindIndex :: PureRegistry -> ModuleIName -> Text -> Maybe IName
+findBindIndex reg mI hNm = (reg._allNames M.!? hNm) >>= (IM.!? mI) >>= \iName ->
+  case reg._loadedModules V.! mI & \(LoadedMod _ _ m) -> m of
+    JudgeOK _mI jm -> Just $ iNameToBindName jm.topINames iName
+    _ -> Nothing
+
 -- TODO not pretty
 checkExternScope :: BitSet -> ModIName -> Externs -> IName -> ExternVar
 checkExternScope openMods thisModIName exts i = case exts.extNames V.! i of
@@ -126,6 +132,9 @@ mfw2qmfw modNm = \case
   StartPostfix m i -> QStartPostfix m (mkQName modNm i)
   MFPart         i -> QMFPart         (mkQName modNm i)
 
+iNameToBindName :: BitSet -> IName -> IName -- BindName
+iNameToBindName topINames iNm = popCount (topINames .&. setNBits iNm :: Integer)
+
 -- * For each IName in a module, figure out if matches any loaded names
 resolveNames :: PureRegistry -> IName -> P.Module -> V.Vector HName
   -> (M.Map HName (IntMap IName) , M.Map HName (IM.IntMap [QMFWord]) , Externs)
@@ -139,8 +148,6 @@ resolveNames reg modIName p iNamesV = let
     zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> (pd ^. P.hNameMFWords)]
 
   -- Exposed inames map to a bind index; there are more inames than bind indexes
-  iNameToBindName :: BitSet -> IName -> IName -- BindName
-  iNameToBindName topINames iNm = popCount (topINames .&. setNBits iNm :: Integer)
   getTopINames mI = if mI == modIName then Just topINames
     else case reg._loadedModules V.! mI & \(LoadedMod _ _ m) -> m of
     JudgeOK _mI jm -> Just jm.topINames
