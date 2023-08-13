@@ -14,8 +14,8 @@ type Repl = HaskelineT (StateT ReplState IO)
 -- <dead code> for use in ghci
 demoFile   = "demo.ii"
 sh         = main' . Data.List.words
-[parseTree , ssa , core , types , opt , emitC , interp] = sh . (demoFile <>) <$>
-  [" -p parse" , " -p ssa" , " -p core --no-fuse", " -p types --no-fuse" , " -p simple" , " -p C" , " --interpret"]
+[parseTree , ssa , core , types , opt , x86 , interp] = sh . (demoFile <>) <$>
+  [" -p parse" , " -p ssa" , " -p core --no-fuse", " -p types --no-fuse" , " -p simple" , " --emit-x86" , " --interpret"]
 stream = sh "ii/stream.ii -p simple"
 testRepl   = sh ""
 

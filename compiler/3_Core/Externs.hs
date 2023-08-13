@@ -59,8 +59,11 @@ data PureRegistry = Registry {
 }; makeLenses ''PureRegistry
 
 -- Note. We read builtins directly , this just occupies Module Name 0
+primJM :: JudgedModule
 primJM = V.unzip primBinds & \(primHNames , _prims) ->
-  JudgedModule 0 "Builtins" primHNames (complement 0) 0 mempty -- prim labels are direct bindings
+  JudgedModule 0 "Builtins" primHNames (complement 0) 0 mempty mempty
+  -- prim labels are direct bindings
+  -- TODO atm this is just a placeholder and prims are looked up differently
 
 builtinRegistry = let
   _timeBuiltins = UTCTime (ModifiedJulianDay 0) (getTime_resolution)

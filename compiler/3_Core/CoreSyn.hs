@@ -47,6 +47,7 @@ data Term -- β-reducable (possibly to a type)
  | BruijnAbs Int Term
  | BruijnAbsTyped Int Term [(Int , Type)] Type -- ints index arg metadata
  | App     Term [Term]
+ | PApp Term [Term] [Type] {-Type-} -- reduces to BruijnAbsTyped via renaming VBruijns
  | Captures VName -- rec/mut: Read bind and app its captures, can't know them in one pass
 -- | BruijnCaptures Int BitSet Term
 
@@ -210,6 +211,7 @@ data JudgedModule = JudgedModule {
  , jmINames   :: V.Vector HName
  , topINames  :: BitSet -- These allow QName -> TopBind vec lookup
  , labelINames:: BitSet
+ , openDatas  :: [(IName , [IName])] -- also open fields
  , moduleTT   :: ModuleBinds
 }
 

@@ -191,7 +191,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
        shouldPutJM = (dependents == 0 || putDependents cmdLine)
                       && any (`elem` printPass cmdLine) ["core", "simple", "types"]
        -- TODO when to do elf stuff
-       shouldMkElf = shouldSimplify
+       shouldMkElf = putX86 cmdLine -- shouldSimplify
        disassElf = True
        runElf = True
        coreToAsm curReg maybeMain = CoreToX86.mkAsmBindings mI curReg._loadedModules maybeMain jm.moduleTT
@@ -217,13 +217,15 @@ judge deps reg exts modIName p iNamesV = let
 --  bindNames   = p ^. P.bindings <&> P._fnNm
   labelINames = p ^. P.parseDetails . P.labelINames
   bindINames  = p ^. P.parseDetails . P.topINames
+  modOpens    = p ^. P.imports
   (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules
-  jm = JudgedModule modIName (p ^. P.moduleName) iNamesV bindINames labelINames modTT
+  openDatas = mempty
+  jm = JudgedModule modIName (p ^. P.moduleName) iNamesV bindINames labelINames openDatas modTT
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails) && null (errors ^. checkFails)
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails) && null (errors ^. unpatternFails)
   warnings = errors ^. scopeWarnings & \ws -> if null ws then Nothing
     else Just (unlines $ formatScopeWarnings iNamesV <$> ws)
-  in (warnings , if coreOK then Right jm else Left (errors , jm))
+  in d_ modOpens (warnings , if coreOK then Right jm else Left (errors , jm))
 
 simplify :: CmdLine -> ModuleIName -> V.Vector LoadedMod -> JudgedModule -> JudgedModule
 simplify cmdLine thisMod loadedMods jm = let

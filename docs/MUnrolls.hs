@@ -11,10 +11,13 @@ import Control.Monad.Fix
 
 -- Control functor F = (A + _)
 tailRecurse :: (c -> Either b c) -> c -> b
-tailRecurse c = h where h = (identity ||| h) . c -- (|||) = codiagonal
+tailRecurse c = h where h = (identity ||| h) . c -- (|||) = Δ codiagonal
 
 tailRecurse :: (c -> Σ b c) -> c -> b
 tailRecurse f = fix λself. -> identity Δ self ∘ c
+
+mhylo :: (Monad m , Traversable f) => (f a -> m a) -> (s -> m (f s)) -> s -> m a
+mhylo alg coalg c = coalg c >>= sequence . fmap (mhylo alg coalg) >>= alg
 
 --hyloM :: (Functor f , Monad m , Traversable f) => (f b -> m b) -> (a -> m (f a)) -> a -> m b
 --hyloM f g = h where h = f <=< traverse h <=< g

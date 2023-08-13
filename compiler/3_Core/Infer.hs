@@ -216,8 +216,19 @@ inferF = let
    castRet :: BiCast -> ([Term] -> BiCast -> [Term]) -> Expr -> Expr
    castRet biret castArgs = \case
      Core (App f args) retTy -> case biret of
-       CastApp _ac (Just pap) rc -> -- partial application TODO use argcasts
-         retCast rc (Core (App (Instr (MkPAp (length pap))) (f : castArgs args biret)) retTy)
+       -- PAp: TODO is it always OK to eta-expand and introduce new bruijn args:
+       -- papFn p1 => λx y. papFn p1 x y
+       CastApp _ac (Just pap) rc -> let
+--       papN = length pap -- TODO use argcasts
+--       argTys = pap <&> (0,) -- TODO .. no inames?
+--       newArgs = castArgs args biret ++ [VBruijn i | i <- [0 .. papN - 1]]
+--       newFn = BruijnAbsTyped papN (App f newArgs) argTys retTy
+--       -- ! TODO HACK must place papFn and papArgs outside lambda, else
+--       -- their VBruijns will be messed up
+         in -- TODO beta-env can deal with renaming debruijns
+         retCast rc (Core (PApp f (castArgs args biret) pap) retTy)
+--       retCast rc (Core newFn retTy)
+--       retCast rc (Core (App (Instr (MkPAp (length pap))) (f : castArgs args biret)) retTy)
        CastApp _ac Nothing    rc -> retCast rc (Core (App f (castArgs args biret)) retTy)
        _ -> Core (App f args) retTy
      t -> t
@@ -358,6 +369,7 @@ inferF = let
       , Just labTy@(TyGround [THTyCon (THTuple paramTys)]) <- ts BSM.!? qName2Key qL -> pure $
          -- Term label apps are extensible
          Core (Label qL []) (tHeadToTy $ THTyCon (THArrow (V.toList paramTys) labTy))
+    x -> error $ show x
 
   P.MatchBF mkScrut caseSplits catchAll -> mkScrut >>= \(Core scrut gotScrutTy) -> do
     (branches , rhsTys) <- fmap unzip $ caseSplits `forM` \(pat , mkRhs) -> do
@@ -366,8 +378,10 @@ inferF = let
           altFnTy = case rhs of
             BruijnAbsTyped _ _t ars _retT -> tHeadToTy (THTyCon $ THTuple (V.fromList $ snd <$> ars))
             _ -> tHeadToTy (THTyCon (THTuple mempty))
-      (l , patTy) <- case pat of -- Either infer whatever the rhs function expects, or use the sumtype declaration
+      (l , patTy) <- case pat of -- Either
+        -- infer whatever the rhs function expects
         Right l -> pure (l , altFnTy)
+        -- use the sumtype declaration
         Left  (l , iNm) -> getModBind 0 0 iNm >>= \(Core term _ty) -> case term of
           Ty (TyGround [THTyCon (THSumTy ts)])
             -- vv Biunify the rhs function and the expected label type

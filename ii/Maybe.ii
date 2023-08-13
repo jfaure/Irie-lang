@@ -1,5 +1,5 @@
-Maybe a = data
-  Just a
+Maybe = data
+  Just Int
   Nothing
 
 rect = { x = 3 , y = 4 }

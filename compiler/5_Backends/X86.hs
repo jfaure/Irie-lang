@@ -29,7 +29,7 @@ data Reg -- The order is vital, so fromEnum produces the right int for each regi
   | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15
   deriving (Eq, Show , Enum)
 
-ccall_scratchRegs    = [RDI , RSI , RDX , RCX , R8 , R9 , R10 , R11 , R12 , R13 , R14 , R15]
+ccall_scratchRegs    = [RDI , RSI , RDX , RCX , R8 , R9 , R10 , R11]
 ccall_calleSavedRegs = [RSP , RBP , R12 , R13 , R14 , R15]
 
 data LinuxSyscalls = SysRead | SysWrite | SysOpen | SysClose | SysNewStat | SysNewFStat | SysNewIStat | SysPoll | SysLSeek | SysMMap | SysMProtect | SysMUnMap deriving (Eq , Show , Enum)
@@ -89,9 +89,9 @@ mrmRegAddrMode = 0xc0 -- 11000000 -- else register-indirect + optional displacem
 mkModRM_RR dst src = B (mrmRegAddrMode .|. fromReg dst `shiftL` 3 .|. fromReg src)
 -- v unset high bits
 --mkModRM_rr00 dst src = B (dst `shiftL` 3 .|. src)
-mkModRM_rr dst src = B (mrmRegAddrMode .|. dst `shiftL` 3 .|. src)
+mkModRM_rr dst src = B (mrmRegAddrMode .|. dst .<<. 3 .|. src)
 mkModRM_Dest r1 = B (mrmRegAddrMode .|. fromReg r1) -- specify destination register
-mkModRM_digit n src = B (mrmRegAddrMode .|. n `shiftL` 3 .|. fromReg src)
+mkModRM_digit n src = B (mrmRegAddrMode .|. n .<<. 3 .|. fromReg src)
 
 -- SIB(scale index base), present whem ModR/M requests it: (mod/=11 & .r/m=100)
 --   called indexed register-indirect addressing

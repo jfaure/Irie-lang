@@ -59,7 +59,7 @@ data PrimInstr
  | Zext | Sext
  | GMPZext Int | GMPSext Int -- take an i<64 to a gmp integer
 
- | Puts | PutChar | PutNbr | GMPPutNbr
+ | Puts | PutsN | PutChar | PutNbr | GMPPutNbr
 
  | PowApp Int -- pow application of function
  | MkTuple
@@ -74,6 +74,7 @@ data PrimInstr
  | Len -- len of PrimArray
  | SizeOf
  | Ptr2Maybe -- glue between ptr/nullptrs and algebraic data (usually Maybe t = [Nothing | Just t])
+ | UnfoldLStack
 
  -- conversion between primitive arrays and ADTs
  -- ? Should Maybe be a builtin type for unfolding purposes
@@ -131,7 +132,7 @@ data TyInstrs
 -- TODO conversion instructions, bitcasts, Maybe va_arg, SIMD
 data Predicates  = EQCmp | NEQCmp | GECmp | GTCmp | LECmp | LTCmp | AND | OR
 data IntInstrs   = Add | Sub | Mul | SDiv | SRem | Neg | AbsVal | IPow | Ord | Chr
-data NatInstrs   = UDiv | URem
+data NatInstrs   = UDiv | URem | UDivMod
 data BitInstrs   = And | Or | Not | Complement | Xor | ShL | ShR | BitRev | ByteSwap | PopCount | CTZ | CLZ | FShL | FShR | RotL | RotR | TestBit | SetBit
                  {- BMI1 -} | ANDN | BEXTR | BLSI | BLSMSK | BLSR| CtTZ {- BMI2 -} | BZHI | MULX | PDEP | PEXT
 data FracInstrs  = FAdd | FSub | FMul | FDiv | FRem | FCmp

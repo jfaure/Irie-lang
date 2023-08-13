@@ -11,14 +11,14 @@
 -- => {l1 : α v β} v α -> (µγ.α -> γ) -- At most 1 type from each component
 -- Subsumption: [Δ1]τ1 <=? [Δ2]τ2 => [Δ2]τ2 =? [Δ1^Δ2]τ1vτ2
 -- Type = record
---   theads : Vector [THead]
+--   theads : Vector THead -- add dodgy alt THeads=[THead]
 --   δ      : Vector (NonEmpty Int) -- states index theads
 
 -- Allow less general annotations
--- f : Arrow Int { x = Int }
--- f x = { x = x }
+-- f : Int -> { f0 = Int }
+-- f x = { f0 = x }
 
--- Layout fns: topo-sort a module so dependents can pre-calc asm offsets
+-- Topo-sort modules so dependents always computed first (esp. for asm offsets)
 
 --imports list list2 tree question ls foldr Free parsec intmap patternTests hash
 --import irieShell -- ideas for irie as shell
@@ -41,9 +41,6 @@
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
--- clear sumtype alts if inhabited by bottom
--- eg. [Skip {⊥}] <: []
-
 -- Libs: Optparse Lens List Eff DFA BitSet
 
 -- Profunctor Lenses: lens|prims|iso|adapter|traversal|getter|fold
@@ -62,7 +59,10 @@
 --   Just a
 
 -- Sort out import label scopes, incl '@' version
+-- ! JudgedModule.openDatas is the key
 --import Maybe
+--Maybe = data
+--  Just Int
 --f = Just 3
 
 -- Allow recursive data types; μ?
@@ -78,26 +78,21 @@
 --  True  => add 0 a
 --  False => add 0 b
 
--- builtin withUnfoldLStack : (s -> Maybe (Char , s)) -> s -> ((Nat , CString) -> a) -> a
--- nextDigitU n = divMod n 10 & \(q , r) -> if q == 0 && r == 0 then Nothing else Just (chr (48 + r) , q)
--- itoa n = withUnfoldLStack n (write 0 len)
+-- unfold to stack : (s -> Maybe (Char , s)) -> s -> ((Nat , CString) -> a) -> a
+-- import prelude
+-- -- Int -> Maybe (Char , Int)
+-- nextDigitU n = divMod n 10 > \(q , r) => if q =? 0 && r =? 0 then Void else Just (chr (48 + r) , q)
+-- itoa n = withUnfoldL nextDigitU n (\len str => putsN str len)
 
--- Dups & sv/restore function state
--- * Calls Force a specific register allocation + sv/restore anything clobbered by cc
--- ↓ Calls force some register alloc
--- ↑ physical registers based on RNames
 fac n = case lt n 1 of
   True  => n
---False => add n (fac (mul n n)) -- need to push n
-  False => add (fac (mul n n)) n -- need to push n
--- ? rax collisions among branches
--- ? duplications => back to sharing
+  False => add n (fac (mul n n)) -- need to push n
 
--- ? regspan , regpack (sum tags & regs)
+--pap = add 3
+
+--algebra x y z = add 5 (add x (mul (sub y 2) z))
 
 --plus1 x y = add x y
 --plus2 (x , y) = add x y
 
--- * mk UnfoldStack builtin, to push to stack directly
--- !? Can require some functions to return their args in same registers , in case that reg is needed again
 --main = 3

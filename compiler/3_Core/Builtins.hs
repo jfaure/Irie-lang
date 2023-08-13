@@ -13,14 +13,15 @@ tHeadToTy t = TyGround [t]
 
 mkExtTy x  = [mkExt x]
 --mkExt = THExt -- dodgy optimisation
-mkExt i | i <= V.length primTys = THPrim $ snd (primTys V.! i)
-mkExt i = THExt i
+mkExt i = mkExt' (i - 6)
+mkExt' i | i <= V.length primTys = THPrim $ snd (primTys V.! i)
+mkExt' i = THExt i
 
 readPrimExtern :: IName -> Expr
 readPrimExtern i = snd (primBinds V.! i)
 
 -- THExt
-nBuiltinLabelTypes = 6 -- 3
+nBuiltinLabelTypes = 0 -- 9 -- 3
 readPrimType i = snd (primBinds V.! (i + nBuiltinLabelTypes))
 
 getPrimTy :: HName -> IName
@@ -105,16 +106,22 @@ x86Intrinsics =
 
 -- Primitive Labels
 -- * Predicates must return labels so if_then_else_ can fuse
+-- !! This must follow exactly the same order as the QNames (0.n) defined below
 builtinLabels :: [(HName , Expr)]
 builtinLabels =
   [ ("False" , Core (Label builtinFalseQ mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [falseLabelT]))]))
   , ("True"  , Core (Label builtinTrueQ  mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [trueLabelT]))]))
-  , ("BoolL" , ty (TyGround [boolL]))
 
   , ("L" , Core (Label builtinLQ mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [lLabelT]))]))
   , ("R" , Core (Label builtinRQ mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [rLabelT]))]))
-  , ("Either" , ty (tHeadToTy (THTyCon (THSumTy (BSM.fromList [lLabelT , rLabelT])))))
+  , ("Just" , Core (Label builtinJustQ mempty) (TyGround [THBi 1 $ tHeadToTy $ THTyCon (THSumTy (BSM.fromList [justLabelT (tHeadToTy (THBound 0))]))]))
+  , ("Void" , Core (Label builtinVoidQ mempty) (TyGround [THTyCon (THSumTy (BSM.fromList [voidLabelT]))]))
   ]
+--  , ("BoolL" , ty (TyGround [boolL]))
+--  , ("Either" , ty (tHeadToTy (THTyCon (THSumTy (BSM.fromList [lLabelT , rLabelT])))))
+--  , ("Maybe" , ty (tHeadToTy (THTyCon (THSumTy (BSM.fromList [voidLabelT , justLabelT])))))
+--maybe = ty (tHeadToTy (THTyCon (THSumTy (BSM.fromList [voidLabelT , justLabelT]))))
+
 builtinTrue  = Label builtinTrueQ  mempty
 builtinFalse = Label builtinFalseQ mempty
 builtinFalseQ = mkQName 0 0 -- 0.0
@@ -127,6 +134,10 @@ builtinLQ = mkQName 0 2
 builtinRQ = mkQName 0 3
 lLabelT = (qName2Key builtinLQ , TyGround [THTyCon (THTuple (V.singleton (tHeadToTy THTop)))])
 rLabelT = (qName2Key builtinLQ , TyGround [THTyCon (THTuple (V.singleton (tHeadToTy THTop)))])
+builtinJustQ = mkQName 0 4
+builtinVoidQ = mkQName 0 5
+justLabelT ty = (qName2Key builtinJustQ , TyGround [THTyCon (THTuple (V.singleton ty))])
+voidLabelT = (qName2Key builtinVoidQ , TyGround [THTyCon (THTuple mempty)])
 
 -- ! Indexes here are of vital importance: THExts are assigned to these to speed up comparisons
 -- If anything here is changed, type of lit and the getPrimTy list below may also need to be changed
@@ -224,7 +235,20 @@ instrs :: [(HName , (PrimInstr , GroundType))] = [
   , ("boolOR"  , (NumInstr (PredInstr OR )   , mkTHArrow [boolL, boolL] boolL))
   , ("boolAND" , (NumInstr (PredInstr AND )   , mkTHArrow [boolL, boolL] boolL))
 
+  , ("divMod", (NumInstr (NatInstr UDivMod )
+--  , mkTHArrow [iTy , iTy] (THTyCon $ THTuple (V.fromList $ tHeadToTy <$> [iTy , iTy]))))
+    , mkTHArrow [iTy , iTy] (THTyCon $ THProduct (BSM.fromList $ second tHeadToTy <$> [(0,iTy) , (qName2Key (mkQName 0 1),iTy)]))))
+
   , ("traceId" , (TraceId , [THBi 1 $ TyGround $ mkTHArrow [THBound 0] (THBound 0)]))
+
+  -- (s -> Maybe (Char , s)) -> s -> (Nat -> CString -> a) -> a
+  , ("withUnfoldL" , (UnfoldLStack , let
+    stepT = tHeadToTy $ THTyCon $ THProduct $ BSM.fromList [(0 , tHeadToTy charTy) , (qName2Key (mkQName 0 1) , tHeadToTy (THBound 1))]
+    maybeT = TyGround [THTyCon (THSumTy (BSM.fromList [justLabelT stepT , voidLabelT]))]
+    unfoldFn = TyGround $ mkTyArrow [TyGround [THBound 1]] maybeT
+    withFn = TyGround $ mkTHArrow [iTy , mkExt str] (THBound 0)
+    in [THBi 2 $ TyGround $ mkTyArrow [unfoldFn , tHeadToTy (THBound 1) , withFn]
+      (tHeadToTy $ THBound 0)]))
   ]
 iTy = THPrim (PrimInt 32)
 charTy = THPrim (PrimInt 8)
@@ -235,6 +259,7 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("primLen" , (Len , ([ia] , i)))
 
   , ("puts"      , (Puts    , ([str] , i)))
+  , ("putsN"     , (PutsN   , ([str , i] , i)))
   , ("putNumber" , (PutNbr  , ([i] , i)))
   , ("putChar"   , (PutChar , ([i8] , i8)))
   , ("ord"       , (NumInstr (IntInstr Ord) , ([i8] , i32)))

@@ -256,6 +256,7 @@ pTerm showRhs = let
     LetsF ls t -> "let" <+> viaShow (bitSet2IntList ls) <+> "in" <> hardline <> t
 --  LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
+    PAppF{} -> "todo-pretty-papp"
 
   parensApp f args = parens $ parens f <+> nest 2 (sep args)
   in para $ \case

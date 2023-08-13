@@ -16,6 +16,7 @@ data CmdLine = CmdLine
   , noCache        :: Bool
   , putDependents  :: Bool
   , putLetBinds    :: Bool
+  , putX86         :: Bool
 --  , reportErrors   :: Bool -- print an error summary (not doing so is probably only useful for the test suite)
   , recompile      :: Bool   -- recompile even if cached
   , quiet          :: Bool
@@ -41,6 +42,7 @@ defaultCmdLine = CmdLine -- Intended for use from ghci
   , noCache        = False
   , putDependents  = False
   , putLetBinds    = False
+  , putX86         = False
   , recompile      = False
   , quiet          = False
   , outFile        = Nothing
@@ -103,6 +105,9 @@ cmdLineDecls = CmdLine
   <*> flag True False 
       (             long "no-put-letBinds"
       <> help "Should print-pass apply to imported modules")
+  <*> switch
+      (             long "emit-x86"
+      <> help "Disassemble x86 assembly for module using objdump")
   <*> switch
       (             long "recompile"
       <> help "recompile even if cached file looks good")

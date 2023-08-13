@@ -175,7 +175,10 @@ arrowBiSub (argsp,argsm) (retp,retm) = let
   bsArgs []  x = ([] , Nothing , ) <$> biSubType retp (prependArrowArgsTy x retm)  -- Returns a function
   bsArgs (p : ps) (m : ms) = (\arg (xs,pap,retbi) -> (arg:xs , pap , retbi)) <$> biSubType m p <*> bsArgs ps ms
   in bsArgs argsp argsm <&> \(argCasts, pap, retCast) -> -- TODO keep the papCast ?
-    if all isBiEq argCasts && isNothing pap then retCast else CastApp argCasts {- pap -} Nothing retCast
+    if all isBiEq argCasts && isNothing pap
+    then retCast
+--  else CastApp argCasts {- pap -} Nothing retCast
+    else CastApp argCasts pap retCast
 
 primBiSub p1 m1 = case (p1 , m1) of
   (PrimInt p , PrimInt m) -> case compare p m of
