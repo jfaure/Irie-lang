@@ -84,9 +84,22 @@
 -- nextDigitU n = divMod n 10 > \(q , r) => if q =? 0 && r =? 0 then Void else Just (chr (48 + r) , q)
 -- itoa n = withUnfoldL nextDigitU n (\len str => putsN str len)
 
-fac n = case lt n 1 of
+-- ! retLocs must be respected. arg locs may be reassigned (mov Vs push, overwrite v call)
+-- ?? args <=> regs. (args have dup info , regs are direct currency of asm)
+-- ? flip commutative operations iff right reg needed as dest
+-- eg. bruijnArg RDI -> dup RDI => x RDI (RDI maybe destroyed)
+--  -> ccalling conv RDI -> recover x
+--   RetLoc
+--  /  op  \ One branch should use retloc. Regs may be dup / calling convs involved
+-- ? fst branch gets priority
+-- flexible: push , dup , forks
+fac n = case lt n 2 of
   True  => n
-  False => add n (fac (mul n n)) -- need to push n
+  False => mul n (fac (sub n 1))
+
+main i = fac i
+
+--dup x = add x x
 
 --pap = add 3
 

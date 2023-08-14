@@ -10,8 +10,8 @@ data Literal
 -- | I32 Int
 -- | Int Integer -- convenience
  | Fin Int Integer
- | PolyInt   !Text -- gmp
- | PolyFrac  !Text -- gmp
+ | PolyInt   !Text
+ | PolyFrac  !Text
  | String    [Char]
  | RevString [Char]
  | LitArray [Literal] -- incl. tuples ?
@@ -47,8 +47,6 @@ data POSIXType = DirP | DirentP
 ------------------
 data PrimInstr
  = NumInstr   !NumInstrs
- | GMPInstr   !NumInstrs
- | GMPOther   !GMPSpecial
 
  | MemInstr   !ArrayInstrs
  | TyInstr    !TyInstrs
@@ -57,9 +55,8 @@ data PrimInstr
  | MkTop | MkBot -- no-op casts
 
  | Zext | Sext
- | GMPZext Int | GMPSext Int -- take an i<64 to a gmp integer
 
- | Puts | PutsN | PutChar | PutNbr | GMPPutNbr
+ | Puts | PutsN | PutChar | PutNbr
 
  | PowApp Int -- pow application of function
  | MkTuple
@@ -116,14 +113,6 @@ data NumInstrs
  | BitInstr   !BitInstrs
  | FracInstr  !FracInstrs
 
-data GMPSpecial -- special fast cases avoiding a gmpInt in favor of raw i64
- = AddUI
- | SubUI | UISub
- | MulSI | MulUI | AddMul | AddMulSi | SubMul | SubMulSi
- | Mul2Exp
- | CMPUI | CMPAbsD | CMPAbsUI
- | PowMUI | PowUI | UIPowUI
-
  -- type instructions
 data TyInstrs
  = MkIntN  -- : Nat → Set --make an int with n bits
@@ -140,8 +129,6 @@ data ArrayInstrs = ExtractVal  -- | InsertVal | Gep
 
 primInstr2Nm = \case
   NumInstr i -> show i
-  GMPInstr i -> "gmp-" <> show i
-  GMPOther i -> "gmp-" <> show i
   TyInstr  i -> show i
   i          -> show i
 -- MemInstr   !ArrayInstrs
@@ -149,6 +136,11 @@ primInstr2Nm = \case
 isAssoc = \case
   NumInstr (IntInstr i) -> case i of { Add->True ; Mul->True ; _ -> False }
   _ -> False
+
+isCommutative = \case
+  NumInstr (IntInstr i) -> case i of { Add->True ; Mul->True ; _ -> False }
+  _ -> False
+
 
 deriving instance Show Literal
 deriving instance Show PrimType
@@ -162,7 +154,6 @@ deriving instance Show FracInstrs
 deriving instance Show ArrayInstrs
 deriving instance Show Predicates
 deriving instance Show NumInstrs
-deriving instance Show GMPSpecial
 deriving instance Show POSIXType
 
 deriving instance Ord Literal
@@ -177,7 +168,6 @@ deriving instance Ord NatInstrs
 deriving instance Ord FracInstrs
 deriving instance Ord ArrayInstrs
 deriving instance Ord NumInstrs
-deriving instance Ord GMPSpecial
 deriving instance Ord POSIXType
 
 deriving instance Eq Literal
@@ -192,7 +182,6 @@ deriving instance Eq FracInstrs
 deriving instance Eq ArrayInstrs
 deriving instance Eq TyInstrs
 deriving instance Eq NumInstrs
-deriving instance Eq GMPSpecial
 deriving instance Eq POSIXType
 
 prettyPrimType :: PrimType -> Text

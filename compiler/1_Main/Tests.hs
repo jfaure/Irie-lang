@@ -13,6 +13,7 @@ import System.IO.Unsafe
 import System.Directory
 import System.IO.Temp (getCanonicalTemporaryDirectory)
 import System.FilePath
+import System.Process
 import qualified System.IO as SIO
 import Text.RawString.QQ
 import qualified Test.Syd as S
@@ -181,3 +182,19 @@ allTests = S.sydTest $ do
 
 -- ghci
 s = t tInfer
+
+---------
+-- X86 --
+---------
+testAsmOutput fnName fName goldName = let
+  in S.goldenTextFile (goldDir <> "x86Dis/" <> goldName) $ do
+  tmpFile <- getCanonicalTemporaryDirectory <&> (</> "tmp" <> takeFileName fName)
+  Main.sh (fName <> " --emit-x86")
+  -- get readable objdump
+  r <- T.pack <$> readProcess "objdump"
+    ["--disassemble=" <> fnName , "-Mintel" , "-mi386:x86-64" , "/tmp/runAsm.out"] ""
+  writeFile "/tmp/out" r
+  pure r
+
+tasm = S.sydTest $ do
+  S.it "asm.ii" (testAsmOutput "fac" "X86Tests/fac.ii" "fac")

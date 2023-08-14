@@ -140,7 +140,7 @@ genExpr modBindName lm term freeVarCopies (atLen , freeVars) tvarIdx = use modBi
     lift (generalise bl bis' rawTy) >>= \gTy -> let
     rawRetExpr = Core term gTy -- Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
     noInlineExpr = let q = Var (letBindIndex lm) in
-      Core (if freeVars == 0 then q else BruijnAbs (popCount freeVars) q) gTy
+      Core (if freeVars == 0 then q else BruijnAbs (popCount freeVars) mempty q) gTy
     bind = if freeVars == 0
     then BindOK optInferred rawRetExpr
     else BindRenameCaptures atLen freeVars rawRetExpr -- Recursive binds need their free-env backpatched in

@@ -225,10 +225,10 @@ judge deps reg exts modIName p iNamesV = let
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails) && null (errors ^. unpatternFails)
   warnings = errors ^. scopeWarnings & \ws -> if null ws then Nothing
     else Just (unlines $ formatScopeWarnings iNamesV <$> ws)
-  in d_ modOpens (warnings , if coreOK then Right jm else Left (errors , jm))
+  in {-d_ modOpens-} (warnings , if coreOK then Right jm else Left (errors , jm))
 
 simplify :: CmdLine -> ModuleIName -> V.Vector LoadedMod -> JudgedModule -> JudgedModule
-simplify cmdLine thisMod loadedMods jm = let
+simplify _cmdLine thisMod loadedMods jm = let
   mL :: F.Lens' JudgedModule ModuleBinds -- Fresnel experiment
   mL = F.lens moduleTT (\u new -> u { moduleTT = new })
   in jm & mL F.%~ (\e -> runST (BetaEnv.simpleBindings thisMod loadedMods e))

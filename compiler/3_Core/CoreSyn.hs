@@ -7,6 +7,7 @@ import Prim ( Literal, PrimInstr, PrimType )
 import QName
 import qualified BitSetMap as BSM ( BitSetMap )
 import qualified Data.Map.Strict as M ( Map )
+import qualified Data.IntMap as IM
 import qualified Data.Vector as V ( Vector )
 import qualified Data.Vector.Unboxed as VU ( Vector )
 import Data.Functor.Foldable.TH (makeBaseFunctor)
@@ -44,12 +45,13 @@ data Term -- β-reducable (possibly to a type)
 -- ->
  | VBruijn IName
  | VBruijnLevel Int
- | BruijnAbs Int Term
- | BruijnAbsTyped Int Term [(Int , Type)] Type -- ints index arg metadata
+ | BruijnAbs Int (IM.IntMap Int) Term
+ | BruijnAbsTyped Int Term [(Int , Type)] Type -- ints index arg metadata idx , dups
  | App     Term [Term]
  | PApp Term [Term] [Type] {-Type-} -- reduces to BruijnAbsTyped via renaming VBruijns
  | Captures VName -- rec/mut: Read bind and app its captures, can't know them in one pass
--- | BruijnCaptures Int BitSet Term
+ | Dup IName Int Term -- VBruijn name duplicated (for register allocator)
+ | Era IName Int -- case branch alts that don't use some inputs
 
 -- {}
  | Array    (V.Vector Term) -- All have same type
@@ -76,6 +78,7 @@ data Term -- β-reducable (possibly to a type)
  | Meet Term Term | Join Term Term -- ^ v lattice operators
  | Mu Int Term -- deBruijn variable is marked as a fixpoint
  | Top Term -- tmp node for mkasm
+
 -- factorial = fix (\rec n -> if n <= 1 then 1 else n * rec (n-1)) 5
 -- squishTree : fix b [Node (A , fix C [Cons (b , c) | Nil])] -> d -> fix d [Cons (A , d)]
 type TInt = Int -- index into thead & flow vectors

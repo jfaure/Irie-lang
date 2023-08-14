@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo , vecArgSort , unfoldrExactN')
+ , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo , vecArgSort , unfoldrExactN' , amend , amendU)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -13,6 +13,7 @@ import GHC.Err
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Mutable as MVU
 import qualified Data.Map.Strict as M
 import Data.Align
 import Data.These
@@ -21,6 +22,12 @@ import Control.Arrow ((|||) , (&&&) , (***) , (>>>) , (<<<))
 import Data.Functor.Foldable
 
 import qualified Data.Vector.Algorithms.Intro as VAlgo
+
+amendU :: VU.Unbox a => VU.Vector a -> Int -> a -> VU.Vector a
+amendU v i a = VU.modify (\mv -> MVU.write mv i a) v
+
+amend :: V.Vector a -> Int -> a -> V.Vector a
+amend v i a = V.modify (\mv -> MV.write mv i a) v
 
 vecArgSort :: (Ord a, VU.Unbox a) => VU.Vector a -> VU.Vector Int
 vecArgSort xs = VU.map fst $ VU.create $ do

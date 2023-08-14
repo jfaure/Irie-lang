@@ -12,7 +12,6 @@ import System.Process
 import CMMap
 
 execJIT = False
--- ghciHack = True
 
 -- Registers are encoded using 4-bit value in X.reg column. al,ax,eax,rax,st0,mmx0,xmm0,ymm0 all share same number
 -- Thus all registers are numbered [0..15], the 64-bit versions are named explicitly:

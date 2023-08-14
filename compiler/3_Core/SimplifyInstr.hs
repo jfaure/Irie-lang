@@ -82,7 +82,7 @@ simpleInstr i args = let
   NumInstr (PredInstr p) | [Lit (Fin _ a) , Lit (Fin _ b)] <- {-trace (T.intercalate "," $ prettyTermRaw <$> args)-} args -> boolToLabel (interpretBinaryPredInstr p a b)
 
   -- Re-associate for x86-codegen, which expects immediates on the right
-  NumInstr (IntInstr Add) | [imm@(Lit (Fin _ iVal)) , x] <- args -> if iVal == 0 then x else App (Instr i) [x , imm]
+--NumInstr (IntInstr Add) | [imm@(Lit (Fin _ iVal)) , x] <- args -> if iVal == 0 then x else App (Instr i) [x , imm]
 
   -- cannot use posix types directly due to hidden constructors preventing deriving Binary for Literal
   OpenDir | [Lit (String fName)] <- args -> let

@@ -11,6 +11,7 @@ import Control.Lens
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Map as M
+import qualified Data.IntMap as IM
 import Data.List (unzip3)
 
 -- A nested Abs inside a β-env smaller than total env requires "inserting" more args
@@ -26,7 +27,7 @@ data FEnv s = FEnv
 type SimplifierEnv s = StateT (FEnv s) (ST s)
 
 getBruijnAbs = \case
-  BruijnAbs n body -> Just (n , body)
+  BruijnAbs n _ body -> Just (n , body)
   BruijnAbsTyped n body _ _ -> Just (n , body)
   _ -> Nothing
 
@@ -86,11 +87,11 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
   App f args -> fuse (seed & env .~ (argEnv , (TSub argEnv sLvl <$> args) <> trailingArgs) & term .~ f)
   abs | Just (n , body) <- getBruijnAbs abs -> if null trailingArgs
     then case getBruijnAbs body of -- not β-reducing => spawn bruijn arg subs
-      Just (m , b2) -> fuse (seed & term .~ BruijnAbs (m + n) b2)
+      Just (m , b2) -> fuse (seed & term .~ BruijnAbs (m + n) mempty b2)
       _ -> let
         nextLvl = sLvl + n
         nextSeed = seed & lvl .~ nextLvl & env .~ (mkBruijnArgSubs nextLvl n <> argEnv , mempty) & term .~ body
-        in pure $ BruijnAbsF n (Right nextSeed)
+        in pure $ BruijnAbsF n mempty (Right nextSeed)
     else claimArgs n body trailingArgs where
       claimArgs :: Int -> Term -> [Sub] -> SimplifierEnv s (TermF (Either Term Seed))
       claimArgs n body trailingArgs = let
@@ -99,7 +100,7 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
         in case compare l n of
           EQ -> let nextEnv = V.reverse (V.fromList ourArgs) -- <&> patchAbs l
             in fuse (seed & env .~ (nextEnv <> argEnv , remArgs) & term .~ body)
-          LT -> claimArgs l (BruijnAbs (n - l) body) trailingArgs
+          LT -> claimArgs l (BruijnAbs (n - l) mempty body) trailingArgs
           GT -> error "impossible"
 
   VBruijnLevel l -> pure $ let v = sLvl - l - 1
@@ -108,7 +109,8 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
   -- env contains raw args to simplify, at the new lvl for any bruijns subbed in
   -- This duplicates work if simplifying the same arg twice at the same lvl - need β-optimality
   VBruijn i -> if i >= eLen then error $ show (i , eLen , seed ^. env) else
-    argEnv V.! i & \(TSub prevEnv prevLvl argTerm) -> fuse $ seed -- if lvl /= prevLvl then error $ show (lvl , prevLvl)
+    argEnv V.! i & \(TSub prevEnv prevLvl argTerm) -> fuse $ seed
+    -- if lvl /= prevLvl then error $ show (lvl , prevLvl)
       & term .~ argTerm
       & env  .~ (prevEnv , trailingArgs)
 
@@ -150,8 +152,8 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
     fuseCase (seed & term .~ scrut & env . _1 %~ V.drop n) retT branches d
 
   --Have to simplify scrut first, it doesn't take our trailingArgs!
-  CaseB scrut retT branches d -> runSimpleTerm (Seed sLvl (argEnv , []) scrut) >>= \scrut ->
-    fuseCase (seed & term .~ scrut) retT branches d
+  CaseB scrut retT branches d -> runSimpleTerm (Seed sLvl (argEnv , []) scrut)
+    >>= \scrut -> fuseCase (seed & term .~ scrut) retT branches d
 
   -- Try before and after forcing the scrut
   TTLens obj [f] LensGet -> case obj of
@@ -165,19 +167,18 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
     opaque -> pure $ TTLensF (continue opaque) [f] LensGet
 
   Captures (VQBindIndex q) | modName q == modIName -> let bindName = unQName q
-   in use localBinds >>= \bindVec -> MV.read bindVec bindName >>= \case
-     BindOK{} -> fuse $ seed & term .~ Var (VQBindIndex q) -- recursive def doesn't capture anything
-     BindRenameCaptures atLen letCaptures _ -> let
-       -- v capture in recursive position: need to find the args and adjust them to this lvl
-       -- perhaps ideally should let the top-level renameCaptures rename them for us..
-       new = popCount letCaptures
-       captures = bitSet2IntList letCaptures <&> \i -> VBruijnLevel $
-         atLen - new - renameVBruijn atLen letCaptures i
-       in fuse $ seed & term .~ App (Var (VQBindIndex q)) (reverse captures)
-     x -> error (show x)
+    in use localBinds >>= \bindVec -> MV.read bindVec bindName >>= \case
+    BindOK{} -> fuse $ seed & term .~ Var (VQBindIndex q) -- recursive def doesn't capture anything
+    BindRenameCaptures atLen letCaptures _ -> let
+      -- v capture in recursive position: need to find the args and adjust them to this lvl
+      -- perhaps ideally should let the top-level renameCaptures rename them for us..
+      new = popCount letCaptures
+      captures = bitSet2IntList letCaptures <&> \i -> VBruijnLevel $
+        atLen - new - renameVBruijn atLen letCaptures i
+      in fuse $ seed & term .~ App (Var (VQBindIndex q)) (reverse captures)
+    x -> error (show x)
   x -> noop x
 
---fuseCase lvl argEnv trailingArgs retT branches d tt = let
 fuseCase seed retT branches d = let
   idEnv = mkBruijnArgSubs (seed ^. lvl) (V.length (seed ^. env . _1))
   continue tt = Right (seed & term .~ tt)
@@ -193,7 +194,7 @@ fuseCase seed retT branches d = let
       -- case (\p1..p2 -> scrut) of branches
       -- (\p1..p2 C -> ) (p1..p2 -> scrut) (\case branches) -- Thus branches aren't touched by params
       -- CaseSeq knows its branches expect it to rm the first n args of its env
-      BruijnAbs n innerOutput -> BruijnAbs n (CaseSeq n innerOutput retT branches d)
+      BruijnAbs n dups innerOutput -> BruijnAbs n dups (CaseSeq n innerOutput retT branches d)
       BruijnAbsTyped{} -> _
       innerOutput      -> CaseB innerOutput retT branches d
     in fuseCase (seed & term .~ innerScrut) ty2 (pushCase <$> innerBranches) (pushCase <$> innerDefault)
@@ -225,7 +226,7 @@ simpleBind bindName bind = use localBinds >>= \bindVec -> case bind of
       (\i -> TSub mempty nCaptures (VBruijnLevel (nCaptures - 1 - renameVBruijn atLen free i)))
     seed = Seed nCaptures (renameEnv , mempty) inExpr
     in do
-      term <- BruijnAbs nCaptures <$> runSimpleTerm seed
+      term <- BruijnAbs nCaptures mempty <$> runSimpleTerm seed
       let b = BindOK (OptBind 1 mempty) (Core term ty) -- Any recursive captures were sorted
      --   b = BindRenameCaptures atLen free (Core term ty)
       b <$ MV.write bindVec bindName b
@@ -244,17 +245,15 @@ renameVBruijn atLen free i = if
 runSimpleTerm :: Seed -> SimplifierEnv s Term
 runSimpleTerm seed = let
 -- hypoM but with Skip node
-  termFHypoM :: (Monad m , Recursive b , Base b ~ TermF)
-    => (TermF b -> b) -> (c -> m (TermF (Either b c))) -> c -> m b
+  termFHypoM :: (Monad m)
+    => (TermF b -> b) -> (c -> m (TermF (Either Term c))) -> c -> m b
   termFHypoM f g = let
     h = g >=> \case
       SkipF s -> (pure . cata f ||| h) s
       x       -> f <$> traverse (pure . cata f ||| h) x
     in h
-  in termFHypoM constFoldF fuse seed
-
---simpleExpr :: Expr -> ST s Expr
---simpleExpr (Core t ty) = simpleTerm t <&> (`Core` ty)
+  in termFHypoM constFoldCountF fuse seed <&> \(dups , rhs) -> rhs
+--in termFHypoM constFoldF fuse seed
 
 constFoldF :: TermF Term -> Term
 constFoldF = \case
@@ -262,6 +261,23 @@ constFoldF = \case
   AppF (App g args) brgs -> constFoldF (AppF g (args <> brgs))
   CastF (CastZext n) (Lit (Fin m i)) | m < n -> Lit (Fin n i)
   x -> embed x
+
+type Dups = IM.IntMap Int
+constFoldCountF :: TermF (Dups , Term) -> (Dups , Term)
+constFoldCountF termDups = let
+  term = snd <$> termDups
+  dups = foldr (\x acc -> IM.unionWith (+) acc (fst x)) mempty termDups
+  in case term of
+  VBruijnF i -> (IM.singleton i 1 , VBruijn i)
+  -- TODO only take args this scopes over
+  BruijnAbsF n _ rhs -> d_ dups (mempty , BruijnAbs n dups rhs)
+--CaseBF{} ->
+  BruijnAbsTypedF n rhs args rT -> error $ show (embed term)
+  term' -> (dups,) $ case term' of
+    AppF (Instr i) args -> simpleInstr i args
+--  AppF (App g args) brgs -> constFoldCountF (AppF g (args <> brgs))
+    CastF (CastZext n) (Lit (Fin m i)) | m < n -> Lit (Fin n i)
+    x -> embed x
 
 ------------------
 -- Specialisations
@@ -302,7 +318,7 @@ specApp seedLvl env q args = let
 
       -- ! repackedArgs are at lvl, inlineF is at (lvl + bruijnN)
       -- fully simplify the specialised partial application (if it recurses then this spec is extremely valuable)
-      let rawAbs = BruijnAbs bruijnN (App inlineF repackedArgs)
+      let rawAbs = BruijnAbs bruijnN mempty (App inlineF repackedArgs)
       specFn <- runSimpleTerm (Seed seedLvl env rawAbs) -- TODO if repackedArgs contains debruijns this may break
       -- (fst env , TSub (mkBruijnArgSubs lvl (V.length (fst env))) (bruijnN + lvl) <$> repackedArgs) rawAbs
       when debug_fuse $ do

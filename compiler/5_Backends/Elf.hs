@@ -468,6 +468,7 @@ mkElf (disassElf , runElf) mkProg = let
   when disassElf $ readProcess "objdump" ["-d" , "-Mintel" , "--visualize-jumps=color" , "--disassembler-color=on", outFile] "" >>= putStrLn
 --visualize-jumps[=color
   when runElf $ do
+    putStrLn @Text "Running elf..."
     (exitCode , asmStdout , asmStderr) <- readProcessWithExitCode outFile [] ""
     putStrLn asmStdout
     print exitCode

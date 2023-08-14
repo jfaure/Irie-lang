@@ -185,5 +185,5 @@ primBiSub p1 m1 = case (p1 , m1) of
     EQ -> pure BiEQ
     LT -> pure (CastZext m)
     GT -> BiEQ <$ failBiSub (TextMsg "Primitive Finite Int") (TyGround [THPrim p1]) (TyGround [THPrim m1])
-  (PrimInt p , PrimBigInt) -> pure (CastInstr (GMPZext p))
+--(PrimInt p , PrimBigInt) -> pure (CastInstr (GMPZext p))
   (p , m) -> if p /= m then failBiSub (TextMsg "primitive types") (TyGround [THPrim p1]) (TyGround [THPrim m1]) else pure BiEQ
