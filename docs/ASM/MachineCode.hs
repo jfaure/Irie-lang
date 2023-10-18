@@ -9,6 +9,7 @@ type LName = Int -- TODO
 -- ## New revelations
 -- * cap fields/labels to 64
 --   => use pdep to mark frets for subtyping casts
+--   => ! vpshufb is better
 --   => can inc. limit using a tree if necessary
 
 -- ## MachineCode

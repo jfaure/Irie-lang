@@ -197,4 +197,5 @@ testAsmOutput fnName fName goldName = let
   pure r
 
 tasm = S.sydTest $ do
-  S.it "asm.ii" (testAsmOutput "fac" "X86Tests/fac.ii" "fac")
+--S.it "asm.ii" (testAsmOutput "fac" "X86Tests/fac.ii" "fac")
+  S.it "dupLop.ii" (testAsmOutput "alg" "X86Tests/dupLop.ii" "dupLop")

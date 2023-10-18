@@ -17,6 +17,7 @@ import Data.Functor.Foldable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified BitSetMap as BSM ( (!?), fromList, fromVec, singleton, unzip )
+import PrettyCore
 
 judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (ModuleBinds , Errors)
 judgeModule pm importedModules modIName exts loaded = let
@@ -212,22 +213,33 @@ inferF = let
  checkFails srcOff x = use tmpFails >>= \case
    [] -> pure x
    x  -> poisonExpr <$ (tmpFails .= []) <* (errors . biFails %= (map (BiSubError srcOff) x ++))
+ -- the only safe way to insert VBruijns is over terms guaranteed not to contain freevars
+ -- eg: "add 3" => \papArg0 -> (\f arg1 pap0 -> f arg1 pap0) add 3 papArg0
+ -- β-env will remove the innermost args while renaming VBruijns if necessary
+ mkPap f args retTy pap castArgs biret = let
+   argsN = length args
+   papN = length pap -- TODO use argcasts
+   argTys = pap <&> (0,) -- TODO .. no inames?
+   newArgs = f : castArgs args biret ++ [VBruijn i | i <- [0 .. papN - 1]]
+-- newFn = BruijnAbsTyped papN (App f newArgs) argTys retTy
+   newFn = let
+     newArgsN = argsN + papN - 1
+     bf = App (VBruijn (papN + argsN)) (VBruijn <$> [newArgsN , newArgsN - 1 .. 0])
+     papFn = BruijnAbs papN mempty
+     in papFn $ App (BruijnAbs (1 + papN + argsN) mempty bf) newArgs
+   in trace (prettyTermRaw newFn) $ Core newFn retTy
+   -- ! TODO HACK must place papFn and papArgs outside lambda, else
+   -- their VBruijns will be messed up
  inferApp srcOff f args = let
    castRet :: BiCast -> ([Term] -> BiCast -> [Term]) -> Expr -> Expr
    castRet biret castArgs = \case
      Core (App f args) retTy -> case biret of
        -- PAp: TODO is it always OK to eta-expand and introduce new bruijn args:
        -- papFn p1 => λx y. papFn p1 x y
-       CastApp _ac (Just pap) rc -> let
---       papN = length pap -- TODO use argcasts
---       argTys = pap <&> (0,) -- TODO .. no inames?
---       newArgs = castArgs args biret ++ [VBruijn i | i <- [0 .. papN - 1]]
---       newFn = BruijnAbsTyped papN (App f newArgs) argTys retTy
---       -- ! TODO HACK must place papFn and papArgs outside lambda, else
---       -- their VBruijns will be messed up
-         in -- TODO beta-env can deal with renaming debruijns
-         retCast rc (Core (PApp f (castArgs args biret) pap) retTy)
---       retCast rc (Core newFn retTy)
+       CastApp _ac (Just pap) rc ->
+         -- TODO beta-env can deal with renaming debruijns
+         retCast rc (mkPap f args retTy pap castArgs biret)
+--       retCast rc (Core (PApp f (castArgs args biret) pap) retTy)
 --       retCast rc (Core (App (Instr (MkPAp (length pap))) (f : castArgs args biret)) retTy)
        CastApp _ac Nothing    rc -> retCast rc (Core (App f (castArgs args biret)) retTy)
        _ -> Core (App f args) retTy

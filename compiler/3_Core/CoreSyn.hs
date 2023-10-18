@@ -50,8 +50,6 @@ data Term -- β-reducable (possibly to a type)
  | App     Term [Term]
  | PApp Term [Term] [Type] {-Type-} -- reduces to BruijnAbsTyped via renaming VBruijns
  | Captures VName -- rec/mut: Read bind and app its captures, can't know them in one pass
- | Dup IName Int Term -- VBruijn name duplicated (for register allocator)
- | Era IName Int -- case branch alts that don't use some inputs
 
 -- {}
  | Array    (V.Vector Term) -- All have same type

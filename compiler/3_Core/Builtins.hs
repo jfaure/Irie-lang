@@ -11,23 +11,25 @@ import qualified BitSetMap as BSM
 
 tHeadToTy t = TyGround [t]
 
-mkExtTy x  = [mkExt x]
---mkExt = THExt -- dodgy optimisation
-mkExt i = mkExt' (i - 6)
-mkExt' i | i <= V.length primTys = THPrim $ snd (primTys V.! i)
-mkExt' i = THExt i
-
 readPrimExtern :: IName -> Expr
 readPrimExtern i = snd (primBinds V.! i)
 
 -- THExt
-nBuiltinLabelTypes = 0 -- 9 -- 3
+-- since this indexes primTys directly, leave space for boolLabel that wants 0.0 and 0.1
+-- Very dodgy
 readPrimType i = snd (primBinds V.! (i + nBuiltinLabelTypes))
+
+mkExtTy x  = [mkExt x]
+--mkExt = THExt -- dodgy optimisation
+nBuiltinLabelTypes = length builtinLabels -- 0 -- 9 -- 3
+mkExt i = mkExt' (i - nBuiltinLabelTypes)
+mkExt' i | i <= V.length primTys = THPrim $ snd (primTys V.! i)
+mkExt' i = THExt i
 
 getPrimTy :: HName -> IName
 getPrimTy nm = case primMap M.!? nm of
   Nothing -> panic $ "panic: badly setup primtables; " <> nm <> " not in scope"
-  Just i  -> i - nBuiltinLabelTypes -- since this indexes primTys directly, leave space for boolLabel that wants 0.0 and 0.1
+  Just i  -> i -- - nBuiltinLabelTypes
 
 primMap = M.fromList $ Prelude.imap (\i (nm,_val) -> (nm,i)) primTable
 primBinds :: V.Vector (HName , Expr) = V.fromList primTable
@@ -144,8 +146,8 @@ voidLabelT = (qName2Key builtinVoidQ , TyGround [THTyCon (THTuple mempty)])
 primTys :: V.Vector (HName , PrimType) = V.fromList
   [ ("Bool"    , PrimInt 1)
   , ("Int"     , PrimInt 32)
-  , ("I32"     , PrimInt 64)
-  , ("U32"     , PrimNat 64)
+  , ("I32"     , PrimInt 32)
+  , ("U32"     , PrimNat 32)
   , ("I64"     , PrimInt 64)
   , ("U64"     , PrimNat 64)
   , ("BigInt"  , PrimBigInt)
@@ -262,8 +264,8 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("putsN"     , (PutsN   , ([str , i] , i)))
   , ("putNumber" , (PutNbr  , ([i] , i)))
   , ("putChar"   , (PutChar , ([i8] , i8)))
-  , ("ord"       , (NumInstr (IntInstr Ord) , ([i8] , i32)))
-  , ("chr"       , (NumInstr (IntInstr Chr) , ([i32] , i8)))
+  , ("ord"       , (NumInstr (IntInstr Ord) , ([i8] , i)))
+  , ("chr"       , (NumInstr (IntInstr Chr) , ([i]  , i8)))
 
   , ("add64" , (NumInstr (IntInstr Add    ) , ([i64, i64] , i64) ))
   , ("add"   , (NumInstr (IntInstr Add    ) , ([i, i] , i) ))

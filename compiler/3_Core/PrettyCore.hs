@@ -154,6 +154,7 @@ pTyHead pos = let
   THMuBound  t -> pretty (number2xyz t)
   THExt      i -> case readPrimType i of
     (Core (Ty t) _) -> pTy' t
+    (Core e t) -> parens (pTerm pos e <> " : " <> pTy' t)
     x -> "Unknown-Extern(" <> viaShow x <> ")"
   THTyCon t -> case t of
     THArrow [] ret -> error $ toS $ "panic: fntype with no args: [] -> (" <> prettyTy ansiRender ret <> ")"
@@ -226,7 +227,7 @@ pTerm showRhs = let
     VBruijnLevelF b -> "BL" <> viaShow b
     LitF     l -> annotate ALiteral $ parens (viaShow l)
     BruijnAbsF n dups body -> parens $ "λb(" <> viaShow n <> "[" <> viaShow dups <> "])" <+> body
---  BruijnAbsTypedF n body argMetas retTy -> parens $ "λB(" <> viaShow n <> ")" <+> body
+    BruijnAbsTypedF n body argMetas retTy -> parens $ "λB(" <> viaShow n <> ")" <+> body
 --  BruijnCapturesF lc freeVars body -> "λ" <> viaShow lc <> "[" <> viaShow (bitSet2IntList freeVars) <> "]" <+> body
     CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing ts d
     CaseSeqF _n arg _ty ts d -> arg <+> " caseSeq> " <+> prettyMatch identity Nothing ts d
@@ -257,7 +258,7 @@ pTerm showRhs = let
 --  LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
     PAppF{} -> "todo-pretty-papp"
-    DupF b n t -> "(Dups " <> viaShow b <> "x" <> viaShow n <> ")" <> t
+    x -> error $ show $ embed (Question <$ x)
 
   parensApp f args = parens $ parens f <+> nest 2 (sep args)
   in para $ \case

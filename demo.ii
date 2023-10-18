@@ -1,7 +1,7 @@
 -- let-bound mixfix in scope outside, wrong IName/Letname
 -- poly1 = let _<_ = \f a => f a in (\y => y . t) < { t = 1 }  -- %i1
 
--- Illegal pattern
+-- Illegal pattern (multi equation)
 -- eq1 @x b = 2
 -- eq1 a b = 3
 
@@ -41,8 +41,6 @@
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
--- Libs: Optparse Lens List Eff DFA BitSet
-
 -- Profunctor Lenses: lens|prims|iso|adapter|traversal|getter|fold
 -- * Set unconditionally adds a field (scoped-fields can stack)
 -- * Optic = p a b -> p s t
@@ -58,12 +56,14 @@
 --   Nothing
 --   Just a
 
--- Sort out import label scopes, incl '@' version
+-- Sort out import label scopes, incl '@' version (seems ok?)
 -- ! JudgedModule.openDatas is the key
 --import Maybe
---Maybe = data
---  Just Int
---f = Just 3
+-- Index out of bounds when using before declare
+-- x = Just 3
+-- Maybe = data
+--   Just Int
+-- f = Just 3 ok
 
 -- Allow recursive data types; μ?
 --IntList = data
@@ -72,40 +72,54 @@
 --g (Cons x) = x
 --f = Cons 3
 
---import Maybe
-
---ifThenElse cond a b = case lt cond 0 of
---  True  => add 0 a
---  False => add 0 b
-
+-- Asm examples
 -- unfold to stack : (s -> Maybe (Char , s)) -> s -> ((Nat , CString) -> a) -> a
 -- import prelude
 -- -- Int -> Maybe (Char , Int)
 -- nextDigitU n = divMod n 10 > \(q , r) => if q =? 0 && r =? 0 then Void else Just (chr (48 + r) , q)
 -- itoa n = withUnfoldL nextDigitU n (\len str => putsN str len)
 
+-- TODO count eras through case
 -- ! retLocs must be respected. arg locs may be reassigned (mov Vs push, overwrite v call)
 -- ?? args <=> regs. (args have dup info , regs are direct currency of asm)
--- ? flip commutative operations iff right reg needed as dest
 -- eg. bruijnArg RDI -> dup RDI => x RDI (RDI maybe destroyed)
 --  -> ccalling conv RDI -> recover x
---   RetLoc
+--   RetLoc -- binOp hints (need commutative register)
 --  /  op  \ One branch should use retloc. Regs may be dup / calling convs involved
--- ? fst branch gets priority
--- flexible: push , dup , forks
-fac n = case lt n 2 of
-  True  => n
-  False => mul n (fac (sub n 1))
+--fac n = case lt n 2 of
+--  True  => n
+--  False => mul n (fac (sub n 1))
 
-main i = fac i
+-- mov vs push (overwrite vs call preserve)
+--alg x y = add x (mul x y)
 
---dup x = add x x
+--∏ A → (A → %i8 → (%i32 ⊓ A)) → (%i32 ⊓ A) → %ptr(PrimInt 8) → %i32
+--foldl fn z str = case nullString str of
+--  True => add 0 z
+--  False => (\(head , tail) => foldl fn (fn z head) tail) (unConsString str)
+--atoi str = foldl (\acc c => add (sub (ord c) 48) (mul acc 10)) 0 str : String -> Int
 
 --pap = add 3
+--pap x y = x -- why makes bruijnAbsTyped?
 
 --algebra x y z = add 5 (add x (mul (sub y 2) z))
 
 --plus1 x y = add x y
 --plus2 (x , y) = add x y
+--id x = x
+--ff x = id (add x 3)
 
---main = 3
+-- ? Unknown extern Arrow
+--plus : Arrow Int Int
+--plus x = add x 3
+--f : Arrow Int { f0 = Int }
+--f x = { f0 = add 1 x }
+f = puts
+g = Fin
+
+a = Arrow
+s = Set
+l = ptr2maybe
+x = Int
+plus = add 3 2
+z = _mm256_add_epi8

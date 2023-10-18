@@ -1,0 +1,12 @@
+
+/tmp/runAsm.out      檔案格式 elf64-x86-64
+
+
+.text 區段的反組譯：
+
+0000000000000012 <alg>:
+  12:	56                   	push   rsi
+  13:	0f af f7             	imul   esi,edi
+  16:	58                   	pop    rax
+  17:	03 c6                	add    eax,esi
+  19:	c3                   	ret

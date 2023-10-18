@@ -141,6 +141,9 @@ isCommutative = \case
   NumInstr (IntInstr i) -> case i of { Add->True ; Mul->True ; _ -> False }
   _ -> False
 
+arity = \case
+  NumInstr u -> 2
+  NullString -> 1
 
 deriving instance Show Literal
 deriving instance Show PrimType

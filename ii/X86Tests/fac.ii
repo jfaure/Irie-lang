@@ -1,4 +1,3 @@
 fac n = case lt n 1 of
   True  => add 5 n
   False => add n (fac (mul n n))
-

@@ -70,7 +70,7 @@ data Value
 --type Atom = Int
 --type Atoms = MV.IOVector (Maybe RegMem)
 
-data RPNInstr = BinOp PrimInstr | ImmOp PrimInstr Literal deriving Show
+data RPNInstr = UnOp PrimInstr | BinOp PrimInstr | ImmOp PrimInstr Literal deriving Show
 data RetNode
   = SetLit    Literal
   | ArgReg    Int
@@ -99,7 +99,8 @@ mkRPN (as , ai) (term : argsR) = case term of
   App (Instr i) argsL -> case argsL of -- TODO Only iff i commutative!
     [l , Lit lit]                   -> mkRPN (as , ImmOp i lit : ai) (argsR ++ [l])
     [Lit lit , r] | isCommutative i -> mkRPN (as , ImmOp i lit : ai) (argsR ++ [r])
-    argsL         -> mkRPN (as , BinOp i : ai) (argsR ++ argsL)
+    argsL | arity i == 2 -> mkRPN (as , BinOp i : ai) (argsR ++ argsL)
+    argsL | arity i == 1 -> mkRPN (as , UnOp i : ai) (argsR ++ argsL)
   x -> mkRPN (x : as , ai) argsR
 
 -- Conv. to RPN , mark TOP for ret
@@ -168,6 +169,7 @@ reassign r y = use argRegs >>= \ab -> let
       argRegs .= amend ab i (StackSlot slot (Bits 64))
 
 -- destructive operations want to overwrite one of their regs
+-- Also mark a use of this reg
 inPlaceReg :: X86.Reg -> MkX86M Bool
 inPlaceReg r = use regDups >>= \rDups -> let
   rI = fromEnum r
@@ -219,17 +221,20 @@ mkX86F = \case
       NumInstr (PredInstr pI) -> freeReg r *> freeReg l *>
         writeAsm (X86.cmpReg32 l r) $> VJmpCond (getX86JmpPred pI)
       -- destroys lOp
-      NumInstr nI  -> inPlaceReg r >>= \case
+      NumInstr nI  -> inPlaceReg l >>= \case
         True  -> freeReg r *> writeAsm (getX86NumInstr nI l r) $> lVal
         False -> do
           -- ! reassign args pointing here
           reassign l Nothing
           freeReg r *> writeAsm (getX86NumInstr nI l r) $> lVal
       instr -> error $ show instr
+    unOp (rVal@(Reg r _) , stack) instr = (,stack) <$> case instr of
+      NullString -> pure (VJmpCond X86.JZ) -- TODO
 
     go stack op = case op of
       ImmOp instr val -> immOp stack instr val
       BinOp instr     -> binOp stack instr
+      UnOp  instr     -> unOp  stack instr
     -- stack must be fully used else internal panic
     in foldM go (seed , stack) instrs <&> \(val , []) -> val
 
@@ -297,7 +302,8 @@ getCallingConv :: Expr -> CallingConv
 getCallingConv (Core bindTerm ty) = let
   sizeOfProd pr = sum (asmSizeOf <$> pr)
   tyToAsmTy (TyGround [th]) = case th of
-    THPrim (PrimInt n) -> Bits n
+    THPrim (PrimInt n)         -> Bits n
+    THPrim (PtrTo (PrimInt n)) -> Bits 64
     THTyCon (THProduct bsm) -> tyToAsmTy <$> bsm & \prod -> ProdTy (sizeOfProd prod , prod)
     THTyCon (THTuple   bsm) -> tyToAsmTy <$> bsm & \prod ->
       ProdTy (sizeOfProd prod , BSM.fromList $ V.toList (V.indexed prod))
@@ -342,15 +348,15 @@ asmSizeOf = \case
   SumTy (n , p , sz) -> sizeOfTagBits n + sz -- sizeof gets number of bytes in an int
 sizeOfTagBits n = Foreign.Storable.sizeOf n * 8 - countLeadingZeros n
 
-getRhs :: Int -> Expr -> (Term , IM.IntMap Int)
+getRhs :: Int -> Expr -> Either Text (Term , IM.IntMap Int)
 getRhs nArgs (Core term ty) = case term of
   BruijnAbs n dups body -> case compare nArgs n of
-    EQ -> (body , dups)
+    EQ -> Right (body , dups)
     GT -> _pap
-    LT -> error $ "impossible: function has non-function type: "
-      <> toS (prettyTermRaw term) <> "\n: " <> toS (prettyTyRaw ty)
-  term | nArgs == 0 -> (term , mempty)
-  _ -> error $ show (nArgs , term)
+    LT -> Left $ "impossible: function has non-function type: " <> show (nArgs , n)
+      <> "\n  " <> toS (prettyTermRaw term) <> "\n: " <> toS (prettyTyRaw ty)
+  term | nArgs == 0 -> Right (term , mempty)
+  _ -> Left $ show (nArgs , term)
 
 -- C calling conv = ret in rax, args in rdi, rsi, rdx, rcx, r8, r9 , rest on stack in rev order
 -- callee saved = r[12..15] rsp, rbp
@@ -366,22 +372,27 @@ bindToAsm thisM loadedMods mb ccs (memPtr' , memLen') bindINm expr = let
   liveArgs = let
     setReg live (Reg r _) = clearBit live (fromEnum r)
     in V.foldl setReg (complement 0) argValues
-  (rhs , argDups) = getRhs (V.length argValues) expr
-  regDups' = VU.create $ MVU.replicate 16 0 >>= \mv -> (mv <$) $ IM.toList argDups `forM`
-    \(i , n) -> MVU.write mv (argValues V.! i & \(Reg ar _) -> fromEnum ar) n
-  startState = MkX86State
-    { _memPtr = memPtr' , _memLen = memLen'
-    , _modBinds = mb
-    , _liveRegs = liveArgs .&. liveRegsStart -- & did_LiveRegs
-    , _argRegs  = argValues
-    , _regDups  = regDups' -- VU.replicate 16 0
-    , _stackSz  = 0
-    }
-  cgBind = genAsm ccs argValues retValue rhs
-  in do
-  MV.modify mb (\(cc , _) -> (cc , Right memPtr')) bindINm
-  (_ , st) <- cgBind `runStateT` startState
-  pure (st ^. memPtr)
+  in case getRhs (V.length argValues) expr of
+  Left e -> trace e $ pure memPtr' -- cannot generate asm for this binding
+  Right (rhs , argDups) -> let
+    regDups' = VU.create $ do
+      mv <- MVU.replicate 16 0
+      IM.toList argDups `forM_` \(i , n) ->
+        MVU.write mv (argValues V.! i & \(Reg ar _) -> fromEnum ar) n
+      pure mv
+    startState = MkX86State
+      { _memPtr = memPtr' , _memLen = memLen'
+      , _modBinds = mb
+      , _liveRegs = liveArgs .&. liveRegsStart -- & did_LiveRegs
+      , _argRegs  = argValues
+      , _regDups  = regDups' -- VU.replicate 16 0
+      , _stackSz  = 0
+      }
+    cgBind = genAsm ccs argValues retValue rhs
+    in do
+    MV.modify mb (\(cc , _) -> (cc , Right memPtr')) bindINm
+    (_ , st) <- cgBind `runStateT` startState
+    pure (st ^. memPtr)
 
 -- * cg a module asm and write to a ptr
 -- * track symbols = offset & strName
@@ -402,16 +413,18 @@ mkAsmBindings modIName loadedMods maybeMain lets (memPtr , memLen) = let
 --modBinds <- MV.replicate (V.length lets) (Left [])
   modBinds <- V.unsafeThaw (ccs <&> (, Left[]))
 
-  startMainPtr <- X86.mkAsm' memLen memPtr $ concat [X86.pop64 X86.RDI]
+  startMainPtr <- X86.mkAsm' memLen memPtr
+    $ concat [X86.pop64 X86.RDI , X86.pop64 X86.RSI , X86.pop64 X86.RDX]
   entryEndPtr <- X86.mkAsm' memLen startMainPtr -- memPtr
     $ concat [ X86.callImm32 0 , X86.movR64 X86.RDI X86.RAX , X86.movImm32 X86.RAX 60{-SysExit-} , X86.syscall ]
 
   let entrySym = [(0 , "start")]
   (endPtr , syms) <- foldM (appendBind modBinds) (entryEndPtr , entrySym) lets
-  mainEntry <- fromIntegral <$> case maybeMain of
+  _mainEntry <- fromIntegral <$> case maybeMain of
     Nothing -> pure 0
     Just i  -> do
       mainPtr <- MV.read modBinds i <&> \(_ , Right ptr) -> ptr
       X86.mkAsm' memLen startMainPtr (X86.callImm32 (fromIntegral (minusPtr mainPtr startMainPtr) - X86.callRelativeSz))
       pure 0
   pure (endPtr , ({-mainEntry-} 0 , syms)) -- main entry is our exit syscall
+  -- atm the first function of this section is the entry point

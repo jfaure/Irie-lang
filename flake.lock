@@ -41,11 +41,11 @@
         "systems": "systems"
       },
       "locked": {
-        "lastModified": 1685518550,
-        "narHash": "sha256-o2d0KcvaXzTrPRIo0kOLV0/QXHhDQ5DTi+OxcjO8xqY=",
+        "lastModified": 1694529238,
+        "narHash": "sha256-zsNZZGTGnMOf9YpHKJqMSsa0dXbfmxeoJ7xHlrt+xmY=",
         "owner": "numtide",
         "repo": "flake-utils",
-        "rev": "a1720a10a6cfe8234c0e93907ffe81be440f4cef",
+        "rev": "ff7b65b44d01cf9ba6a71320833626af21126384",
         "type": "github"
       },
       "original": {
@@ -164,11 +164,11 @@
         "nixpkgs": "nixpkgs_4"
       },
       "locked": {
-        "lastModified": 1687007357,
-        "narHash": "sha256-JqJwMWl/P1HrJxG5SO0TLFHbO8AYiMqhHGRzto76an4=",
+        "lastModified": 1696069899,
+        "narHash": "sha256-ZLIgeaIjmzlICtCg88xiaJsM7u03F3WGxoDCAknCfvE=",
         "ref": "refs/heads/master",
-        "rev": "5f02633707fa3d9d61ef77ce1a0298936fc04b52",
-        "revCount": 1116,
+        "rev": "a863ad211af049462319295cb74f0261c88532ca",
+        "revCount": 1130,
         "type": "git",
         "url": "https://gitlab.horizon-haskell.net/package-sets/horizon-platform"
       },
@@ -350,11 +350,11 @@
     },
     "nixpkgs_5": {
       "locked": {
-        "lastModified": 1687011986,
-        "narHash": "sha256-ZNSi/wBw12d7LO8YcZ4aehIlPp4lgSkKbrHaoF80IKI=",
+        "lastModified": 1697009197,
+        "narHash": "sha256-viVRhBTFT8fPJTb1N3brQIpFZnttmwo3JVKNuWRVc3s=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "2c09e8eb8717e240ef9c5727c1cc9186db9fb309",
+        "rev": "01441e14af5e29c9d27ace398e6dd0b293e25a54",
         "type": "github"
       },
       "original": {

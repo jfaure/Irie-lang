@@ -1,6 +1,6 @@
 import prelude
 
---ListF a = data
+--ListF a r = data
 --  Done
 --  Skip r
 --  Yield a r
