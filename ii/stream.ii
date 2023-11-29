@@ -6,9 +6,12 @@ import prelude
 --  Yield a r
 
 listF f = \case
-  Done => Done
-  Yield x r => Yield x (f r)
-  Skip r => Skip (f r)
+  @Done => @Done
+  @Yield x r => @Yield x (f r)
+  @Skip r => @Skip (f r)
+
+--Stream = data
+--  stream
 
 tailRecurse fn = (identity ||| tailRecurse fn) << fn
 

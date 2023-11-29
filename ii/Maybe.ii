@@ -3,3 +3,5 @@ Maybe = data
   Nothing
 
 rect = { x = 3 , y = 4 }
+
+x = Just 5

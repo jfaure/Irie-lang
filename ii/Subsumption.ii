@@ -1,0 +1,16 @@
+-- # Subsumption
+-- reduced form; At most 1 type from each component:
+-- {l1 : α} v {l1 : β, l2 : β} v µγ.α → γ
+-- => {l1 : α v β} v α -> (µγ.α -> γ)
+-- [Δ1]τ1 <=? [Δ2]τ2 => [Δ2]τ2 =? [Δ1^Δ2]τ1vτ2
+-- GraphType = record
+--   theads : Vector THead -- add dodgy alt THeads=[THead]
+--   δ      : Vector (NonEmpty Int) -- states index theads
+-- λ vs graph: graph for inference
+-- & instantiation & multiplicities ?
+
+-- esp. instances of polymorphism
+-- f : Int -> { f0 = Int }
+-- f x = { f0 = x }
+--plus : Arrow Int Int
+--plus x = add x 3

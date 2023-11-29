@@ -30,12 +30,13 @@ type CaseID    = Int
 -- Bruijns vs QBinds => QBinds are mutually in scope & Lens
 -- Note. lifted let binds are appended to the module and become VQBinds
 -- (qualified IName -> bind index) obtained via Externs.iNameToBindName: (topBinds : BitSet) -> QName -> Int
+-- an IConv (module name in QName) specifies the many to 1 (IName -> HName) convention for that module
 newtype VName = VQBindIndex QName
 data LetMeta = LetMeta { isTop :: Bool , letIName :: QName , letBindIndex :: VName , srcLoc :: Int }
 
 data Term -- β-reducable (possibly to a type)
  = Var !VName -- Direct index into modBinds rather than a qualified IName
- | Lit     !Literal
+ | Lit !Literal
  | Question      -- attempt to infer this TT
  | Poison  !Text -- typecheck inconsistency
  | Instr   !PrimInstr
@@ -46,17 +47,17 @@ data Term -- β-reducable (possibly to a type)
  | VBruijn IName
  | VBruijnLevel Int
  | BruijnAbs Int (IM.IntMap Int) Term
- | BruijnAbsTyped Int Term [(Int , Type)] Type -- ints index arg metadata idx , dups
+ | BruijnAbsTyped Int Term [(Int , Type)] Type -- metadata idx: dups , hname , src
  | App     Term [Term]
- | PApp Term [Term] [Type] {-Type-} -- reduces to BruijnAbsTyped via renaming VBruijns
- | Captures VName -- rec/mut: Read bind and app its captures, can't know them in one pass
+ | InstrApp !PrimInstr [Term] -- Applied instruction: TODO only allow fully applied: η expand instr paps
+ | Captures VName -- rec/mut placeholder for inference until captures are known
 
 -- {}
  | Array    (V.Vector Term) -- All have same type
  | Tuple    (V.Vector Term)
  | Prod     (BSM.BitSetMap Term)
- | LetBinds (V.Vector (LetMeta , Bind)) Term -- change to Lets bitset (lets are lifted now)
- | Lets BitSet Term
+ | Lets BitSet Term -- Lets are lifted, topINames bitSet tracks top ones.
+   -- ?perhaps should allow all inames a vec spot, + overload with duplicates
  | TTLens  Term [IField] LensOp
 
 -- []
@@ -75,7 +76,7 @@ data Term -- β-reducable (possibly to a type)
  | SigmaApp Term Term -- basically a PAp (no immediate β-reduction)
  | Meet Term Term | Join Term Term -- ^ v lattice operators
  | Mu Int Term -- deBruijn variable is marked as a fixpoint
- | Top Term -- tmp node for mkasm
+ | Return Term -- tmp node for mkasm and mkC
 
 -- factorial = fix (\rec n -> if n <= 1 then 1 else n * rec (n-1)) 5
 -- squishTree : fix b [Node (A , fix C [Cons (b , c) | Nil])] -> d -> fix d [Cons (A , d)]
@@ -210,7 +211,7 @@ data JudgedModule = JudgedModule {
    modIName   :: IName
  , modHName   :: HName
  , jmINames   :: V.Vector HName
- , topINames  :: BitSet -- These allow QName -> TopBind vec lookup
+ , topINames  :: BitSet -- These allow QName -> TopBind vec lookup "Externs.iNameToBindName"
  , labelINames:: BitSet
  , openDatas  :: [(IName , [IName])] -- also open fields
  , moduleTT   :: ModuleBinds

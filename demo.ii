@@ -1,22 +1,22 @@
 -- let-bound mixfix in scope outside, wrong IName/Letname
 -- poly1 = let _<_ = \f a => f a in (\y => y . t) < { t = 1 }  -- %i1
 
+-- Index out of bounds on use before declare
+-- x = Just 3
+--Maybe = data
+--  Just Int
+--f = Just 3 -- ok
+
+-- IName > mName binds (somehow mismatched QName/IName pairs)
+--import ii/m1
+--g = m1f
+--z = _<_
+
 -- Illegal pattern (multi equation)
 -- eq1 @x b = 2
 -- eq1 a b = 3
 
--- recursive Tree Automata; enumerate data modulo (N constructors) and build a NFA transition table
-
--- reduced form: {l1 : α} v {l1 : β, l2 : β} v µγ.α → γ
--- => {l1 : α v β} v α -> (µγ.α -> γ) -- At most 1 type from each component
--- Subsumption: [Δ1]τ1 <=? [Δ2]τ2 => [Δ2]τ2 =? [Δ1^Δ2]τ1vτ2
--- Type = record
---   theads : Vector THead -- add dodgy alt THeads=[THead]
---   δ      : Vector (NonEmpty Int) -- states index theads
-
--- Allow less general annotations
--- f : Int -> { f0 = Int }
--- f x = { f0 = x }
+-- recursive Tree data Automata; enumerate data modulo N (constructors) and build a NFA transition table. Spawn list for each constructor
 
 -- Topo-sort modules so dependents always computed first (esp. for asm offsets)
 
@@ -33,93 +33,42 @@
 --import tupleTests
 --import Tee -- duplicate streams
 --import dir
-
--- Cat records: V and ^
--- set/get formal semantics, add new fields?
--- Presence variables
+--import asmTests
+--import ii/Subsumption
 
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
--- Profunctor Lenses: lens|prims|iso|adapter|traversal|getter|fold
--- * Set unconditionally adds a field (scoped-fields can stack)
--- * Optic = p a b -> p s t
--- * Lens = view : s -> a , update : (b , s) -> t
--- ? GLens : (s -> (a -> b) -> (b , t)) => view s = fst (glens s identity) ; update s x = snd (glens s (const x))
--- 'x' field QName not imported.
--- import Maybe?
--- f = rect . x
+-- Qualified modules, name clash? (eg. Maybe.Maybe)
+-- import Maybe
+-- y = Maybe
 
--- type params (conv fn to THBi or embed Core in types)
--- type application vs implicit THBi
--- Maybe a = data
---   Nothing
---   Just a
-
--- Sort out import label scopes, incl '@' version (seems ok?)
--- ! JudgedModule.openDatas is the key
---import Maybe
--- Index out of bounds when using before declare
--- x = Just 3
--- Maybe = data
---   Just Int
--- f = Just 3 ok
-
--- Allow recursive data types; μ?
+-- Allow declare recursive data types; μ?
 --IntList = data
 --  Nil
 --  Cons Int -- IntList
 --g (Cons x) = x
 --f = Cons 3
 
--- Asm examples
--- unfold to stack : (s -> Maybe (Char , s)) -> s -> ((Nat , CString) -> a) -> a
--- import prelude
--- -- Int -> Maybe (Char , Int)
--- nextDigitU n = divMod n 10 > \(q , r) => if q =? 0 && r =? 0 then Void else Just (chr (48 + r) , q)
--- itoa n = withUnfoldL nextDigitU n (\len str => putsN str len)
 
--- TODO count eras through case
--- ! retLocs must be respected. arg locs may be reassigned (mov Vs push, overwrite v call)
--- ?? args <=> regs. (args have dup info , regs are direct currency of asm)
--- eg. bruijnArg RDI -> dup RDI => x RDI (RDI maybe destroyed)
---  -> ccalling conv RDI -> recover x
---   RetLoc -- binOp hints (need commutative register)
---  /  op  \ One branch should use retloc. Regs may be dup / calling convs involved
---fac n = case lt n 2 of
---  True  => n
---  False => mul n (fac (sub n 1))
+-- type params (conv BruijnAbs to THBi)
+-- * Bruijns in types are already THBounds
+-- ? type application vs implicit
+-- Maybe a = data
+--   Nothing
+--   Just a
+-- f = Just 3
 
--- mov vs push (overwrite vs call preserve)
---alg x y = add x (mul x y)
+-- record wildcard
+-- { x = Int , y } -- indicates y = ?
 
---∏ A → (A → %i8 → (%i32 ⊓ A)) → (%i32 ⊓ A) → %ptr(PrimInt 8) → %i32
---foldl fn z str = case nullString str of
---  True => add 0 z
---  False => (\(head , tail) => foldl fn (fn z head) tail) (unConsString str)
---atoi str = foldl (\acc c => add (sub (ord c) 48) (mul acc 10)) 0 str : String -> Int
+-- Need to Subtype case outputs to largest type
+-- fac => cannot codegen type: (%i1 ⊔ %i32)
 
---pap = add 3
---pap x y = x -- why makes bruijnAbsTyped?
+-- β-env loops
+fac n = case le n 1 of
+  True => 257
+  False => mul n (fac (sub n 1))
+main x = fac x
 
---algebra x y z = add 5 (add x (mul (sub y 2) z))
-
---plus1 x y = add x y
---plus2 (x , y) = add x y
---id x = x
---ff x = id (add x 3)
-
--- ? Unknown extern Arrow
---plus : Arrow Int Int
---plus x = add x 3
---f : Arrow Int { f0 = Int }
---f x = { f0 = add 1 x }
-f = puts
-g = Fin
-
-a = Arrow
-s = Set
-l = ptr2maybe
-x = Int
-plus = add 3 2
-z = _mm256_add_epi8
+-- TODO emitC: passdown env

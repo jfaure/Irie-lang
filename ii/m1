@@ -1,0 +1,3 @@
+import prelude
+
+m1f x = readFile < x

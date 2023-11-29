@@ -105,6 +105,7 @@ atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
 atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
  when debug_biunify (traceM ("⚛bisub: " <> prettyTyRaw tyP <> " <=> " <> prettyTyRaw tyM)) *>
  case (p , m) of
+  (THSet up , THSet um) | up <= um -> pure BiEQ
   (_ , THTop) -> pure (CastInstr MkTop)
   (THBot , _) -> pure (CastInstr MkBot)
   (THPrim p1 , THPrim p2) -> primBiSub p1 p2

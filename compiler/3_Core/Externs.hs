@@ -89,7 +89,7 @@ lookupIName :: V.Vector LoadedMod -> Int -> Int -> Maybe HName
 lookupIName = lookupJM jmINames -- labelNames
 lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
   JudgeOK _mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName)
-    else Just ("bugged IName resolution:" <> show iName)
+    else Just ("Bug: IName cannot belong to mName (iName > length of module):" <> show iName <> " >= " <> show (V.length v))
   _ -> Nothing
 lookupLabelBitSet lms mName = case _loadedImport (lms V.! mName) of
   JudgeOK _mI jm -> Just jm.labelINames

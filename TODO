@@ -1,31 +1,31 @@
 # Libs: Lens List Eff BitSet
 # II: DFA NFA glushkov Charscan
-# ASM
-  * pass down cc hints
-  * mov V push (overwrite vs preserve for call)
-  * sum & prod
-  * polymorphism
-  * Recursives: add explicit μ/roll combinator + memory management marker
-  * Topo-sort bindings
-  * FunArg: fn ptr + ptr to papstruct (requires specialisation / new function per pap!)
-  * CC: 1 arg = 1 reg. poly = (64bit , YMM). FnArg = (fnPtr , memPtr)
+# TT: μ datatypes
 ## Top Priority (PathNames , cross-level mutuality)
+  * Label scopes, @ vs declared (stream.ii doesn't work anymore)
+  * Profunctor lenses
   * Type aliases
   * Add let-capture tests
   * leaf bicasts ; subtype tycon trees (traversals)
   * Case call stream.next to recover nice syntax (? subtype @stream to open top layer)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
+  * Subsumption.ii (also graphType , instantiation , multiplicities)
+  * Type params (conv bruijnAbs to THBi) ; Type application vs implicit
+## Memory
+  * Derived streams (eg. splitAt, where second stream only available after first produced (ie. 2 can mutate 1 to buf)).
 ## New primitives + Syntax
+  * Union text: "hello" , "world"
+  * Union|intersect records&sumdata: V and ^
+  * set/get formal semantics, add new fields?
+  * Presence variables + quantify `decomp : Label A -> [A _ | ..] -> ([A _] , [..])`
   * generalise all lambda types (unless inlineable?) + check not-recursive (avoid inf β-reduction eg. Y-comb)
   * subtypes: Identity Iso "a <: Identity a" "Identity a <: a" & typeClass dict "{ ret : A } <: A"
   * module import-sig (will help with mutual modules)
   * Meta-record: { ret : A , ... } <: A
-  * mkSimd, maybe convert functions to parallel version
-  * '.' , reservedChar for "r.f" , but want ".&." , ".." names => reserve '.' but words can start with "."?
+  * mkSimd, some functions map directly to simd version
+  * '.' , reservedChar for "r.f" , but want ".&." , ".." names => reserve '.' => let words start with "."?
   * ~> = implicit arg: A ~> A -> A ; ~ for app of implicit: "identity ~Int 3"
-  * quantify over presences in fields / labels
-     decomp : Label A -> [A _ | ..] -> ([A _] , [..])
-  * record type syntax: { x = Int , y } -- indicates y = ? (only makes sense as a type, but legal syntax)
+  * record type syntax: { x = Int , y } -- indicates y = ? (makes sense as a type, else is bottom)
   * record union (| : |) , difference (\\ : \\)
   * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
   * scope of field/label names: topnames or label names?
@@ -39,12 +39,21 @@
       f x = x x => f x = let a b = DUP x in a b
       ! see when lambdas are duplicated (also reduce computations on free-vars when papped)
   ? compute containement
-## Notes. Modules / records
+# ASM: sum & prod , polymorphism , recursives (µ combinator + memory management mark)
+  * Count ERA through case
+  * pass down cc hints
+  * mov V push (overwrite vs preserve for call)
+  * Topo-sort bindings
+  * FunArg: fn ptr + ptr to papstruct (requires specialisation / new function per pap!)
+  * CC: 1 arg = 1 reg. poly = (64bit , YMM). FnArg = (fnPtr , memPtr)
+## Notes. Modules / records. (! Modules have an IConv + File)
+  Topo-sort so dependents always computed first, mark mutuals
+    Record = Vector ([?Mutuals | Vector ?Record])
   export list & bind Import list
   Cap field number?
   Eraser argument is a form of function subtyping
   add-specs to imported binds
-  unInline case-branch lambdas
+  unInline case-branch lambdas for bypass/cross-module specialisation
   open / required (also locally)
   record-field patterns ((a , b) = rhs) => (\case { (a , b) => rhs })
     ? need to case over whole record since lhs is in scope mutually
@@ -71,7 +80,7 @@
     This function has type (t1 → t2) u (T1 → T2), but not (t1 ^ T1) → (t2 U T2)
   * subsumption requires initiality and distributivity of ⊓ and ⊔ over → and ×
 ## Parse / Pretty / Repl
-  * lambda case type annotation: \case : scrut -> ret
+  * lambda case type annotation, \case : scrut -> ret
   * Parse Intrinsics (eg. readConstFile , getFnName , getSourceLine , getSourceFile etc..)
   * repl parser: multiline case / let
   * edit-distance

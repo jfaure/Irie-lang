@@ -57,7 +57,9 @@ pJM showLetBinds showRhs jm = let
   jmINms = jmINames jm
   binds = toList (if showLetBinds then moduleTT jm else V.takeWhile (isTop . fst) (moduleTT jm))
   in vsep $ (\(letMeta , b) -> (if isTop letMeta then "" else "letBound ")
-    <> pBind (jmINms V.! unQName (letIName letMeta)) showRhs b) <$> binds -- TODO yolo assumption that QName == thisMod
+    <> pBind (if modIName jm /= modName (letIName letMeta) then error "bad QName assumption"
+      else  jmINms V.! unQName (letIName letMeta)) showRhs b) <$> binds
+      -- TODO yolo assumption that QName == thisMod
 
 --------------
 -- Renderer --
@@ -232,7 +234,8 @@ pTerm showRhs = let
     CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing ts d
     CaseSeqF _n arg _ty ts d -> arg <+> " caseSeq> " <+> prettyMatch identity Nothing ts d
     AppF f args    -> parens (f <+> nest 2 (sep args))
-    InstrF   p -> annotate AInstr (prettyInstr p)
+    InstrF   i -> annotate AInstr (prettyInstr i)
+    InstrAppF i args -> parens (annotate AInstr (prettyInstr i) <+> nest 2 (sep args))
     X86IntrinsicF t -> annotate AInstr (viaShow t)
     CastF  i t -> parens (viaShow i) <> enclose "<" ">" (viaShow t)
     LabelF   l [] -> "@" <> prettyLabel l
@@ -257,7 +260,7 @@ pTerm showRhs = let
     LetsF ls t -> "let" <+> viaShow (bitSet2IntList ls) <+> "in" <> hardline <> t
 --  LetBlockF bs   -> enclose "{" "}" $ hsep $ punctuate " ;" ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
 --  LetBlockF bs   -> nest 2 $ vsep ((\(nm , b) -> pBind (hName nm) showRhs b) <$> toList bs)
-    PAppF{} -> "todo-pretty-papp"
+--  PAppF{} -> "todo-pretty-papp"
     x -> error $ show $ embed (Question <$ x)
 
   parensApp f args = parens $ parens f <+> nest 2 (sep args)

@@ -381,6 +381,8 @@ inferF = let
       , Just labTy@(TyGround [THTyCon (THTuple paramTys)]) <- ts BSM.!? qName2Key qL -> pure $
          -- Term label apps are extensible
          Core (Label qL []) (tHeadToTy $ THTyCon (THArrow (V.toList paramTys) labTy))
+    -- v eg. Maybe a = ..
+--  BruijnAbsTyped n (Ty fn) -> _
     x -> error $ show x
 
   P.MatchBF mkScrut caseSplits catchAll -> mkScrut >>= \(Core scrut gotScrutTy) -> do

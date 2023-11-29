@@ -71,7 +71,7 @@ mkBruijnArgSubs l n = let env = mempty -- doesn't matter since bruijnLevel termi
 -- ! seed term and trailingArgs may have different envs
 -- ! inlining needs to watch free-vars and VBruijn level differences
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
-fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. term)) $ let
+fuse seed = use thisMod >>= \modIName -> trace (prettyTermRaw (seed ^. term)) $ let
   sLvl = seed ^. lvl
   (argEnv , trailingArgs) = seed ^. env
   continue       tt = Right (seed & term .~ tt)

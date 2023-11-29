@@ -3,6 +3,7 @@ module CoreToX86 where
 import qualified X86
 import Externs
 import CoreSyn
+import PrettyCore
 import Prim
 import Data.Functor.Foldable
 import Data.Functor.Foldable.TH
@@ -15,7 +16,6 @@ import qualified Foreign.Storable
 import qualified Data.IntMap as IM
 import Control.Lens
 import Foreign.Ptr
-import PrettyCore
 import Control.Monad.Trans.Cont
 
 -- TODO. multiply by constant use lea: esp. 3 5 9
@@ -70,6 +70,7 @@ data Value
 --type Atom = Int
 --type Atoms = MV.IOVector (Maybe RegMem)
 
+-- Main goal is to isolate nodes that force use of certain registers, eg. DIV , call
 data RPNInstr = UnOp PrimInstr | BinOp PrimInstr | ImmOp PrimInstr Literal deriving Show
 data RetNode
   = SetLit    Literal
@@ -109,7 +110,7 @@ type RegMachineState = ()
 mkRegMachineU :: _ -> _ -> Bool -> (RegMachineState , Term)
   -> RetNodeF (RegMachineState , Term)
 mkRegMachineU argVals retVal isTop (st , term) = case term of
-  Top t -> case t of -- We care about tail calls and ret-ting out of branches
+  Return t -> case t of -- We care about tail calls and ret-ting out of branches
     CaseB{}     -> mkRegMachineU argVals retVal True (st , t)
     App Var{} _ -> mkRegMachineU argVals retVal True (st , t)
     t       -> RetF retVal (st , t)
@@ -122,8 +123,8 @@ mkRegMachineU argVals retVal isTop (st , term) = case term of
     in CallQNameF isTop q ((st, ) <$> args) -- TODO read calling conv!
 
   -- v Case alts are sorted by BSM , so first alt is always 0
-  CaseB mkScrut _t alts Nothing | BSM.size alts == 2 , [ok , ko] <- V.toList (BSM.elems alts) -> let
-    top = if isTop then Top else identity -- Branches share initial state but run disjoint
+  CaseB mkScrut _t alts Nothing | BSM.size alts == 2 , [ko , ok] <- V.toList (BSM.elems alts) -> let
+    top = if isTop then Return else identity -- Branches share initial state but run disjoint
     in IfElseF isTop (st , mkScrut) (st , top ok) (st , top ko)
 
   x -> error $ show x
@@ -291,7 +292,7 @@ respectRetLoc ret@(Reg retLoc _) (Reg v _) = ret <$
 
 genAsm :: V.Vector CallingConv -> V.Vector Value -> Value -> Term -> MkX86M Value
 genAsm ccs argVals retVal term = let
-  start = (() , Top term) -- (RegMachineState (RetLoc retVal) ccs , Top term)
+  start = (() , Return term) -- (RegMachineState (RetLoc retVal) ccs , Top term)
   in -- d_ (ana (mkRegMachineU argVals retVal False) start :: RetNode) $
     hylo mkX86F (mkRegMachineU ccs retVal False) start
 

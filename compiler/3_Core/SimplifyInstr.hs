@@ -8,6 +8,10 @@ import System.IO.Unsafe
 --import Data.Bits
 --import qualified Data.Text as T
 
+-- max β-reduction (interpreter mode). eg `puts "hello"` will trace "hello" and reduce to 5
+-- Simplification for the purpose of optimising codegen should never use this
+performIO = False
+
 interpretBinaryIntInstr = \case
   Add  -> (+)
   Mul  -> (*)
@@ -92,7 +96,7 @@ simpleInstr i args = let
     []     -> Tuple (V.fromList [builtinFalse , Lit (DirStream []) , Lit (String "")])
     f : fs -> Tuple (V.fromList [builtinTrue  , Lit (DirStream fs) , Lit (String f)])
   IsDir   | [Lit (String fName)] <- args -> if unsafePerformIO (Dir.doesDirectoryExist fName) then builtinTrue else builtinFalse
-  Puts    | [Lit (String fName)] <- args -> trace fName $ Lit (Fin 32 (fromIntegral $ length fName))
+  Puts    | performIO , [Lit (String fName)] <- args -> trace fName $ Lit (Fin 32 (fromIntegral $ length fName))
 
   StrBufToString | [Lit (RevString rs)] <- args -> Lit (String (reverse rs)) -- TODO slow
   PushStrBuf | [Lit (RevString rs) , Lit (Char c)] <- args -> Lit (RevString (c : rs))
@@ -101,7 +105,7 @@ simpleInstr i args = let
   UnCons | [Lit (String s)]     <- args -> fromMaybe (chr 0 , "") (uncons s)
     & \(head , tail) -> Tuple (V.fromList [Lit (Char head) , Lit (String tail)])
   TraceId | [Lit t] <- args -> d_ t (Lit t)
-  _ -> App (Instr i) args
+  _ -> InstrApp i args
 
 {-
 simpleGMPInstr :: NumInstrs -> [Term] -> Term

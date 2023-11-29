@@ -44,6 +44,7 @@ primTable = concat
     (\(nm , (i , tys)) -> (nm , Core (Instr i) (tys2TyHead tys)))         <$> primInstrs
   , (\(nm , (i , t))   -> (nm , Core (Instr i) (TyGround t)))             <$> instrs
   , [("Set" , Core (Ty (tySet 0)) (tySet 1))]
+  , [("Set1" , Core (Ty (tySet 1)) (tySet 2))]
   , (\(nm , aTs , retT)   -> let
     ty = case aTs of
       []  -> tHeadToTy retT
@@ -167,7 +168,7 @@ primTys :: V.Vector (HName , PrimType) = V.fromList
   ]
 
 --b = boolL
-[i, b, f, i8, ia, str, set , i32 , i64 , dirp , _dirent , cstruct , strBuf] = getPrimTy <$> ["Int", "Bool", "Double", "Char", "IntArray", "CString", "Set" , "I32" , "I64" , "DIR*" , "dirent*" , "CStruct" , "StrBuf"]
+[i, b, f, i8, ia, str, set , set1 , i32 , i64 , dirp , _dirent , cstruct , strBuf] = getPrimTy <$> ["Int", "Bool", "Double", "Char", "IntArray", "CString", "Set" , "Set1" ,  "I32" , "I64" , "DIR*" , "dirent*" , "CStruct" , "StrBuf"]
 
 --substPrimTy i = THPrim $ primTyBinds V.! i
 

@@ -6,4 +6,4 @@ f = () --{ r = 3 } -- @G
 gg = 3
 x = gg
 
--- import odd; f = gg
+-- import this; f = gg

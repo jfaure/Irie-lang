@@ -1,0 +1,8 @@
+-- Profunctor Lenses: lens|prims|iso|adapter|traversal|getter|fold
+-- * Set unconditionally adds a field (scoped-fields can stack)
+-- * Optic = p a b -> p s t
+-- * Lens = view : s -> a , update : (b , s) -> t
+-- ? GLens : (s -> (a -> b) -> (b , t)) => view s = fst (glens s identity) ; update s x = snd (glens s (const x))
+-- 'x' field QName not imported.
+-- import Maybe?
+-- f = rect . x
