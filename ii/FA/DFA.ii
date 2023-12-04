@@ -11,7 +11,6 @@ DFA = record
 -- S has indices that are used to lookup T
 _⊗m,n_ { assoc } : _
 
--- ! Don't mix avx and avx2
 -- note. shuffle_epi8 operates on nybbles [0..15] and sets 0 if bit[7] is set
 _⊗16,16_   = _mm_shuffle_epi8
 _2x⊗16,16_ = _mm256_shuffle_epi8 -- shuffle 2 _m128 at once

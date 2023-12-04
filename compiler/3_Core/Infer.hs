@@ -1,6 +1,6 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
 module Infer (judgeModule) where
-import Prim ( PrimInstr(MkPAp) , Literal(..) )
+import Prim
 import Builtins (typeOfLit)
 import BiUnify
 import qualified ParseSyntax as P
@@ -140,8 +140,8 @@ genExpr modBindName lm term freeVarCopies (atLen , freeVars) tvarIdx = use modBi
   in use blen >>= \bl -> use bis >>= \bis' ->
     lift (generalise bl bis' rawTy) >>= \gTy -> let
     rawRetExpr = Core term gTy -- Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
-    noInlineExpr = let q = Var (letBindIndex lm) in
-      Core (if freeVars == 0 then q else BruijnAbs (popCount freeVars) mempty q) gTy
+--  noInlineExpr = let q = Var (letBindIndex lm) in
+--    Core (if freeVars == 0 then q else BruijnAbs (popCount freeVars) mempty q) gTy
     bind = if freeVars == 0
     then BindOK optInferred rawRetExpr
     else BindRenameCaptures atLen freeVars rawRetExpr -- Recursive binds need their free-env backpatched in
@@ -149,10 +149,16 @@ genExpr modBindName lm term freeVarCopies (atLen , freeVars) tvarIdx = use modBi
   in rawRetExpr <$ MV.write modBinds' modBindName (lm , bind)
 
 -- judgeBind then uninline and add + biunify any captured arguments
-getModBind letNest letName modBindName = do
+getModBind :: Bool -> Int -> IName -> IName -> TCEnv s Expr
+getModBind doInline letNest letName modBindName = do
+  thisM <- use thisMod
   expr <- judgeBind letNest letName modBindName
   use modBinds >>= (`MV.read` modBindName) <&> snd >>= \case
-    BindOK{} -> pure expr
+--  BindOK{} -> pure expr
+--  TODO check this is OK !!
+    BindOK{} -> let
+      retTerm = if doInline then exprTerm expr else Var (VQBindIndex (mkQName thisM modBindName))
+      in pure $ Core retTerm (exprType expr) -- Don't inline
     BindRenameCaptures atLen free _ -> 
 --    when ({-popCount (lc + 1) /= 0-} lc /= setNBits ld) (traceM "TODO rename captured VBruijns") *>
       explicitFreeVarApp atLen free expr -- ld doesn't matter since we dont β-reduce
@@ -219,7 +225,7 @@ inferF = let
  mkPap f args retTy pap castArgs biret = let
    argsN = length args
    papN = length pap -- TODO use argcasts
-   argTys = pap <&> (0,) -- TODO .. no inames?
+-- argTys = pap <&> (0,) -- TODO .. no inames?
    newArgs = f : castArgs args biret ++ [VBruijn i | i <- [0 .. papN - 1]]
 -- newFn = BruijnAbsTyped papN (App f newArgs) argTys retTy
    newFn = let
@@ -265,7 +271,7 @@ inferF = let
  -- result of mixfix solves; QVar, PExprApp
  getQBind :: QName -> TCEnv s Expr
  getQBind q = use thisMod >>= \m -> if modName q == m -- binds at this module are at let-nest 0
-   then unQName q & \i -> getModBind 0 i i
+   then unQName q & \i -> getModBind False 0 i i
    else use loadedMs <&> \ls -> readQName ls (modName q) (unQName q)
      & fromMaybe (error (showRawQName q))
 
@@ -297,7 +303,7 @@ inferF = let
           else freshBiSubs 1 >>= \[t] -> t <$ MV.write cr bruijnAtBind t
         else pure (argTVars V.! b) -- local arg
       pure $ Core (VBruijn b) (tyVar tv)
-    P.VLetBind (_iName , letNest , letIdx , i) -> getModBind letNest letIdx i
+    P.VLetBind (_iName , letNest , letIdx , i) -> getModBind False letNest letIdx i
     P.VBruijnLevel l -> error $ "unresolve bruijnLevel: " <> show l
 
   P.BruijnLamF (P.BruijnAbsF argCount argMetas _nest rhs) ->
@@ -376,7 +382,7 @@ inferF = let
 --  pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
 
   -- Convert a declared label to a function TODO this is not pretty, should improve collecting labels from a data decl
-  P.LabelDeclF l iNm -> use thisMod >>= \thisM -> getModBind 0 0 iNm >>= \(Core term _ty) -> case term of
+  P.LabelDeclF l iNm -> use thisMod >>= \thisM -> getModBind True 0 0 iNm >>= \(Core term _ty) -> case term of
     Ty (TyGround [THTyCon (THSumTy ts)]) | qL <- mkQName thisM l
       , Just labTy@(TyGround [THTyCon (THTuple paramTys)]) <- ts BSM.!? qName2Key qL -> pure $
          -- Term label apps are extensible
@@ -393,10 +399,10 @@ inferF = let
             BruijnAbsTyped _ _t ars _retT -> tHeadToTy (THTyCon $ THTuple (V.fromList $ snd <$> ars))
             _ -> tHeadToTy (THTyCon (THTuple mempty))
       (l , patTy) <- case pat of -- Either
-        -- infer whatever the rhs function expects
+        -- | use the type the rhs function expects
         Right l -> pure (l , altFnTy)
-        -- use the sumtype declaration
-        Left  (l , iNm) -> getModBind 0 0 iNm >>= \(Core term _ty) -> case term of
+        -- | use the sumtype declaration
+        Left  (l , iNm) -> getModBind True 0 0 iNm >>= \(Core term _ty) -> case term of
           Ty (TyGround [THTyCon (THSumTy ts)])
             -- vv Biunify the rhs function and the expected label type
             | qL <- qName2Key l , Just t <- ts BSM.!? qL -> (qL , t) <$ bisub t altFnTy
@@ -404,12 +410,16 @@ inferF = let
       pure ((l , (rhs , patTy)) , rhsTy)
     def <- sequenceA catchAll
     -- mvp: 2 bitsetmaps, for rhs and types
-    let (alts , altTys) = BSM.unzip (BSM.fromList branches)
+    let altExprs = (BSM.fromList branches)
+        (alts , altTys) = BSM.unzip altExprs
         retTy   = mergeTypeList False $ maybe rhsTys ((: rhsTys) . exprType) def -- ? TODO why negative merge
         scrutTy = TyGround [THTyCon $ if isJust def then THSumOpen altTys else THSumTy altTys]
     (b , matchTy) <- biUnifyApp (TyGround (mkTyArrow [scrutTy] retTy)) [gotScrutTy]
     case b of { BiEQ -> pure () ; CastApp [BiEQ] Nothing BiEQ -> pure () ; c -> error $ "expected bieq; " <> show c }
-    pure $ Core (CaseB scrut matchTy alts (exprTerm <$> def)) matchTy
+    -- TODO should generalise each alt , to get the precise type of the scrut
+--  scrutTyG <- generaliseType gotScrutTy
+    pure $ Core (CaseB scrut scrutTy alts (exprTerm <$> def)) matchTy
+--  pure $ Core (mergeCaseBranches retTy scrut matchTy altExprs (exprTerm <$> def)) matchTy
 
   P.TypedF t ty -> t >>= \(Core term gotT) -> ty >>= exprToTy >>= \annTy ->
     generaliseType gotT

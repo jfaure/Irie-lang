@@ -110,7 +110,7 @@ type RegMachineState = ()
 mkRegMachineU :: _ -> _ -> Bool -> (RegMachineState , Term)
   -> RetNodeF (RegMachineState , Term)
 mkRegMachineU argVals retVal isTop (st , term) = case term of
-  Return t -> case t of -- We care about tail calls and ret-ting out of branches
+  Return "" t -> case t of -- We care about tail calls and ret-ting out of branches
     CaseB{}     -> mkRegMachineU argVals retVal True (st , t)
     App Var{} _ -> mkRegMachineU argVals retVal True (st , t)
     t       -> RetF retVal (st , t)
@@ -124,7 +124,7 @@ mkRegMachineU argVals retVal isTop (st , term) = case term of
 
   -- v Case alts are sorted by BSM , so first alt is always 0
   CaseB mkScrut _t alts Nothing | BSM.size alts == 2 , [ko , ok] <- V.toList (BSM.elems alts) -> let
-    top = if isTop then Return else identity -- Branches share initial state but run disjoint
+    top = if isTop then Return "" else identity -- Branches share initial state but run disjoint
     in IfElseF isTop (st , mkScrut) (st , top ok) (st , top ko)
 
   x -> error $ show x
@@ -292,7 +292,7 @@ respectRetLoc ret@(Reg retLoc _) (Reg v _) = ret <$
 
 genAsm :: V.Vector CallingConv -> V.Vector Value -> Value -> Term -> MkX86M Value
 genAsm ccs argVals retVal term = let
-  start = (() , Return term) -- (RegMachineState (RetLoc retVal) ccs , Top term)
+  start = (() , Return "" term) -- (RegMachineState (RetLoc retVal) ccs , Top term)
   in -- d_ (ana (mkRegMachineU argVals retVal False) start :: RetNode) $
     hylo mkX86F (mkRegMachineU ccs retVal False) start
 

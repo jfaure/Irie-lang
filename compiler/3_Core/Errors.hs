@@ -7,6 +7,7 @@ import Data.Vector as V
 import Data.Vector.Unboxed as VU
 import PrettyCore
 import Control.Lens
+import MixfixSyn
 
 data Errors = Errors
   { _biFails      :: [BiSubError]
@@ -25,7 +26,8 @@ data CheckError = CheckError { inferredType :: Type , annotationType :: Type } |
 data ScopeError
   = ScopeError Text
   | NoScopeLabel IName Int
-  | ScopeNotImported BitSet QName
+  | ScopeNotOpened BitSet QName -- this QName is a BindIndex, not an IName!
+  | ScopeNotOpenedINames BitSet [QName]
   | AmbigBind  Text [(ModIName , IName)]
   | ScopeLetBound IName
   | LetConflict ModIName BitSet -- [Text]
@@ -89,13 +91,17 @@ formatCheckError bindSrc (CheckError inferredTy annTy) = clRed "Incorrect annota
 formatCheckError bindSrc (ExpectedType expr) = clRed "Annotation is not a type: " <> toS (prettyExpr ansiRender expr)
 
 getIName bindSrc modIName i = fromMaybe (show i) ((srcINames bindSrc) modIName i)
+getBindName bindSrc modIName i = fromMaybe (show i) ((srcBindNames bindSrc) modIName i)
 
 formatScopeError thisMod bindSrc = \case
   ScopeError h -> clRed "Not in scope: "      <> h
-  NoScopeLabel i n -> clRed "Not in scope: label "      <> show (getIName bindSrc thisMod i) <> " (Applied to " <> show n <> " args)"
+  NoScopeLabel i n -> clRed "Not in scope: label " <> show (getIName bindSrc thisMod i) <> " (Applied to " <> show n <> " args)"
   ScopeLetBound i -> clRed "let-bound not in scope: "      <> show i
-  ScopeNotImported opens q -> clRed "Not in scope " <> getIName bindSrc (modName q) (unQName q)
+  ScopeNotOpened opens q -> clRed "Not in scope " <> getBindName bindSrc (modName q) (unQName q)
     <> clBlue "\nnote. ∃: " <> showRawQName q
+  ScopeNotOpenedINames opens qs -> let -- mixfix words were loaded but none are in scope
+    qHNames = qs <&> \q -> getIName bindSrc (modName q) (unQName q)
+    in clRed "Not in scope: " <> show (fromMaybe "?! empty mixfixwords list" (Prelude.head qHNames))
   AmbigBind h many -> clRed "Ambiguous binding: " <> h <> show many
   LetConflict modIName many -> let
     in case bitSet2IntList many of

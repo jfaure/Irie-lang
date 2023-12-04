@@ -56,7 +56,8 @@ handleExtern exts mod open lm i = case checkExternScope open mod exts i of
   Imported _ e  -> InlineExpr e
   MixfixyVar m  -> MFExpr (-1) m -- TODO if ko, mixfix should report "mixfix word cannot be a binding: "
   -- (errors . scopeFails %= s)
-  NotOpened m h -> ScopePoison (ScopeNotImported m h)
+  NotOpened m h -> ScopePoison (ScopeNotOpened m h)
+  NotOpenedINames m qs -> ScopePoison (ScopeNotOpenedINames m qs)
   NotInScope  h -> ScopePoison (ScopeError h)
   AmbiguousBinding h ms -> ScopePoison (AmbigBind h ms)
   ImportLabel q   -> QLabel q

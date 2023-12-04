@@ -1,20 +1,22 @@
-# Libs: Lens List Eff BitSet
+# IILibs: Lens List Eff BitSet
 # II: DFA NFA glushkov Charscan
 # TT: μ datatypes
 ## Top Priority (PathNames , cross-level mutuality)
-  * Label scopes, @ vs declared (stream.ii doesn't work anymore)
+  * BoundTvars => replace join/meets with upper&lower bounds on each typevar
+  * Label names; @ vs declared (stream.ii doesn't work anymore)
   * Profunctor lenses
-  * Type aliases
+  * Type params (conv bruijnAbs to THBi) ; Type application vs implicit
   * Add let-capture tests
   * leaf bicasts ; subtype tycon trees (traversals)
   * Case call stream.next to recover nice syntax (? subtype @stream to open top layer)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * Subsumption.ii (also graphType , instantiation , multiplicities)
-  * Type params (conv bruijnAbs to THBi) ; Type application vs implicit
+  * newtypes to differentiate IName/bindName QNames
 ## Memory
   * Derived streams (eg. splitAt, where second stream only available after first produced (ie. 2 can mutate 1 to buf)).
 ## New primitives + Syntax
-  * Union text: "hello" , "world"
+  * Join text: `"hello" , "world"`
+  * List: `# a b c`
   * Union|intersect records&sumdata: V and ^
   * set/get formal semantics, add new fields?
   * Presence variables + quantify `decomp : Label A -> [A _ | ..] -> ([A _] , [..])`
@@ -30,6 +32,8 @@
   * `$ ls -l --reverse`: '$' runs opt-parse on text to end-of-line
   * scope of field/label names: topnames or label names?
       {x = 3} . x .~ "hello" -- { x : Int } -> { x : String }
+  * (constexpr : a -> a) => Guarantee a compile time constant
+  * (constReadFile : String -> String) => read file at compile time
   ? `setBit` infix syntax
   ? Sum-of-Record
   ? argCase => f = \argCase { a b => _ }

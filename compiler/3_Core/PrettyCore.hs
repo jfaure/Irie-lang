@@ -21,7 +21,7 @@ traceTerm t x = trace (prettyTermRaw t) x
 -- <h1 id="Marker">There's a link to here!</h1>
 data Annotation
  = ANone | AArg IName | AQRawName QName
- | AQBindName QName | AQSpecName QName| AQLabelName QName | AQFieldName QName | AQBindIndex QName -- Names 
+ | AQSpecName QName| AQLabelName QName | AQFieldName QName | AQBindIndex QName -- Names 
  | AInstr | ALiteral | AType  | AAbs | AKeyWord
 -- | ASrcLoc -- for clickable html
 
@@ -80,15 +80,15 @@ render flags = let
   prettyQName isField names q = let -- (names V.! modName q) V.! unQName q
     iName = unQName q
     showText q nameFn = if iName < 0 then "!!" <> show iName else -- (- iName - 1) else
-      toS $ fromMaybe (showRawQName q) $ nameFn (modName q) (unQName q)
+      toS $ fromMaybe (showRawQName q) $ nameFn (modName q) iName
     isBuiltin = modName q == 0
-    in (if isBuiltin then "!" else "") <> if isField && isBuiltin then show (unQName q) else
+    in (if isBuiltin then "!" else "") <> if isField && isBuiltin then show iName else
       maybe (showRawQName q) (showText q) names
 
   doAnn :: Annotation -> Annotation -> Builder -> Builder
   doAnn prev a b = let
     addColor cl b = if ansiColor flags then cl <> b <> getColor prev else b
-    getColor = \case { ANone -> ansiCLNormal ; AArg{} -> ansiCLBlue ; AQBindName{} -> ansiCLYellow
+    getColor = \case { ANone -> ansiCLNormal ; AArg{} -> ansiCLBlue
       ; ALiteral -> ansiCLMagenta ; AInstr -> ansiCLMagenta ; AAbs -> ansiCLCyan ; AType -> ansiCLGreen
       ; AKeyWord -> ansiCLMagenta ; _ -> ansiCLNormal }
     in case a of
@@ -96,9 +96,6 @@ render flags = let
     AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
     AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
     AQRawName   q -> addColor (getColor a) $ fromText (showRawQName q)
-    AQBindName  q -> addColor (getColor a) $ b <> case srcINames <$> bindSource flags of
-      Nothing  -> "π(" <> (fromText (showRawQName q)) <> ")"
-      Just fn -> fromText (fromMaybe (showRawQName q) $ fn (modName q) (unQName q))
 --  AQBindIndex q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False Nothing q)
     AQBindIndex q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcBindNames <$> bindSource flags) q)
     AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcINames <$> bindSource flags) q)
@@ -209,7 +206,6 @@ pExpr showRhs (Core term ty) = let pos = True in case term of
 pTerm :: Bool -> Term -> Doc Annotation
 pTerm showRhs = let
   pVName = \case
---  VQBind q       -> annotate (AQBindName q) ""
     VQBindIndex q  -> annotate (AQBindIndex q) "" -- ?! this can't be stable
 --  VForeign i -> "foreign " <> viaShow i
   prettyLabel l = annotate (AQLabelName l) ""

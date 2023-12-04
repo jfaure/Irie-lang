@@ -53,7 +53,7 @@ printList l = case l of
   @Nil => 0
   @Cons i ll => add (putNumber i) (printList ll)
 |] in S.describe "printList" $ S.it (toS e) $ UniText (inferType e)
-      `S.shouldBe` UniText "printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 ⊔ %i32)"
+      `S.shouldBe` UniText "printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → %i32"
 
 -- val as a pattern no longer parsed
 --   let e :: Text = [r|

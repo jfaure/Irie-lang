@@ -33,6 +33,8 @@ import qualified System.IO as SIO -- (hClose , openTempFile)
 --import System.FileLock
 --import qualified Data.Binary as DB
 
+putModVerdict = True -- TODO should only print at repl?
+
 searchPath = ["./" , "ii/"]
 objPath    = ["./"]
 objDir     = ".irie-obj/"
@@ -178,7 +180,6 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
      getBindSrc = readMVar reg <&> \r -> -- Need to read this after registering current module
        BindSource (lookupIName r._loadedModules) (lookupBindName r._loadedModules)
      srcInfo = Just (SrcInfo progText (VU.reverse $ VU.fromList $ pm ^. P.parseDetails . P.newLines))
-     putModVerdict = False -- TODO should only print at repl?
      (warnings , jmResult) = judge importINames reg' exts mI pm iNamesV
 
      shouldSimplify = not $ (noFuse cmdLine || elem "core" (printPass cmdLine) || elem "types" (printPass cmdLine))

@@ -13,6 +13,7 @@ import Control.Lens
 import qualified Data.IntMap as IM
 import qualified Data.Map as M
 import qualified Data.Binary as DB
+import Data.List (partition)
 import Data.Time
 import qualified BitSetMap as BSM
 
@@ -70,9 +71,6 @@ builtinRegistry = let
   lBuiltins = LoadedMod 0 0 (JudgeOK 0 primJM)
   in Registry (M.singleton "Builtins" 0) (IM.singleton 0 <$> primMap) mempty (V.singleton lBuiltins)
 
---readLabel {-, readField-} :: Externs -> IName -> QName
---readLabel exts l = if l < 0 then mkQName 0 (-1 - l) else exts.importLabels V.! l
-
 readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
 readQName curMods modNm iNm = let
   readJudgedBind :: JudgedModule -> IName -> Expr
@@ -88,8 +86,8 @@ readQName curMods modNm iNm = let
 lookupIName :: V.Vector LoadedMod -> Int -> Int -> Maybe HName
 lookupIName = lookupJM jmINames -- labelNames
 lookupJM jmProj lms mName iName = case _loadedImport (lms V.! mName) of
-  JudgeOK _mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName)
-    else Just ("Bug: IName cannot belong to mName (iName > length of module):" <> show iName <> " >= " <> show (V.length v))
+  JudgeOK mI jm -> jmProj jm & \v -> if iName < V.length v then Just (v V.! iName)
+    else Just ("Bug: QName " <> showRawQName (mkQName mName iName) <> ": IName exceeds module " <> show mI <> "'s length: " <> show (V.length v))
   _ -> Nothing
 lookupLabelBitSet lms mName = case _loadedImport (lms V.! mName) of
   JudgeOK _mI jm -> Just jm.labelINames
@@ -117,23 +115,36 @@ findBindIndex reg mI hNm = (reg._allNames M.!? hNm) >>= (IM.!? mI) >>= \iName ->
 
 -- TODO not pretty
 checkExternScope :: BitSet -> ModIName -> Externs -> IName -> ExternVar
-checkExternScope openMods thisModIName exts i = case exts.extNames V.! i of
+checkExternScope openMods thisModIName exts extName = case exts.extNames V.! extName of
   Importable modNm i
     | testBit openMods modNm || modNm == 0 -> Importable modNm i
-    | True -> NotOpened openMods (mkQName thisModIName i)
+    | True -> NotOpened openMods (mkQName modNm i)
   Imported modNm e
     | testBit openMods modNm || modNm == 0 -> Imported modNm e
-    | True -> NotOpened openMods (mkQName thisModIName i)
+    | True -> NotOpened openMods (mkQName thisModIName extName) -- ? extName here
   ImportLabel q
     | m <- modName q , testBit openMods m || m == 0 || m == thisModIName -> ImportLabel q
   NotInScope x -> NotInScope (show (bitSet2IntList openMods) <> " : " <> x)
-  m@MixfixyVar{} -> m -- TODO
+  m@(MixfixyVar (Mixfixy maybeBind mfws)) -> let
+    isInScope = \case
+      QStartPrefix _ q -> testBit openMods (modName q)
+      QStartPostfix _ q -> testBit openMods (modName q)
+      QMFPart q -> testBit openMods (modName q)
+    (inScope , notInScope) = partition isInScope mfws
+    qs = notInScope <&> \case { QStartPrefix _ q -> q ; QStartPostfix _ q -> q ; QMFPart q -> q }
+    in if null inScope then NotOpenedINames openMods qs else MixfixyVar (Mixfixy maybeBind inScope)
+  -- $ if True -- testBit openMods modNm || modNm == 0
+--  then m
+--  else NotOpened openMods (mkQName modNm extName) -- ? extName here
   x -> x
 
-mfw2qmfw modNm = \case
-  StartPrefix  m i -> QStartPrefix  m (mkQName modNm i)
-  StartPostfix m i -> QStartPostfix m (mkQName modNm i)
-  MFPart         i -> QMFPart         (mkQName modNm i)
+mfw2qmfw modTopINames modNm = let
+  -- get topIName from the IName
+  findBindName (MixfixDef i ws f) = MixfixDef (iNameToBindName modTopINames i) ws f
+  in \case
+  StartPrefix  m i -> QStartPrefix  (findBindName m) (mkQName modNm i)
+  StartPostfix m i -> QStartPostfix (findBindName m) (mkQName modNm i)
+  MFPart         i -> QMFPart                        (mkQName modNm i)
 
 iNameToBindName :: BitSet -> IName -> IName -- BindName
 iNameToBindName topINames iNm = popCount (topINames .&. setNBits iNm :: Integer)
@@ -147,8 +158,8 @@ resolveNames reg modIName p iNamesV = let
   labelINames  = pd ^. P.labelINames
   fieldINames  = pd ^. P.fieldINames
   exposedINames = topINames .|. {-labelINames .|.-} fieldINames
-  mfResolver = M.unionWith IM.union reg._globalMixfixWords $ M.unionsWith IM.union $
-    zipWith (\modNm map -> IM.singleton modNm <$> map) [modIName..] [map (mfw2qmfw modIName) <$> (pd ^. P.hNameMFWords)]
+  mfResolver = M.unionWith IM.union reg._globalMixfixWords $
+    IM.singleton modIName <$> (map (mfw2qmfw topINames modIName) <$> (pd ^. P.hNameMFWords))
 
   -- Exposed inames map to a bind index; there are more inames than bind indexes
   getTopINames mI = if mI == modIName then Just topINames
@@ -166,30 +177,19 @@ resolveNames reg modIName p iNamesV = let
     mfWords = IM.toList <$> (mfResolver M.!? hNm)
     in case (binds , mfWords) of
     (Just [] , _)  -> NotInScope hNm -- this name was deleted from (all) modules
-    (Just [(modNm , iNm)] , Nothing) -> if
-     | modNm == 0 -> case readPrimExtern iNm of
+    (Just [(modNm , iNm)] , Nothing) -> if modNm == 0
+      then case readPrimExtern iNm of
        Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
        x -> Imported 0 x -- inline builtins
-     | True -> case if modNm == modIName then Just labelINames else lookupLabelBitSet reg._loadedModules modNm of
+      else -- case if modNm == modIName then Just labelINames else lookupLabelBitSet reg._loadedModules modNm of
 --     Just ls | testBit ls iNm -> ImportLabel (mkQName modNm iNm)
-       _ -> if modNm == modIName then ForwardRef iNm
-         else case getTopINames modNm of
-         Just top -> Importable modNm (iNameToBindName top iNm)
-         Nothing  -> _
-    (b , Just mfWords) -> let
-      -- ugly
-      top w = fromMaybe _ (getTopINames (modName w))
-      convMFName = \case
-        QStartPrefix  (MixfixDef i ws f) w -> QStartPrefix (MixfixDef (iNameToBindName (top w) i) ws f) w
-        QStartPostfix (MixfixDef i ws f) w -> QStartPostfix (MixfixDef (iNameToBindName (top w) i) ws f) w
-        x -> x
-      flattenMFMap = concatMap (fmap convMFName . snd)
-      in MixfixyVar $ case b of
-      _Nothing     -> Mixfixy Nothing (flattenMFMap mfWords)
-      -- TODO ambiguous mfword / bindName ?
---    Just [(m,i)] -> Mixfixy (Just (mkQName m i)) (flattenMFMap mfWords)
-    (Nothing      , Nothing) -> NotInScope hNm
-    (Just many , _)          -> AmbiguousBinding hNm many
+--     _ ->
+        if modNm == modIName then ForwardRef iNm else case getTopINames modNm of
+          Just top -> Importable modNm (iNameToBindName top iNm)
+          Nothing  -> _
+    (_bind , Just mfWords) -> MixfixyVar (Mixfixy Nothing (concatMap snd mfWords))
+    (Nothing   , Nothing)  -> NotInScope hNm
+    (Just many , _)        -> AmbiguousBinding hNm many
 
   in (resolver , mfResolver , Externs (resolveName <$> iNamesV))
 

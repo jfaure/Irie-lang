@@ -1,0 +1,29 @@
+-- Tests for C emission
+
+fac n = case le n 1 of
+  True => 1
+  False => mul n (fac (sub n 1))
+main = putNumber (fac 5)
+
+dep1 = 2
+dep2 x = add x x
+main = add (dep2 7) dep1
+
+-- constants
+f = { x = 2 , y = 3 }
+g = f . x
+main = putNumber (add g (add f . x f . y))
+
+tuple x = (add x x , 5)
+
+tuple = (3 , 5)
+tuple = { f1 = 3 , f2 = { s2 = 5 , s3 = 1 } }
+main = putNumber tuple . f2 . s3
+unTuple x = x . f
+
+f = _mm256_set_epi8 0 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46 48 50 52 54 56 58 60 62
+s = _mm256_set_epi8 0 1 2 3 4 31 30 14 16 18 20 22 24 26 28 30 32 34 36 38 40 42 44 46 48 50 52 54 56 58 60 62
+main = add (_mm256_put_epi8 f) (_mm256_put_epi8 (_mm256_shuffle_epi8 f s))
+
+
+-- _mm_put_epi8 = alloca > store > big-printf/putNumber array

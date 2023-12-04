@@ -105,7 +105,8 @@ simpleInstr i args = let
   UnCons | [Lit (String s)]     <- args -> fromMaybe (chr 0 , "") (uncons s)
     & \(head , tail) -> Tuple (V.fromList [Lit (Char head) , Lit (String tail)])
   TraceId | [Lit t] <- args -> d_ t (Lit t)
-  _ -> InstrApp i args
+--_ -> InstrApp i args
+  _ -> App (Instr i) args
 
 {-
 simpleGMPInstr :: NumInstrs -> [Term] -> Term

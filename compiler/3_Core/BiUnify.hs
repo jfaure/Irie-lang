@@ -89,7 +89,6 @@ instantiateF tvars t pos = let
       case t pos of
         (rs , TyGround g ) -> (setBit rs m , TyVars (0 `setBit` mInst) g)
         (rs , TyVars vs g) -> (setBit rs m , TyVars (vs `setBit` mInst) g)
-        _ -> _
     THBound i   -> thBound i
     THMuBound i -> thBound i
     THBi n _    -> error $ "higher rank polymorphic instantiation: " <> show n
@@ -99,7 +98,6 @@ instantiateF tvars t pos = let
   in case t of
   TyVarsF vs g -> let x = instGround <$> g in (getRecs x , mergeTypeList pos (TyVars vs [] : (snd <$> x)))
   TyGroundF g  -> let x = instGround <$> g in (getRecs x , mergeTypeList pos (snd <$> x))
-  t -> distribute t pos & \x -> (getRecs x , embed (fmap snd x))
 
 atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
 atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
@@ -136,6 +134,7 @@ data KeySubtype
   = LOnly Type       -- OK by record | sumtype subtyping
   | ROnly IName Type -- KO field not present (IName here is a field or label name)
   | Both  Type Type  -- biunify the leaf types
+  deriving Show
 
 -- This is complicated slightly by needing to recover the necessary subtyping casts
 biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
@@ -161,13 +160,15 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
     go label subType = case y BSM.!? label of -- x must contain supertypes of all x labels
       Nothing -> failBiSub (AbsentLabel (QName label)) tyP tyM
       Just superType -> biSubType subType superType
+-- TODO insert Sum->Sum casts (This is were labels are actually written to memory)
+--  merged = BSM.mergeWithKey' (\_k a b -> Just (Both a b)) (\_k v -> LOnly v) ROnly x y
     in BiEQ <$ (go `BSM.traverseWithKey` x) -- TODO bicasts
   (THSumTy s , THArrow args retT) | [(lName , tuple)] <- BSM.toList s -> -- singleton sumtype ⇒ Partial application of Label
     let t' = TyGround $ case tuple of
                TyGround [THTyCon (THTuple x)] -> [THTyCon $ THTuple (x V.++ V.fromList args)]
                x                              -> [THTyCon $ THTuple (V.fromList (x : args))]
     in biSubType (TyGround [THTyCon (THSumTy $ BSM.singleton lName t')]) retT
-  (THSumTy s , THArrow{}) | [_single] <- BSM.toList s -> failBiSub (TextMsg "Note. Labels must be fully applied to avoid ambiguity") tyP tyM
+  (THSumTy s , THArrow{}) | [_single] <- BSM.toList s -> failBiSub (TextMsg "Note. Partially applied Label") tyP tyM
   _         -> failBiSub TyConMismatch tyP tyM
 
 arrowBiSub (argsp,argsm) (retp,retm) = let

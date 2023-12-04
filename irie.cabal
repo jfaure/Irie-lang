@@ -36,6 +36,7 @@ executable irie-exe
     , base hiding (Prelude)
   main-is: Main.hs
   other-modules:
+      MyString
       C
       X86
       CoreToX86

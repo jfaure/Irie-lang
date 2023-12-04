@@ -10,6 +10,21 @@ import Prim
 import qualified BitSetMap as BSM
 import Data.List (union , intersect)
 
+-- Cases unify their branch types, this sometimes requires subtyping
+-- eg. (%i1 ⊔ %i8) require subtyping %i1 to %i8
+mergeCaseBranches :: Type -> Term -> Type -> BSM.BitSetMap (Term , Type) -> Maybe Term -> Term
+mergeCaseBranches retTy scrut t altExprs d = let
+  (alts , altTys) = BSM.unzip altExprs
+  subtypeAlts = mkCast retTy <$> altExprs
+  in CaseB scrut t alts d
+--in CaseB scrut t subtypeAlts d -- also default
+
+maxType x y = tyBot
+
+mkCast wantTy (term , gotTy) = case wantTy of
+  TyGround [THPrim (PrimInt n)] | TyGround [THPrim (PrimInt m)] <- gotTy , m <= n -> Cast (CastZext m) term
+  _ -> d_ ("! don't know how to cast. " <> prettyTyRaw gotTy <> "\n <: " <> prettyTyRaw wantTy) term
+
 mkFieldCol a b = TyGround [THFieldCollision a b]
 mkLabelCol a b = TyGround [THLabelCollision a b]
 
@@ -153,7 +168,7 @@ mergeTyHead pos t1 t2 = --(\ret -> trace (prettyTyRaw (TyGround [t1]) <> " ~~ " 
   [THSet l , THSet k] -> [THSet (max l k)]
   [THAlias q , THAlias q0] | q == q0 -> [THAlias q]
   [THPrim a , THPrim b]  -> if a == b then [t1] else case (a,b) of
---  (PrimInt x , PrimInt y) -> [THPrim $ PrimInt $ max x y]
+    (PrimInt x , PrimInt y) -> [THPrim $ PrimInt $ max x y] -- TODO if pos?
     (PrimBigInt , PrimInt _) -> [THPrim $ PrimBigInt]
     (PrimInt _ , PrimBigInt) -> [THPrim $ PrimBigInt]
     _ -> join

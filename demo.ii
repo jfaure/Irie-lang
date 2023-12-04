@@ -7,18 +7,12 @@
 --  Just Int
 --f = Just 3 -- ok
 
--- IName > mName binds (somehow mismatched QName/IName pairs)
---import ii/m1
---g = m1f
---z = _<_
-
 -- Illegal pattern (multi equation)
 -- eq1 @x b = 2
 -- eq1 a b = 3
 
--- recursive Tree data Automata; enumerate data modulo N (constructors) and build a NFA transition table. Spawn list for each constructor
-
--- Topo-sort modules so dependents always computed first (esp. for asm offsets)
+-- record wildcard
+-- { x = Int , y } -- indicates y = ?
 
 --imports list list2 tree question ls foldr Free parsec intmap patternTests hash
 --import irieShell -- ideas for irie as shell
@@ -35,6 +29,7 @@
 --import dir
 --import asmTests
 --import ii/Subsumption
+--import CTests
 
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
@@ -50,7 +45,6 @@
 --g (Cons x) = x
 --f = Cons 3
 
-
 -- type params (conv BruijnAbs to THBi)
 -- * Bruijns in types are already THBounds
 -- ? type application vs implicit
@@ -59,16 +53,33 @@
 --   Just a
 -- f = Just 3
 
--- record wildcard
--- { x = Int , y } -- indicates y = ?
+-- Topo-sort / declare / dep graph
+-- ! Unfold(constructLN) inferrence, mutate perm table
+-- main = f 3 2
+-- f x y = add x y
 
--- Need to Subtype case outputs to largest type
--- fac => cannot codegen type: (%i1 ⊔ %i32)
+-- Polymorphism, esp. ∀a. a ⊓ T -> a
+-- ! BasicTypeBound : [Tlo <: a <: Thi] => a -> a
+-- typedef all tvars
 
--- β-env loops
-fac n = case le n 1 of
-  True => 257
-  False => mul n (fac (sub n 1))
-main x = fac x
+-- η-expand paps
+--t = add
 
--- TODO emitC: passdown env
+-- withAlloca : ∀a. Int -> a -> a
+-- unfoldrStr : (seed -> Next a seed) -> seed -> Array a
+
+-- Cases:
+-- | Lift all alt functions:
+--  (generalise , free vars , dups/eras , specs)
+-- | Alt args lens into the scrut
+-- * caseTypes: | LitTables | if-else | switch
+-- * subtype sumTypes (ensure alts are subtyped to case-ret-type)
+
+--f = \case
+--  @Rectangle x y => add x y
+
+--x = True
+--y = @Rectangle 5 3
+--either = \case
+--  @Left a  => add a 2
+--  @Right b => add b 5

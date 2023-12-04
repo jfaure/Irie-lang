@@ -1,5 +1,5 @@
-length = ∏ A → µa.[Nil | Cons {⊤ , a}] → (%i1 ⊔ %i32)
-printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → (%i1 ⊔ %i32)
+length = ∏ A → µa.[Nil | Cons {⊤ , a}] → %i32
+printList = ∏ A → µa.[Nil | Cons {%i32 , a}] → %i32
 scanSum = ∏ A → %i32 → a → µa.[Cons {%i32 , a}]
 take = ∏ A B C → %i32 → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]
 takeWhile = ∏ A B C → (A → [!False | !True]) → µb.[Nil | Cons {A , b}] → µc.[Nil | Cons {A , c}]

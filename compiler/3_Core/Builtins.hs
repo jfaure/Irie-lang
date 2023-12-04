@@ -105,6 +105,9 @@ x86Intrinsics =
   , ("_mm256_castsi128_si256" , [mm128] , mm256)
   , ("_mm256_castsi256_si128" , [mm256] , mm128)
   , ("_mm256_insertf128_si256" , [mm256 , mm128 , primI32] , mm256)
+
+  -- irie extensions
+  , ("_mm256_put_epi8" , [mm256] , primI32)
   ]
 
 -- Primitive Labels
@@ -267,6 +270,9 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("putChar"   , (PutChar , ([i8] , i8)))
   , ("ord"       , (NumInstr (IntInstr Ord) , ([i8] , i)))
   , ("chr"       , (NumInstr (IntInstr Chr) , ([i]  , i8)))
+  
+--  , ("putX86mm256" , (PutX86mm256  , ([mm256] , i)))
+--  , ("putX86mm128" , (PutX86mm128  , ([mm128] , i)))
 
   , ("add64" , (NumInstr (IntInstr Add    ) , ([i64, i64] , i64) ))
   , ("add"   , (NumInstr (IntInstr Add    ) , ([i, i] , i) ))

@@ -4,8 +4,10 @@
 -- fromList O(n)
 -- (!?) O(log n)
 -- union , intersection , mergeWithKey O(n)
-module BitSetMap (BitSetMap(..) , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , singleton , (!?) , findIndex , BitSetMap.elems , BitSetMap.keys
-  , unionWith , intersectionWith , traverseWithKey , mergeWithKey' , mergeWithKey , mapAccum , mapWithKey , BitSetMap.unzip , fromVec) where
+module BitSetMap (BitSetMap(..) , size , fromList , fromListWith , BitSetMap.toList , foldrWithKey , foldlWithKey
+  , singleton , (!?) , findIndex , BitSetMap.elems , BitSetMap.keys
+  , unionWith , intersectionWith , traverseWithKey , mergeWithKey' , mergeWithKey , mapAccum , mapWithKey
+  , BitSetMap.unzip , fromVec) where
 
 -- For oneshot built ordered lists, dichotomy lookup on a (Vector (Int , a)) is a clear improvement vs Data.IntMap
 import Data.Binary ( Binary )
@@ -116,7 +118,12 @@ mergeWithKey' both onlyL onlyR l r = let
   in BitSetMap.fromList $ merge (BitSetMap.toList l) (BitSetMap.toList r)
 mergeWithKey = _
 
-foldrWithKey f z = BSM . foldr (curry f) z . unBSM
+foldrWithKey :: ((Int , a) -> c -> c) -> c -> BitSetMap a -> c
+foldrWithKey f z = foldr f z . unBSM
+
+foldlWithKey :: (c -> (Int , a) -> c) -> c -> BitSetMap a -> c
+foldlWithKey f z = foldl f z . unBSM
+
 singleton i a = BSM (V.singleton (i , a))
 
 {-

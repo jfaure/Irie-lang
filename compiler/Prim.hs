@@ -30,7 +30,6 @@ data PrimType
  | PrimFloat !FloatTy
  | PrimArr      PrimType
  | PtrTo        PrimType
- | PrimTuple    [PrimType]
  | PrimExtern   [PrimType]
  | PrimExternVA [PrimType]
  | PrimCStruct
@@ -57,6 +56,7 @@ data PrimInstr
  | Zext | Sext
 
  | Puts | PutsN | PutChar | PutNbr
+ | PutX86mm256 | PutX86mm128 -- Int -> IO () "size of each elem"
 
  | PowApp Int -- pow application of function
  | MkTuple
@@ -194,7 +194,6 @@ prettyPrimType = toS . \case
   PrimNat x        -> "%ui" <> show x
   PrimFloat f      -> "%f" <> show f
   PrimArr prim     -> "%@[" <> show prim <> "]"
-  PrimTuple prim   -> "%tuple(" <> show prim <> ")"
   PtrTo t          -> "%ptr(" <> show t <> ")"
   PrimExtern   tys -> "%extern(" <> show tys <> ")"
   PrimExternVA tys -> "%externVA(" <> show tys <> ")"

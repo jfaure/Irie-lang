@@ -76,7 +76,11 @@ data Term -- β-reducable (possibly to a type)
  | SigmaApp Term Term -- basically a PAp (no immediate β-reduction)
  | Meet Term Term | Join Term Term -- ^ v lattice operators
  | Mu Int Term -- deBruijn variable is marked as a fixpoint
- | Return Term -- tmp node for mkasm and mkC
+
+ -- bytestring unfoldr additional states: Unfold list allows surrounds '()' and infixes
+ | Return ByteString Term -- tmp node for mkasm and mkC: cast and term
+ | Void
+-- | CaseAlts (BSM.BitSetMap Term) (Maybe Term) -- scrutless CaseB: allows us to >>= the seed obtained from running scrut
 
 -- factorial = fix (\rec n -> if n <= 1 then 1 else n * rec (n-1)) 5
 -- squishTree : fix b [Node (A , fix C [Cons (b , c) | Nil])] -> d -> fix d [Cons (A , d)]
@@ -177,13 +181,15 @@ data ExternVar
 
  | NotInScope       HName
  | NotOpened        BitSet QName -- HName HName
+ | NotOpenedINames  BitSet [QName] -- TODO nonempty?
  | AmbiguousBinding HName [(ModIName , IName)] -- same level binding overlap / overwrite
 
  | Importable ModuleIName IName -- Available externally but not obviously worth inlining
- | MixfixyVar Mixfixy           -- temp data fed to solvemixfixes
+ | MixfixyVar Mixfixy
 
 data Mixfixy = Mixfixy
  { ambigBind   :: Maybe QName -- mixfixword also bind, eg. `if_then_else_` and `then`
+ -- TODO perhaps remove ambigbind
  , ambigMFWord :: [QMFWord]
  }
 
@@ -196,6 +202,7 @@ data BiCast
  | CastZext Int
  | CastProduct Int [(ASMIdx , BiCast)] -- number of drops, and indexes into parent struct
  | CastFields  [BiCast]
+-- | CastSum BSM.BitSetMap
 
  | CastApp [BiCast] (Maybe [Type]) BiCast -- argcasts , maybe papcast , retcast
  | CastOver ASMIdx BiCast Expr Type

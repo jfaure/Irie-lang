@@ -14,6 +14,10 @@ import qualified Data.Map as M
 import qualified Data.IntMap as IM
 import Data.List (unzip3)
 
+g_reduceInstr = False
+
+g_noInline = False
+
 -- A nested Abs inside a β-env smaller than total env requires "inserting" more args
 -- this more or less forces us to copy the env, which ruins β-optimal sharing of subcomputations
 
@@ -71,7 +75,7 @@ mkBruijnArgSubs l n = let env = mempty -- doesn't matter since bruijnLevel termi
 -- ! seed term and trailingArgs may have different envs
 -- ! inlining needs to watch free-vars and VBruijn level differences
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
-fuse seed = use thisMod >>= \modIName -> trace (prettyTermRaw (seed ^. term)) $ let
+fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. term)) $ let
   sLvl = seed ^. lvl
   (argEnv , trailingArgs) = seed ^. env
   continue       tt = Right (seed & term .~ tt)
@@ -115,7 +119,7 @@ fuse seed = use thisMod >>= \modIName -> trace (prettyTermRaw (seed ^. term)) $ 
       & env  .~ (prevEnv , trailingArgs)
 
   -- inlineLetBind: lvl == 0 means this fully reduces (won't produce a function)
-  Var (VQBindIndex q) | sLvl == 0 {-&& not (null trailingArgs)-} -> let -- Have to inline all bindings on full β-reduce
+  Var (VQBindIndex q) | g_reduceInstr && sLvl == 0 && not g_noInline {-&& not (null trailingArgs)-} -> let -- Have to inline all bindings on full β-reduce
     doSimpleBind = \case -- bind = simpleBind lvl (argEnv , []) bind >>= \b -> case b of
 --    BindOK o (Core (Var (VQBindIndex qq)) _ty) | q == qq -> d_ "error bind contains itself" $ noop (Var (VQBindIndex q))
       BindOK _o (Core inlineF _ty) -> -- d_ inlineF $ -- if optId o /= 0 then noop inlineF else
@@ -131,7 +135,7 @@ fuse seed = use thisMod >>= \modIName -> trace (prettyTermRaw (seed ^. term)) $ 
       Just b  -> doSimpleBind b
       Nothing -> noop (Var (VQBindIndex q))
 
-  Var (VQBindIndex q) | modName q == modIName ->
+  Var (VQBindIndex q) | modName q == modIName && not g_noInline ->
 --  runSimpleBind q *>
     (trailingArgs `forM` \(TSub e l t) -> if null e then pure t else runSimpleTerm (Seed l (e , []) t))
     >>= specApp sLvl (argEnv , []) q
@@ -252,19 +256,20 @@ runSimpleTerm seed = let
       SkipF s -> (pure . cata f ||| h) s
       x       -> f <$> traverse (pure . cata f ||| h) x
     in h
-  in termFHypoM constFoldCountF fuse seed <&> \(dups , rhs) -> rhs
---in termFHypoM constFoldF fuse seed
+--in termFHypoM constFoldCountF fuse seed <&> \(dups , rhs) -> rhs
+  in termFHypoM constFoldF fuse seed
 
 constFoldF :: TermF Term -> Term
 constFoldF = \case
-  AppF (Instr i) args -> simpleInstr i args
+  AppF (Instr i) args | g_reduceInstr -> simpleInstr i args
   AppF (App g args) brgs -> constFoldF (AppF g (args <> brgs))
+  InstrAppF{} -> _
   CastF (CastZext n) (Lit (Fin m i)) | m < n -> Lit (Fin n i)
   x -> embed x
 
 type Dups = IM.IntMap Int
-constFoldCountF :: TermF (Dups , Term) -> (Dups , Term)
-constFoldCountF termDups = let
+_constFoldCountF :: TermF (Dups , Term) -> (Dups , Term)
+_constFoldCountF termDups = let
   term = snd <$> termDups
   dups = foldr (\x acc -> IM.unionWith (+) acc (fst x)) mempty termDups
   in case term of
@@ -302,7 +307,8 @@ destructureArgs args = let
 -- TODO atm only specialises current module
 specApp :: forall s. Lvl -> Env -> QName -> [Term] -> SimplifierEnv s (TermF (Either Term Seed))
 specApp seedLvl env q args = let
-  noInline = SkipF (Left (App (Var (VQBindIndex q)) args))
+  noInline = let fn = Var (VQBindIndex q)
+    in if null args then SkipF (Left fn) else SkipF (Left (App (fn) args))
   (bruijnN , unstructuredArgs , repackedArgs , argShapes) = destructureArgs args
   in -- d_ args $ d_ argShapes $ d_ repackedArgs $ d_ unstructuredArgs $ d_ "" $
   if all (== ShapeNone) argShapes {- note. all _ [] = True -} then pure noInline else
