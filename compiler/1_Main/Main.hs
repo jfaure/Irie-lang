@@ -15,7 +15,7 @@ type Repl = HaskelineT (StateT ReplState IO)
 demoFile   = "demo.ii"
 sh         = main' . Data.List.words
 [parseTree , ssa , core , types , opt , emitC , x86 , interp] = sh . (demoFile <>) <$>
-  [" -p parse" , " -p ssa" , " -p core --no-fuse", " -p types --no-fuse" , " -p simple" , " --emit-c" , " --emit-x86" , " --interpret"]
+  [" -p parse" , " -p ssa" , " -p core --no-fuse", " -p types --no-fuse" , " -p simple" , " --mk-c --dump-c --run-c -o/tmp/c.lol" , " --emit-x86" , " --interpret"]
 stream = sh "ii/stream.ii -p simple"
 testRepl   = sh ""
 

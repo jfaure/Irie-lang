@@ -31,11 +31,11 @@ type CaseID    = Int
 -- Note. lifted let binds are appended to the module and become VQBinds
 -- (qualified IName -> bind index) obtained via Externs.iNameToBindName: (topBinds : BitSet) -> QName -> Int
 -- an IConv (module name in QName) specifies the many to 1 (IName -> HName) convention for that module
-newtype VName = VQBindIndex QName
-data LetMeta = LetMeta { isTop :: Bool , letIName :: QName , letBindIndex :: VName , srcLoc :: Int }
+newtype VQBindIndex = VQBindIndex QName
+data LetMeta = LetMeta { isTop :: Bool , letIName :: QName , letBindIndex :: VQBindIndex , srcLoc :: Int }
 
 data Term -- β-reducable (possibly to a type)
- = Var !VName -- Direct index into modBinds rather than a qualified IName
+ = Var !VQBindIndex
  | Lit !Literal
  | Question      -- attempt to infer this TT
  | Poison  !Text -- typecheck inconsistency
@@ -50,7 +50,7 @@ data Term -- β-reducable (possibly to a type)
  | BruijnAbsTyped Int Term [(Int , Type)] Type -- metadata idx: dups , hname , src
  | App     Term [Term]
  | InstrApp !PrimInstr [Term] -- Applied instruction: TODO only allow fully applied: η expand instr paps
- | Captures VName -- rec/mut placeholder for inference until captures are known
+ | Captures VQBindIndex -- rec/mut placeholder for inference until captures are known
 
 -- {}
  | Array    (V.Vector Term) -- All have same type
@@ -180,7 +180,7 @@ data ExternVar
  | ImportLabel QName
 
  | NotInScope       HName
- | NotOpened        BitSet QName -- HName HName
+ | NotOpened        BitSet VQBindIndex
  | NotOpenedINames  BitSet [QName] -- TODO nonempty?
  | AmbiguousBinding HName [(ModIName , IName)] -- same level binding overlap / overwrite
 
@@ -202,7 +202,7 @@ data BiCast
  | CastZext Int
  | CastProduct Int [(ASMIdx , BiCast)] -- number of drops, and indexes into parent struct
  | CastFields  [BiCast]
--- | CastSum BSM.BitSetMap
+-- | CastSum (BSM.BitSetMap Type)
 
  | CastApp [BiCast] (Maybe [Type]) BiCast -- argcasts , maybe papcast , retcast
  | CastOver ASMIdx BiCast Expr Type

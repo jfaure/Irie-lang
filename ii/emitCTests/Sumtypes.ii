@@ -1,0 +1,12 @@
+--Wrap = data
+--  wrap
+--x = wrap
+
+-- Sumtypes
+sRect = \case
+  @Rectangle x y => add x y
+
+sWrap = \case
+  @wrap x => add x 3
+
+main = 0

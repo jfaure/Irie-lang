@@ -6,3 +6,5 @@
 either f g r = case r of
   Left x  => f x
   Right y => g y
+
+main = 0

@@ -24,14 +24,14 @@ import Control.Lens
 import System.Process
 import System.IO.Unsafe
 
-getIName :: V.Vector LoadedMod -> QName -> ByteString
-getIName loadedMods q = case lookupIName loadedMods (modName q) (unQName q) of
+getRawIName :: V.Vector LoadedMod -> QName -> ByteString
+getRawIName loadedMods q = case lookupIName loadedMods (modName q) (unQName q) of
   Just hNm -> encodeUtf8 hNm
   got -> error $ show got <> ": " <> show q
 
-getFieldName loadedMods q = if modName q == 0
+getIName loadedMods q = if modName q == 0
   then "_" <> show (unQName q) -- tuples are qnamed in the builtin module '0'
-  else getIName loadedMods q
+  else getRawIName loadedMods q
 
 -- Note. see C disassembly = objdump -d -Mintel --visualize-jumps=color --disassembler-color=on --disassemble=fName
 -- recursions: Tail , Linear , Binary/Multiple , Mutual , Nested , Tree , Generative , Course-of-Values
@@ -71,23 +71,26 @@ type AsmType = TyHead
 -- so we can track types of arg/ret ↓↑ during codegen
 data BasicTy
   = BPrim PrimType
-  | BBound ByteString -- point to typedef
+  | BBound Int
   | BStruct (BSM.BitSetMap BasicTy)
+  | BArrow [BasicTy] BasicTy
   | BEnum Int -- trivial sumtype. (incl. Peanos?)
 --  | BNewType Int BasicTy -- sumtype of 1 alt, the label is implicit
 -- Note. if sumtype has only 1 tag, tag is removed.
   | BSum Int{-nTags-} (BSM.BitSetMap BasicTy) Int {-maxSz-} -- if larger than reg_call, malloc the data
-  | BVoid
   deriving Show
 --  | BTree
 --  | BList
 
 -- incls register(s) in ASM
-data Value = VArg IName | VLocal IName | VLens Value [ByteString] | Tag Int Value deriving Show
+data Value = VArg IName | VLocal IName | VLens Value [ByteString] | VTag Int Value | VVoid deriving Show
 
 -- pass down typedef for structure types
+unTyGround (TyGround [t]) = t
 tyToBasicTy :: TyHead -> BasicTy
-tyToBasicTy = \case
+tyToBasicTy = let
+  doTy = tyToBasicTy . unTyGround
+  in \case
   THPrim p -> BPrim p
   THTyCon tcon -> case tcon of
     THProduct bsm -> BStruct (bsm <&> \(TyGround [t]) -> tyToBasicTy t)
@@ -101,27 +104,43 @@ tyToBasicTy = \case
         | maxSz    == 0 -> BEnum tagCount --  (PrimNat bits)
         | tagCount == 1 , [(tag , TyGround [ty])] <- BSM.toList bsm ->
           BSum tagCount (BSM.singleton tag (tyToBasicTy ty)) maxSz
-        | True -> _BSum
---  THArrow{} -> "TArrow"
+        | True -> BSum tagCount (doTy <$> bsm) maxSz
+    THArrow aTs rT -> BArrow (doTy <$> aTs) (doTy rT)
     t -> traceTy (TyGround [THTyCon t]) (error "")
   THBi _ (TyGround [ty]) -> tyToBasicTy ty
---THBound i -> "TBound"
-  t -> traceTy (TyGround [t]) (error "")
+  THBound i -> BBound i
+--THSet 0 -> BBound i
+  t -> traceTy (TyGround [t]) (error $ show t)
 
-serialiseBasicTy :: V.Vector LoadedMod -> BasicTy -> (BasicTy , ByteString)
-serialiseBasicTy loadedMods t = let
+-- C fnptr typedefs are tragically idiotic, eg: "typedef retT ALIAS(aT0 , ...)"
+-- ie. Have to embed the alias inside the type it is aliasing.
+-- This forces us to handle the name here
+-- TODO pass down field names for fnptr record fields
+serialiseBasicTy :: V.Vector LoadedMod -> Maybe ByteString -> BasicTy -> (BasicTy , ByteString)
+serialiseBasicTy loadedMods tyName bTy = let
+  tagCountToTagType = BPrim . PrimNat . intLog2
   convStep = \case
     BPrim p -> NBStr (toByteString $ fromWrite $ emitPrimType p)
-    BBound td -> NBStr td -- point to typedef
+    BBound td -> NBStr "TBound" -- (show td) -- point to typedef
+    BArrow ars ret -> NChunks $ (Left "(" : Right ret : Left " (*)(" : intersperse (Left " , ") (Right <$> ars)) ++ [Left "))"]
     BStruct bs -> let
       emitField (q , fieldType) = let
-        in [Right fieldType , Left (" " <> getFieldName loadedMods (QName q) <> "; ")]
-      in NChunks (Left "struct { " : concatMap emitField (BSM.toList bs) ++ [Left " }"])
-    BEnum tagCount -> NBStr $ toByteString $ fromWrite $ emitPrimType (PrimNat (intLog2 tagCount))
-    BSum 1 alts sz | [(tag , ty)] <- BSM.toList alts -> NSkip ty
---  BVoid -> NDone
---  BNewType ->
-  in (t , snd $ unfoldrChunks convStep t)
+        in [Right fieldType , Left (" " <> getIName loadedMods (QName q) <> "; ")]
+      in case BSM.toList bs of
+        [(q , f)] -> NStr ("ImplF(" <> getIName loadedMods (QName q) <> ")") f
+        fields    -> NChunks (Left "struct { " : concatMap emitField fields ++ [Left "}"])
+    BEnum tagCount -> NSkip (tagCountToTagType tagCount)
+    BSum 1 alts sz | [(tag , ty)] <- BSM.toList alts -> NStr ("ImplL(" <> getIName loadedMods (QName tag) <> ") ") ty
+    BSum n alts sz -> let
+      fields = BSM.toList alts <&> \(tag , subTy) ->
+        [Right subTy , Left (" " <> getIName loadedMods (QName tag) <> "; ")]
+      in NChunks $ Left "TSum(" : Right (tagCountToTagType n) : Left ") " : concat fields ++ [Left "} datum; } "]
+
+  in case bTy of
+    BArrow ars retT -> (bTy ,) $ snd (unfoldrChunks convStep retT)
+      <> maybe "(*)" (\t -> "(*" <> t <> ")") tyName
+      <> "(" <> BS.intercalate " , " (snd . unfoldrChunks convStep <$> ars) <> ")"
+    _ -> (bTy , snd (unfoldrChunks convStep bTy) <> maybe "" (" " <>) tyName)
 
 -- size in bytes of a type
 sizeOf :: Type -> Int
@@ -134,29 +153,30 @@ sizeOf = \case
 
 type CCTy = (BasicTy , ByteString)
 type CallingConv = ([CCTy] , CCTy)
+newtype Typedef = Typedef { unTypedef :: ByteString }
 
 -- TODO: must topologically sort
 mintersperse a b = mconcat (intersperse a b)
 
-mkCModule (dumpC , runC) moduleIName loadedMods moduleTT = do
-  let outFile = "/tmp/runC.out"
+mkCModule (dumpC , runC , requestOutFile) moduleIName loadedMods moduleTT = do
+  let outFile = fromMaybe "/tmp/runC.out" requestOutFile
       srcFile = "/tmp/Csrc.c"
       cModule = emitCModule moduleIName loadedMods moduleTT
       csrcTxt = toLazyByteString (mkHeader <> cModule)
-  putStrLn @Text "> dump CSrc:"
-  putStrLn csrcTxt
+  when dumpC $ putStrLn @Text "> dump CSrc:" *> putStrLn csrcTxt
   BSL.writeFile srcFile csrcTxt
+
+  putStrLn @Text ("\n> Compiling C: " <> toS srcFile <> " -> " <> toS outFile <> ":")
+  (clangOK , cout , cstderr) <- readProcessWithExitCode "gcc" [srcFile , "-march=haswell" , "-o" <> outFile] ""
+
   when runC $ do
-    putStrLn @Text ("\n> Compiling and running C: " <> toS srcFile <> " -> " <> toS outFile <> ":")
-    (clangOK , cout , cstderr) <- readProcessWithExitCode "gcc" [srcFile , "-march=haswell" , "-o" <> outFile] ""
+    putStrLn @Text "\n> Running C: "
     case clangOK of
       ExitFailure _ -> putStrLn cout *> putStrLn cstderr
       ExitSuccess -> do
         (exitCode , asmStdout , asmStderr) <- readProcessWithExitCode outFile [] ""
-        putStrLn asmStdout
-        print exitCode
+        when runC $ putStrLn asmStdout *> print exitCode
 
--- #define transmute(v,to) ((union {typeof(v) from; to to_;}{.from=v}).to_
 mkHeader :: Builder
 mkHeader = fromWriteList writeByteString
   [ "#include <stdint.h>\n"
@@ -165,9 +185,12 @@ mkHeader = fromWriteList writeByteString
 --, "#include <immintrin.h>\n" Massively slows down compile times..
   , "typedef uint64_t u64; " , "typedef uint32_t u32; " , "typedef uint8_t u8; " , "typedef uint8_t u1;\n"
   , "typedef int64_t i64; "  , "typedef int32_t i32; "  , "typedef int8_t i8; "  , "typedef int8_t i1;\n"
-  , "#define CastStruct(GOT,WANT,b) ({ union { GOT got; WANT want; } ret; ret.got = (b); ret.want;})\n"
+  , "#define BitCast(GOT,WANT,b) ({ union { GOT got; WANT want; } ret; ret.got = (b); ret.want;})\n"
+  , "#define ImplL(l)\n"
+  , "#define ImplF(l)\n"
   , "typedef struct { u64 r; u64 rx; } Ret128;\n" -- c-call convention allows in-reg return of 2 u64s
   , "typedef Ret128 TArrow; typedef Ret128 TBound;\n"
+  , "#define TSum(tagTy) struct { tagTy tag; union {\n"
   , "// Custom Defs //\n\n"
 --, "#define BOX(ty,b) ({ty *p = malloc(sizeof(ty)); *p = (b); p;})\n"
 --, "#define CastStruct(t1,t2,b) ({ union { t1 in; t2 out; } ret; ret.in= (b); ret.out;})\n"
@@ -180,32 +203,54 @@ emitCModule modIName loadedMods lets = let
     got -> error $ show got <> ": " <> show q
   fnToStr (Right (fnDecl , fnBody)) = [fnDecl , " {\n  " , fnBody , "\n}\n"]
   fnToStr (Left  (fnDecl , fnBody)) = [fnDecl , " " , fnBody , ";\n\n"]
-  binds = lets <&> \(lm , (BindOK _ rhs)) -> fnToStr $
-    emitFunction loadedMods (encodeUtf8 (fnName lm)) (getCallingConv loadedMods rhs) rhs
-  in fromWriteList writeByteString (concat $ V.toList binds)
+  (ccs , typedefs) = V.unzip $ lets <&> \(lm , (BindOK _ rhs)) -> let
+    fName = encodeUtf8 (fnName lm)
+    in (getCallingConv loadedMods fName rhs)
+  binds = let
+    emitFn (lm , (BindOK _ rhs)) cc = fnToStr $ emitFunction modIName loadedMods ccs (encodeUtf8 (fnName lm)) cc rhs
+    in V.zipWith emitFn lets ccs
+  in fromWriteList (writeByteString . unTypedef) (concat $ V.toList typedefs)
+    <> fromWriteList writeByteString (concat $ V.toList binds) -- TODO improve perf
 
 -- v ASM must also allocate the registers according to calling conv
-getCallingConv :: V.Vector LoadedMod -> Expr -> CallingConv
-getCallingConv loadedMods (Core bindTerm ty) = let
-  mkBasicTy = serialiseBasicTy loadedMods . tyToBasicTy
+getCallingConv :: V.Vector LoadedMod -> ByteString -> Expr -> (CallingConv , [Typedef])
+getCallingConv loadedMods fnName (Core bindTerm ty) = let
+--mkBasicTy nm = serialiseBasicTy loadedMods nm . tyToBasicTy
+  mkAsmTy = tyToBasicTy . tyToAsmTy
   (argTys , retTy) = case ty of
-    TyGround [THTyCon (THArrow ars ret)] -> (tyToAsmTy <$> ars , tyToAsmTy ret)
-    TyGround [THBi _ (TyGround [THTyCon (THArrow ars ret)])]  -> (tyToAsmTy <$> ars , tyToAsmTy ret)
+    TyGround [THTyCon (THArrow ars ret)] -> (mkAsmTy <$> ars , mkAsmTy ret)
+    TyGround [THBi _ (TyGround [THTyCon (THArrow ars ret)])]  -> (mkAsmTy <$> ars , mkAsmTy ret)
     -- TODO incomplete
-    t -> (mempty , tyToAsmTy t)
-  in (mkBasicTy <$> argTys , mkBasicTy retTy)
+    t -> (mempty , mkAsmTy t)
+
+  maybeTypedef idx bty = if -- let tName = if idx < 0 then "" else "a" <> show idx in if
+    | needsTypedef bty -> let
+      td = fnName <> if idx < 0 then "_RT" else "_AT" <> show idx
+      (bty' , rawTyStr) = serialiseBasicTy loadedMods (Just td) bty
+      in ((bty' , td {-<> " " <> tName-}) , Just (Typedef $ "typedef " <> rawTyStr <> ";\n"))
+    | True -> (serialiseBasicTy loadedMods Nothing bty , Nothing)
+
+  nArgs = length argTys
+  (retCC : argCC , maybeTypedefStrs) = unzip $ zipWith maybeTypedef [-1 .. nArgs -1] (retTy : argTys)
+  typedefs = catMaybes maybeTypedefStrs
+
+  in ((argCC , retCC) , typedefs)
 
 tyToAsmTy (TyGround [th]) = th
 tyToAsmTy t = error $ "asm: cannot codegen type: " <> toS (prettyTyRaw t)
+
+
+impliedField :: BasicTy -> Bool
+impliedField = \case { BStruct bs -> BSM.size bs == 1 ; _ -> False }
 
 -- ↓ next term , dups , retLoc (esp. ret typdef)
 -- ↑ dependencies, literals, fns
 -- ↓↑ state for the unfolding
 data Env = Env { retVal :: BasicTy , argEnv :: V.Vector (Value , BasicTy) } deriving Show
 data CSeed = Up BasicTy | Dwn (Env , Term) deriving Show
-termToCU :: V.Vector LoadedMod -> CSeed -> NextChunk CSeed
-termToCU loadedMods (Up ty) = NEnd (Up ty)
-termToCU loadedMods (Dwn (env , term)) = let
+termToCU :: ModIName -> V.Vector LoadedMod -> V.Vector CallingConv -> CSeed -> NextChunk CSeed
+termToCU thisM loadedMods ccs (Up ty) = NEnd (Up ty)
+termToCU thisM loadedMods ccs (Dwn (env , term)) = let
   idSeed t = Dwn (env , t)
   in case term of
   Return cast f  -> NEnclose ("return " <> cast) (idSeed f) ";"
@@ -214,7 +259,7 @@ termToCU loadedMods (Dwn (env , term)) = let
     showValue = \case
       VArg i   -> ("a" <> show i)
       VLocal i -> ("l" <> show i)
-      VLens v fields -> BS.intercalate "._" (showValue v : fields)
+      VLens v fields -> BS.intercalate "." (showValue v : fields)
     in NStr (showValue val) (Up ty)
   Var (VQBindIndex q) -> case lookupBindName loadedMods (modName q) (unQName q) of
     Just hNm -> NBStr (encodeUtf8 hNm) -- ! Get the calling conv
@@ -222,6 +267,7 @@ termToCU loadedMods (Dwn (env , term)) = let
   Cast cast x -> case cast of
     CastZext n -> let castStr = writeToByteString $ writeChar '(' <> emitPrimType (PrimNat n) <> writeChar ')'
       in NChunks [Left castStr , Right (idSeed x) , Right (Up (BPrim (PrimNat n)))]
+    CastFields fCasts -> NSkip (idSeed x) -- TODO
     cast -> error $ show cast
 --  CastProduct{}
   App f args -> case f of
@@ -235,17 +281,26 @@ termToCU loadedMods (Dwn (env , term)) = let
         NumInstr (BitInstr Not) -> mkFunction "!(" arg
         _ -> _
       | otherwise -> error $ "panic: bad instr: " <> show i
-    _ -> let l = (Right (idSeed f) : Left "(" : intersperse (Left " , ") (Right . idSeed <$> args)) ++ [Left ")"]
-      in NChunks l
-
+-- TODO need arg typedefs => emit in topo order & pass down prev ccs
+    Var (VQBindIndex q) | modName q == thisM -> let
+      (ccArgs , ccRet) = ccs V.! unQName q
+      -- if building a struct we need the arg typedef: eg. (FArgN){ ..fields.. }
+      castArg (bty , strTy) arg = if
+        | needsTypedef bty -> [Left " , " , Left ("(" <> strTy <> ")") , Right (idSeed arg)]
+        | True -> [Left " , " , Right (idSeed arg)]
+      mkArgs = alignWith (these _ _ castArg) ccArgs args
+      in NChunks $ (Right (idSeed f) : Left "(" : drop 1 (concat mkArgs))
+        ++ [Left ")"]
+    _ -> NChunks $ (Right (idSeed f) : Left "(" : intersperse (Left " , ") (Right . idSeed <$> args))
+     ++ [Left ")"]
   -- * Pass down type for prods and sums; sub-products split each field into a retLoc
   Prod  bsm  -> let
-    mkField (q , fieldVal) = getFieldName loadedMods (QName q) & \hNm ->
+    mkField (q , fieldVal) = getIName loadedMods (QName q) & \hNm ->
       [Left ("." <> hNm <> "=") , Right (idSeed fieldVal) , Left ", "]
     in NChunks (Left "{ " : (concatMap mkField (BSM.toList bsm)) ++ [Left "}"])
   -- The cast is an artefact of inference, TODO have infer. remove it / cast after extraction
   TTLens rawObj fields LensGet -> let
-    mkAccess f = "." <> getFieldName loadedMods (QName f)
+    mkAccess f = "." <> getIName loadedMods (QName f)
     in case rawObj of
     Cast (CastProduct 1 [(idx , leafCast)]) obj -> -- TODO leafCast
       NEndStr (idSeed obj) (mconcat $ mkAccess <$> fields)
@@ -254,69 +309,80 @@ termToCU loadedMods (Dwn (env , term)) = let
 
   Label l args -> error "label" -- Since wasn't caught by a cast, does nothing (identity label)
 
--- lit-case => (int [2]){ 5 , 0 }[a0];
---CaseB scrut _t alts Nothing | BSM.size alts == 2 , [(_koq , ko) , (_okq ,ok)] <- BSM.toList alts ->
---  NStr "if (" (idSeed UnfoldList [scrut , UnfoldStr ") " , ok , UnfoldStr "\n  else " , ko] "")
-
-  -- TODO default , LitArray , altCasts
+  -- TODO calcScrut , default , LitTables , altCasts
   -- scrut = | Enum | Tag
   -- ! Must know scrut Type => To name it (scrut.tag , scrut.data) & interpret tag
-  CaseB scrut scrutTy alts d -> let -- BSM sorts on QName already, so can imap to get asmidxs TODO?
+  CaseB scrut inferredScrutTy alts d -> let -- BSM sorts on QName already, so can imap to get asmidxs TODO?
     last = BSM.size alts - 1
-    mkAlt :: Int -> BasicTy -> Int -> (Int , Term) -> [Either ByteString CSeed]
-    mkAlt scrutName (BSum nTags altTys maxSz) asmIdx (_qNm , term) = let
-      altTerm = case term of
-        BruijnAbs n _ rhs -> rhs -- TODO hack, need to add locals to env
-        t -> t
-      caseTxt = if asmIdx == last && isNothing d then "default: " else "case " <> show asmIdx <> ": "
-      breakTxt = case altTerm of { Return{} -> "\n  "  ; _ -> "\n  " } -- break? not needed
-      scrutLenses = V.imap (\i ty -> (VLens (VLocal scrutName) [show i] , ty)) (BSM.elems altTys)
-      -- ! lift alt-fns OR need to remap deBruijns so the first n point to data in this label
-      altEnv = Env (retVal env) (scrutLenses <> argEnv env)
-      in [Left caseTxt , Right (Dwn (altEnv , altTerm)) , Left breakTxt]
+    mkAlt :: Maybe Value -> BasicTy -> Int -> (Int , Term) -> [Either ByteString CSeed]
+    mkAlt scrutNameM ty asmIdx (_qNm , term) = case ty of
+      BSum nTags altTys maxSz -> let
+        altTerm = case term of
+          BruijnAbs n _ rhs -> rhs -- ! TODO ensure type matches this
+          t -> t
+        caseTxt = if asmIdx == last && isNothing d then "default: " else "case " <> show asmIdx <> ": "
+        breakTxt = case altTerm of { Return{} -> "\n  "  ; _ -> "\n  " } -- break? not needed
+        scrutLenses scrutName = let
+          emitLens i (q , ty) = let
+            unScrut = ["datum" , getIName loadedMods (QName q)]
+            vlens = VLens scrutName (if impliedField ty then unScrut else unScrut ++ ["_" <> show i])
+            in (vlens , ty)
+          in V.imap emitLens (BSM.unBSM altTys)
+        -- ! lift alt-fns OR need to remap deBruijns so the first n point to data in this label
+        altEnv = Env (retVal env) $ case scrutNameM of
+          Just nm -> (scrutLenses nm <> argEnv env)
+          Nothing -> argEnv env
+        in [Left caseTxt , Right (Dwn (altEnv , altTerm)) , Left breakTxt]
+      BEnum n -> [Left ("case " <> show asmIdx <> ": ") , Right (idSeed term) , Left "\n  "]
+      ty -> error $ show ty
     altList scrutName ty = (concat $ Prelude.imap (mkAlt scrutName ty) (BSM.toList alts))
 
-   -- Left ("({ " <> snd (serialiseBasicTy loadedMods scrutTy) <> " scrut = ")
-    namedScrut scrutName scrutTy = NChunks
-      $ Left "switch (" : Right (idSeed scrut) : Left ") {\n  " : altList scrutName scrutTy
+    namedScrut scrutName scrutTy = Left "switch ("
+      : Right (idSeed scrut)
+      : Left (if isJust scrutName then ".tag) {\n  " else ") {\n  ")
+      : altList scrutName scrutTy
       ++ [Left "}"]
 
-    anonScrut scrutTy readTag = NChunks
-      $ Left "switch ("
-      : Right (idSeed scrut)
-      : Left (if readTag then ".tag) {\n  " else ") {\n  ")
-      : altList 0 scrutTy
-      ++ [Left "})"]
     in case scrut of -- enums don't need a name, but all other scruts do
-      VBruijn i -> argEnv env V.! i & \(_value , ty) -> case ty of
-        BSum nTags tys maxSz -> anonScrut ty False
-        ty -> anonScrut ty False
+      VBruijn i -> argEnv env V.! i & \(scrutVal , ty) -> let
+        seedRhs :: _ -> Term -> CSeed
+        seedRhs tys = \case
+          BruijnAbs n _free rhs -> let
+            labelArgs = [0 .. n-1] <&> \i -> let fTy = tys V.! i
+              in if V.length tys == 1 {- impliedField -} then (scrutVal , fTy) else (VLens scrutVal ["_" <> show i] , fTy)
+            in Dwn (Env (retVal env) (V.fromList labelArgs <> argEnv env) , rhs)
+          rhs -> idSeed rhs
+        in case ty of
+        BSum 1 sumTy maxSz | [(_q , subTys)] <- BSM.toList sumTy -> let
+          tys = case subTys of { BStruct tys -> BSM.elems tys ; _ -> mempty } :: V.Vector BasicTy
+          in BSM.toList alts & \[(_q , rhs)] -> NSkip (seedRhs tys rhs)
+        BSum nTags tys maxSz -> NChunks $ namedScrut (Just (VArg i)) ty
+        BEnum nTags -> NChunks $ namedScrut Nothing ty
+        t -> error $ show t
       -- TODO enum scruts don't need a name
-      _ -> _ -- anonScrut (d_ "warning: i32 assumed" $ BPrim (PrimInt 32)) True -- TODO bind the scrut onto a caseAlts
+
+--    calcEnumScrut -> NChunks $ namedScrut VVoid (BEnum (BSM.size alts)) False
+      calcStruct -> let
+        scrutTy = tyToBasicTy (unTyGround inferredScrutTy)
+        readTag = case scrutTy of { BSum 1 _ _ -> False ; BEnum{} -> False ; BSum{} -> True }
+        in NChunks $ namedScrut Nothing scrutTy
+--      caseChunks = namedScrut (VLocal freshLocal) ty False
+--      in NChunks $ (Left "({ " : {-Right (idSeed calcScrut) :-} caseChunks) ++ [Left "});"]
+      -- anonScrut (d_ "warning: i32 assumed" $ BPrim (PrimInt 32)) True -- TODO bind the scrut onto a caseAlts
 
   X86Intrinsic "_mm256_undefined_si256" -> NBStr "_mm256_undefined_si256()"
   X86Intrinsic txt -> NBStr (encodeUtf8 txt)
   x -> error $ show x
 
---termToC :: V.Vector LoadedMod -> Term -> (Term , ByteString)
-termToC loadedMods term = unfoldrChunks (termToCU loadedMods) term
+needsTypedef = \case { BStruct{} -> True ; BSum{} -> True ; BArrow{} -> True ; _ -> False }
 
 -- [typedefs] , ret_ty fnName(arg1Ty arg1Nm , t2 n2) { .. }
-emitFunction :: V.Vector LoadedMod -> ByteString -> CallingConv -> Expr
+emitFunction :: ModuleIName -> V.Vector LoadedMod -> V.Vector CallingConv -> ByteString -> CallingConv -> Expr
   -> Either (ByteString , ByteString) (ByteString , ByteString)
-emitFunction loadedMods fnName (argT , retT) (Core term _) = let
+emitFunction thisM loadedMods ccs fnName cc@(argT , retT) (Core term _) = let
   nArgs = length argT
-  (retBTy  , rawRetStr) = retT
-  (argBTys , rawArgStrs) = unzip argT
-
-  -- Use typedefs rather than raw types for structs. (No choice for structs passing through calling convs)
-  needsTypeDef = \case { BStruct{} -> True ; _ -> False }
-  maybeTypedef idx (bty , rawTyStr) = if needsTypeDef bty
-    then let td = fnName <> if idx < 0 then "_RT" else "_AT" <> show idx
-      in (td , Just ("typedef " <> rawTyStr <> " " <> td <> ";\n"))
-    else (rawTyStr , Nothing)
-  (retTyStr : argTyStrs , maybeTypedefStrs) = unzip $ zipWith maybeTypedef (-1 : [nArgs-1 , nArgs-2 .. 0]) (retT : argT)
-  typedefStrs = mconcat (catMaybes maybeTypedefStrs)
+  (retBTy  , retTyStr) = retT
+  (argBTys , argTyStrs) = unzip argT
 
   rhs = case term of
     BruijnAbs n dups body -> case compare nArgs n of -- TODO rm length
@@ -329,16 +395,15 @@ emitFunction loadedMods fnName (argT , retT) (Core term _) = let
   mkReturn = \case
     CaseB scrut t alts d -> CaseB scrut t (mkReturn <$> alts) (mkReturn <$> d)
     BruijnAbs n d rhs -> BruijnAbs n d (mkReturn rhs)
-    t -> Return (if needsTypeDef retBTy then "(" <> retTyStr <> ")" else "") t -- eg. "(retTy){.f=3}"
+    t -> Return (if needsTypedef retBTy then "(" <> retTyStr <> ")" else "") t -- eg. "(retTy){.f=3}"
 
-  emitParam (i :: Int) tystr = tystr <> " a" <> show i
-  fnDecl = typedefStrs <> retTyStr <> " " <> fnName <> "("
-    <> BS.intercalate " , " (zipWith emitParam [nArgs - 1 , nArgs - 2 .. 0] argTyStrs) <> ")"
+  fnDecl = {-typedefStrs <>-} retTyStr <> " " <> fnName <> "("
+    <> BS.intercalate " , " (Prelude.imap (\i t -> t <> " a" <> show i) argTyStrs) <> ")"
 
   argValues = zipWith (\i ty -> (VArg i , ty)) [nArgs - 1 , nArgs - 2 .. 0] argBTys
-  mkRhs rhs = snd $ termToC loadedMods (Dwn (Env retBTy (V.fromList argValues) , rhs))
+  mkRhs rhs = snd $ unfoldrChunks (termToCU thisM loadedMods ccs) (Dwn (Env retBTy (V.fromList argValues) , rhs))
   in if nArgs == 0 && fnName /= "main"
-    then Left (typedefStrs <> retTyStr <> " const " <> fnName <> " =" , mkRhs rhs)
+    then Left ({-typedefStrs <>-} retTyStr <> " const " <> fnName <> " =" , mkRhs rhs)
     else Right (fnDecl , mkRhs (mkReturn rhs))
 
 -- returns "?" if doesn't know the textual representation

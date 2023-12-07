@@ -186,8 +186,7 @@ s = t tInfer
 ---------
 -- X86 --
 ---------
-testAsmOutput fnName fName goldName = let
-  in S.goldenTextFile (goldDir <> "x86Dis/" <> goldName) $ do
+testAsmOutput fnName fName goldName = S.goldenTextFile (goldDir <> "x86Dis/" <> goldName) $ do
   tmpFile <- getCanonicalTemporaryDirectory <&> (</> "tmp" <> takeFileName fName)
   Main.sh (fName <> " --emit-x86")
   -- get readable objdump
@@ -199,3 +198,14 @@ testAsmOutput fnName fName goldName = let
 tasm = S.sydTest $ do
 --S.it "asm.ii" (testAsmOutput "fac" "X86Tests/fac.ii" "fac")
   S.it "dupLop.ii" (testAsmOutput "alg" "X86Tests/dupLop.ii" "dupLop")
+
+testC fName goldName = S.goldenTextFile (goldDir <> "emitC/" <> goldName) $ do
+  let outFile = "/tmp/testC.out"
+  Main.sh ("ii/emitCTests/" <> fName <> " --mk-c -o" <> outFile)
+  (exitCode , asmStdout , asmStderr) <- readProcessWithExitCode outFile [] ""
+  pure (toS asmStdout)
+
+c = let
+  mkCTest nm = S.it ("c-" <> nm) (testC (nm <> ".ii") nm)
+  in S.sydTest $ mapM_ mkCTest
+    [ "ap" , "argCast" , "Constants" , "either" , "factorial" , "nestTuple" , "Sumtypes" ]

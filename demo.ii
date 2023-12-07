@@ -1,18 +1,19 @@
--- let-bound mixfix in scope outside, wrong IName/Letname
+-- let-bound mixfix not in scope
 -- poly1 = let _<_ = \f a => f a in (\y => y . t) < { t = 1 }  -- %i1
 
--- Index out of bounds on use before declare
--- x = Just 3
---Maybe = data
---  Just Int
---f = Just 3 -- ok
-
--- Illegal pattern (multi equation)
+-- Illegal pattern (multi-line equation)
 -- eq1 @x b = 2
 -- eq1 a b = 3
 
 -- record wildcard
--- { x = Int , y } -- indicates y = ?
+-- rw = { x = Int , y } -- indicates y = ?
+
+-- multi-branch μ merge =>
+-- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
+
+-- Add Module names to namespace , name clash when opening ?
+-- import Maybe
+-- y = Maybe
 
 --imports list list2 tree question ls foldr Free parsec intmap patternTests hash
 --import irieShell -- ideas for irie as shell
@@ -31,12 +32,11 @@
 --import ii/Subsumption
 --import CTests
 
--- multi-branch μ merge =>
--- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
-
--- Qualified modules, name clash? (eg. Maybe.Maybe)
--- import Maybe
--- y = Maybe
+-- Label Index out of bounds on use before declare
+--x = Just 3
+--Maybe = data
+--  Just Int
+--f = Just 3 -- ok
 
 -- Allow declare recursive data types; μ?
 --IntList = data
@@ -44,6 +44,11 @@
 --  Cons Int -- IntList
 --g (Cons x) = x
 --f = Cons 3
+
+-- emit typedefs & use user declared types ?
+--Wrap = data
+--  wrap
+--lol = wrap
 
 -- type params (conv BruijnAbs to THBi)
 -- * Bruijns in types are already THBounds
@@ -53,33 +58,36 @@
 --   Just a
 -- f = Just 3
 
+-- funArg (& polys)
+-- foldr f s l = add 0 case l of
+--  @Cons x xs => f (add 0 x) (foldr f s xs)
+--  @Nil       => add s 0
+
 -- Topo-sort / declare / dep graph
 -- ! Unfold(constructLN) inferrence, mutate perm table
 -- main = f 3 2
 -- f x y = add x y
 
--- Polymorphism, esp. ∀a. a ⊓ T -> a
--- ! BasicTypeBound : [Tlo <: a <: Thi] => a -> a
--- typedef all tvars
-
--- η-expand paps
---t = add
-
+-- ? where to alloc mem. Stack is good iff mem is freed on same stack frame
 -- withAlloca : ∀a. Int -> a -> a
 -- unfoldrStr : (seed -> Next a seed) -> seed -> Array a
 
--- Cases:
--- | Lift all alt functions:
---  (generalise , free vars , dups/eras , specs)
--- | Alt args lens into the scrut
--- * caseTypes: | LitTables | if-else | switch
--- * subtype sumTypes (ensure alts are subtyped to case-ret-type)
+-- * Alt casts infer:409
+-- altCast = \case
+--   True  => 0 -- i1 <: i8
+--   False => 5 -- i8
 
---f = \case
---  @Rectangle x y => add x y
-
---x = True
---y = @Rectangle 5 3
+-- Label & sumtype casts
 --either = \case
 --  @Left a  => add a 2
 --  @Right b => add b 5
+--main = either (@Left 3)
+
+-- * Type application (& type params) & Cast to TPoly
+-- * Specialise polys to a size
+--ap f x = f x
+--plus1 x = add x 1
+--main = ap plus1 5
+
+-- lift / inline / specialise bruijn fns & η-expand paps
+-- main = ap (\y => add 3 y) 4

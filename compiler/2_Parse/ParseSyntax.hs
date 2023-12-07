@@ -135,7 +135,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
  | InlineExpr CoreSyn.Expr
 
  -- tmp mixfix vars
- | QVar  QName
+-- | QVar  QName
  | IQVar QName
  | MFExpr SourceOffset CoreSyn.Mixfixy
  | App SourceOffset TT [TT] -- Used by unpattern and solveMixfixes once clear of precedence & mixfixes

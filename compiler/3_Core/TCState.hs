@@ -6,10 +6,12 @@ import Prim
 import qualified Scope (Params)
 import Externs
 import Errors
-import Control.Lens
+import Control.Lens(makeLenses , use , (%=) , (.=))
 import qualified Data.Vector.Mutable as MV ( MVector, grow, length, write, read )
 import qualified ParseSyntax as P ( FnDef )
 import qualified Data.Vector as V ( Vector )
+import qualified BiUnify (biSubType , BisubEnvState(..))
+import Generalise (generalise)
 
 -- inference uses a cataM (biunification vector and new tvar assignments)
 type TCEnv s a = StateT (TCEnvState s) (ST s) a
@@ -18,20 +20,22 @@ data TCEnvState s = TCEnvState {
    _externs  :: Externs     -- vector ExternVars
  , _loadedMs :: V.Vector LoadedMod
  , _thisMod  :: ModuleIName -- used to make the QName for local bindings
+ , _topBindsCount :: Int    -- offset in modBinds where module binds end and their lifted let-bindings begin
 
  -- out
  , _modBinds :: MV.MVector s (LetMeta , Bind) -- all lets lifted, the P.FnDef is saved in letBinds
  , _errors   :: Errors
 
- -- Biunification state
+ -- Inference state
  , _scopeParams   :: Scope.Params
  , _letBinds      :: MV.MVector s (MV.MVector s P.FnDef)-- (Either P.FnDef Bind))
  , _letNest       :: Int
- , _topBindsCount :: Int    -- offset in modBinds where module binds end and their lifted let-bindings begin
  , _bindsBitSet   :: BitSet -- mark inferred binds
  , _inferStack    :: BitSet -- To detect infer cycles: recursion / mutuals
  , _cyclicDeps    :: BitSet
  , _bruijnArgVars :: V.Vector Int       -- bruijn arg -> TVar map
+
+ -- Biunification state
  , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
  , _blen          :: Int                -- cursor for bis which may have spare space
  , _bis           :: MV.MVector s BiSub -- typeVars
@@ -42,10 +46,26 @@ data TCEnvState s = TCEnvState {
  , _captureRenames :: MV.MVector s Int -- undef unless letCaptures bit set!
 }; makeLenses ''TCEnvState
 
+-- Simply copy over the relevant parts of tcstate
+-- TODO make a struct for these
+bisub :: Type -> Type -> TCState.TCEnv s BiCast
+bisub got exp = use blen >>= \bl -> use bis >>= \bvec -> let
+  runBiSub = runStateT (BiUnify.biSubType got exp) BiUnify.BisubEnvState
+    { BiUnify._blen = bl , BiUnify._bis = bvec , BiUnify._tmpFails = [] }
+  in lift runBiSub >>= \(val , BiUnify.BisubEnvState{BiUnify._blen=bl , BiUnify._bis=bvec , BiUnify._tmpFails=tf})
+    -> val <$ do
+    TCState.tmpFails %= (tf ++)
+    TCState.bis .= bvec
+    TCState.blen .= bl
+
+generaliseType :: Type -> TCEnv s Type
+generaliseType ty = use blen >>= \bl -> use bis >>= \bis' -> lift (generalise bl bis' ty)
+
 clearBiSubs :: Int -> TCEnv s ()
 clearBiSubs n = blen .= n
 
 -- spawn new tvar slots in the bisubs vector
+-- ! duplicated in biunify
 freshBiSubs :: Int -> TCEnv s [Int]
 freshBiSubs n = do
   bisubs <- use bis
@@ -66,7 +86,7 @@ resolveTypeQName = exprToTy <=< resolveQIndex
 resolveQIndex :: forall s. QName -> TCEnv s Expr
 resolveQIndex q = use thisMod >>= \mI -> if modName q == mI
   then use modBinds >>= \mBinds -> MV.read mBinds (unQName q) <&> \(_lm , BindOK _ e) -> e
-  else use loadedMs <&> \lBinds -> fromMaybe _ -- (Core (Var (VQBindIndex q)) tyBot)
+  else use loadedMs <&> \lBinds -> fromMaybe (error "invalid QName?!")
     (readQName lBinds (modName q) (unQName q))
 
 termToTy :: Term -> TCEnv s Type

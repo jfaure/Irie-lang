@@ -5,7 +5,7 @@ import Prim
 import Data.Binary
 import Data.Vector.Binary()
 
-deriving instance Generic VName
+deriving instance Generic VQBindIndex
 deriving instance Generic QName
 deriving instance Generic Term
 deriving instance Generic LensOp
@@ -42,7 +42,7 @@ deriving instance Generic BitInstrs
 deriving instance Generic NumInstrs
 deriving instance Generic POSIXType
 
-instance Binary VName
+instance Binary VQBindIndex
 instance Binary QName
 instance Binary Term
 instance Binary LensOp

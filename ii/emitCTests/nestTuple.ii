@@ -1,0 +1,7 @@
+tuple = (3 , 5)
+prod = { f1 = 3 , f2 = { s2 = 5 , s3 = 1 } }
+
+mkTuple x = (add x x , 5)
+unTuple x = x . f
+
+main = putNumber (prod . f2 . s3)

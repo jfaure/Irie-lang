@@ -14,9 +14,10 @@ import qualified Data.Map as M
 import qualified Data.IntMap as IM
 import Data.List (unzip3)
 
-g_reduceInstr = False
+g_runSimplify = False
 
-g_noInline = False
+g_reduceInstr = g_runSimplify
+g_noInline = not g_runSimplify
 
 -- A nested Abs inside a β-env smaller than total env requires "inserting" more args
 -- this more or less forces us to copy the env, which ruins β-optimal sharing of subcomputations
@@ -37,7 +38,7 @@ getBruijnAbs = \case
 
 type Lvl = Int
 data Sub = TSub (V.Vector Sub) Lvl Term deriving Show -- eLen lvl term
-type Env = (V.Vector Sub , [Sub]) -- [(Int , Term)]) -- length of argEnv (needs to remain consistent across paps
+type Env = (V.Vector Sub , [Sub]) -- length of argEnv (needs to remain consistent across paps
 --type Seed = (Lvl , Env , Term) -- expected eLen may be < envlen since tsubs eLen can increase
 
 data Seed = Seed

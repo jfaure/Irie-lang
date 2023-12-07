@@ -1,0 +1,5 @@
+either = \case
+  @Left a  => add a 2
+  @Right b => add b 5
+
+main = putNumber 5

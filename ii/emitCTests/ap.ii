@@ -1,0 +1,4 @@
+-- ensure i32 -> i32 type
+ap f x = (add 0 (f (add 0 x)))
+plus1 x = add x 1
+main = putNumber (ap plus1 5)

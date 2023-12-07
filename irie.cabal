@@ -30,7 +30,6 @@ executable irie-exe
     -Wunused-matches
     -Wunused-do-bind
     -Wwrong-do-bind
-    -Wname-shadowing:
   mixins:
       base (Prelude as BasePrelude)
     , base hiding (Prelude)
@@ -38,6 +37,7 @@ executable irie-exe
   other-modules:
       MyString
       C
+      Typer
       X86
       CoreToX86
       LinuxSyscalls

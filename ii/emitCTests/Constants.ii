@@ -1,0 +1,4 @@
+-- constants
+f = { x = 2 , y = 3 }
+g = f . x
+main = putNumber (add g (add f . x f . y))

@@ -2,7 +2,6 @@
 # II: DFA NFA glushkov Charscan
 # TT: μ datatypes
 ## Top Priority (PathNames , cross-level mutuality)
-  * BoundTvars => replace join/meets with upper&lower bounds on each typevar
   * Label names; @ vs declared (stream.ii doesn't work anymore)
   * Profunctor lenses
   * Type params (conv bruijnAbs to THBi) ; Type application vs implicit
@@ -11,7 +10,9 @@
   * Case call stream.next to recover nice syntax (? subtype @stream to open top layer)
   * Identify recons (cons over matches) and rewrite to Lens insert / modify
   * Subsumption.ii (also graphType , instantiation , multiplicities)
-  * newtypes to differentiate IName/bindName QNames
+  * Use VQBindIndex everywhere relevant
+  * Bounded Tvars eg. "[Tlo <: a <: Thi] => a -> a" instead of "∀a. a ⊓ T -> a" => 
+  * no need to emit a tuple underneath every label
 ## Memory
   * Derived streams (eg. splitAt, where second stream only available after first produced (ie. 2 can mutate 1 to buf)).
 ## New primitives + Syntax
@@ -130,3 +131,4 @@
   * https://documentation.divio.com/
   * phase distinction: meaning of static expr not dependent on executing dynamic exprs
   * prevent β-env loops
+  * https://arxiv.org/pdf/2202.13633v1.pdf has text on GADT and fixpoints

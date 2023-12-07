@@ -12,6 +12,27 @@ import Foreign.Marshal.Utils
 import Foreign.Ptr
 -- import qualified Data.Vector as V
 
+import qualified Data.Vector.Generic as VG
+import qualified Data.Vector.Generic.Mutable as VGM
+
+constructN :: forall v a. VG.Vector v a => Int -> (v a -> a) -> v a
+{-# INLINE constructN #-}
+constructN n f = let
+  fill :: forall s. Int -> v a -> ST s (v a)
+  fill i v = if i < n then let x = f (VG.unsafeTake i v) in VG.elemseq v x $ VG.unsafeThaw v >>= \v' ->
+    VGM.unsafeWrite v' i x *> VG.unsafeFreeze v' >>= fill (i + 1)
+    else return v
+  in runST (VGM.new n >>= VG.unsafeFreeze >>= fill 0)
+
+constructNSeed :: forall v a seed. (VG.Vector v a) => Int -> (v a -> seed -> (a , seed)) -> seed -> (seed , v a)
+constructNSeed n f inSeed = let
+  fill :: forall s. Int -> (seed , v a) -> ST s (seed , v a)
+  fill i (inSeed , v) = if
+    | i < n -> let (x , outSeed) = f (VG.unsafeTake i v) inSeed in VG.elemseq v x $ VG.unsafeThaw v >>= \v' ->
+      VGM.unsafeWrite v' i x *> VG.unsafeFreeze v' >>= \nextV -> fill (i + 1) (outSeed , nextV)
+    | i >= n -> pure (inSeed , v)
+  in runST (VGM.new n >>= VG.unsafeFreeze >>= \startV -> fill 0 (inSeed , startV))
+
 data NextChunk seed
  = NEnd seed
  | NSkip seed

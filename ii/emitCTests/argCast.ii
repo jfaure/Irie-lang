@@ -1,0 +1,3 @@
+-- arg cast based on f cc
+f (a , b) = add a b
+main = putNumber f (3 , 2)

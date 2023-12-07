@@ -1,33 +1,52 @@
 -- See presentation/TypeTheory for commentary
-module BiUnify (bisub , biSubTVarTVar) where
+{-# LANGUAGE TemplateHaskell #-}
+module BiUnify (biSubTVarTVar , biSubType , BisubEnv , BisubEnvState(..)) where
 import Prim (PrimInstr(..) , PrimType(..))
 import CoreSyn as C
 import Errors ( BiFail(..), TmpBiSubError(TmpBiSubError) )
-import CoreUtils
-import TCState
+import CoreUtils (prependArrowArgsTy , tHeadToTy , mergeTypeList , partitionType , mergeTypes , mergeTVar , hasVar)
 import PrettyCore (prettyTyRaw)
 import Builtins (readPrimType)
-import Data.Distributive
+import Data.Distributive (distribute)
 import qualified BitSetMap as BSM ( (!?), elems, mergeWithKey', singleton, toList, traverseWithKey )
-import qualified Data.Vector.Mutable as MV ( read, write )
 import qualified Data.Vector as V ( Vector, (!), (++), fromList, ifoldM, length, zipWithM )
 import Data.Functor.Foldable
-import Control.Lens ( use, (%=) )
+import Control.Lens ( makeLenses , use , (%=) , (.=) )
+import qualified Data.Vector.Mutable as MV
 debug_biunify = global_debug
 
-failBiSub :: BiFail -> Type -> Type -> TCEnv s BiCast
+resolveTypeQName = _ -- TCState.resolveTypeQName
+
+type BisubEnv s a = StateT (BisubEnvState s) (ST s) a
+data BisubEnvState s = BisubEnvState
+ { _blen     :: Int                -- cursor for bis which may have spare space
+ , _bis      :: MV.MVector s BiSub -- typeVars
+ , _tmpFails :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
+ }; makeLenses ''BisubEnvState
+
+-- spawn new tvar slots in the bisubs vector
+-- TODO this fn is duplicated !
+freshBiSubs :: Int -> BisubEnv s [Int]
+freshBiSubs n = do
+  bisubs <- use bis
+  biLen  <- use blen
+  let tyVars  = [biLen .. biLen+n-1]
+  blen .= biLen + n
+  bisubs <- if MV.length bisubs < biLen + n then MV.grow bisubs n else pure bisubs
+  bis .= bisubs
+  tyVars `forM_` \i -> MV.write bisubs i (BiSub tyBot tyTop)
+  pure tyVars
+
+failBiSub :: BiFail -> Type -> Type -> BisubEnv s BiCast
 failBiSub msg a b = BiEQ <$ (tmpFails %= (TmpBiSubError msg a b:))
 
-bisub a b = --when debug_biunify (traceM ("bisub: " <> prettyTyRaw a <> " <=> " <> prettyTyRaw b)) *>
-  biSubType a b
-
-biSubTVars :: BitSet -> BitSet -> TCEnv s BiCast
+biSubTVars :: BitSet -> BitSet -> BisubEnv s BiCast
 biSubTVars p m = BiEQ <$ (bitSet2IntList p `forM` \v -> biSubTVarTVar v `mapM` bitSet2IntList m)
 
 biSubTVarTVar p m = use bis >>= \v -> MV.read v p >>= \(BiSub p' m') -> do
   when debug_biunify (traceM ("bisubττ: " <> prettyTyRaw (tyVar p) <> " <=> " <> prettyTyRaw (tyVar m)))
   MV.write v p (BiSub (mergeTVar m p') (mergeTVar m m')) -- TODO is ok? intended to fix recursive type unification
-  if (hasVar m' m) then pure BiEQ else biSubType p' (TyVars (setBit 0 m) []) -- Avoid loops
+  if hasVar m' m then pure BiEQ else biSubType p' (TyVars (setBit 0 m) []) -- Avoid loops
 
 biSubTVarP v m = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   let mMerged = mergeTypes True m m'
@@ -43,7 +62,8 @@ biSubTVarM p v = use bis >>= \b -> MV.read b v >>= \(BiSub p' m') -> do
   if pMerged == p' then pure BiEQ -- if merging was noop, this would probably loop
   else biSubType p m'
 
-biSubType :: Type -> Type -> TCEnv s BiCast
+-- when debug_biunify (traceM ("bisub: " <> prettyTyRaw a <> " <=> " <> prettyTyRaw b)) *>
+biSubType :: Type -> Type -> BisubEnv s BiCast
 biSubType tyP tyM = let
   (pVs , pTs) = partitionType tyP
   (mVs , mTs) = partitionType tyM
@@ -56,7 +76,7 @@ biSubType tyP tyM = let
 isBiEq = \case { BiEQ -> True ; _ -> False }
 
 -- bisub on ground types
-biSub :: [TyHead] -> [TyHead] -> TCEnv s BiCast
+biSub :: [TyHead] -> [TyHead] -> BisubEnv s BiCast
 biSub a b = case (a , b) of
   ([] ,  _)  -> pure BiEQ
   (_  , [])  -> pure BiEQ
@@ -76,7 +96,7 @@ mergeCasts [] = []
 -- Note. weird special case (A & {f : B}) typevars as produced by lens over
 --   The A serves to propagate the input record, minus the lens field
 --   what is meant is really set difference: A =: A // { f : B }
-instantiate :: Bool -> Int -> Type -> TCEnv s Type
+instantiate :: Bool -> Int -> Type -> BisubEnv s Type
 instantiate pos nb ty = (if nb == 0 then pure mempty else freshBiSubs nb <&> V.fromList)
   <&> \tvars -> snd $ cata (instantiateF tvars) ty pos
 
@@ -99,7 +119,7 @@ instantiateF tvars t pos = let
   TyVarsF vs g -> let x = instGround <$> g in (getRecs x , mergeTypeList pos (TyVars vs [] : (snd <$> x)))
   TyGroundF g  -> let x = instGround <$> g in (getRecs x , mergeTypeList pos (snd <$> x))
 
-atomicBiSub :: TyHead -> TyHead -> TCEnv s BiCast
+atomicBiSub :: TyHead -> TyHead -> BisubEnv s BiCast
 atomicBiSub p m = let tyM = TyGround [m] ; tyP = TyGround [p] in
  when debug_biunify (traceM ("⚛bisub: " <> prettyTyRaw tyP <> " <=> " <> prettyTyRaw tyM)) *>
  case (p , m) of
@@ -141,9 +161,8 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1 , args2) (ret1 , ret2)
   (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSubType x y
   (THArray x , THArray y) -> BiEQ <$ biSubType x y
-  (THProduct x , THProduct y) -> let --use normFields >>= \nf -> let -- record: fields in the second must all be in the first
+  (THProduct x , THProduct y) -> let
     merged     = BSM.mergeWithKey' (\_k a b -> Just (Both a b)) (\_k v -> LOnly v) ROnly x y
---  normalized = V.fromList $ IM.elems $ IM.mapKeys (nf VU.!) merged
     normalized = BSM.elems merged -- $ IM.mapKeys (nf VU.!) merged
     go leafCasts normIdx ty = case ty of
       LOnly _a   {- drop     -} -> pure leafCasts --(field : drops , leafCasts)
@@ -162,7 +181,7 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
       Just superType -> biSubType subType superType
 -- TODO insert Sum->Sum casts (This is were labels are actually written to memory)
 --  merged = BSM.mergeWithKey' (\_k a b -> Just (Both a b)) (\_k v -> LOnly v) ROnly x y
-    in BiEQ <$ (go `BSM.traverseWithKey` x) -- TODO bicasts
+    in BiEQ <$ (go `BSM.traverseWithKey` x)
   (THSumTy s , THArrow args retT) | [(lName , tuple)] <- BSM.toList s -> -- singleton sumtype ⇒ Partial application of Label
     let t' = TyGround $ case tuple of
                TyGround [THTyCon (THTuple x)] -> [THTyCon $ THTuple (x V.++ V.fromList args)]

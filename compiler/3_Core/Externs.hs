@@ -118,10 +118,10 @@ checkExternScope :: BitSet -> ModIName -> Externs -> IName -> ExternVar
 checkExternScope openMods thisModIName exts extName = case exts.extNames V.! extName of
   Importable modNm i
     | testBit openMods modNm || modNm == 0 -> Importable modNm i
-    | True -> NotOpened openMods (mkQName modNm i)
+    | True -> NotOpened openMods (VQBindIndex $ mkQName modNm i)
   Imported modNm e
     | testBit openMods modNm || modNm == 0 -> Imported modNm e
-    | True -> NotOpened openMods (mkQName thisModIName extName) -- ? extName here
+    | True -> NotOpened openMods (VQBindIndex $ mkQName thisModIName extName) -- ? extName here
   ImportLabel q
     | m <- modName q , testBit openMods m || m == 0 || m == thisModIName -> ImportLabel q
   NotInScope x -> NotInScope (show (bitSet2IntList openMods) <> " : " <> x)
@@ -133,9 +133,6 @@ checkExternScope openMods thisModIName exts extName = case exts.extNames V.! ext
     (inScope , notInScope) = partition isInScope mfws
     qs = notInScope <&> \case { QStartPrefix _ q -> q ; QStartPostfix _ q -> q ; QMFPart q -> q }
     in if null inScope then NotOpenedINames openMods qs else MixfixyVar (Mixfixy maybeBind inScope)
-  -- $ if True -- testBit openMods modNm || modNm == 0
---  then m
---  else NotOpened openMods (mkQName modNm extName) -- ? extName here
   x -> x
 
 mfw2qmfw modTopINames modNm = let

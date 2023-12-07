@@ -1,7 +1,7 @@
 {-# Language FlexibleInstances #-}
 module ShowCore where
 import CoreSyn
-deriving instance Show VName
+deriving instance Show VQBindIndex
 deriving instance Show Term
 deriving instance Show LensOp
 deriving instance Show (TyCon Type)

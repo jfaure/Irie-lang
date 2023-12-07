@@ -194,7 +194,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
                       && any (`elem` printPass cmdLine) ["core", "simple", "types"]
        -- TODO when to do elf stuff
        shouldMkElf = putX86 cmdLine -- shouldSimplify
-       shouldEmitC = putC cmdLine
+       shouldEmitC = mkC cmdLine || dumpC cmdLine || runC cmdLine
        disassElf = True
        runElf = True
        coreToAsm curReg maybeMain = CoreToX86.mkAsmBindings mI curReg._loadedModules maybeMain jm.moduleTT
@@ -202,7 +202,8 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
        in registerJudgedMod reg mI (Right (resolver , mfResolver , jm))
        *> maybe (pure ()) putStrLn warnings
        *> when shouldPutJM (getBindSrc >>= \bindSrc -> putJudgedModule cmdLine (Just bindSrc) jm)
-       *> when shouldEmitC (readMVar reg >>= \r' -> C.mkCModule (True , True) mI r'._loadedModules jm.moduleTT)
+       *> when shouldEmitC (readMVar reg >>= \r' ->
+         C.mkCModule (dumpC cmdLine , runC cmdLine , outFile cmdLine) mI r'._loadedModules jm.moduleTT)
        *> when shouldMkElf (readMVar reg >>= \r' -> Elf.mkElf (disassElf , runElf) (coreToAsm r' (lookupMain r')))
        *> when putModVerdict (putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
   ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)

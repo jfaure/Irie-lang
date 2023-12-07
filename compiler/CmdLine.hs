@@ -16,7 +16,9 @@ data CmdLine = CmdLine
   , noCache        :: Bool
   , putDependents  :: Bool
   , putLetBinds    :: Bool
-  , putC           :: Bool
+  , mkC            :: Bool
+  , dumpC          :: Bool
+  , runC           :: Bool
   , putX86         :: Bool
 --  , reportErrors   :: Bool -- print an error summary (not doing so is probably only useful for the test suite)
   , recompile      :: Bool   -- recompile even if cached
@@ -43,7 +45,9 @@ defaultCmdLine = CmdLine -- Intended for use from ghci
   , noCache        = False
   , putDependents  = False
   , putLetBinds    = False
-  , putC           = False
+  , mkC            = False
+  , dumpC          = False
+  , runC           = False
   , putX86         = False
   , recompile      = False
   , quiet          = False
@@ -107,9 +111,9 @@ cmdLineDecls = CmdLine
   <*> flag True False 
       (             long "no-put-letBinds"
       <> help "Should print-pass apply to imported modules")
-  <*> switch
-      (             long "emit-c"
-      <> help "dump C source")
+  <*> switch (long "mk-c" <> help "write out C source")
+  <*> switch (long "dump-c" <> help "dump C source")
+  <*> switch (long "run-c"  <> help "dump C source")
   <*> switch
       (             long "emit-x86"
       <> help "Disassemble x86 assembly for module using objdump")

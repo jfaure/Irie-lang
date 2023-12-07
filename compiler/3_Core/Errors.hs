@@ -26,7 +26,7 @@ data CheckError = CheckError { inferredType :: Type , annotationType :: Type } |
 data ScopeError
   = ScopeError Text
   | NoScopeLabel IName Int
-  | ScopeNotOpened BitSet QName -- this QName is a BindIndex, not an IName!
+  | ScopeNotOpened BitSet VQBindIndex -- this QName is a BindIndex, not an IName!
   | ScopeNotOpenedINames BitSet [QName]
   | AmbigBind  Text [(ModIName , IName)]
   | ScopeLetBound IName
@@ -97,7 +97,7 @@ formatScopeError thisMod bindSrc = \case
   ScopeError h -> clRed "Not in scope: "      <> h
   NoScopeLabel i n -> clRed "Not in scope: label " <> show (getIName bindSrc thisMod i) <> " (Applied to " <> show n <> " args)"
   ScopeLetBound i -> clRed "let-bound not in scope: "      <> show i
-  ScopeNotOpened opens q -> clRed "Not in scope " <> getBindName bindSrc (modName q) (unQName q)
+  ScopeNotOpened opens (VQBindIndex q) -> clRed "Not in scope " <> getBindName bindSrc (modName q) (unQName q)
     <> clBlue "\nnote. ∃: " <> showRawQName q
   ScopeNotOpenedINames opens qs -> let -- mixfix words were loaded but none are in scope
     qHNames = qs <&> \q -> getIName bindSrc (modName q) (unQName q)
