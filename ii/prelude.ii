@@ -50,6 +50,7 @@ ifThenElse cond a b = case cond of
   False => b
 
 if_then_else_ { l0 } = ifThenElse
+boolToInt t = ifThenElse t 1 0
 
 --identity : (a : Set) -> a
 identity x = x

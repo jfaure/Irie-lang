@@ -2,7 +2,7 @@
 {-# OPTIONS -funbox-strict-fields #-}
 module ParseSyntax where
 import Prim ( Literal )
-import QName ( QName )
+import QName ( QName , VQBindIndex )
 import MixfixSyn ( MFWord, MixfixDef, Prec )
 import Errors (ScopeError , MixfixError , UnPatError , ScopeWarning)
 import Text.Megaparsec.Pos ( Pos , mkPos )
@@ -136,7 +136,7 @@ data TT -- Type | Term; Parser Expressions (types and terms are syntactically eq
 
  -- tmp mixfix vars
 -- | QVar  QName
- | IQVar QName
+ | IQVar VQBindIndex
  | MFExpr SourceOffset CoreSyn.Mixfixy
  | App SourceOffset TT [TT] -- Used by unpattern and solveMixfixes once clear of precedence & mixfixes
  | PExprApp SourceOffset Prec QName [TT]

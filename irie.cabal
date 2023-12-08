@@ -81,6 +81,7 @@ executable irie-exe
       compiler/4_ASM/
       compiler/5_Backends/
   default-extensions:
+      BlockArguments
       NumericUnderscores
       BinaryLiterals
       StrictData

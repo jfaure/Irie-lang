@@ -96,7 +96,6 @@ render flags = let
     AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
     AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
     AQRawName   q -> addColor (getColor a) $ fromText (showRawQName q)
---  AQBindIndex q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False Nothing q)
     AQBindIndex q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcBindNames <$> bindSource flags) q)
     AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcINames <$> bindSource flags) q)
     AQFieldName q -> -- if modName q == 0 then "!" <> fromText (show (unQName q)) else

@@ -63,7 +63,8 @@ parseExpr srcOff = SubParser $ let
     Nothing -> throwE "unexpected end of mixfix stream"
     Just (MFExpr _ (Mixfixy _ qs)) -> asum $ qs <&> \case
       QStartPrefix (MixfixDef mb mfws _fixityR) q
-        -> pure $ AppF srcOff (Left (IQVar (mkQName (modName q) mb))) (Right <$> mkMFSubParsers (modName q) (drop 1 mfws))
+        -> let qvar = IQVar (VQBindIndex (mkQName (modName q) mb))
+          in pure $ AppF srcOff (Left qvar) (Right <$> mkMFSubParsers (modName q) (drop 1 mfws))
       m -> throwE ("UnexpectedPreMF: " <> show m)
   larg -> let
     parsePostfix = stream %%= uncons' >>= \case

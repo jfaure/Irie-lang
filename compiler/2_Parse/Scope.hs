@@ -60,8 +60,8 @@ handleExtern exts mod open lm i = case checkExternScope open mod exts i of
   NotOpenedINames m qs -> ScopePoison (ScopeNotOpenedINames m qs)
   NotInScope  h -> ScopePoison (ScopeError h)
   AmbiguousBinding h ms -> ScopePoison (AmbigBind h ms)
-  ImportLabel q   -> QLabel q
-  Importable m i  -> IQVar (mkQName m i)
+  ImportLabel q  -> QLabel q
+  Importable qi  -> IQVar qi
 
 -- Pattern (TT) inversion: case-alts can introduce VBruijns and thus change the scope environment
 -- Parse > resolve mixfixes > resolve cases > check arg scopes?

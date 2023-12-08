@@ -24,34 +24,33 @@ import PrettyCore
 
 -- Wanted to somehow pause a hylo to unroll dependencies then resume it.
 -- pure unrollBinds issue: "f (Either pauseHylo continue) -> ?"
--- its nonsensical to thread things out then back into the f structure
+-- => it's nonsensical to thread deps out then back into the recursive f structure
 -- hypoBreak :: (Functor f , Base ff ~ f, Recursive ff) =>
 --   (f expr -> expr) -> (seed -> Either modSeed (f (Either ff seed))) -> seed -> Either modSeed expr
 -- hypoBreak f g = h where h = fmap (f <<< fmap (_cata f ||| h)) <<< g
 
 -- TODO could free elems of parsebinds faster
-data Env = Env { eOpened :: BitSet , eLoadedMods :: (V.Vector LoadedMod) , eModIName :: ModuleIName , eExterns :: Externs , eScopeParams :: Scope.Params , eTopBindsCount :: Int }
+data Env = Env { ePModBinds :: V.Vector P.FnDef , eOpened :: BitSet , eLoadedMods :: (V.Vector LoadedMod) , eModIName :: ModuleIName , eExterns :: Externs , eScopeParams :: Scope.Params , eTopBindsCount :: Int }
 
--- State that gets dragged through entire Term
+-- Handle a top-level rhs: May contain cycles at top level and lets that require us to capture variables
 data TCEnvState s = TCEnvState
-  { blen           :: Int
-  , bisubs         :: MV.MVector s BiSub
-  , letCaptures    :: BitSet
-  , captureRenames :: MV.MVector s Int
-  }
+  { _biunifySt      :: BiUnify.BisubEnvState s -- must be dragged through in case fwd ref is actually mutual
+
+  -- Stack at each letblock
+  -- Free vars (VBruijns >= freeLimit) => pass in explicitly as new VBruijns & new tvars
+  , _freeLimit      :: Int -- Number of args belonging to let-bind (vbruijns >= are free)
+  , _captureRenames :: MV.MVector s (Maybe Int) -- fresh tvars for captured vbruijns inside a let-bind
+  , _letBinds       :: V.Vector (V.Vector P.FnDef)
+  }; makeLenses ''TCEnvState
+-- TODO how to handle efficient lookup of mutuals/fwdrefs without sharing main vector
 type TCEnv s a = StateT (TCEnvState s) (ST s) a
 
+-- * Clearly delimits fresh bisub vectors & inference stacks(cycles/fwd refs/let-blocks)
+-- * These can be run in parallel (Although they may compete to infer common dependencies)
 data ModVecSeed = ModVecSeed
- { _inferStack :: NonEmpty IName -- forward refs require pausing current bind
- , _letBinds   :: V.Vector (V.Vector (Either P.FnDef IName))
--- , letNest  :: Int
--- , letBinds :: MV.MVector s (MV.MVector s P.FnDef)
-
- -- Free vars => any VBruijns from outside the let-binding must be explicitly passed as new VBruijns
- , _tmpFails      :: [TmpBiSubError]    -- bisub failures are dealt with at an enclosing App
--- , _freeLimit   :: Int
--- , _letCaptures :: BitSet
--- , _captureRenames :: MV.MVector s Int -- undef unless letCaptures bit set!
+ { _inferStack   :: NonEmpty IName -- forward refs require pausing current bind
+ , _topBindsDone :: BitSet
+ , _errors       :: Errors  -- bisub failures are dealt with at an enclosing App
  }; makeLenses ''ModVecSeed
 
 judgeModule :: P.Module -> BitSet -> ModuleIName -> Externs.Externs -> V.Vector LoadedMod -> (ModuleBinds , Errors)
@@ -61,8 +60,8 @@ judgeModule pm importedModules modIName exts loaded = let
   topBindsCount = V.length pBinds
   modOpens = pm ^. P.imports
   scopeParams = Scope.initModParams letCount modOpens importedModules (pBinds <&> (^. P.fnIName))
-  env = Env importedModules loaded modIName exts scopeParams topBindsCount
-  startSeed = ModVecSeed (0 :| []) (V.singleton (Left <$> pBinds)) []
+  env = Env pBinds importedModules loaded modIName exts scopeParams topBindsCount
+  startSeed = ModVecSeed (0 :| []) (V.singleton (Left <$> pBinds)) emptyErrors
   (retSeed , modBinds) = constructNSeed (topBindsCount + letCount) (nextBind env) startSeed
   in (modBinds , _errors retSeed)
 
@@ -77,26 +76,25 @@ nextBind env prevRefs seed = let
     []    -> (parseBindIdx + 1) :| []
     h : t -> h :| t
   nextSeed = seed & inferStack .~ nextInferStack
-  in case (seed ^. letBinds) V.! 0 V.! parseBindIdx of
-  Right bindIdx -> (prevRefs V.! bindIdx , nextSeed) -- scopeApoF returns TTF (Either TT ScopeSeed)
+  in case (seed ^. pModBinds) V.! parseBindIdx of
+  Right bindIdx -> (prevRefs V.! bindIdx , nextSeed) -- Already parsed
   Left abs -> let
     letIName = mkQName (eModIName env) (abs ^. P.fnIName)
     bindIdx = _
-    letMeta bindIdx = LetMeta (V.length (seed ^. letBinds) == 1) letIName
-      (VQBindIndex (mkQName (eModIName env) bindIdx)) (abs ^. P.fnSrc)
-
+    letMeta bindIdx = LetMeta 0{-letDepth-} letIName (VQBindIndex (mkQName (eModIName env) bindIdx)) (abs ^. P.fnSrc)
     scopeApoF = Scope.scopeApoF (eTopBindsCount env) (eExterns env) (eModIName env)
-    expr' :: Either ModVecSeed Expr
-    expr' = fst $ runST $ runStateT (hypoBreak (infer env) scopeApoF (abs ^. P.fnRhs , eScopeParams env))
-      (BiUnify.BisubEnvState _blen _bis [])
-    expr = _
+    (expr , st) = runST $ do
+      captureRenamesV <- MV.new 50
+      let startState = TCEnvState (BiUnify.BisubEnvState _blen _bis []) 0 captureRenamesV
+      (expr , st) <- runStateT (hypo (infer env) scopeApoF (abs ^. P.fnRhs , eScopeParams env)) startState
+      (expr,) <$> VG.unsafeFreeze (st._biunifySt._bis)
     in ((letMeta (V.length prevRefs) , BindOK optInferred expr) , nextSeed)
 
 -- ! tc fails , bisubs , letCaptures aggregate the env!
 -- ! Allow inference to stack dependencies, then unroll them later
 -- terms and types must be built in lockstep
 -- ! cataM: in order to biunify subbranches & insert casts
-infer :: forall s. Env -> P.TTF (BiUnify.BisubEnv s Expr) -> BiUnify.BisubEnv s Expr
+infer :: forall s. Env -> P.TTF (TCEnv s Expr) -> TCEnv s Expr
 infer env = \case
 -- P.IQVarF q | modName q == eModIName env -> Left (seed & inferStack %~ (unQName q NE.<|))
 -- P.VarF (P.VLetBind (_iName , letNest , letIdx , i)) -> _ -- Also P.LabelDeclF: getModBind False letNest letIdx i.

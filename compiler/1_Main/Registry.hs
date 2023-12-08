@@ -203,7 +203,7 @@ judgeTree cmdLine reg (NodeF (dependents , mod) m_depL) = mapConcurrently identi
        *> maybe (pure ()) putStrLn warnings
        *> when shouldPutJM (getBindSrc >>= \bindSrc -> putJudgedModule cmdLine (Just bindSrc) jm)
        *> when shouldEmitC (readMVar reg >>= \r' ->
-         C.mkCModule (dumpC cmdLine , runC cmdLine , outFile cmdLine) mI r'._loadedModules jm.moduleTT)
+         C.mkCModule (dumpC cmdLine , runC cmdLine , outFile cmdLine) mI r'._loadedModules jm.moduleTT jm.depPerm)
        *> when shouldMkElf (readMVar reg >>= \r' -> Elf.mkElf (disassElf , runElf) (coreToAsm r' (lookupMain r')))
        *> when putModVerdict (putStrLn @Text ("OK \"" <> pm ^. P.moduleName <> "\"(" <> show mI <> ")"))
   ImportLoop ms -> error $ "import loop: " <> show (bitSet2IntList ms)
@@ -223,9 +223,9 @@ judge deps reg exts modIName p iNamesV = let
   labelINames = p ^. P.parseDetails . P.labelINames
   bindINames  = p ^. P.parseDetails . P.topINames
   modOpens    = p ^. P.imports
-  (modTT , errors) = judgeModule p deps modIName exts reg._loadedModules
+  ((modTT , depOrder) , errors) = judgeModule reg._loadedModules exts deps modIName p
   openDatas = mempty
-  jm = JudgedModule modIName (p ^. P.moduleName) iNamesV bindINames labelINames openDatas modTT
+  jm = JudgedModule modIName (p ^. P.moduleName) iNamesV bindINames labelINames openDatas modTT depOrder
   coreOK = null (errors ^. biFails) && null (errors ^. scopeFails) && null (errors ^. checkFails)
     && null (errors ^. typeAppFails) && null (errors ^. mixfixFails) && null (errors ^. unpatternFails)
   warnings = errors ^. scopeWarnings & \ws -> if null ws then Nothing

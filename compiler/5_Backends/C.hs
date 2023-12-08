@@ -158,10 +158,10 @@ newtype Typedef = Typedef { unTypedef :: ByteString }
 -- TODO: must topologically sort
 mintersperse a b = mconcat (intersperse a b)
 
-mkCModule (dumpC , runC , requestOutFile) moduleIName loadedMods moduleTT = do
+mkCModule (dumpC , runC , requestOutFile) moduleIName loadedMods moduleTT depPerm = do
   let outFile = fromMaybe "/tmp/runC.out" requestOutFile
       srcFile = "/tmp/Csrc.c"
-      cModule = emitCModule moduleIName loadedMods moduleTT
+      cModule = emitCModule moduleIName loadedMods moduleTT depPerm
       csrcTxt = toLazyByteString (mkHeader <> cModule)
   when dumpC $ putStrLn @Text "> dump CSrc:" *> putStrLn csrcTxt
   BSL.writeFile srcFile csrcTxt
@@ -196,13 +196,15 @@ mkHeader = fromWriteList writeByteString
 --, "#define CastStruct(t1,t2,b) ({ union { t1 in; t2 out; } ret; ret.in= (b); ret.out;})\n"
   ]
 
-emitCModule :: ModuleIName -> V.Vector LoadedMod -> V.Vector (LetMeta , Bind) -> Builder
-emitCModule modIName loadedMods lets = let
+emitCModule :: ModuleIName -> V.Vector LoadedMod -> V.Vector (LetMeta , Bind) -> DepPermutation -> Builder
+emitCModule modIName loadedMods lets depPerm = let
   fnName lm = (letIName lm) & \q -> case lookupIName loadedMods (modName q) (unQName q) of
     Just hNm | modIName == modName q -> hNm
     got -> error $ show got <> ": " <> show q
   fnToStr (Right (fnDecl , fnBody)) = [fnDecl , " {\n  " , fnBody , "\n}\n"]
   fnToStr (Left  (fnDecl , fnBody)) = [fnDecl , " " , fnBody , ";\n\n"]
+  -- TODO ensure the typedefs are in backpermuted order also!
+  -- ! Don't have to precompute all ccs in that case
   (ccs , typedefs) = V.unzip $ lets <&> \(lm , (BindOK _ rhs)) -> let
     fName = encodeUtf8 (fnName lm)
     in (getCallingConv loadedMods fName rhs)
@@ -210,7 +212,7 @@ emitCModule modIName loadedMods lets = let
     emitFn (lm , (BindOK _ rhs)) cc = fnToStr $ emitFunction modIName loadedMods ccs (encodeUtf8 (fnName lm)) cc rhs
     in V.zipWith emitFn lets ccs
   in fromWriteList (writeByteString . unTypedef) (concat $ V.toList typedefs)
-    <> fromWriteList writeByteString (concat $ V.toList binds) -- TODO improve perf
+    <> fromWriteList writeByteString (concat $ V.toList (V.backpermute binds depPerm)) -- TODO improve perf
 
 -- v ASM must also allocate the registers according to calling conv
 getCallingConv :: V.Vector LoadedMod -> ByteString -> Expr -> (CallingConv , [Typedef])
@@ -288,7 +290,7 @@ termToCU thisM loadedMods ccs (Dwn (env , term)) = let
       castArg (bty , strTy) arg = if
         | needsTypedef bty -> [Left " , " , Left ("(" <> strTy <> ")") , Right (idSeed arg)]
         | True -> [Left " , " , Right (idSeed arg)]
-      mkArgs = alignWith (these _ _ castArg) ccArgs args
+      mkArgs = alignWith (these (error . show) (error . show) castArg) ccArgs args
       in NChunks $ (Right (idSeed f) : Left "(" : drop 1 (concat mkArgs))
         ++ [Left ")"]
     _ -> NChunks $ (Right (idSeed f) : Left "(" : intersperse (Left " , ") (Right . idSeed <$> args))

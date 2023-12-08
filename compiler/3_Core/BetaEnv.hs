@@ -22,7 +22,7 @@ g_noInline = not g_runSimplify
 -- A nested Abs inside a β-env smaller than total env requires "inserting" more args
 -- this more or less forces us to copy the env, which ruins β-optimal sharing of subcomputations
 
-debug_fuse = True
+debug_fuse = False
 
 data FEnv s = FEnv
  { _thisMod    :: ModuleIName

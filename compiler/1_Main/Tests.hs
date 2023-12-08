@@ -187,7 +187,7 @@ s = t tInfer
 -- X86 --
 ---------
 testAsmOutput fnName fName goldName = S.goldenTextFile (goldDir <> "x86Dis/" <> goldName) $ do
-  tmpFile <- getCanonicalTemporaryDirectory <&> (</> "tmp" <> takeFileName fName)
+--tmpFile <- getCanonicalTemporaryDirectory <&> (</> "tmp" <> takeFileName fName)
   Main.sh (fName <> " --emit-x86")
   -- get readable objdump
   r <- T.pack <$> readProcess "objdump"
@@ -202,7 +202,7 @@ tasm = S.sydTest $ do
 testC fName goldName = S.goldenTextFile (goldDir <> "emitC/" <> goldName) $ do
   let outFile = "/tmp/testC.out"
   Main.sh ("ii/emitCTests/" <> fName <> " --mk-c -o" <> outFile)
-  (exitCode , asmStdout , asmStderr) <- readProcessWithExitCode outFile [] ""
+  (_exitCode , asmStdout , _asmStderr) <- readProcessWithExitCode outFile [] ""
   pure (toS asmStdout)
 
 c = let

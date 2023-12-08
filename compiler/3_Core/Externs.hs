@@ -62,7 +62,7 @@ data PureRegistry = Registry {
 -- Note. We read builtins directly , this just occupies Module Name 0
 primJM :: JudgedModule
 primJM = V.unzip primBinds & \(primHNames , _prims) ->
-  JudgedModule 0 "Builtins" primHNames (complement 0) 0 mempty mempty
+  JudgedModule 0 "Builtins" primHNames (complement 0) 0 mempty mempty mempty
   -- prim labels are direct bindings
   -- TODO atm this is just a placeholder and prims are looked up differently
 
@@ -71,16 +71,16 @@ builtinRegistry = let
   lBuiltins = LoadedMod 0 0 (JudgeOK 0 primJM)
   in Registry (M.singleton "Builtins" 0) (IM.singleton 0 <$> primMap) mempty (V.singleton lBuiltins)
 
-readQName :: V.Vector LoadedMod -> ModIName -> IName -> Maybe Expr
-readQName curMods modNm iNm = let
+readQName :: V.Vector LoadedMod -> VQBindIndex -> Maybe Expr
+readQName curMods (VQBindIndex q) = let
+  modNm = modName q ; iNm = unQName q
   readJudgedBind :: JudgedModule -> IName -> Expr
   readJudgedBind m iNm = snd (m.moduleTT V.! iNm) & bindToExpr
   in case curMods V.! modNm & \(LoadedMod _ _ m) -> m of
-  JudgeOK _ jm -> Just $ if testBit jm.labelINames iNm                   
-    -- vv don't like this
-    then mkQName modNm iNm & \qNameL -> Core (Label qNameL [])
-      (tHeadToTy $ THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) (TyGround [THTyCon $ THTuple mempty]))
-    else readJudgedBind jm iNm -- & \(Core _t ty) -> Core (Var (VQBindIndex (mkQName modNm iNm))) ty
+--JudgeOK _ jm | testBit jm.labelINames iNm -- vv don't like this, Also Not an IName !
+--  then mkQName modNm iNm & \qNameL -> Core (Label qNameL [])
+--    (tHeadToTy $ THTyCon $ THSumTy $ BSM.singleton (qName2Key qNameL) (TyGround [THTyCon $ THTuple mempty]))
+  JudgeOK _ jm -> Just $ readJudgedBind jm iNm -- & \(Core _t ty) -> Core (Var (VQBindIndex (mkQName modNm iNm))) ty
   _ -> Nothing
 
 lookupIName :: V.Vector LoadedMod -> Int -> Int -> Maybe HName
@@ -116,9 +116,9 @@ findBindIndex reg mI hNm = (reg._allNames M.!? hNm) >>= (IM.!? mI) >>= \iName ->
 -- TODO not pretty
 checkExternScope :: BitSet -> ModIName -> Externs -> IName -> ExternVar
 checkExternScope openMods thisModIName exts extName = case exts.extNames V.! extName of
-  Importable modNm i
-    | testBit openMods modNm || modNm == 0 -> Importable modNm i
-    | True -> NotOpened openMods (VQBindIndex $ mkQName modNm i)
+  Importable qi@(VQBindIndex q)
+    | testBit openMods (modName q) || modName q == 0 -> Importable qi
+    | True -> NotOpened openMods qi
   Imported modNm e
     | testBit openMods modNm || modNm == 0 -> Imported modNm e
     | True -> NotOpened openMods (VQBindIndex $ mkQName thisModIName extName) -- ? extName here
@@ -177,12 +177,12 @@ resolveNames reg modIName p iNamesV = let
     (Just [(modNm , iNm)] , Nothing) -> if modNm == 0
       then case readPrimExtern iNm of
        Core (Label q []) _ -> ImportLabel q -- TODO pattern-matching on primBinds is not brilliant
-       x -> Imported 0 x -- inline builtins
+       x -> Imported modNm x -- inline builtins
       else -- case if modNm == modIName then Just labelINames else lookupLabelBitSet reg._loadedModules modNm of
 --     Just ls | testBit ls iNm -> ImportLabel (mkQName modNm iNm)
 --     _ ->
         if modNm == modIName then ForwardRef iNm else case getTopINames modNm of
-          Just top -> Importable modNm (iNameToBindName top iNm)
+          Just top -> Importable (VQBindIndex (mkQName modNm (iNameToBindName top iNm)))
           Nothing  -> _
     (_bind , Just mfWords) -> MixfixyVar (Mixfixy Nothing (concatMap snd mfWords))
     (Nothing   , Nothing)  -> NotInScope hNm

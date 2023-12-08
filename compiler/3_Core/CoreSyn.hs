@@ -31,7 +31,6 @@ type CaseID    = Int
 -- Note. lifted let binds are appended to the module and become VQBinds
 -- (qualified IName -> bind index) obtained via Externs.iNameToBindName: (topBinds : BitSet) -> QName -> Int
 -- an IConv (module name in QName) specifies the many to 1 (IName -> HName) convention for that module
-newtype VQBindIndex = VQBindIndex QName
 data LetMeta = LetMeta { isTop :: Bool , letIName :: QName , letBindIndex :: VQBindIndex , srcLoc :: Int }
 
 data Term -- β-reducable (possibly to a type)
@@ -124,7 +123,7 @@ type TyHead = THead Type
 data THead ty
  = THPrim     PrimType
  | THExt      IName -- ix to builtins (use getExprType to get Type from Expr) -- rm
- | THAlias    QName
+ | THAlias    VQBindIndex
  | THSet      Uni
  | THPoison         -- marker for inconsistencies found during inference
  | THTop | THBot
@@ -184,7 +183,7 @@ data ExternVar
  | NotOpenedINames  BitSet [QName] -- TODO nonempty?
  | AmbiguousBinding HName [(ModIName , IName)] -- same level binding overlap / overwrite
 
- | Importable ModuleIName IName -- Available externally but not obviously worth inlining
+ | Importable VQBindIndex -- ModuleIName IName -- Available externally but not obviously worth inlining
  | MixfixyVar Mixfixy
 
 data Mixfixy = Mixfixy
@@ -212,6 +211,7 @@ data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTup
  deriving (Eq , Ord)
 
 type ModuleBinds = V.Vector (LetMeta , Bind)
+type DepPermutation = V.Vector IName -- How to avoid forward refs
 -- Each module has its own convention for numbering HNames - this must be resolved when importing binds
 -- thus QName indicates which modules HName->IName convention to use (Also guarantees names are generative)
 data JudgedModule = JudgedModule {
@@ -222,6 +222,7 @@ data JudgedModule = JudgedModule {
  , labelINames:: BitSet
  , openDatas  :: [(IName , [IName])] -- also open fields
  , moduleTT   :: ModuleBinds
+ , depPerm    :: DepPermutation
 }
 
 data SrcInfo = SrcInfo Text (VU.Vector Int)

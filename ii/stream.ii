@@ -1,9 +1,10 @@
 import prelude
 
 --ListF a r = data
---  Done
---  Skip r
---  Yield a r
+ListF = data
+  Done
+  Skip Int
+  Yield Char Int
 
 listF f = \case
   @Done => @Done
@@ -15,6 +16,7 @@ listF f = \case
 
 tailRecurse fn = (identity ||| tailRecurse fn) << fn
 
+{-
 Sfuse next (@stream n0 s0) = @stream (next << n0) s0
 ana next seed = @stream next seed
 
@@ -145,3 +147,4 @@ f = writeArray (newArray 1) 0 53
 
 --List a = Stream a | Array Int a | Build ((a -> r) -> r -> r)
 --mkStrPatternMatcher : List CString -> MiniScanner
+-}

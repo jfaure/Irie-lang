@@ -1,0 +1,13 @@
+import prelude
+
+--m1f x = readFile < x
+--
+--_testmf_ = \f x => f x
+
+a = "a"
+
+List = data
+  Skip
+
+b = "b"
+c = "c"

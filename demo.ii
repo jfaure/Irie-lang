@@ -63,10 +63,7 @@
 --  @Cons x xs => f (add 0 x) (foldr f s xs)
 --  @Nil       => add s 0
 
--- Topo-sort / declare / dep graph
--- ! Unfold(constructLN) inferrence, mutate perm table
--- main = f 3 2
--- f x y = add x y
+-- Imports
 
 -- ? where to alloc mem. Stack is good iff mem is freed on same stack frame
 -- withAlloca : ∀a. Int -> a -> a
@@ -85,9 +82,17 @@
 
 -- * Type application (& type params) & Cast to TPoly
 -- * Specialise polys to a size
---ap f x = f x
---plus1 x = add x 1
---main = ap plus1 5
+--id x = x
+--f = id 3
 
 -- lift / inline / specialise bruijn fns & η-expand paps
+-- ap f x = f x
 -- main = ap (\y => add 3 y) 4
+
+--import stream
+--f = tailRecurse
+
+import prelude
+import ii/m1
+f = (a , b , c)
+g x y = x + y

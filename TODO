@@ -13,6 +13,9 @@
   * Use VQBindIndex everywhere relevant
   * Bounded Tvars eg. "[Tlo <: a <: Thi] => a -> a" instead of "∀a. a ⊓ T -> a" => 
   * no need to emit a tuple underneath every label
+  * Can fuse scope infer hypo if scope saves params to letblock for resumption
+  * typeOf : {l : Level}{A : Set l}(a : A) -> Set l
+  * typeOf {A = A} _ = A
 ## Memory
   * Derived streams (eg. splitAt, where second stream only available after first produced (ie. 2 can mutate 1 to buf)).
 ## New primitives + Syntax

@@ -1,5 +1,3 @@
 ifThenElse cond a b = case cond of
   True  => a
   False => b
-
-
