@@ -29,12 +29,11 @@
 --import ii/Subsumption
 --import CTests
 
--- Label Index out of bounds on use before declare
--- Perhaps should lift labels to proper top level bindings
+-- Captures VQBindIndex{} on use before declare
 --x = Just 3
 --Maybe = data
 --  Just Int
---f = Just 3 -- ok
+-- x = Just 3 -- ok
 
 -- Allow declaring recursive data types; μ?
 --IntList = data
@@ -56,6 +55,7 @@
 --  @Cons x xs => f (add 0 x) (foldr f s xs)
 --  @Nil       => add s 0
 
+-- lift labels so can be imported with type / fwd reffed etc..
 -- import m2
 -- f = d1 -- imported label (& fwd refs to labels)
 
@@ -93,5 +93,8 @@
 
 -- No β-reduce duplicates ; 0-arity dup/let-bind eg.
 -- main = (\x => add x x) (add 3 2)
+
+--f = \x => \y => add x y
+--f = let f0 x = let f1 y = add x y in f1 in f0
 
 -- TODO separate pass for casting, incl type application

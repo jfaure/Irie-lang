@@ -48,7 +48,7 @@ data FEnv s = FEnv
 type SimplifierEnv s = StateT (FEnv s) (ST s)
 
 getBruijnAbs = \case
-  BruijnAbs n _ body -> error $ show $ Just (n , body)
+  BruijnAbs n _ body -> {-error $ show $-} Just (n , body)
   BruijnAbsTyped n body _ _ -> Just (n , body)
   _ -> Nothing
 
@@ -135,8 +135,8 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
     >>= specApp sLvl (argEnv , []) q
 
   LetSpec q sh | sLvl == 0 && modName q == modIName -> runSimpleBind q >>= \case
-    BindOK (OptBind _ shps) _ -> case shps M.!? sh of
-      Nothing -> error $ show (modName q , unQName q) <> ": " <> show shps -- pure (LetSpecF q sh) -- ?! error
+    BindOK oBind _ -> case oSpecs oBind M.!? sh of
+      Nothing -> error $ show (modName q , unQName q) <> ": " <> show (oSpecs oBind) -- pure (LetSpecF q sh) -- ?! error
       Just t  -> if null trailingArgs then pure (SkipF (Left t)) else fuse (seed & term .~ t)
     x -> error $ show x
 
@@ -165,7 +165,7 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
   Captures (VQBindIndex q) | modName q == modIName -> let bindName = unQName q
     in use localBinds >>= \bindVec -> MV.read bindVec bindName >>= \case
     BindOK{} -> fuse $ seed & term .~ Var (VQBindIndex q) -- recursive def doesn't capture anything
-    BindRenameCaptures atLen letCaptures _ -> let
+    BindRenameCaptures atLen letCaptures _ _ -> let
       -- v capture in recursive position: need to find the args and adjust them to this lvl
       -- perhaps ideally should let the top-level renameCaptures rename them for us..
       new = popCount letCaptures
@@ -209,12 +209,12 @@ runSimpleBind q = let bindName = unQName q -- only works in this module!
 
 -- simplifies a binding by itself in a void env (captures must be explicitly applied to bindings)
 simpleBind bindName bind = use localBinds >>= \bindVec -> case bind of
-  BindOK (OptBind optLvl specs) (Core t ty) -> if optLvl /= 0 then pure bind else do
+  BindOK (OptBind optLvl specs bty) (Core t ty) -> if optLvl /= 0 then pure bind else do
 --  MV.write bindVec bindName (BindOK (OptBind 1 specs) (Core (Var (VQBind q)) ty))
     newT <- runSimpleTerm (Seed 0 (mempty , mempty) t)
-    let b = BindOK (OptBind ({-optLvl +-} 1) specs) (Core newT ty)
+    let b = BindOK (OptBind ({-optLvl +-} 1) specs bty) (Core newT ty)
     b <$ MV.write bindVec bindName b
-  BindRenameCaptures atLen free (Core inExpr ty) -> let
+  BindRenameCaptures atLen free (Core inExpr ty) basicTy -> let
     -- v TODO captures don't need renaming if they are in range [0..n] for some n < atLen
     -- namesOK = 1 + freeVars == 1 .<<. atLen
     nCaptures = popCount free
@@ -223,7 +223,7 @@ simpleBind bindName bind = use localBinds >>= \bindVec -> case bind of
     seed = Seed nCaptures (renameEnv , mempty) inExpr
     in do
       term <- BruijnAbs nCaptures mempty <$> runSimpleTerm seed
-      let b = BindOK (OptBind 1 mempty) (Core term ty) -- Any recursive captures were sorted
+      let b = BindOK (OptBind 1 mempty basicTy) (Core term ty) -- Any recursive captures were sorted
      --   b = BindRenameCaptures atLen free (Core term ty)
       b <$ MV.write bindVec bindName b
   x -> error (show x)
@@ -307,12 +307,12 @@ specApp seedLvl env q args = let
   use localBinds >>= \bindVec ->
     let bindNm = unQName q
   in MV.read bindVec bindNm >>= \case
-  BindOK o expr@(Core inlineF _ty) -> case bindSpecs o M.!? argShapes of
+  BindOK o expr@(Core inlineF _ty) -> case oSpecs o M.!? argShapes of
     Just cachedSpec -> pure $ SkipF $ Left (App cachedSpec unstructuredArgs)
     Nothing -> if all (\case { ShapeNone -> True ; _ -> False }) argShapes then pure noInline else do
       let recGuard = LetSpec q argShapes
-      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) _t)
-        -> BindOK (OptBind oLvl (M.insert argShapes recGuard oSpecs)) expr) bindNm
+      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs bty) _t)
+        -> BindOK (OptBind oLvl (M.insert argShapes recGuard oSpecs) bty) expr) bindNm
 
       -- ! repackedArgs are at lvl, inlineF is at (lvl + bruijnN)
       -- fully simplify the specialised partial application (if it recurses then this spec is extremely valuable)
@@ -323,8 +323,8 @@ specApp seedLvl env q args = let
         traceM $ "raw spec " <> show bindNm <> " " <> show argShapes <> "\n => " <> prettyTermRaw rawAbs <> "\n"
         traceM $ "simple spec " <> prettyTermRaw specFn <> "\n"
 
-      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs) _t)
-        -> BindOK (OptBind oLvl (M.insert argShapes specFn oSpecs)) expr) bindNm
+      MV.modify bindVec (\(BindOK (OptBind oLvl oSpecs bty) _t)
+        -> BindOK (OptBind oLvl (M.insert argShapes specFn oSpecs) bty) expr) bindNm
 
       let fn = if seedLvl == 0 then specFn else recGuard
       pure $ SkipF $ Left if null unstructuredArgs then fn else App fn unstructuredArgs

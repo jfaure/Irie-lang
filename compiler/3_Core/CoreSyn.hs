@@ -162,19 +162,39 @@ data ArgShape
  | ShapePAPLet QName [ArgShape] -- even if fully applied, it makes little difference
  deriving (Ord , Eq , Show , Generic)
 
+-- BasicTy
+-- * Every TBound gets its own typedef
+-- * Every Struct that passes through a function gets its own typedef
+-- BasicTypes are 1:1 to Terms, so constructed/deconstructed in lockstep with Core operations
+-- so we can track types of arg/ret ↓↑ during codegen
+-- * Bounded polys: F (∀x in (LoBound , HiBound) -> ..)
+-- * Generalise returns BasicTy. (No meet/joins & explicit lambdas / apps / Indexed)
+-- * Track BasicTys & insert casts (C / BetaEnv?) (Inference can't do it before generalisation)
+data BasicType
+  = BPrim PrimType
+  | BBound Int
+  | BStruct (BSM.BitSetMap BasicType)
+  | BArrow [BasicType] BasicType
+  | BEnum Int -- trivial sumtype. (incl. Peanos?)
+--  | BNewType Int BasicTy -- sumtype of 1 alt, the label is implicit
+-- Note. if sumtype has only 1 tag, tag is removed.
+  | BSum Int{-nTags-} (BSM.BitSetMap BasicType) Int {-maxSz-} -- if larger than reg_call, malloc the data
+  deriving Show
+
 data Bind
  = Guard  { tvar :: IName } -- being inferred; if met again, is recursive/mutual
  -- generalising mutual types must wait for all tvars to be constrained (all mutual block to be inferred)
  | Mutu Expr BitSet IName -- tvarIdx
  | BindOK { optLevel :: OptBind , bindToExpr :: Expr }
- | BindRenameCaptures Int BitSet Expr -- atLen and freeVars bitset (@ the atLen)
+ | BindRenameCaptures Int BitSet Expr BasicType -- atLen and freeVars bitset (@ the atLen)
 
 data OptBind = OptBind
   { optId :: Int
-  , bindSpecs :: M.Map [ArgShape] Term -- opt-level , specialisations
+  , oSpecs :: M.Map [ArgShape] Term -- opt-level , specialisations
+  , bBasicType :: BasicType
 --  , doAsm :: Bool -- iff more primitives than type constructor operations & is used
   }
-optInferred = OptBind 0 mempty
+optInferred bty = OptBind 0 mempty bty
 
 data ExternVar
  = ForwardRef IName -- not extern

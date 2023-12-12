@@ -45,20 +45,20 @@ data ParseDetails = ParseDetails {
  , _thisBind       :: IName -- so data/gadt can mark themselves open
 }
 data FnDef = FnDef {
-   _fnNm         :: HName -- TODO rm, isos with the fnIName given an IConv
- , _fnIName      :: IName
+   _fnIName      :: IName
  , _fnRecType    :: !LetQual
  , _fnMixfixName :: Maybe MixfixDef
  , _fnRhs        :: TT
  , _fnSrc        :: SourceOffset
 }
 
-data LetQual = LetIDK | Let | Dep | Rec | Mut deriving (Eq , Show)
+data LetQual = LetIDK | Let | LetInline | Dep | Rec | Mut deriving (Eq , Show)
 
 data ScopedName
  = VBruijnLevel IName
  | VBruijn  IName
  | VLetBind (IName , Int , Int , Int) -- iName , letnest , letidx , modiname (lifted name)
+ | VLetIdx IName -- for lifting lambdas into a let-block
 
 data LensOp a = LensGet | LensSet a | LensOver a deriving (Show , Functor , Foldable , Traversable)
 data DoStmt  = Sequence TT | Bind IName TT -- | Let

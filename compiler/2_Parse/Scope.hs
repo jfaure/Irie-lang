@@ -109,8 +109,8 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
   -- failures : redundant pattern match / illegal pattern
   -- Case /guard failures are recoverable iff wildcard higher case next: this duplicates rhs
   -- ! This delegates spawning of new VBruijns via GuardArgs
-  unfoldCase :: TT -> [(TT , TT)] -> Params -> TT
-  unfoldCase scrut rawAlts params = let
+  unfoldPattern :: TT -> [(TT , TT)] -> Params -> TT
+  unfoldPattern scrut rawAlts params = let
     -- * resolve enough externs to run solvemixfix on the pattern
     scopeLayer pat = case pat of
       VParseIName i -> case checkExternScope params._open thisMod exts i of
@@ -165,13 +165,15 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
   Var v -> case v of
     VBruijnLevel i -> VarF (VBruijn $ params._bruijnCount - 1 - i) -- Arg-prod arg name
     VBruijn n -> VarF (VBruijn n) -- lambdaCaseF spawns (VBruijn 0) ; error "VBruijn n/=0 shouldn't be possible"
+    VLetBind{} -> VarF v
+--  VLetIdx i -> VarF (did_ $ VLetBind (0 , params._letNest , 0 , i))
   -- TODO Not ideal; retype solvemixfix on (∀a. TTF a) ?
   Juxt o args   -> Left <$> project (solveMixfixes o $ scopeTT topBindsCount exts thisMod params <$> args)
 --Juxt o args   -> scopeApoF exts thisMod . (,params) $ solveMixfixes o $ _ $
 --  args <&> \case { Var v -> handleVar v ; x -> Left <$> project x }
   BruijnLam b -> scopeBruijnAbs b
   LambdaCase (CaseSplits' alts) -> scopeBruijnAbs $ BruijnAbsF 1 [] 0 (CasePat (CaseSplits (Var (VBruijn 0)) alts))
-  CasePat (CaseSplits scrut alts) -> RawExprF (Right (unfoldCase scrut alts params , params))
+  CasePat (CaseSplits scrut alts) -> RawExprF (Right (unfoldPattern scrut alts params , params))
 
   -- v transpose ?
   FnEqns eqns -> case eqns of
@@ -184,13 +186,13 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
       rhs' = if null subPats then Guards ko guards rhs else GuardArgs subPats (Guards ko guards rhs)
       in MatchBF scrut [(Right (qName2Key q) , rhs')] ko
     in case g of
-    GuardPat pat scrut -> case pat of -- TODO should probably let unfoldCase take over everything
+    GuardPat pat scrut -> case pat of
       Label l subPats -> guardLabel scrut (mkQName thisMod l) subPats
       Tuple subPats -> let
         n = length subPats
         projections = [TupleIdx (qName2Key (mkQName 0 i)) scrut | i <- [0 .. n - 1]]
         in Right . (,params) <$> AppF (-1) (GuardArgs subPats (Guards ko guards rhs)) projections
-      x -> RawExprF (Right (unfoldCase scrut [(x , rhs)] params , params))
+      x -> RawExprF (Right (unfoldPattern scrut [(x , rhs)] params , params))
     GuardBool{} -> error (show g)
 
   -- ? mutual | let | rec scopes

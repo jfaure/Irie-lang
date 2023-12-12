@@ -72,7 +72,7 @@ data Value = VArg IName | VLocal IName | VLens Value [ByteString] | VTag Int Val
 -- ie. Have to embed the alias inside the type it is aliasing.
 -- This forces us to handle the name here
 -- TODO pass down field names for fnptr record fields
-serialiseBasicTy :: V.Vector LoadedMod -> Maybe ByteString -> BasicTy -> (BasicTy , ByteString)
+serialiseBasicTy :: V.Vector LoadedMod -> Maybe ByteString -> BasicType -> (BasicType , ByteString)
 serialiseBasicTy loadedMods tyName bTy = let
   tagCountToTagType = BPrim . PrimNat . intLog2
   convStep = \case
@@ -98,7 +98,7 @@ serialiseBasicTy loadedMods tyName bTy = let
       <> "(" <> BS.intercalate " , " (snd . unfoldrChunks convStep <$> ars) <> ")"
     _ -> (bTy , snd (unfoldrChunks convStep bTy) <> maybe "" (" " <>) tyName)
 
-type CCTy = (BasicTy , ByteString)
+type CCTy = (BasicType , ByteString)
 type CallingConv = ([CCTy] , CCTy)
 newtype Typedef = Typedef { unTypedef :: ByteString }
 
@@ -190,14 +190,14 @@ tyToAsmTy (TyGround [th]) = th
 tyToAsmTy t = error $ "asm: cannot codegen type: " <> toS (prettyTyRaw t)
 
 
-impliedField :: BasicTy -> Bool
+impliedField :: BasicType -> Bool
 impliedField = \case { BStruct bs -> BSM.size bs == 1 ; _ -> False }
 
 -- ↓ next term , dups , retLoc (esp. ret typdef)
 -- ↑ dependencies, literals, fns
 -- ↓↑ state for the unfolding
-data Env = Env { retVal :: BasicTy , argEnv :: V.Vector (Value , BasicTy) } deriving Show
-data CSeed = Up BasicTy | Dwn (Env , Term) deriving Show
+data Env = Env { retVal :: BasicType , argEnv :: V.Vector (Value , BasicType) } deriving Show
+data CSeed = Up BasicType | Dwn (Env , Term) deriving Show
 termToCU :: ModIName -> V.Vector LoadedMod -> V.Vector CallingConv -> CSeed -> NextChunk CSeed
 termToCU thisM loadedMods ccs (Up ty) = NEnd (Up ty)
 termToCU thisM loadedMods ccs (Dwn (env , term)) = let
@@ -273,7 +273,7 @@ termToCU thisM loadedMods ccs (Dwn (env , term)) = let
   -- ! Must know scrut Type => To name it (scrut.tag , scrut.data) & interpret tag
   CaseB scrut inferredScrutTy alts d -> let -- BSM sorts on QName already, so can imap to get asmidxs TODO?
     last = BSM.size alts - 1
-    mkAlt :: Maybe Value -> BasicTy -> Int -> (Int , Term) -> [Either ByteString CSeed]
+    mkAlt :: Maybe Value -> BasicType -> Int -> (Int , Term) -> [Either ByteString CSeed]
     mkAlt scrutNameM ty asmIdx (_qNm , term) = case ty of
       BSum nTags altTys maxSz -> let
         altTerm = case term of
@@ -313,7 +313,7 @@ termToCU thisM loadedMods ccs (Dwn (env , term)) = let
           rhs -> idSeed rhs
         in case ty of
         BSum 1 sumTy maxSz | [(_q , subTys)] <- BSM.toList sumTy -> let
-          tys = case subTys of { BStruct tys -> BSM.elems tys ; _ -> mempty } :: V.Vector BasicTy
+          tys = case subTys of { BStruct tys -> BSM.elems tys ; _ -> mempty } :: V.Vector BasicType
           in BSM.toList alts & \[(_q , rhs)] -> NSkip (seedRhs tys rhs)
         BSum nTags tys maxSz -> NChunks $ namedScrut (Just (VArg i)) ty
         BEnum nTags -> NChunks $ namedScrut Nothing ty

@@ -15,6 +15,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified BitSetMap as BSM
 import PrettyCore
+import Caster(tyToBasicTy , unTyGround)
 
 data InferEnv = InferEnv
   { eLoadedMods    :: V.Vector LoadedMod
@@ -69,13 +70,13 @@ judgeModule loaded exts importedModules modIName pm = let
 -- infer >> generalise >> check annotation
 -- This stacks inference of forward references and let-binds and identifies mutual recursion
 judgeBind :: forall s. InferEnv -> Int -> IName -> IName -> TCEnv s Expr
-judgeBind inferEnv letNest bindINm modBindName = use modBinds >>= \modBinds' -> let
+judgeBind inferEnv letNest letBindName modBindName = use modBinds >>= \modBinds' -> let
   -- reference to inference stack (forward ref | recursive | mutual)
   preInferred :: (LetMeta , Bind) -> TCEnv s Expr
   preInferred (lm , bind) = let noop t = Core (Var (letBindIndex lm)) t
     in case bind of
     BindOK _ e  -> pure e -- pure (noop (exprType e))
-    BindRenameCaptures _ _ e -> pure (noop (exprType e))
+    BindRenameCaptures _ _ e _ -> pure (noop (exprType e))
     Guard tvar -> (cyclicDeps %= (`setBit` modBindName)) $> Core (Captures (letBindIndex lm)) (tyVar tvar)
     Mutu _ _ tvar -> (cyclicDeps %= (`setBit` modBindName)) $> Core (Captures (letBindIndex lm)) (tyVar tvar)
 
@@ -87,7 +88,7 @@ judgeBind inferEnv letNest bindINm modBindName = use modBinds >>= \modBinds' -> 
     in freshBiSubs 1 >>= \[tvarIdx] -> do
     inferStack %= (`setBit` modBindName) -- setup recursion/mutual guards and capture detection
     MV.write modBinds' modBindName (letMeta , Guard tvarIdx) -- recs/mutuals will biunify with our tvar
-    svlc  <- letCaptures <<.= 0
+    svlc <- letCaptures <<.= 0
     argVars <- use bruijnArgVars
     atLen <- V.length <$> use bruijnArgVars -- all capturable vars (reference where the letCaptures are valid bruijns)
     (captureRenames .=) =<< MV.new atLen
@@ -113,15 +114,18 @@ judgeBind inferEnv letNest bindINm modBindName = use modBinds >>= \modBinds' -> 
 --    *> traceShowM ("mutu: " , modBindName , bitSet2IntList is , bitSet2IntList cycles)
       $> Core (Captures (letBindIndex letMeta)) (tyVar tvarIdx)
     else do
-      let mutuals = is .&. complement (setNBits modBindName)
+      let mutuals = cycles .&. complement (setNBits modBindName)
 --    traceShowM ("generalise: " , modBindName , bitSet2IntList mutuals , bitSet2IntList is , bitSet2IntList cycles)
       inferStack %= (.&. complement mutuals)
       cyclicDeps %= (.&. complement mutuals)
 
       -- Mutuals must be fully constrained then all generalised together
       -- TODO use mFree?
-      (mFree , mutus) <- fmap unzip $ bitSet2IntList (clearBit mutuals modBindName) `forM` \mut ->
-        MV.read modBinds' mut <&> \(mLetMeta , Mutu mExpr mFree mtv) -> (mFree , (mut , mLetMeta , mExpr , mtv))
+      (mFree , mutus) <- fmap unzip $ bitSet2IntList (mutuals `clearBit` modBindName) `forM` \mut ->
+        MV.read modBinds' mut <&> \case
+          (mLetMeta , Mutu mExpr mFree mtv) -> (mFree , (mut , mLetMeta , mExpr , mtv))
+          (lm , Guard t) -> error $ show t
+--        (lm , x) -> _
       let unionFree = lcVars -- TODO
           unionFreeVarCopies = snd <$> freeVarCopies -- TODO
           tvs = ((tvarIdx , exprType expr) :) $ mutus <&> \(_,_,mexpr,t) -> (t , exprType mexpr)
@@ -138,17 +142,17 @@ judgeBind inferEnv letNest bindINm modBindName = use modBinds >>= \modBinds' -> 
   in use bindsBitSet >>= \b -> if testBit b modBindName
     then MV.read modBinds' modBindName >>= preInferred
     else (bindsBitSet %= (`setBit` modBindName))
-      *> use letBinds >>= (`MV.read` letNest) >>= \wip -> (wip `MV.read` bindINm)
-      >>= inferParsed
+      *> use letBinds >>= (`MV.read` letNest) >>= (`MV.read` letBindName) >>= inferParsed
 
 genExpr :: IName -> LetMeta -> Term -> [Int] -> (Int , BitSet) -> Int -> TCEnv s Expr
 genExpr modBindName lm term freeVarCopies (atLen , freeVars) tvarIdx = use modBinds >>= \modBinds' -> let
   rawTy = prependArrowArgsTy (tyVar <$> freeVarCopies) (tyVar tvarIdx)
   in generaliseType rawTy >>= \gTy -> let
     rawRetExpr = Core term gTy
+    bty = tyToBasicTy $ unTyGround gTy
     bind = if freeVars == 0
-      then BindOK optInferred rawRetExpr
-      else BindRenameCaptures atLen freeVars rawRetExpr -- Recursive binds need their free-env backpatched in
+      then BindOK (optInferred bty) rawRetExpr
+      else BindRenameCaptures atLen freeVars rawRetExpr bty -- Recursive binds need their free-env backpatched in
   in rawRetExpr <$ do
     use depOrder >>= \(tI , tV) -> MV.write tV tI modBindName *> (depOrder .= (tI + 1 , tV))
     MV.write modBinds' modBindName (lm , bind)
@@ -161,7 +165,7 @@ getModBind inferEnv doInline letNest letName modBindName = do
     BindOK{} -> let
       retTerm = if doInline then exprTerm expr else Var (VQBindIndex (mkQName (eModIName inferEnv) modBindName))
       in pure $ Core retTerm (exprType expr)
-    BindRenameCaptures atLen free _ -> 
+    BindRenameCaptures atLen free bty _ -> 
 --    when ({-popCount (lc + 1) /= 0-} lc /= setNBits ld) (traceM "TODO rename captured VBruijns") *>
       explicitFreeVarApp atLen free expr -- ld doesn't matter since we dont β-reduce
     _ -> pure expr -- TODO handle mutuals that capture vars ; ie. spawn mutumorphisms
@@ -204,7 +208,8 @@ inferBlock :: InferEnv -> Int -> V.Vector P.FnDef -> Maybe (TCEnv s Expr) -> TCE
 inferBlock inferEnv liftNames letBindings inExpr = withLetNest \nest -> do
   newFreeVarEnv do
     use letBinds >>= \lvl -> V.thaw letBindings >>= MV.write lvl nest
-    [0 .. V.length letBindings - 1] `forM_` \i -> judgeBind inferEnv nest i (liftNames + i)
+    generateM_ (V.length letBindings) \i -> judgeBind inferEnv nest i (liftNames + i)
+--  [0 .. V.length letBindings - 1] `forM_` \i -> judgeBind inferEnv nest i (liftNames + i)
 --lets <- use modBinds >>= \v -> V.freeze (MV.slice liftNames (V.length letBindings) v) -- freeze copies it
   fromMaybe (pure poisonExpr) inExpr
 
@@ -254,7 +259,7 @@ inferF inferEnv = let
    castArgs args' cast = case cast of
      CastApp ac _maybePap BiEQ -> zipWith castArg args' (ac ++ repeat BiEQ)
      BiEQ -> args'
-     x -> error $ show x
+     x -> traceShow x args' -- error $ show x
    in if any isPoisonExpr (f : args) then pure poisonExpr else do
      (biret , retTy) <- biUnifyApp (exprType f) (exprType <$> args)
      use tmpFails >>= \case

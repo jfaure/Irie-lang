@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , Prelude.error , assert , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo , vecArgSort , unfoldrExactN' , amend , amendU , intLog2)
+ , Text.Printf.printf , String , Prelude.error , assert , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo , vecArgSort , unfoldrExactN' , amend , amendU , intLog2 , generateM_)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -24,6 +24,9 @@ import Control.Exception (assert)
 import Data.Functor.Foldable
 
 import qualified Data.Vector.Algorithms.Intro as VAlgo
+
+generateM_ :: Applicative m => Int -> (Int -> m a) -> m ()
+generateM_ n f = let go i = if i < n then f i *> go (i + 1) else pure () in go 0
 
 intLog2 x = finiteBitSize x - 1 - countLeadingZeros x
 

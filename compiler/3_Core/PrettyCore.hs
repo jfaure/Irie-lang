@@ -195,7 +195,7 @@ pBind nm showRhs bind = pretty nm <> " = " <> case bind of
     letW  = "" -- if lbound then "let " else ""
     in letW <> {-viaShow n <+> -} recKW <> {-(if 0 == free then "" else viaShow (nFree , bitSet2IntList free)) <>-}
       pExpr showRhs expr
-  BindRenameCaptures lc freeVars expr ->
+  BindRenameCaptures lc freeVars expr _bty ->
     "Rename-captures:" <+> viaShow lc <> ":" <+> viaShow freeVars <+> "in" <+> pExpr showRhs expr
 
 pExpr :: Bool -> Expr -> Doc Annotation

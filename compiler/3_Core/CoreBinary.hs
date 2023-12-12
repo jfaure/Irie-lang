@@ -26,6 +26,7 @@ deriving instance Generic Prec
 deriving instance Generic Assoc
 deriving instance Generic LetMeta
 deriving instance Generic OptBind
+deriving instance Generic BasicType
 
 -- Prim
 deriving instance Generic Literal
@@ -64,6 +65,7 @@ instance Binary Assoc
 instance Binary ArgShape
 instance Binary LetMeta
 instance Binary OptBind
+instance Binary BasicType
 
 -- primitives
 instance Binary Literal

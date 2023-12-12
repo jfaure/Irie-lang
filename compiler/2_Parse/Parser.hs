@@ -86,10 +86,10 @@ symbol :: Text -> Parser Text --verbatim strings
 symbol = L.symbol sc
 
 betweenS = between `on` symbol
-parens, braces, brackets :: Parser a -> Parser a
+parens , braces :: Parser a -> Parser a
 parens    = betweenS "(" ")"
 braces    = betweenS "{" "}"
-brackets  = betweenS "[" "]"
+--brackets  = betweenS "[" "]"
 
 -- prev = reference indent level
 -- lvl  = lvl of first indented item
@@ -229,7 +229,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       sig <- optional (tyAnn <* try (endLine *> scn *> pName nm))
       rhsTT <- mkFnEqns <$> pEqns pArgs (pName nm *> pArgs)
       let rhs = maybe rhsTT (Typed rhsTT) sig
-      pure $ Just (FnDef nm iNm Let Nothing rhs srcOff , subParse)
+      pure $ Just (FnDef iNm Let Nothing rhs srcOff , subParse)
     mfDefHNames   -> let
       pMixFixArgs = cata \case
         Nil      -> pure []
@@ -244,10 +244,21 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       sig <- optional (tyAnn <* try (endLine *> scn *> pName nm))
       rhsTT <- mkFnEqns <$> pEqns (pure []) (pMixFixArgs mfDefHNames)
       let rhs = maybe rhsTT (Typed rhsTT) sig
-      pure $ Just (FnDef nm iNm Let (Just mfDef) rhs srcOff , subParse)
+      pure $ Just (FnDef iNm Let (Just mfDef) rhs srcOff , subParse)
 
-lambda = glambda (reserved "=>" <|> reserved "⇒" <|> reserved "=")
-glambda sep = (\ars rhs -> if null ars then rhs else GuardArgs ars rhs) <$> many singlePattern <* lexemen sep <*> tt
+lambdaRhs = reserved "=>" <|> reserved "⇒" <|> reserved "="
+lambda = glambda lambdaRhs
+--glambda sep = GuardArgs <$> some singlePattern <* lexemen sep <*> tt
+-- auto lift glambdas: a little ugly since using the src offset int as its name
+-- TODO could immediately fold top-level lambda chains "\x => \y => "
+glambda sep = do
+  srcOff <- getOffset
+  iNm <- addTopName (show srcOff)
+  rhs    <- GuardArgs <$> some singlePattern <* lexemen sep <*> tt
+  letIdx <- moduleWIP . parseDetails . letBindCount <<+= 1
+  let block = Block True LetInline (V.singleton (FnDef iNm LetInline Nothing rhs srcOff))
+  pure $ LetIn block letIdx (VParseIName iNm)
+
 tyAnn = reservedChar ':' *> tt
 
 -- make a lambda around any '_' found within the tt eg. `(_ + 1)` => `\x => x + 1`
@@ -318,8 +329,7 @@ tt :: Parser TT
 
   caseSplits :: Parser [(TT , TT)]
   caseSplits = let
-    branchArrow = reserved "=>" <|> reserved "⇒"
-    rhs = branchArrow *> tt
+    rhs = lambdaRhs *> tt -- "=>"
     split  = svIndent *> ((,) <$> tt <*> (rhs <|> patGuards rhs))
     in braces (split `sepBy` reservedChar ';') <|> let
      finishEarly = void (char ')' <|> char '}' <|> char ']')

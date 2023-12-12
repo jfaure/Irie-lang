@@ -9,6 +9,7 @@ import qualified Data.Vector as V
 -- ? Type applications , type params / μ params
 -- ? Lift&type/inline/specialise lams/paps
 -- ? Dups
+-- ? only Binds can be functions & must be η-expanded
 
 -- TODO
 -- * Parser: pre-lift all case-alts & bruijnAbs (pre-emptive specialisation)
@@ -25,27 +26,6 @@ import qualified Data.Vector as V
 
 -- idea: newtype BasicType = THead BasicType -- ie. No meet/joins.
 -- Also need BasicType -> Type function so it can participate in inferrence
-
--- * Every TBound gets its own typedef
--- * Every Struct that passes through a function gets its own typedef
--- BasicTypes are 1:1 to Terms, so constructed/deconstructed in lockstep with Core operations
--- so we can track types of arg/ret ↓↑ during codegen
-data BasicTy
-  = BPrim PrimType
-  | BBound Int
-  | BStruct (BSM.BitSetMap BasicTy)
-  | BArrow [BasicTy] BasicTy
-  | BEnum Int -- trivial sumtype. (incl. Peanos?)
---  | BNewType Int BasicTy -- sumtype of 1 alt, the label is implicit
--- Note. if sumtype has only 1 tag, tag is removed.
-  | BSum Int{-nTags-} (BSM.BitSetMap BasicTy) Int {-maxSz-} -- if larger than reg_call, malloc the data
-  deriving Show
---  | BTree
---  | BList
-
--- * Bounded polys: F (∀x in (LoBound , HiBound) -> ..)
--- * Generalise returns BasicTy. (No meet/joins & explicit lambdas / apps / Indexed)
--- * Track BasicTys & insert casts (C / BetaEnv?) (Inference can't do it before generalisation)
 
 -- TODO alignment requirements
 sizeOfPrim = let
@@ -66,7 +46,7 @@ sizeOf = \case
 
 -- pass down typedef for structure types
 unTyGround (TyGround [t]) = t
-tyToBasicTy :: TyHead -> BasicTy
+tyToBasicTy :: TyHead -> BasicType
 tyToBasicTy = let
   doTy = tyToBasicTy . unTyGround
   in \case
