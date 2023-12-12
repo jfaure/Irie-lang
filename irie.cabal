@@ -30,14 +30,24 @@ executable irie-exe
     -Wunused-matches
     -Wunused-do-bind
     -Wwrong-do-bind
-  mixins:
-      base (Prelude as BasePrelude)
-    , base hiding (Prelude)
+  default-language: GHC2021
+  default-extensions:
+      ApplicativeDo
+      BlockArguments
+      RecursiveDo
+      StrictData
+      TypeFamilies
+      LambdaCase
+      MultiWayIf
+      OverloadedStrings
+      OverloadedRecordDot
+      PartialTypeSignatures
+  mixins: base hiding (Prelude)
   main-is: Main.hs
   other-modules:
+      Caster
       MyString
       C
-      Typer
       X86
       CoreToX86
       LinuxSyscalls
@@ -78,39 +88,7 @@ executable irie-exe
       compiler/1_Main/
       compiler/2_Parse/
       compiler/3_Core/
-      compiler/4_ASM/
-      compiler/5_Backends/
-  default-extensions:
-      BlockArguments
-      NumericUnderscores
-      BinaryLiterals
-      StrictData
-      LambdaCase
-      EmptyCase
-      ViewPatterns
-      StandaloneDeriving
-      MultiWayIf
-      PartialTypeSignatures
-      ScopedTypeVariables
-      RankNTypes
-      FlexibleContexts
-      FlexibleInstances
-      TupleSections
-      ConstraintKinds
-      RecursiveDo
-      OverloadedStrings
-      DeriveDataTypeable
-      DeriveGeneric
-      OverloadedRecordDot
-      UnicodeSyntax
-      DeriveFunctor
-      DeriveTraversable
-      DeriveFoldable
-      DerivingVia
-      TypeApplications
-      StandaloneKindSignatures
-      TypeOperators
-      TypeFamilies
+      compiler/4_Backends/
   build-depends:
       base
     , ghc-prim
@@ -159,7 +137,6 @@ executable irie-exe
     , derive-storable
     , derive-storable-plugin
     , split
-  default-language: Haskell2010
 
 --test-suite irie-test
 --  type: exitcode-stdio-1.0

@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Prelude
  ( module Protolude , module Data.Align , module Data.These , module Control.Arrow
- , Text.Printf.printf , String , error , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo , vecArgSort , unfoldrExactN' , amend , amendU , intLog2)
+ , Text.Printf.printf , String , Prelude.error , assert , iMap2Vector , fromJust , IName , HName , ModuleIName , argSort , imap , emptyBitSet , setNBits , popCnt , bitSet2IntList , intList2BitSet , bitDiff , BitSet , d_ , dv_ , did_ , anyM , allM , findM , foldl1 , fromRevListN , anaM , hyloM , hypoM , hypoM' , hypo , vecArgSort , unfoldrExactN' , amend , amendU , intLog2)
 
 --  QName(..) , mkQName , unQName , modName , qName2Key , moduleBits)
 where
@@ -10,6 +10,7 @@ import Protolude hiding (check , Type , Fixity(..) , moduleName , option
  )
 
 import GHC.Err
+import GHC.Stack (HasCallStack , withFrozenCallStack)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Unboxed as VU
@@ -19,6 +20,7 @@ import Data.Align
 import Data.These
 import Text.Printf
 import Control.Arrow ((|||) , (&&&) , (***) , (>>>) , (<<<))
+import Control.Exception (assert)
 import Data.Functor.Foldable
 
 import qualified Data.Vector.Algorithms.Intro as VAlgo
@@ -32,13 +34,13 @@ amend :: V.Vector a -> Int -> a -> V.Vector a
 amend v i a = V.modify (\mv -> MV.write mv i a) v
 
 vecArgSort :: (Ord a, VU.Unbox a) => VU.Vector a -> VU.Vector Int
-vecArgSort xs = VU.map fst $ VU.create $ do
+vecArgSort xs = VU.map fst $ VU.create do
   xsi <- VU.thaw $ VU.indexed xs
   xsi <$ VAlgo.sortBy (comparing snd) xsi
 
 -- return seed also
 unfoldrExactN' :: Int -> (b -> (a , b)) -> b -> (V.Vector a , b)
-unfoldrExactN' n fU seed = runST $ do
+unfoldrExactN' n fU seed = runST do
   v <- MV.new n
   endSeed <- foldM (\s i -> fU s & \(val , seed2) -> seed2 <$ MV.write v i val) seed [0 .. n-1]
   (, endSeed) <$> V.unsafeFreeze v
@@ -49,11 +51,13 @@ type IName  = Int
 type ModuleIName = Int
 type HName  = Text
 
-fromRevListN n l = V.create $ do
+fromRevListN n l = V.create do
   v <- MV.new n
   v <$ zipWithM (\i e -> MV.write v i e) [n-1,n-2..0] l
 
 --error (s :: String) = panic $ toS s
+error :: HasCallStack => String -> s
+error s = withFrozenCallStack (trace s (GHC.Err.error s))
 fromJust = fromMaybe (panic "fromJust")
 
 popCnt b = let i64List = unfoldr (\b -> if b /= 0 then Just (fromInteger b :: Int64 , b `shift` 64) else Nothing) b in sum $ popCount <$> i64List

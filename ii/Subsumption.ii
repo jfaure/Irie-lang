@@ -5,7 +5,7 @@
 -- [Δ1]τ1 <=? [Δ2]τ2 => [Δ2]τ2 =? [Δ1^Δ2]τ1vτ2
 -- GraphType = record
 --   theads : Vector THead -- add dodgy alt THeads=[THead]
---   δ      : Vector (NonEmpty Int) -- states index theads
+--   δ      : Vector (NonEmpty Int) -- states index THeads
 -- λ vs graph: graph for inference
 -- & instantiation & multiplicities ?
 
@@ -14,3 +14,16 @@
 -- f x = { f0 = x }
 --plus : Arrow Int Int
 --plus x = add x 3
+
+-- subsume D1 t1 D2 t2 = --  [∆1]τ1 <=∀ [∆2]τ2 iff [∆2]τ2 = [∆1⊓∆2]τ2 ⊔ τ2
+--   subsume+ t1 t2 && all (\x -> subsume- (D1- x) (D2- x)) D2
+-- -- This is equivalent to checking [∆0]τ0 <= [∆2]τ2, where [∆0]τ0 is taken from [∆1]τ1 with all variables replaced by ⊥ and ⊤
+-- -- If that is ok, then need to check the flow edges: subsume saves correspondence between states in the tables T+ T-, and flow edges to be added are q1m ~> q1p where (q2m q1m) in T- and (q1p q2p) in T+
+
+-- subsume+ qp qp = THeads match exactly && recursive subsume transitions
+
+-- admissable qm qp ty = let -- Add a flow edge to type if that is allowed
+-- ty' = insertFlow ty qm qp -- qm ~> qp
+-- in
+-- ok if $ any THeads in (H(qm) ∩ H(qp)) for THeads in @ Prim -> Label
+-- && admissable recursively for tycons

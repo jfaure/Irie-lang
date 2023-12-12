@@ -1,5 +1,6 @@
 module SimplifyInstr where
 import CoreSyn
+import ShowCore()
 import Prim
 import Builtins
 import qualified Data.Vector as V
@@ -80,7 +81,6 @@ simpleInstr i args = let
 
   NumInstr (IntInstr Chr) | [Lit (Fin _ i) ] <- args -> Lit (Char (chr (fromIntegral i)))
   NumInstr (IntInstr Ord) | [Lit (Char c)] <- args -> Lit (Fin 32 (fromIntegral $ ord c))
---NumInstr (IntInstr i)  | [Lit (I32 a) , Lit (I32 b)] <- args ->
   NumInstr (IntInstr i)  | [Lit (Fin n a) , Lit (Fin m b)] <- args -> Lit (Fin (max m n) (interpretBinaryIntInstr i a b))
   NumInstr (BitInstr i)  | [Lit (Fin n a) , Lit (Fin m b)] <- args -> Lit (Fin (max m n) (interpretBinaryBitInstr i a b))
   NumInstr (PredInstr p) | [Lit (Fin _ a) , Lit (Fin _ b)] <- {-trace (T.intercalate "," $ prettyTermRaw <$> args)-} args -> boolToLabel (interpretBinaryPredInstr p a b)

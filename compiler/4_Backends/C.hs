@@ -2,9 +2,9 @@
 module C where
 import Prim
 import CoreSyn
+import Caster
 import PrettyCore
 import Externs
-import Builtins(typeOfLit)
 import MyString
 import Blaze.ByteString.Builder
 import Blaze.ByteString.Builder.Char8
@@ -65,52 +65,8 @@ data SumType -- Unused
 type AsmIdx = Int -- QName -> [0..] flattened name in context
 type AsmType = TyHead
 
--- * Every TBound gets its own typedef
--- * Every Struct that passes through a function gets its own typedef
--- BasicTypes are 1:1 to Terms, so constructed/deconstructed in lockstep with Core operations
--- so we can track types of arg/ret ↓↑ during codegen
-data BasicTy
-  = BPrim PrimType
-  | BBound Int
-  | BStruct (BSM.BitSetMap BasicTy)
-  | BArrow [BasicTy] BasicTy
-  | BEnum Int -- trivial sumtype. (incl. Peanos?)
---  | BNewType Int BasicTy -- sumtype of 1 alt, the label is implicit
--- Note. if sumtype has only 1 tag, tag is removed.
-  | BSum Int{-nTags-} (BSM.BitSetMap BasicTy) Int {-maxSz-} -- if larger than reg_call, malloc the data
-  deriving Show
---  | BTree
---  | BList
-
 -- incls register(s) in ASM
 data Value = VArg IName | VLocal IName | VLens Value [ByteString] | VTag Int Value | VVoid deriving Show
-
--- pass down typedef for structure types
-unTyGround (TyGround [t]) = t
-tyToBasicTy :: TyHead -> BasicTy
-tyToBasicTy = let
-  doTy = tyToBasicTy . unTyGround
-  in \case
-  THPrim p -> BPrim p
-  THTyCon tcon -> case tcon of
-    THProduct bsm -> BStruct (bsm <&> \(TyGround [t]) -> tyToBasicTy t)
-    THTuple   tys -> BStruct (BSM.fromVec $ V.imap (\i (TyGround [t]) -> (qName2Key (mkQName 0 i) , tyToBasicTy t)) tys)
-    THSumTy   bsm -> let
-      collect :: Int -> (Int , Type) -> Int
-      collect (maxSz) (_qNm , ty) = (max maxSz (sizeOf ty))
-      maxSz = BSM.foldlWithKey collect 0 bsm
-      tagCount = BSM.size bsm -- bits = intLog2 tagCount
-      in if
-        | maxSz    == 0 -> BEnum tagCount --  (PrimNat bits)
-        | tagCount == 1 , [(tag , TyGround [ty])] <- BSM.toList bsm ->
-          BSum tagCount (BSM.singleton tag (tyToBasicTy ty)) maxSz
-        | True -> BSum tagCount (doTy <$> bsm) maxSz
-    THArrow aTs rT -> BArrow (doTy <$> aTs) (doTy rT)
-    t -> traceTy (TyGround [THTyCon t]) (error "")
-  THBi _ (TyGround [ty]) -> tyToBasicTy ty
-  THBound i -> BBound i
---THSet 0 -> BBound i
-  t -> traceTy (TyGround [t]) (error $ show t)
 
 -- C fnptr typedefs are tragically idiotic, eg: "typedef retT ALIAS(aT0 , ...)"
 -- ie. Have to embed the alias inside the type it is aliasing.
@@ -142,15 +98,6 @@ serialiseBasicTy loadedMods tyName bTy = let
       <> "(" <> BS.intercalate " , " (snd . unfoldrChunks convStep <$> ars) <> ")"
     _ -> (bTy , snd (unfoldrChunks convStep bTy) <> maybe "" (" " <>) tyName)
 
--- size in bytes of a type
-sizeOf :: Type -> Int
-sizeOf = \case
-  TyGround [t] -> case t of
-    THPrim p -> sizeOfPrim p
-    THTyCon tycon -> case tycon of
-      THTuple t -> if null t then 0 else sum (sizeOf <$> t)
-  _ -> _
-
 type CCTy = (BasicTy , ByteString)
 type CallingConv = ([CCTy] , CCTy)
 newtype Typedef = Typedef { unTypedef :: ByteString }
@@ -169,7 +116,7 @@ mkCModule (dumpC , runC , requestOutFile) moduleIName loadedMods moduleTT depPer
   putStrLn @Text ("\n> Compiling C: " <> toS srcFile <> " -> " <> toS outFile <> ":")
   (clangOK , cout , cstderr) <- readProcessWithExitCode "gcc" [srcFile , "-march=haswell" , "-o" <> outFile] ""
 
-  when runC $ do
+  when runC do
     putStrLn @Text "\n> Running C: "
     case clangOK of
       ExitFailure _ -> putStrLn cout *> putStrLn cstderr
@@ -188,6 +135,7 @@ mkHeader = fromWriteList writeByteString
   , "#define BitCast(GOT,WANT,b) ({ union { GOT got; WANT want; } ret; ret.got = (b); ret.want;})\n"
   , "#define ImplL(l)\n"
   , "#define ImplF(l)\n"
+  , "#define VOID 0\n"
   , "typedef struct { u64 r; u64 rx; } Ret128;\n" -- c-call convention allows in-reg return of 2 u64s
   , "typedef Ret128 TArrow; typedef Ret128 TBound;\n"
   , "#define TSum(tagTy) struct { tagTy tag; union {\n"
@@ -256,7 +204,7 @@ termToCU thisM loadedMods ccs (Dwn (env , term)) = let
   idSeed t = Dwn (env , t)
   in case term of
   Return cast f  -> NEnclose ("return " <> cast) (idSeed f) ";"
-  Lit l -> NStr (emitLiteral l) (Up $ tyToBasicTy (typeOfLit l))
+  Lit l -> NStr (emitLiteral l) (Up $ BPrim (typeOfLit l))
   VBruijn v -> argEnv env V.! v & \(val , ty) -> let
     showValue = \case
       VArg i   -> ("a" <> show i)
@@ -266,11 +214,15 @@ termToCU thisM loadedMods ccs (Dwn (env , term)) = let
   Var (VQBindIndex q) -> case lookupBindName loadedMods (modName q) (unQName q) of
     Just hNm -> NBStr (encodeUtf8 hNm) -- ! Get the calling conv
     got -> error $ show got <> ": " <> show q
-  Cast cast x -> case cast of
-    CastZext n -> let castStr = writeToByteString $ writeChar '(' <> emitPrimType (PrimNat n) <> writeChar ')'
-      in NChunks [Left castStr , Right (idSeed x) , Right (Up (BPrim (PrimNat n)))]
-    CastFields fCasts -> NSkip (idSeed x) -- TODO
-    cast -> error $ show cast
+  Cast cast x -> NSkip (idSeed x) -- Casts are incomplete, C/BetaEnv must insert them later
+--  CastZext n -> let castStr = writeToByteString $ writeChar '(' <> emitPrimType (PrimNat n) <> writeChar ')'
+--    in NChunks [Left castStr , Right (idSeed x) , Right (Up (BPrim (PrimNat n)))]
+
+--  -- TODO cast tycons properly
+--  CastFields fCasts -> NSkip (idSeed x)
+--  CastProduct _n fCasts -> NSkip (idSeed x) -- TODO cast the fields, also β-env push down casts
+--  CastSum bsm -> d_ bsm $ NSkip (idSeed x)
+--  cast -> error $ show cast
 --  CastProduct{}
   App f args -> case f of
     Instr i -> if -- This automatically returns the Up of the last operand, fine for almost all instructions
@@ -296,20 +248,25 @@ termToCU thisM loadedMods ccs (Dwn (env , term)) = let
     _ -> NChunks $ (Right (idSeed f) : Left "(" : intersperse (Left " , ") (Right . idSeed <$> args))
      ++ [Left ")"]
   -- * Pass down type for prods and sums; sub-products split each field into a retLoc
-  Prod  bsm  -> let
+  Prod bsm  -> let
+    fList = BSM.toList bsm
     mkField (q , fieldVal) = getIName loadedMods (QName q) & \hNm ->
       [Left ("." <> hNm <> "=") , Right (idSeed fieldVal) , Left ", "]
-    in NChunks (Left "{ " : (concatMap mkField (BSM.toList bsm)) ++ [Left "}"])
+    in case fList of
+      [] -> NBStr "VOID"
+      [(f1 , t)] -> NSkip (idSeed t)
+      fList -> NChunks (Left "{ " : (concatMap mkField fList) ++ [Left "}"])
   -- The cast is an artefact of inference, TODO have infer. remove it / cast after extraction
   TTLens rawObj fields LensGet -> let
     mkAccess f = "." <> getIName loadedMods (QName f)
     in case rawObj of
-    Cast (CastProduct 1 [(idx , leafCast)]) obj -> -- TODO leafCast
+    Cast (CastProduct 1 bsm) obj | [(idx , leafCast)] <- BSM.toList bsm -> -- TODO leafCast
       NEndStr (idSeed obj) (mconcat $ mkAccess <$> fields)
     obj ->
       NEndStr (idSeed obj) (mconcat $ mkAccess <$> fields)
 
-  Label l args -> error "label" -- Since wasn't caught by a cast, does nothing (identity label)
+  -- Labels are implicit until subtyped into a sumtype context
+  Label l args -> NSkip (idSeed $ Prod (BSM.fromList (Prelude.imap (\i t -> (qName2Key (mkQName 0 i) , t)) args)))
 
   -- TODO calcScrut , default , LitTables , altCasts
   -- scrut = | Enum | Tag
@@ -331,7 +288,7 @@ termToCU thisM loadedMods ccs (Dwn (env , term)) = let
             in (vlens , ty)
           in V.imap emitLens (BSM.unBSM altTys)
         -- ! lift alt-fns OR need to remap deBruijns so the first n point to data in this label
-        altEnv = Env (retVal env) $ case scrutNameM of
+        altEnv = Env (retVal env) case scrutNameM of
           Just nm -> (scrutLenses nm <> argEnv env)
           Nothing -> argEnv env
         in [Left caseTxt , Right (Dwn (altEnv , altTerm)) , Left breakTxt]
@@ -429,7 +386,7 @@ emitLiteral = \case
 
 emitPrimType :: PrimType -> Write
 emitPrimType (PtrTo p) = emitPrimType p <> writeChar '*'
-emitPrimType p = writeByteString $ case p of
+emitPrimType p = writeByteString case p of
   PrimInt n  -> if
     | n <= 1  -> "i1"
     | n <= 8  -> "i8"
@@ -445,11 +402,3 @@ emitPrimType p = writeByteString $ case p of
   X86Vec 128 -> "__m128i"
   X86Vec 256 -> "__m256i"
   x -> error ("C-emitprimtype: " <> show x)
-
--- TODO alignment requirements
-sizeOfPrim = let
-  bitSize n = div n 8
-  in \case
-  PrimInt n -> bitSize n
-  PrimNat n -> bitSize n
-  _ -> _

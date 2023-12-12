@@ -96,8 +96,8 @@ MemArray A = { n : i32 ; n x A }
 AltFn = freeVars:{} -> List -> arg1 -> arg2 -> ..
 Fold  = @ { @AltFns }
 
-elim  fold memList@(sz , ptr) = for 0..sz $ \i -> fold[alt] ptr[i]
-stream (fold : folds) memList@(sz , ptr) = for 0..sz $ \i -> fold[alt] ptr[i]
+elim  fold memList@(sz , ptr) = for 0..sz \i -> fold[alt] ptr[i]
+stream (fold : folds) memList@(sz , ptr) = for 0..sz \i -> fold[alt] ptr[i]
 
 printList l = { const 0   ; \i ll => add ? ? }
 incList   l = { const Nil ; \i ll => Cons ? ? }

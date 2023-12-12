@@ -187,6 +187,17 @@ deriving instance Eq TyInstrs
 deriving instance Eq NumInstrs
 deriving instance Eq POSIXType
 
+typeOfLit = \case
+  String{}  -> PtrTo (PrimInt 8) --"CharPtr"
+  LitArray{}-> PtrTo (PrimInt 8) --"CharPtr"
+  PolyInt{} -> PrimBigInt
+--Int 0     -> PrimInt 1
+--Int 1     -> PrimInt 1
+--Int{}     -> PrimInt 32
+  Char{}    -> PrimInt 8
+  Fin n _   -> PrimInt n --mkExt 3
+  x -> error $ "don't know type of literal: " <> show x
+
 prettyPrimType :: PrimType -> Text
 prettyPrimType = toS . \case
   PrimInt x        -> "%i" <> show x
@@ -197,7 +208,7 @@ prettyPrimType = toS . \case
   PtrTo t          -> "%ptr(" <> show t <> ")"
   PrimExtern   tys -> "%extern(" <> show tys <> ")"
   PrimExternVA tys -> "%externVA(" <> show tys <> ")"
-  POSIXTy t -> case t of { DirP → "%DIR*" ; DirentP → "%dirent*" }
+  POSIXTy t -> case t of { DirP -> "%DIR*" ; DirentP -> "%dirent*" }
   PrimCStruct -> "%CStruct" -- (" <> show x <> ")"
   PrimStrBuf -> "%StrBuf" -- (" <> show x <> ")"
   X86Vec i -> "__m" <> show i

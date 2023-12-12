@@ -90,21 +90,23 @@ render flags = let
     addColor cl b = if ansiColor flags then cl <> b <> getColor prev else b
     getColor = \case { ANone -> ansiCLNormal ; AArg{} -> ansiCLBlue
       ; ALiteral -> ansiCLMagenta ; AInstr -> ansiCLMagenta ; AAbs -> ansiCLCyan ; AType -> ansiCLGreen
-      ; AKeyWord -> ansiCLMagenta ; _ -> ansiCLNormal }
+      ; AKeyWord -> ansiCLMagenta ; AQLabelName{} -> ansiCLYellow ; _ -> ansiCLNormal }
+    aColor = getColor a
     in case a of
-    ANone         -> addColor (getColor a) b
-    AArg i        -> addColor (getColor a)  ("λ" <> fromString (show i) <> b)
-    AQSpecName  q -> addColor (getColor a) $ "π" <> (fromText (showRawQName q)) <> ""
-    AQRawName   q -> addColor (getColor a) $ fromText (showRawQName q)
-    AQBindIndex q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcBindNames <$> bindSource flags) q)
-    AQLabelName q -> {-addColor ansiCLYellow $-} b <> fromText (prettyQName False (srcINames <$> bindSource flags) q)
+    ANone         -> addColor aColor b
+    AArg i        -> addColor aColor  ("λ" <> fromString (show i) <> b)
+    AQSpecName  q -> addColor aColor $ "π" <> (fromText (showRawQName q)) <> ""
+    AQRawName   q -> addColor aColor $ fromText (showRawQName q)
+    AQBindIndex q -> addColor aColor $ b <> fromText (prettyQName False (srcBindNames <$> bindSource flags) q)
+    AQLabelName q -> addColor aColor $ b <> {-fromText (showRawQName q) <>-}
+      fromText (prettyQName False (srcINames <$> bindSource flags) q)
     AQFieldName q -> -- if modName q == 0 then "!" <> fromText (show (unQName q)) else
-      {-addColor ansiCLYellow $-} b <> fromText (prettyQName True (srcINames <$> bindSource flags) q)
-    ALiteral      -> addColor (getColor a) b
-    AInstr        -> addColor (getColor a) b
-    AAbs          -> addColor (getColor a) b
-    AType         -> addColor (getColor a) b
-    AKeyWord      -> addColor (getColor a) b
+      addColor aColor $ b <> fromText (prettyQName True (srcINames <$> bindSource flags) q)
+    ALiteral      -> addColor aColor b
+    AInstr        -> addColor aColor b
+    AAbs          -> addColor aColor b
+    AType         -> addColor aColor b
+    AKeyWord      -> addColor aColor b
   in TLB.toLazyText . renderTree ANone . treeForm
 
 addAnsiColor cl x = cl <> x <> ansiCLNormal
@@ -228,11 +230,11 @@ pTerm showRhs = let
 --  BruijnCapturesF lc freeVars body -> "λ" <> viaShow lc <> "[" <> viaShow (bitSet2IntList freeVars) <> "]" <+> body
     CaseBF  arg _ty ts d -> arg <+> " > " <+> prettyMatch identity Nothing ts d
     CaseSeqF _n arg _ty ts d -> arg <+> " caseSeq> " <+> prettyMatch identity Nothing ts d
-    AppF f args    -> parens (f <+> nest 2 (sep args))
+    AppF f args -> parens (f <+> nest 2 (sep args))
     InstrF   i -> annotate AInstr (prettyInstr i)
     InstrAppF i args -> parens (annotate AInstr (prettyInstr i) <+> nest 2 (sep args))
     X86IntrinsicF t -> annotate AInstr (viaShow t)
-    CastF  i t -> parens (viaShow i) <> enclose "<" ">" (viaShow t)
+    CastF  i t -> parens (viaShow i) <> enclose "<" ">" t
     LabelF   l [] -> "@" <> prettyLabel l
     LabelF   l t  -> parens $ "@" <> prettyLabel l <+> hsep (parens <$> t)
 --  CaseF caseID scrut -> parens $ "Case" <> viaShow caseID <+> scrut
@@ -259,7 +261,7 @@ pTerm showRhs = let
     x -> error $ show $ embed (Question <$ x)
 
   parensApp f args = parens $ parens f <+> nest 2 (sep args)
-  in para $ \case
+  in para \case
     -- parens if necessary
     AppF f args | BruijnAbs{} <- fst f -> parensApp (snd f) (snd <$> args)
     x -> ppTermF (snd <$> x)

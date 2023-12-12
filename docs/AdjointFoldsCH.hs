@@ -154,7 +154,7 @@ mkDiag a = Diag (a , a)
 
 sumProductAdj :: (Functor f, Functor g, Functor r1, Functor r2) =>
   Adjunction f r1 -> Adjunction g r2 -> Adjunction (Sum f g) (Product r1 r2)
-sumProductAdj f g = mkAdjUnit (\a -> Pair (adjunctL f InL a) (adjunctL g InR a)) $ \case
+sumProductAdj f g = mkAdjUnit (\a -> Pair (adjunctL f InL a) (adjunctL g InR a)) \case
   InL l -> adjunctR f (\(Pair x _) -> x) l
   InR r -> adjunctR g (\(Pair _ x) -> x) r
 

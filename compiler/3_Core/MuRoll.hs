@@ -51,12 +51,12 @@ mergeRolls (Rolling noopRoll m r _z) (BuildRoll noopBuild builds) = let
   -- builds & \((bm , br , bty) :| []) -> on (==) (fmap voidMus) br r
 
   clearMus :: Roller -> Roller -- Roller = [THead (Maybe Type)]
-  clearMus = fmap $ fmap $ \case
+  clearMus = fmap $ fmap \case
     Just (TyGround [THMuBound _]) -> Nothing
     x -> x
   r' = clearMus r
   builds' = (\(_,r,_) -> clearMus r) <$> builds
-  patchMu = mapTHeads $ \case
+  patchMu = mapTHeads \case
     THMuBound i | i == m -> THMuBound (NE.head builds & \(n,_,_) -> n)
     x -> x
   -- TODO v need to also set Just (TyGround [THMuBound _]) to Nothing to continue rolling!
@@ -129,7 +129,7 @@ mergeRollsNE :: NonEmpty TypeRoll -> TypeRoll = \(x :| xs) -> foldr mergeRolls x
 
 -- substitute mu-bounds for another (merge recursive type vars once they are rolled into contact)
 patchMu :: Int -> Int -> Type -> Type
-patchMu n m = mapTHeads' $ \case { THMuBound x | x == n -> THMuBound m ; THMu x t | x == n -> THMu m t ; x -> x }
+patchMu n m = mapTHeads' \case { THMuBound x | x == n -> THMuBound m ; THMu x t | x == n -> THMu m t ; x -> x }
 
 deriving instance Show (THead (Maybe Type))
 deriving instance Show (TyCon TypeRoll)

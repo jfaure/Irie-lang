@@ -49,7 +49,7 @@ uncons' = \case { [] -> (Nothing , []) ; x : xs -> (Just x , xs) }
 
 -- Parser apomorphism
 parseExpr :: SrcOff -> SubParser
-parseExpr srcOff = SubParser $ let
+parseExpr srcOff = SubParser let
   isMF = \case { MFExpr{} -> True ; _ -> False }
   mkApp = \case { [f] -> f ; f : args -> App srcOff f args ; [] -> MixfixPoison (MixfixError srcOff "impossible") }
   mkMFSubParsers :: ModuleIName -> [Maybe IName] -> [SubParser]

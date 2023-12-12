@@ -2,7 +2,7 @@
 -- ! the Prelude supplies mixfixes and more convenient access to these primitives
 -- * constructs a vector of primitives
 -- * supplys a (Map HName IName) to resolve names to indexes
-module Builtins (primBinds , primMap , typeOfLit , builtinFalse , builtinTrue , builtinFalseQ , builtinTrueQ , readPrimExtern , readPrimType) where
+module Builtins (primBinds , primMap , builtinFalse , builtinTrue , builtinFalseQ , builtinTrueQ , readPrimExtern , readPrimType) where
 import Prim
 import CoreSyn
 import qualified Data.Map.Strict as M ( (!?) , fromList )
@@ -304,14 +304,3 @@ primInstrs :: [(HName , (PrimInstr , ([IName] , IName)))] =
   , ("bitPDEP", (NumInstr (BitInstr PDEP ) , ([i , i] , i) ))
   , ("bitPEXT", (NumInstr (BitInstr PEXT ) , ([i , i] , i) ))
   ]
-
-typeOfLit = \case
-  String{}  -> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
-  LitArray{}-> THPrim $ PtrTo (PrimInt 8) --"CharPtr"
-  PolyInt{} -> THPrim PrimBigInt
---Int 0     -> THPrim (PrimInt 1)
---Int 1     -> THPrim (PrimInt 1)
---Int{}     -> THPrim (PrimInt 32)
-  Char{}    -> THPrim (PrimInt 8)
-  Fin n _   -> THPrim (PrimInt n) --mkExt 3
-  x -> error $ "don't know type of literal: " <> show x

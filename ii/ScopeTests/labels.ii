@@ -1,0 +1,6 @@
+i x = 3
+L = data
+  l Int
+
+f = l  -- l has type Int -> l {Int}
+g = @l -- can label anything

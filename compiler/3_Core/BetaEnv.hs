@@ -15,43 +15,14 @@ import qualified Data.IntMap as IM
 import Data.List (unzip3)
 
 g_runSimplify = False
+debug_fuse = False
 
 g_reduceInstr = g_runSimplify
 g_noInline = not g_runSimplify
 
+
 -- A nested Abs inside a β-env smaller than total env requires "inserting" more args
 -- this more or less forces us to copy the env, which ruins β-optimal sharing of subcomputations
-
-debug_fuse = False
-
-data FEnv s = FEnv
- { _thisMod    :: ModuleIName
- , _loadedMods :: V.Vector LoadedMod
- , _localBinds :: MV.MVector s Bind
- }; makeLenses ''FEnv
-type SimplifierEnv s = StateT (FEnv s) (ST s)
-
-getBruijnAbs = \case
-  BruijnAbs n _ body -> Just (n , body)
-  BruijnAbsTyped n body _ _ -> Just (n , body)
-  _ -> Nothing
-
-type Lvl = Int
-data Sub = TSub (V.Vector Sub) Lvl Term deriving Show -- eLen lvl term
-type Env = (V.Vector Sub , [Sub]) -- length of argEnv (needs to remain consistent across paps
---type Seed = (Lvl , Env , Term) -- expected eLen may be < envlen since tsubs eLen can increase
-
-data Seed = Seed
-  { _lvl  :: Lvl
-  , _env  :: Env -- env & trailingArgs
-  , _term :: Term
-  } deriving Show ; makeLenses ''Seed
-isEnvEmpty env = V.null (fst env)
-
--- # abs
---   +lvl -> inc subbed in vbruijns later
--- # app abs -> setup β-env
--- # inline fn -> possibly re-app
 
 -- !! VBruijn sub-chain
 -- # sub-ABS
@@ -69,6 +40,27 @@ isEnvEmpty env = V.null (fst env)
 --  ! Can't instantly simplify args to an App in case f contains more bruijnAbs. Also VBruijns may need relevelling
 --  TODO this may duplicate work if simplified twice at the same lvl; counting on dup nodes + β-optimality to fix this
 
+data FEnv s = FEnv
+ { _thisMod    :: ModuleIName
+ , _loadedMods :: V.Vector LoadedMod
+ , _localBinds :: MV.MVector s Bind
+ }; makeLenses ''FEnv
+type SimplifierEnv s = StateT (FEnv s) (ST s)
+
+getBruijnAbs = \case
+  BruijnAbs n _ body -> error $ show $ Just (n , body)
+  BruijnAbsTyped n body _ _ -> Just (n , body)
+  _ -> Nothing
+
+type Lvl = Int
+data Sub = TSub (V.Vector Sub) Lvl Term deriving Show -- eLen lvl term
+type Env = (V.Vector Sub , [Sub]) -- length of argEnv (needs to remain consistent across paps
+data Seed = Seed
+  { _lvl  :: Lvl
+  , _env  :: Env -- env & trailingArgs
+  , _term :: Term
+  } deriving Show ; makeLenses ''Seed
+
 mkBruijnArgSubs l n = let env = mempty -- doesn't matter since bruijnLevel terminates
   in V.generate n (\i -> TSub env l (VBruijnLevel (l - i - 1)))
 
@@ -76,7 +68,7 @@ mkBruijnArgSubs l n = let env = mempty -- doesn't matter since bruijnLevel termi
 -- ! seed term and trailingArgs may have different envs
 -- ! inlining needs to watch free-vars and VBruijn level differences
 fuse :: forall s. Seed -> SimplifierEnv s (TermF (Either Term Seed))
-fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. term)) $ let
+fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. term)) let
   sLvl = seed ^. lvl
   (argEnv , trailingArgs) = seed ^. env
   continue       tt = Right (seed & term .~ tt)
@@ -85,7 +77,7 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
   unSub (TSub prevArgEnv prevLvl arg) | prevLvl == sLvl
     = Right (seed & term .~ arg & env .~ (prevArgEnv , mempty))
  -- unSub (TSub prevArgEnv prevLvl arg) = traceShow (prevLvl , lvl) $ Right (lvl , (prevArgEnv , mempty) , arg)
-  noop x = pure $ if null trailingArgs
+  noop x = pure if null trailingArgs
     then continue <$> project x
     else AppF (continueNoArgs x) (unSub <$> trailingArgs)
   in case seed ^. term of
@@ -97,7 +89,7 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
         nextLvl = sLvl + n
         nextSeed = seed & lvl .~ nextLvl & env .~ (mkBruijnArgSubs nextLvl n <> argEnv , mempty) & term .~ body
         in pure $ BruijnAbsF n mempty (Right nextSeed)
-    else claimArgs n body trailingArgs where
+    else let
       claimArgs :: Int -> Term -> [Sub] -> SimplifierEnv s (TermF (Either Term Seed))
       claimArgs n body trailingArgs = let
         (ourArgs , remArgs) = splitAt n trailingArgs
@@ -107,8 +99,9 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
             in fuse (seed & env .~ (nextEnv <> argEnv , remArgs) & term .~ body)
           LT -> claimArgs l (BruijnAbs (n - l) mempty body) trailingArgs
           GT -> error "impossible"
+      in claimArgs n body trailingArgs
 
-  VBruijnLevel l -> pure $ let v = sLvl - l - 1
+  VBruijnLevel l -> pure let v = sLvl - l - 1
     in if null trailingArgs then VBruijnF v else AppF (Left (VBruijn v)) (unSub <$> trailingArgs)
 
   -- env contains raw args to simplify, at the new lvl for any bruijns subbed in
@@ -151,9 +144,7 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
 
   -- ? where do params come from if no trailing args here
   -- TODO what if stacking case-cases
-  -- TODO maybe don't need to force the scrut?
-  CaseSeq n scrut retT branches d -> if not (null trailingArgs) then _ else
---  runSimpleTerm (Seed sLvl (argEnv , []) scrut) >>= \scrut -> -- scrut is already simplified
+  CaseSeq n scrut retT branches d -> assert (null trailingArgs) $
     fuseCase (seed & term .~ scrut & env . _1 %~ V.drop n) retT branches d
 
   --Have to simplify scrut first, it doesn't take our trailingArgs!
@@ -165,10 +156,10 @@ fuse seed = use thisMod >>= \modIName -> let -- trace (prettyTermRaw (seed ^. te
     l@Label{} -> error $ "Lensing on a label: " <> show (l , f)
     Tuple l -> pure $ continue <$> project (l V.! unQName (QName f))
     Prod  l -> pure $ continue <$> project (fromMaybe (error "panic: absent field") $ l BSM.!? f)
-    scrut | null trailingArgs -> runSimpleTerm (seed & term .~ scrut) >>= \case
-      Tuple l -> pure $ SkipF $ Left $ (l V.! unQName (QName f))
-      Prod  l -> pure $ SkipF $ Left $ (fromMaybe (error "panic: absent field") $ l BSM.!? f)
-      opaque -> pure $ TTLensF (Left opaque) [f] LensGet
+    scrut | null trailingArgs -> runSimpleTerm (seed & term .~ scrut) <&> \case
+      Tuple l -> SkipF $ Left $ (l V.! unQName (QName f))
+      Prod  l -> SkipF $ Left $ (fromMaybe (error "panic: absent field") $ l BSM.!? f)
+      opaque  -> TTLensF (Left opaque) [f] LensGet
     opaque -> pure $ TTLensF (continue opaque) [f] LensGet
 
   Captures (VQBindIndex q) | modName q == modIName -> let bindName = unQName q
@@ -279,7 +270,7 @@ _constFoldCountF termDups = let
   BruijnAbsF n _ rhs -> d_ dups (mempty , BruijnAbs n dups rhs)
 --CaseBF{} ->
   BruijnAbsTypedF n rhs args rT -> error $ show (embed term)
-  term' -> (dups,) $ case term' of
+  term' -> (dups,) case term' of
     AppF (Instr i) args -> simpleInstr i args
 --  AppF (App g args) brgs -> constFoldCountF (AppF g (args <> brgs))
     CastF (CastZext n) (Lit (Fin m i)) | m < n -> Lit (Fin n i)
@@ -328,7 +319,7 @@ specApp seedLvl env q args = let
       let rawAbs = BruijnAbs bruijnN mempty (App inlineF repackedArgs)
       specFn <- runSimpleTerm (Seed seedLvl env rawAbs) -- TODO if repackedArgs contains debruijns this may break
       -- (fst env , TSub (mkBruijnArgSubs lvl (V.length (fst env))) (bruijnN + lvl) <$> repackedArgs) rawAbs
-      when debug_fuse $ do
+      when debug_fuse do
         traceM $ "raw spec " <> show bindNm <> " " <> show argShapes <> "\n => " <> prettyTermRaw rawAbs <> "\n"
         traceM $ "simple spec " <> prettyTermRaw specFn <> "\n"
 
@@ -336,5 +327,5 @@ specApp seedLvl env q args = let
         -> BindOK (OptBind oLvl (M.insert argShapes specFn oSpecs)) expr) bindNm
 
       let fn = if seedLvl == 0 then specFn else recGuard
-      pure $ SkipF $ Left $ if null unstructuredArgs then fn else App fn unstructuredArgs
+      pure $ SkipF $ Left if null unstructuredArgs then fn else App fn unstructuredArgs
   _ -> pure noInline

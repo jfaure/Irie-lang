@@ -43,12 +43,6 @@ data NextChunk seed
  | NEnclose ByteString seed ByteString
  | NEndStr  seed ByteString
 
--- | NList (NonEmpty seed)
--- | NIntersperseEnclose ByteString ByteString (NonEmpty seed) ByteString
--- | NTree [NextChunk]
--- | NInt  Int
--- | NWrite Int Write
-
 {- INLINE unfoldrChunks -}
 unfoldrChunks :: (seed -> NextChunk seed) -> seed -> (seed , BS.ByteString)
 unfoldrChunks = unfoldrChunksN 256

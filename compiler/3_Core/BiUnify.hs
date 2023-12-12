@@ -8,7 +8,7 @@ import CoreUtils (prependArrowArgsTy , tHeadToTy , mergeTypeList , partitionType
 import PrettyCore (prettyTyRaw)
 import Builtins (readPrimType)
 import Data.Distributive (distribute)
-import qualified BitSetMap as BSM ( (!?), elems, mergeWithKey', singleton, toList, traverseWithKey )
+import qualified BitSetMap as BSM ( size , (!?), fromList, elems, mergeWithKey', singleton, toList, traverseWithKey )
 import qualified Data.Vector as V ( Vector, (!), (++), fromList, ifoldM, length, zipWithM )
 import Data.Functor.Foldable
 import Control.Lens ( makeLenses , use , (%=) , (.=) )
@@ -157,11 +157,13 @@ data KeySubtype
   deriving Show
 
 -- This is complicated slightly by needing to recover the necessary subtyping casts
+biSubTyCon :: THead Type -> THead Type -> (TyCon Type , TyCon Type) -> BisubEnv s BiCast
 biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
   (THArrow args1 ret1 , THArrow args2 ret2) -> arrowBiSub (args1 , args2) (ret1 , ret2)
   (THTuple x , THTuple y) -> BiEQ <$ V.zipWithM biSubType x y
   (THArray x , THArray y) -> BiEQ <$ biSubType x y
   (THProduct x , THProduct y) -> let
+  -- TODO clean this up
     merged     = BSM.mergeWithKey' (\_k a b -> Just (Both a b)) (\_k v -> LOnly v) ROnly x y
     normalized = BSM.elems merged -- $ IM.mapKeys (nf VU.!) merged
     go leafCasts normIdx ty = case ty of
@@ -171,19 +173,20 @@ biSubTyCon p m = let tyP = TyGround [p] ; tyM = TyGround [m] in \case
     in V.ifoldM go [] normalized <&> \leafCasts ->
        let drops = V.length normalized - length leafCasts -- TODO rm filthy list length
        in if drops > 0
-       then CastProduct drops leafCasts -- dropped some fields
+       then CastProduct drops (BSM.fromList leafCasts) -- dropped some fields
        else let leaves = snd <$> leafCasts
        in if all (\case {BiEQ->True;_->False}) leaves then BiEQ else CastFields leaves
   (THSumTy _ , THSumOpen _) -> pure BiEQ -- open sums can match everything
   (THSumTy x , THSumTy y) -> let
-    go label subType = case y BSM.!? label of -- x must contain supertypes of all x labels
+    go label subType = case y BSM.!? label of -- y must contain supertypes of all x labels
       Nothing -> failBiSub (AbsentLabel (QName label)) tyP tyM
       Just superType -> biSubType subType superType
--- TODO insert Sum->Sum casts (This is were labels are actually written to memory)
 --  merged = BSM.mergeWithKey' (\_k a b -> Just (Both a b)) (\_k v -> LOnly v) ROnly x y
-    in BiEQ <$ (go `BSM.traverseWithKey` x)
+    in (go `BSM.traverseWithKey` x) <&> \subCasts -> let
+      cast = BSM.mergeWithKey' (\_ subCast _ -> Just subCast) (\q t -> BiEQ) (\q t -> BiEQ) subCasts y
+      in if BSM.size cast == BSM.size x then BiEQ else CastSum cast
   (THSumTy s , THArrow args retT) | [(lName , tuple)] <- BSM.toList s -> -- singleton sumtype ⇒ Partial application of Label
-    let t' = TyGround $ case tuple of
+    let t' = TyGround case tuple of
                TyGround [THTyCon (THTuple x)] -> [THTyCon $ THTuple (x V.++ V.fromList args)]
                x                              -> [THTyCon $ THTuple (V.fromList (x : args))]
     in biSubType (TyGround [THTyCon (THSumTy $ BSM.singleton lName t')]) retT

@@ -1,8 +1,19 @@
 # IILibs: Lens List Eff BitSet
 # II: DFA NFA glushkov Charscan
 # TT: μ datatypes
+# Typer
+  * Fns always Typed: Lift constants , lambdas , paps , [alts , cases]
+  * Casts: @ret , @fnArg. Must insert during β-env, to respect user annotations
+  * Alt casts
+
+  ? biunify type vs finalised type (GraphType vs Term) => coocs? (for each var, + and - co-occs)
+  * Subsumption & use annotations
+  ? Type params & application & μ
+  ? dependents lifted and normalised
+  * typeOf : {l : Level}{A : Set l}(a : A) -> Set l
+  * typeOf {A = A} _ = A
 ## Top Priority (PathNames , cross-level mutuality)
-  * Label names; @ vs declared (stream.ii doesn't work anymore)
+  * Label names; @ vs declared => @ may take any type whereas declared labels must respect declared type
   * Profunctor lenses
   * Type params (conv bruijnAbs to THBi) ; Type application vs implicit
   * Add let-capture tests
@@ -14,11 +25,11 @@
   * Bounded Tvars eg. "[Tlo <: a <: Thi] => a -> a" instead of "∀a. a ⊓ T -> a" => 
   * no need to emit a tuple underneath every label
   * Can fuse scope infer hypo if scope saves params to letblock for resumption
-  * typeOf : {l : Level}{A : Set l}(a : A) -> Set l
-  * typeOf {A = A} _ = A
 ## Memory
   * Derived streams (eg. splitAt, where second stream only available after first produced (ie. 2 can mutate 1 to buf)).
 ## New primitives + Syntax
+  * '.' as reverse application: eg. "Cons a.x Nil" == "Cons (x a) Nil"
+  * record wildcard: "rw = { x = Int , y }" -- indicates "y = ?"
   * Join text: `"hello" , "world"`
   * List: `# a b c`
   * Union|intersect records&sumdata: V and ^
@@ -73,6 +84,7 @@
     vlength : {n : Nat} -> Vect n a -> Nat
     vlength _ = n
 ## !?
+  * Non-regular recursive types (cannot be encoded direclty with μ)
   * prec/assoc as partial order
   * Higher kinded polymorphism: abstracting over type constructors
   * short-circuit fns: _&&_

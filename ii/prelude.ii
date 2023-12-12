@@ -59,6 +59,9 @@ identity x = x
 --  Nothing
 --  Just a
 
+--Either a b = data
+--  Left a
+--  Right a
 _|||_ {r2} = \l r => \case { @Left x => l x ; @Right x => r x }
 
 fromMaybe a = \case

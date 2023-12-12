@@ -18,8 +18,8 @@ import qualified Data.Vector as V ( Vector, (!), fromList, length, map, singleto
 newtype BitSetMap a = BSM { unBSM :: V.Vector (Int , a) }
   deriving (Eq , Generic , Show)
 instance (Binary e) => Binary (BitSetMap e)
---instance Semialign BitSetMap where
---  alignWith f = mergeWithKey (\k a b -> f (These a b)) (\k x -> f (This x)) (\k y -> f (That y))
+instance Semialign BitSetMap where
+  alignWith f = mergeWithKey (\k a b -> f (These a b)) (\k x -> f (This x)) (\k y -> f (That y))
 instance Functor BitSetMap where
   fmap f = BSM . fmap (\(a , b) -> (a , f b)) . unBSM
 instance Foldable BitSetMap where
@@ -69,7 +69,7 @@ mapWithKey f = BSM . V.map (\(l , v) -> (l , f l v)) . unBSM
 
 traverseWithKey f = fmap BSM <$> traverse (\(l , v) -> (l ,) <$> f l v) . unBSM
 
---unionWith :: (a -> a -> a) -> BitSetMap a -> BitSetMap a -> BitSetMap a
+unionWith :: (a -> a -> a) -> BitSetMap a -> BitSetMap a -> BitSetMap a
 unionWith f (BSM a) (BSM b) = let
   go (i , j) | i >= V.length a && j >= V.length b = Nothing
   go (i , j) | i >= V.length a = Just (b V.! j , (i     , j + 1))
@@ -80,24 +80,14 @@ unionWith f (BSM a) (BSM b) = let
     EQ -> Just ((fst x , f (snd x) (snd y)) , (i + 1 , j + 1))
   in BSM (V.unfoldrN (V.length a + V.length b) go (0 , 0))
 
---unionWith f a b = let
---  merge f xs [] = xs
---  merge f [] ys = ys
---  merge f (x : xs) (y : ys) = case compare (fst x) (fst y) of
---    LT -> x : merge f xs (y : ys)
---    GT -> y : merge f (x : xs) ys
---    EQ -> (fst x , f (snd x) (snd y)) : merge f xs ys
---  in BitSetMap.fromList (merge f (BitSetMap.toList a) (BitSetMap.toList b))
-
---intersectionWith :: (a -> a -> c) -> BitSetMap a -> BitSetMap a -> BitSetMap c
-intersectionWith f a b = let
-  merge _ _ [] = []
-  merge _ [] _ = []
-  merge f (x : xs) (y : ys) = case compare (fst x) (fst y) of
-    LT -> merge f xs (y : ys)
-    GT -> merge f (x : xs) ys
-    EQ -> (fst x , f (snd x) (snd y)) : merge f xs ys
-  in BitSetMap.fromList (merge f (BitSetMap.toList a) (BitSetMap.toList b))
+-- TODO could optimise by walking the smallest bitsetmap
+intersectionWith :: (a -> b -> c) -> BitSetMap a -> BitSetMap b -> BitSetMap c
+intersectionWith f (BSM a) bsmB@(BSM b) = let
+  go i | i >= V.length a = Nothing
+  go i = let (q , l) = a V.! i in case bsmB BitSetMap.!? q of
+    Nothing -> go (i + 1)
+    Just r  -> Just ((q , f l r) , i + 1)
+  in BSM (V.unfoldrN (V.length a) go 0)
 
 --mergeWithKey :: (Key -> a -> b -> Maybe c) -> (IntMap a -> IntMap c) -> (IntMap b -> IntMap c) -> IntMap a -> IntMap b -> IntMap c
 -- f combines keys when found in both, m1 and m2 says how to deal with both differences

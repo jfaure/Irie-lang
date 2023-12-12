@@ -28,6 +28,57 @@ MUL1 n ms = if n =? 0 then 0 else if n =? 1 then ms else SUAddCarry (fmap (mul_p
 -- m * n = B*m * n//B + (m * (n mod B))
 MUL ms (@Cons n ns) = uAdd (MUL (@Cons 0 ms) ns) (MUL1 n ms)
 
+-- interpolations: karatusba @ -1 0 1 ; toom3 @ 0 1 -1 -2 ∞
+
+-- ft is (n log n)
+-- conv u v = invFt (pointwiseMul (ft u) (ft v))
+-- Nth root of unity = ω such that ω**k /= 1 for 1 <= k <N and ω**N = 1
+-- eg. 2 is a 5th root of unity MOD 31 since [2 ** k /= 1 | k <- [1..4]] && 2 ** 5 == 1
+-- eg. split N-bit int into B blocks of length L. so (B * L == N).
+-- => need M > B * ((2^L - 1)^2)
+-- Also performance wants ω=2 (Nth root of unity Mod 2^N-1) and M = 2^k +-1 for any k
+-- 1. Split integer inputs of len N into B = sqrt N pieces of L = sqrt N bits each
+-- 2. FTT using ω=2, M = 2^(2 * sqrt N) +- 1
+-- 3. pointwise multiply 2 ffts
+-- 4. inverse FTT (same ω and M)
+
+-- Note. bitrev(2j,K) = bitrev(j,K/2)
+-- Also  bitrev(2j + 1,K) = K/2 + bitrev(j,K/2)
+-- fftBitrev a ω K -- ω principal Kth root of unity, K = 2^k
+-- fft @a0 a1 = @(a0 + a1) (a0 - a1)
+-- fft @a0 a1 a2 a3 =>
+-- a0 a2 <- @(a0 + a2) (a0 - a2)
+-- a1 a3 <- @(a1 + a3) (a1 - a3)
+-- ω' = ω^(bitrev j (K/2))
+-- @(a0 + ω'a1) (a0 - ω'a1) (a2 + )
+
+-- good schonhage strassen description:
+-- https://members.loria.fr/PZimmermann/mca/mca-cup-0.5.9.pdf
+{-
+-- b must be power of 2
+fftRandomAccess signal b ω M = if b =? 1 then [signal V.! 0] else let
+  signalEven = [signal V.! x | x <- [0 .. b - 2]]
+  signalOdd  = [signal V.! x | x <- [1 .. b - 1]]
+  fftEven = fft signalEven (b / 2) (ω^2) M
+  fftEven = fft signalOdd  (b / 2) (ω^2) M
+  halfB = b // 2
+  in V.create $ MV.new b >>= \res -> res <$ do [0 .. halfB - 1] <&> \k => let
+    prodModM = (ω^k * (fftOdd V.! k)) MOD M -- butterfly, compute only once
+    fftEvenK = fftEven V.! k
+    in write res k           (fftEvenK + prodModM)
+    *> write res (k + halfB) (fftEvenK - prodModM)
+
+fftMul aIn bIn = let
+  len = max (length aIn) (length bIn)
+  k = intLog2 N + 1 -- want N = 2^k for some k
+  N = 2 ^ k
+  B = k // 2
+-- sqrt N: can assume N = 2^k. if k is odd then Either
+-- | B=sqrt (2N), L=sqrt(N/2) more smaller chunks
+-- | B=sqrt (N/2) , L = sqrt(2N). fewer larger chunks
+  (a , b) = (padToLenN aIn , padToLenN bIn) -- can alignWith
+-}
+
 -- only 'a' fusable since `map (_ * aVal)` requires entire b at each iteration
 -- therefore ideally b <? a && b small
 --longMul a b = let

@@ -63,6 +63,7 @@ data Term -- β-reducable (possibly to a type)
  | Label   ILabel [Term]
  | CaseB   Term Type (BSM.BitSetMap Term) (Maybe Term)
  | CaseSeq Int Term Type (BSM.BitSetMap Term) (Maybe Term)
+ -- CaseSeq: β-Env only: scrut already fused, drop n args from env
 
 -- Simplifier
  | LetSpec QName [ArgShape]
@@ -78,7 +79,8 @@ data Term -- β-reducable (possibly to a type)
 
  -- bytestring unfoldr additional states: Unfold list allows surrounds '()' and infixes
  | Return ByteString Term -- tmp node for mkasm and mkC: cast and term
- | Void
+ deriving Eq
+-- | Void
 -- | CaseAlts (BSM.BitSetMap Term) (Maybe Term) -- scrutless CaseB: allows us to >>= the seed obtained from running scrut
 
 -- factorial = fix (\rec n -> if n <= 1 then 1 else n * rec (n-1)) 5
@@ -93,7 +95,7 @@ type THeadVec = V.Vector (THead Int) -- tycons?
 -- - handle better (label <-> function) types isomorphism
 
 -- lensover needs idx for extracting field (??)
-data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr
+data LensOp = LensGet | LensSet Expr | LensOver (ASMIdx , BiCast) Expr deriving Eq
 
 type Uni     = Int  -- a universe of types
 type TyMinus = Type -- input  types (lattice meet ∧) eg. args
@@ -136,6 +138,7 @@ data THead ty
 
  | THBound   IName  -- Π-bound tvar; instantiating Π-binder involves sub with fresh tvars
  | THMuBound IName  -- µ-bound tvar; semantically identical to THBound (must be guarded and covariant)
+ | THTerm Term
  deriving (Eq , Functor , Traversable , Foldable)
 
 tyVar v = TyVars (setBit 0 v) []
@@ -145,7 +148,7 @@ instance Eq Type where -- To union/intersect THeads ...
   TyVars i g1 == TyVars j g2 = i == j && g1 == g2
   _           == _           = False
 
-data Expr = Core { exprTerm :: Term , exprType :: Type }
+data Expr = Core { exprTerm :: Term , exprType :: Type } deriving Eq
 tySet l = TyGround [THSet l]
 ty t = Core (Ty t) (tySet 0)
 poisonExpr = Core (Poison "") tyTop -- TODO top or bot? (they're defined the same atm)
@@ -199,12 +202,13 @@ data BiCast
  = BiEQ
  | CastInstr PrimInstr
  | CastZext Int
- | CastProduct Int [(ASMIdx , BiCast)] -- number of drops, and indexes into parent struct
+ | CastProduct Int (BSM.BitSetMap BiCast) -- [(ASMIdx , BiCast)] -- number of drops, and indexes into parent struct
  | CastFields  [BiCast]
--- | CastSum (BSM.BitSetMap Type)
+ | CastSum (BSM.BitSetMap BiCast)
 
  | CastApp [BiCast] (Maybe [Type]) BiCast -- argcasts , maybe papcast , retcast
  | CastOver ASMIdx BiCast Expr Type
+ deriving Eq
 
 -- label for the different head constructors.
 data Kind = KPrim PrimType | KArrow | KSum | KProd | KRec | KAny | KBound | KTuple | KArray

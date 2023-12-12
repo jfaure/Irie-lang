@@ -157,7 +157,7 @@ idenNo_' = let
   in try ((takeWhile1P Nothing (\x -> isIdenChar x && x /= '_') {-<|> dotIden-}) >>= checkIden)
 
 -- separated and split on '_' (ie. argument holes)
-pMixfixWords :: Parser [Maybe Text] = lexeme $ do
+pMixfixWords :: Parser [Maybe Text] = lexeme do
   some (choice [Nothing <$ char '_' , Just <$> idenNo_']) >>= \case
     [Nothing] -> fail "'_' cannot be an identifier"
     mf -> pure mf
@@ -231,7 +231,7 @@ pDecl isTop sep = SubParser $ many (lexemen pImport) *> svIndent *> let
       let rhs = maybe rhsTT (Typed rhsTT) sig
       pure $ Just (FnDef nm iNm Let Nothing rhs srcOff , subParse)
     mfDefHNames   -> let
-      pMixFixArgs = cata $ \case
+      pMixFixArgs = cata \case
         Nil      -> pure []
         Cons m x -> maybe ((:) <$> lexeme singlePattern <*> x) (\nm -> pName nm *> x) m
       nm = mixFix2Nm mfDefHNames
@@ -260,7 +260,7 @@ tt :: Parser TT
    -- lens '.' binds tighter than App
   argOrLens = arg >>= \larg -> option larg (try $ lens larg)
   lineFoldArgs p = many p >>= \ars -> (ars ++) <$> (try (linefolds p) <|> pure [])
-  appOrArg' o  = argOrLens >>= \larg -> option larg $ case larg of
+  appOrArg' o  = argOrLens >>= \larg -> option larg case larg of
     P.Label l [] -> P.Label l <$> lineFoldArgs argOrLens
     fn     -> (\args -> if null args then fn else Juxt o (fn : args)) <$> lineFoldArgs argOrLens
   appOrArg = getOffset >>= \o -> appOrArg' o
@@ -337,7 +337,7 @@ patGuards rhs = let
 ---------------------
 -- literal parsers --
 ---------------------
-literalP = lexeme $ try $ (<* notFollowedBy iden) $ let
+literalP = lexeme $ try $ (<* notFollowedBy iden) let
   signed p = let
     sign :: Bool -> Parser Bool =
       \i -> option i $ single '+' *> sign i <|> single '-' *> sign (not i)
@@ -370,4 +370,4 @@ numP :: Parser Literal = let decimal_ = takeWhile1P (Just "digit") isDigit :: Pa
   c <- decimal_
   f <- option T.empty (char '.'  *> decimal_)
   e <- option T.empty (char' 'e' *> decimal_)
-  pure $ if T.null f && T.null e then PolyInt c else PolyFrac $ c `T.snoc` '.' `T.append` f `T.append` e
+  pure if T.null f && T.null e then PolyInt c else PolyFrac $ c `T.snoc` '.' `T.append` f `T.append` e

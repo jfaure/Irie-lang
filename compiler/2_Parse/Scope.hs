@@ -4,7 +4,7 @@ import ParseSyntax
 import QName
 import CoreSyn(ExternVar(..))
 import Mixfix (solveMixfixes)
-import Externs ( checkExternScope , Externs )
+import Externs ( checkExternScope , Externs , iNameToBindName )
 import Errors
 import Data.Functor.Foldable
 import Control.Lens
@@ -24,10 +24,12 @@ data Params = Params
   , _letMap      :: V.Vector (IName , Int , Int , Int) -- iname , letNest let idx , lifted index in module binds
                                              -- unfortunately must keep the letName in case its a (mutual?) forward ref
   , _letNest     :: Int
-  , _openDatas   :: (BitSet , V.Vector Int) -- let-offset , else IName == labelName
+  , _openDatas   :: (BitSet , V.Vector IName) -- let-offset , else IName == labelName
+  , _topINames   :: BitSet -- TODO normalises label decls but not too pretty
   } deriving Show ; makeLenses ''Params
 
-initModParams letCount modOpens open bindNmsV = let -- d_ modOpens $ let
+initModParams :: BitSet -> Int -> [PImport] -> BitSet -> V.Vector IName -> Params
+initModParams topINames letCount modOpens open bindNmsV = let -- d_ modOpens let
   sz = 2048 -- TODO max number of let-nests and / or bruijn args
   openDatas = let
     getOpens = \case
@@ -38,7 +40,7 @@ initModParams letCount modOpens open bindNmsV = let -- d_ modOpens $ let
   openDatasV = V.create $ MV.new sz >>= \v -> v <$ (openDatas `forM_` \(lOff , i) -> MV.write v i lOff)
   letMap = V.create $ MV.new sz >>= \v -> v <$ do
     bindNmsV `iforM_` \l i -> MV.write v i (i , 0 , l , l) -- top-binds written to modBinds without offset
-  initParams = Params open emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 letMap 0 (openDatasBitSet , openDatasV)
+  initParams = Params open emptyBitSet emptyBitSet (V.create (MV.new sz)) 0 letMap 0 (openDatasBitSet , openDatasV) topINames
   in initParams & \params -> params
   & lets %~ (.|. intList2BitSet bindNmsV)
   & letNest %~ (1+)
@@ -96,7 +98,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
   resolveExt i = if
     | params._args `testBit` i -> Var $ VBruijn  (params._bruijnCount - 1 - (params._bruijnMap V.! i))
     | params._lets `testBit` i -> Var $ VLetBind (params._letMap V.! i)
-    | fst params._openDatas `testBit` i -> snd params._openDatas V.! i & \e -> LabelDecl i e
+    | fst params._openDatas `testBit` i -> snd params._openDatas V.! i & \e -> LabelDecl i (iNameToBindName params._topINames e)
     | otherwise -> handleExtern exts thisMod (params ^. Scope.open) params._letMap i
 
   -- Patterns (- TTs) need their labels and constants scoped, then introduce new args
@@ -116,24 +118,26 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
 --      ForwardRef i  -> LabelDecl i
         _ -> if fst params._openDatas `testBit` i
           -- data declarations contain "let-binds" describing a specific type for this label
-          then snd params._openDatas V.! i & \e -> LabelDecl i e
+          then snd params._openDatas V.! i & \e -> LabelDecl i (iNameToBindName params._topINames e)
           else VParseIName i -- new argument. (x is likely: `NotInScope sometxt`)
       Juxt o args -> solveMixfixes o (scopeLayer <$> args) -- TODO need to solveScope VExterns first
       tt -> tt
-    isLabel = \case { QLabel{} -> True ; Label{} -> True ; App{} -> True; _ -> False }
+    isLabel = \case { QLabel{} -> True ; Label{} -> True ; App{} -> True; LabelDecl{} -> True; _ -> False }
     (altPats , rest) = span (isLabel . fst) (first scopeLayer <$> rawAlts)
     fail serr = (Right 0 , ScopePoison serr)
     -- Left if a label binding, else a raw label that may take any type
     alts = altPats <&> \(pat {-, guards)-} , rhs) -> case pat of
       QLabel q -> (Right (qName2Key q) , rhs) -- Guards openMatch guards rhs)
       Label i subPats             -> (Right (qName2Key (mkQName thisMod i)) , GuardArgs subPats rhs)
+      LabelDecl i e               -> (Left ((mkQName thisMod i) , e) , rhs)
       App _ (QLabel q) subPats    -> (Right (qName2Key q) , GuardArgs subPats rhs)
       App _ (LabelDecl i e) subPats -> (Left ((mkQName thisMod i) , e) , GuardArgs subPats rhs)
       App _ (VParseIName i) ars   -> fail (NoScopeLabel i (length ars))
       x -> fail (ScopeError $ "bad pattern: " <> show x)
     openMatch = case rest of -- TODO could be guarded; another case
       [] -> Nothing
-      (WildCard , rhs) : redundant -> Just rhs -- guards
+      (WildCard , rhs) : redundant -> Just (ScopeWarn RedundantPatMatch rhs) -- guards TODO warning redundancies
+      (VParseIName i , rhs) : _r -> Just (ScopePoison (NoScopeLabel i 0))
       x -> Just (ScopePoison (ScopeError $ "Unknown label: " <> show x))
 --    x -> error (show x) -- _illegallPattern -- argProd , Tuple , Lit are parsed as guards
     match = MatchB scrut alts openMatch
@@ -156,7 +160,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
     guards = concat (zipWith mkGuards args vbruijnLvls) :: [Guard]
     in scopeBruijnAbs $ BruijnAbsF n argSubs 0 (Guards Nothing (guards ++ nestGuards) rhs)
 
-  in case {-d_ (embed $ Question <$ this) -} this of
+  in case this of
   VParseIName i -> Left <$> project (resolveExt i)
   Var v -> case v of
     VBruijnLevel i -> VarF (VBruijn $ params._bruijnCount - 1 - i) -- Arg-prod arg name
@@ -176,7 +180,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
   GuardArgs pats rhs -> guardArgs pats rhs []
   Guards _ko [] rhs -> scopeApoF topBindsCount exts thisMod (rhs , params) -- RawExprF (Right (rhs , params)) -- skip
   Guards ko (g : guards) rhs -> let
-    guardLabel scrut q subPats = fmap (Right . (,params)) $ let
+    guardLabel scrut q subPats = fmap (Right . (,params)) let
       rhs' = if null subPats then Guards ko guards rhs else GuardArgs subPats (Guards ko guards rhs)
       in MatchBF scrut [(Right (qName2Key q) , rhs')] ko
     in case g of
@@ -186,13 +190,7 @@ scopeApoF topBindsCount exts thisMod (this , params) = let
         n = length subPats
         projections = [TupleIdx (qName2Key (mkQName 0 i)) scrut | i <- [0 .. n - 1]]
         in Right . (,params) <$> AppF (-1) (GuardArgs subPats (Guards ko guards rhs)) projections
---    -- vv TODO could be Label or new arg
---    Var (VExtern i) -> case checkExternScope params._open thisMod exts i of
---      ImportLabel q -> guardLabel scrut q []--guards
---      NotInScope _  -> scopeBruijnAbs (BruijnAbsF 1 [(i , params._bruijnCount)] 0 rhs)
---      x -> DesugarPoisonF (IllegalPattern ("Ext: " <> show x))
       x -> RawExprF (Right (unfoldCase scrut [(x , rhs)] params , params))
---    x -> DesugarPoisonF (IllegalPattern (show x))
     GuardBool{} -> error (show g)
 
   -- ? mutual | let | rec scopes

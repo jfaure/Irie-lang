@@ -21,7 +21,7 @@ import qualified GHC.Show
 
 inferType :: Text -> L.Text
 inferType txt = let
-  (lm , bindSrc) = unsafePerformIO $ do
+  (lm , bindSrc) = unsafePerformIO do
     reg <- initRegistry False
     lm  <- compileText defaultCmdLine {noColor = True , printPass = [] , noCache = True , noFuse = True} reg txt
     r   <- readMVar reg
@@ -113,7 +113,7 @@ testImports = do
   SIO.hClose h2
   Main.sh (fp2 <> " -p types")
 
-testPhantomLabel = S.goldenTextFile (goldDir <> "phantomLabel") $ do
+testPhantomLabel = S.goldenTextFile (goldDir <> "phantomLabel") do
   (fp1 , h1) <- SIO.openTempFile "/tmp/" "m1"
   hPutStr h1 $ T.unlines ["lol (MyLabel x xs) = x"]
   SIO.hClose h1
@@ -129,12 +129,12 @@ testPhantomLabel = S.goldenTextFile (goldDir <> "phantomLabel") $ do
 ph = S.sydTest (S.it "phantom label" testPhantomLabel)
 
 --goldenList = S.goldenTextFile "golden/goldenList" $
---  withSystemTempFile "goldenList" $ \tmpFile tmpHandle -> do
+--  withSystemTempFile "goldenList" \tmpFile tmpHandle -> do
 --    Main.sh ("imports/list1.ii -p types --no-fuse -o" <> tmpFile)
 --    readFile tmpFile
 
 goldDir = "goldenOutput/"
-goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) $ do
+goldenInfer opts fName goldName = S.goldenTextFile (goldDir <> goldName) do
   tmpFile <- getCanonicalTemporaryDirectory <&> (</> "tmp" <> takeFileName fName)
   Main.sh (fName <> " -o" <> tmpFile <> " " <> opts)
   readFile tmpFile -- If file does not exist, then irie failed before writing to it.
@@ -159,6 +159,7 @@ tFuses    = testFuse
 tCaptures = testCaptures
 tPatterns = inversePats
 tSpec     = specialise
+tScope = S.it "tscope.ii" (goldenInfer "-p core  --no-color" "ii/ScopeTests/labels.ii" "ScopeTests/labels")
 
 t = S.sydTest
 tInfer = do
@@ -173,12 +174,14 @@ tInfer = do
   tree
   labelDecl
 --intmap
-allTests = S.sydTest $ do
+allTests = S.sydTest do
+  tScope
   tMixfixes
   tInfer
 --tCaptures
   tFuses
   tPatterns
+  tEmitC
 
 -- ghci
 s = t tInfer
@@ -186,7 +189,7 @@ s = t tInfer
 ---------
 -- X86 --
 ---------
-testAsmOutput fnName fName goldName = S.goldenTextFile (goldDir <> "x86Dis/" <> goldName) $ do
+testAsmOutput fnName fName goldName = S.goldenTextFile (goldDir <> "x86Dis/" <> goldName) do
 --tmpFile <- getCanonicalTemporaryDirectory <&> (</> "tmp" <> takeFileName fName)
   Main.sh (fName <> " --emit-x86")
   -- get readable objdump
@@ -195,17 +198,16 @@ testAsmOutput fnName fName goldName = S.goldenTextFile (goldDir <> "x86Dis/" <> 
   writeFile "/tmp/out" r
   pure r
 
-tasm = S.sydTest $ do
+tasm = S.sydTest do
 --S.it "asm.ii" (testAsmOutput "fac" "X86Tests/fac.ii" "fac")
   S.it "dupLop.ii" (testAsmOutput "alg" "X86Tests/dupLop.ii" "dupLop")
 
-testC fName goldName = S.goldenTextFile (goldDir <> "emitC/" <> goldName) $ do
+testC fName goldName = S.goldenTextFile (goldDir <> "emitC/" <> goldName) do
   let outFile = "/tmp/testC.out"
   Main.sh ("ii/emitCTests/" <> fName <> " --mk-c -o" <> outFile)
   (_exitCode , asmStdout , _asmStderr) <- readProcessWithExitCode outFile [] ""
   pure (toS asmStdout)
 
-c = let
+tEmitC = let
   mkCTest nm = S.it ("c-" <> nm) (testC (nm <> ".ii") nm)
-  in S.sydTest $ mapM_ mkCTest
-    [ "ap" , "argCast" , "Constants" , "either" , "factorial" , "nestTuple" , "Sumtypes" ]
+  in mapM_ mkCTest ["ap" , "argCast" , "Constants" , "either" , "factorial" ,  "nestTuple" , "Sumtypes"]

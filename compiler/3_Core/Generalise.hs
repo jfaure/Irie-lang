@@ -29,7 +29,7 @@ generalise bl bis' startType = do
   (rawT , recs) <- runStateT (buildCoocs bis' coocV 0 True startType) 0
   coocVF  <- V.unsafeFreeze coocV
   let varSubs = buildVarSubs coocVF recs
-  when debug_gen $ do
+  when debug_gen do
     traceM ("raw-inferred: " <> prettyTyRaw rawT)
     traceM $ "recs: " <> show (bitSet2IntList recs)
 --  traceM (unlines $ V.toList $ show <$> V.indexed coocVF)
@@ -41,13 +41,13 @@ generalise bl bis' startType = do
 
 --traceM ("built: " <> prettyTyRaw rebuilt)
   let rolled = forgetRoll (cata rollType rebuilt)
-  pure $ case newQuants of { 0 -> rolled ; n -> TyGround [THBi n rolled] }
+  pure case newQuants of { 0 -> rolled ; n -> TyGround [THBi n rolled] }
 
 -- # Forward-subbing (random-access build of cooc-vector); use bitset of forward subs so if delete; generalise instead
 -- squish (@Node x ts) xs = Cons x (foldr squish xs ts)
 -- µe.([Cons {A , µe.([Cons {A , e}] ⊔ D)}] ⊔ D)
 -- ^ this requires forward subbing non-rec(D) to a rec(e)
--- ^ thus must monadically fill varSubs instead of simpler: V.constructN (V.length coocV) $ \prevSubs ->
+-- ^ thus must monadically fill varSubs instead of simpler: V.constructN (V.length coocV) \prevSubs ->
 --
 -- Forward subbing non-rec->rec has interesting effect on span:
 -- span = ∏ A B → (A → [!False | !True]) → µb.[Nil | Cons {A , b}] → {l : b , r : b}
@@ -81,9 +81,9 @@ calcSub coocV recs subs setSubs v = let
       Just w  -> writeSub setSubs' (SubVar w)
         & (if debug_gen then trace ("sub: " <> show v <> " => " <> show w :: Text) else identity)
       Nothing -> fwdRec >>= \(sets , found) -> case found of
-        Nothing -> writeSub sets $ if null ts then genVar else SubTy (TyGround ts)
+        Nothing -> writeSub sets if null ts then genVar else SubTy (TyGround ts)
         Just w  -> writeSub sets (SubVar w)
-  (polarP , polarN) -> writeSub setSubs' $ let
+  (polarP , polarN) -> writeSub setSubs' let
     recCoocs = setSubs .&. recs .&. (fromMaybe 0 ((fst . partitionType) <$> (polarP <|> polarN)))
     in if testBit recs v && recCoocs == 0 then RecursiveVar else DeleteVar -- TODO cant delete merge of recursive vars?!
 
@@ -95,7 +95,7 @@ buildCoocs bis' coocV guards pos = let
   go loops (vs , gs) = do
     let l = loops .|. vs
     varBounds <- bitSet2IntList (vs .&. complement loops) `forM` \v ->
-      MV.read bis' v >>= \(BiSub p m) -> go l (partitionType $ if pos then p else m)
+      MV.read bis' v >>= \(BiSub p m) -> go l (partitionType if pos then p else m)
     grounds <- gs `forM` \case
       THTyCon (THArrow ars ret) -> fmap THTyCon $ THArrow <$> (b l (not pos) `mapM` ars) <*> b l pos ret
       t -> b l pos `mapM` t -- TODO (?) THBi and THMu in here and don't guard recursive types!
@@ -122,7 +122,7 @@ buildType bis' handleVar loops pos = let
       THTyCon (THArrow ars ret) -> fmap THTyCon $ THArrow <$> (b l (not pos) `mapM` ars) <*> b l pos ret
       t -> b l pos `mapM` t
     varBounds <- bitSet2IntList (vs .&. complement loops) `forM` \v ->
-      MV.read bis' v >>= \(BiSub p m) -> readBounds l (partitionType $ if pos then p else m)
+      MV.read bis' v >>= \(BiSub p m) -> readBounds l (partitionType if pos then p else m)
     subs <- bitSet2IntList vs `forM` \v -> case handleVar v of
       DeleteVar     -> pure tyBot
       GeneraliseVar -> generaliseVar v <&> \b -> TyGround [THBound b]
@@ -141,7 +141,7 @@ buildType bis' handleVar loops pos = let
 --      <&> mergeTypeList pos . (TyGround gs :)
 --    (vs , gs) = partitionType seedTy
 --    readVar v = (MV.read bis' v <&> if pos then _pSub else _mSub) >>= readVars (setBit loops v)
---    negArrows = mapTHeads $ \case
+--    negArrows = mapTHeads \case
 --      THTyCon (THArrow ars ret) -> THTyCon (THArrow ((\(p,l,t) -> (not p,l,t)) <$> ars) ret)
 --      x -> x
 --    in do

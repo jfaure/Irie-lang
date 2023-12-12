@@ -7,7 +7,8 @@ import prelude
 a = "a"
 
 List = data
-  Skip
+  Skip Int Int
 
+s = Skip
 b = "b"
 c = "c"

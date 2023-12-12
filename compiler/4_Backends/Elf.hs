@@ -166,7 +166,7 @@ hashHdrSz = sizeOf (HashHeader 0 0)
 -- Chain vector (symbol indexes) is a groupBy on hash%nBuckets , ending in 0
 mkHash :: Word32 -> VU.Vector Word32 -> (HashHeader , V.Vector Word32 , V.Vector Word32)
 mkHash nBuckets syms' = let syms = VU.cons 0 syms' ; nChains = VU.length syms
-  in runST $ do -- first symbol must be STN_UNDEF
+  in runST do -- first symbol must be STN_UNDEF
   hashes <- VU.unsafeThaw (VU.indexed $ VU.map (\s -> mod s nBuckets) syms)
   VU.sortBy (on compare snd) hashes -- group symbol names that hash >> mod to same value
   hashV <- VU.unsafeFreeze hashes
@@ -189,7 +189,7 @@ mkHash nBuckets syms' = let syms = VU.cons 0 syms' ; nChains = VU.length syms
 -- DT_HASH uses this
 -- DT_GNU_HASH is better (loaders are ~50% faster), although slightly more complicated
 elfHash :: ByteString -> Word32
-elfHash str = (\fn -> B.foldl fn 0 str) $ \acc c -> let
+elfHash str = (\fn -> B.foldl fn 0 str) \acc c -> let
   h = (acc .<<. 4) + fromIntegral c
   g = h .&. 0xf0000000
   in (if g /= 0 then xor h (g .>>. 24) else h) .&. complement g
@@ -226,7 +226,7 @@ writeDynTab mem dyns = let
 writeStrTab :: Ptr Word8 -> V.Vector ByteString -> IO (Ptr Word8)
 writeStrTab ptr strs = let
   go acc bs = let blen = B.length bs in do
-    BSU.unsafeUseAsCString bs $ \cstr -> copyBytes acc (castPtr cstr) blen
+    BSU.unsafeUseAsCString bs \cstr -> copyBytes acc (castPtr cstr) blen
     plusPtr acc (blen + 1) <$ pokeByteOff acc blen (0 :: Word8)
   in poke ptr (0 :: Word8) *> V.foldM go (plusPtr ptr 1) strs
 
@@ -318,7 +318,7 @@ mkDynElf ptr memSz nHashBuckets interp libcName runpathName extSymbols relTab wr
     in V.generate nExterns mkSym 
   symTabSz = (1 + nExterns) * elf64_SymSz -- This must be precalculated correctly !
 
-  hashedSyms = VU.generate (V.length extSymbols) $ \i -> elfHash (extSymbols V.! i)
+  hashedSyms = VU.generate (V.length extSymbols) \i -> elfHash (extSymbols V.! i)
     -- & \h -> d_ (extSymbols V.! i , h , mod h nHashBuckets) h
   hashInfo@(hashHdr , hashBuckets , hashChains) = mkHash nHashBuckets hashedSyms
   hashLen = hashHdrSz + 4 * (length hashBuckets + V.length hashChains) -- same as symbol count
@@ -362,7 +362,7 @@ mkDynElf ptr memSz nHashBuckets interp libcName runpathName extSymbols relTab wr
   when (minusPtr wroteSymTab (plusPtr ptr (fromIntegral symTabOff)) /= symTabSz) (error "Miscalculated symtabsz")
   V.foldM push (plusPtr ptr (fromIntegral relOff   )) relTab
   writeDynTab  (plusPtr ptr (fromIntegral dynOff   )) dynTab
-  BSU.unsafeUseAsCString interp $ \cstr -> -- skip '\0' since strtab must start with one
+  BSU.unsafeUseAsCString interp \cstr -> -- skip '\0' since strtab must start with one
     copyBytes (plusPtr ptr (fromIntegral interpOff)) (castPtr cstr) (B.length interp)
   strTabWrittenLen <- writeStrTab  (plusPtr ptr (fromIntegral strTabOff)) extSymbols
   when (minusPtr strTabWrittenLen (plusPtr ptr (fromIntegral strTabOff)) /= strtabSz) (error "Miscalculated strtablen")
@@ -449,7 +449,7 @@ mkElf (disassElf , runElf) mkProg = let
     in addSection elfM2 Nothing symStrShdr (\(inp,_) -> (,()) <$> writeStrTab inp symStrs)
   (elfM4 , ()) <- let
     symOffs = V.scanl (\acc bs -> acc + B.length bs + 1) 1 symStrs
-    elfSyms = (flip Prelude.imap) syms $ \i (off , _) -> emptyElf64_Sym
+    elfSyms = (flip Prelude.imap) syms \i (off , _) -> emptyElf64_Sym
       { stName = fromIntegral (symOffs V.! i) {-strtaboffs!-}
       , stValue = fromIntegral off
       , stInfo = mkSTInfo STB_GLOBAL STT_FUNC
@@ -467,7 +467,7 @@ mkElf (disassElf , runElf) mkProg = let
 --readProcess "readelf" ["-all", "-s" , outFile] "" >>= putStrLn
   when disassElf $ readProcess "objdump" ["-d" , "-Mintel" , "--visualize-jumps=color" , "--disassembler-color=on", outFile] "" >>= putStrLn
 --visualize-jumps[=color
-  when runElf $ do
+  when runElf do
     putStrLn @Text "Running elf..."
     (exitCode , asmStdout , asmStderr) <- readProcessWithExitCode outFile [] ""
     putStrLn asmStdout

@@ -279,7 +279,7 @@ mkX86F = \case
     koRet <- ko -- TODO restore cpu state to beginning of switch case for alts!
     restoreState startState
 
-    for_ endOkBr $ \e -> use memPtr >>= \ref ->
+    for_ endOkBr \e -> use memPtr >>= \ref ->
       writeAsmAt e (X86.jmpImm32 (fromIntegral (minusPtr ref e) - X86.jmpImm32Sz))
     when (okRet /= koRet) (traceM $ show (okRet , koRet))
     pure okRet
@@ -376,7 +376,7 @@ bindToAsm thisM loadedMods mb ccs (memPtr' , memLen') bindINm expr = let
   in case getRhs (V.length argValues) expr of
   Left e -> trace e $ pure memPtr' -- cannot generate asm for this binding
   Right (rhs , argDups) -> let
-    regDups' = VU.create $ do
+    regDups' = VU.create do
       mv <- MVU.replicate 16 0
       IM.toList argDups `forM_` \(i , n) ->
         MVU.write mv (argValues V.! i & \(Reg ar _) -> fromEnum ar) n

@@ -5,9 +5,6 @@
 -- eq1 @x b = 2
 -- eq1 a b = 3
 
--- record wildcard
--- rw = { x = Int , y } -- indicates y = ?
-
 -- multi-branch μ merge =>
 -- rec1 v = { a = rec1 v , b = rec1 v }  -- ∏ A B → ⊤ → µa.{a : a , b : a}
 
@@ -33,22 +30,18 @@
 --import CTests
 
 -- Label Index out of bounds on use before declare
+-- Perhaps should lift labels to proper top level bindings
 --x = Just 3
 --Maybe = data
 --  Just Int
 --f = Just 3 -- ok
 
--- Allow declare recursive data types; μ?
+-- Allow declaring recursive data types; μ?
 --IntList = data
 --  Nil
 --  Cons Int -- IntList
 --g (Cons x) = x
 --f = Cons 3
-
--- emit typedefs & use user declared types ?
---Wrap = data
---  wrap
---lol = wrap
 
 -- type params (conv BruijnAbs to THBi)
 -- * Bruijns in types are already THBounds
@@ -63,36 +56,42 @@
 --  @Cons x xs => f (add 0 x) (foldr f s xs)
 --  @Nil       => add s 0
 
--- Imports
-
--- ? where to alloc mem. Stack is good iff mem is freed on same stack frame
--- withAlloca : ∀a. Int -> a -> a
--- unfoldrStr : (seed -> Next a seed) -> seed -> Array a
-
--- * Alt casts infer:409
--- altCast = \case
---   True  => 0 -- i1 <: i8
---   False => 5 -- i8
-
--- Label & sumtype casts
---either = \case
---  @Left a  => add a 2
---  @Right b => add b 5
---main = either (@Left 3)
+-- import m2
+-- f = d1 -- imported label (& fwd refs to labels)
 
 -- * Type application (& type params) & Cast to TPoly
 -- * Specialise polys to a size
---id x = x
---f = id 3
+-- id x = x
+-- f = id 3
+
+-- ? where to alloc mem. Stack is good iff mem is freed on same stack frame
+-- withAlloca : ∀a. Int -> IO ()
+-- unfoldrStr : (seed -> Next a seed) -> seed -> Array a
+
+-- * Alt casts infer:409
+-- altCast e = case e of
+--   True  => { x = 0 } -- i1 <: i8
+--   False => { x = 5 } -- i8
+
+-- Post-infer casts
+-- ! If contains tvars, can save up/lo bounds to bind; Can tvars change casts from above the term?
+-- eg. either = \case {Left a => a ; Right a => add a 3 }
+--  : "Either A Int -> Int ⊔ A"
+-- A between [⊥ , Int]; infer can't cast it because depends on tvar bounds.
+--either = \case
+--  @Left a  => add a 2
+--  @Right b => add b 5
+-- main = either (@Left 3)
 
 -- lift / inline / specialise bruijn fns & η-expand paps
+-- Paps are specialisations, lambdas can be lifted by parser
 -- ap f x = f x
 -- main = ap (\y => add 3 y) 4
 
+--import subsume.ii
 --import stream
---f = tailRecurse
 
-import prelude
-import ii/m1
-f = (a , b , c)
-g x y = x + y
+-- No β-reduce duplicates ; 0-arity dup/let-bind eg.
+-- main = (\x => add x x) (add 3 2)
+
+-- TODO separate pass for casting, incl type application

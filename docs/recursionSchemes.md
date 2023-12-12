@@ -1,6 +1,6 @@
 -- pretty print a tree
 let pprint1 :: Tree Int -> String
-    pprint1 = fold $ \case
+    pprint1 = fold \case
       NodeF i [] -> show i
       NodeF i ss -> show i ++ ": [" ++ intercalate ", " ss ++ "]"
 
@@ -98,7 +98,7 @@ pprint5 t = let
 --One common use for para is to construct a new tree which reuses most of the sub-trees from the original. In the following example, we insert a new node under the leftmost leaf. This requires allocating new nodes along a path from the root to that leaf, while keeping every other sub-tree untouched.
 
 insertLeftmost :: Int -> Tree Int -> Tree Int
-insertLeftmost new = para $ \case -- para pairs the original tree with results of recursion
+insertLeftmost new = para \case -- para pairs the original tree with results of recursion
   -- TreeF Int (Tree Int, Tree Int) -> Tree Int
   NodeF i [] → Node i [Node new []] -- insert new node on left
   NodeF i ((_orig, recur) : tts)) → -- use orignal tree except for leftmost node
@@ -110,7 +110,7 @@ collatzLength = let
   algebra Nil        = 0
   algebra (Cons _ x) = x + 1
   elgotCoalgebra 1 = Left 1
-  elgotCoalgebra n = Right $ Cons n $ if n `mod` 2 == 0 then (div n 2) else (3 * n + 1)
+  elgotCoalgebra n = Right $ Cons n if n `mod` 2 == 0 then (div n 2) else (3 * n + 1)
   in elgot algebra elgotCoalgebra
 
 cata  :: (Base t (Identity a) -> a) -> t -> a
@@ -135,7 +135,7 @@ decompressImage :: [(Int,Char)] -> String
 decompressImage = chrono linesOf3 decodeRLE where
   decodeRLE :: [(Int,Char)] -> ListF Char (Free (ListF Char) [(Int,Char)])
   decodeRLE []          = Nil
-  decodeRLE ((n,c):ncs) = Cons c $ do
+  decodeRLE ((n,c):ncs) = Cons c do
     replicateM_ (n-1) $ Free $ Cons c $ Pure ()
     pure ncs
 

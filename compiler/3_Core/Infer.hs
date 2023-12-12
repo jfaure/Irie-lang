@@ -1,32 +1,37 @@
 -- : see "Algebraic subtyping" by Stephen Dolan https://www.cs.tufts.edu/~nr/cs257/archive/stephen-dolan/thesis.pdf
 module Infer (judgeModule) where
-import Prim
-import Builtins (typeOfLit)
+import Prim(Literal(..) , typeOfLit)
 import qualified ParseSyntax as P
 import CoreSyn as C
-import CoreUtils (isPoisonExpr , tHeadToTy , mkTyArrow , prependArrowArgsTy , mergeTVar , mergeTypes , mergeTypeList , mergeTypeHeadList , unzipExprs)
+import CoreUtils (isPoisonExpr , tHeadToTy , mkTyArrow , prependArrowArgsTy , mergeTVar , mergeTypes , mergeTypeList , mergeTypeHeadList , unzipExprs , mergeCaseBranches)
 import qualified Scope
 import Errors
-import Externs
+import Externs (LoadedMod , Externs , readQName)
 import TypeCheck ( check )
 import TCState
 import Control.Lens
 import Data.Functor.Foldable
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import qualified BitSetMap as BSM ( (!?), fromList, fromVec, singleton, unzip )
+import qualified BitSetMap as BSM
 import PrettyCore
 
-data InferEnv = InferEnv { eLoadedMods :: (V.Vector LoadedMod) , eModIName :: ModuleIName , eExterns :: Externs , eScopeParams :: Scope.Params , eTopBindsCount :: Int }
-
+data InferEnv = InferEnv
+  { eLoadedMods    :: V.Vector LoadedMod
+  , eModIName      :: ModuleIName
+  , eExterns       :: Externs
+  , eScopeParams   :: Scope.Params
+  , eTopBindsCount :: Int
+}
 judgeModule :: V.Vector LoadedMod -> Externs.Externs -> BitSet -> ModuleIName -> P.Module
   -> ((ModuleBinds , DepPermutation) , Errors)
 judgeModule loaded exts importedModules modIName pm = let
-  binds    = pm ^. P.bindings
-  letCount = pm ^. P.parseDetails . P.letBindCount
+  topINames = pm ^. P.parseDetails . P.topINames
+  binds     = pm ^. P.bindings
+  letCount  = pm ^. P.parseDetails . P.letBindCount
   topBindsCount = V.length binds
   bindsCount = letCount + topBindsCount
-  scopeParams' = Scope.initModParams letCount (pm ^. P.imports) importedModules (binds <&> (^. P.fnIName))
+  scopeParams' = Scope.initModParams topINames letCount (pm ^. P.imports) importedModules (binds <&> (^. P.fnIName))
   -- sadly have to dup codepath for this warning: letBinds vectors stops the hylo (infer cata must setup some things)
   warnTopDups :: forall s. TCEnv s ()
   warnTopDups = let topDups = Scope.findDups (binds <&> (^. P.fnIName))
@@ -37,7 +42,7 @@ judgeModule loaded exts importedModules modIName pm = let
   inferModule = inferBlock inferEnv 0 binds Nothing
     *> use modBinds >>= V.freeze >>= \mb -> use depOrder >>= V.freeze . snd <&> (mb,)
 
-  in runST $ do
+  in runST do
   modBinds' <- MV.new bindsCount
   depOrder' <- MV.new bindsCount
   letBinds' <- MV.new 0xFFF -- let-nest TODO HACK
@@ -140,7 +145,7 @@ genExpr :: IName -> LetMeta -> Term -> [Int] -> (Int , BitSet) -> Int -> TCEnv s
 genExpr modBindName lm term freeVarCopies (atLen , freeVars) tvarIdx = use modBinds >>= \modBinds' -> let
   rawTy = prependArrowArgsTy (tyVar <$> freeVarCopies) (tyVar tvarIdx)
   in generaliseType rawTy >>= \gTy -> let
-    rawRetExpr = Core term gTy -- Core (if freeVars == 0 then t else BruijnAbs (popCount freeVars) t) gTy
+    rawRetExpr = Core term gTy
     bind = if freeVars == 0
       then BindOK optInferred rawRetExpr
       else BindRenameCaptures atLen freeVars rawRetExpr -- Recursive binds need their free-env backpatched in
@@ -196,8 +201,8 @@ newFreeVarEnv goInEnv = do
     letCaptures %= (`shiftR` (fl - svFL)) -- reset relative to next enclosing let-nest
 
 inferBlock :: InferEnv -> Int -> V.Vector P.FnDef -> Maybe (TCEnv s Expr) -> TCEnv s Expr -- , V.Vector (LetMeta , Bind))
-inferBlock inferEnv liftNames letBindings inExpr = withLetNest $ \nest -> do
-  newFreeVarEnv $ do
+inferBlock inferEnv liftNames letBindings inExpr = withLetNest \nest -> do
+  newFreeVarEnv do
     use letBinds >>= \lvl -> V.thaw letBindings >>= MV.write lvl nest
     [0 .. V.length letBindings - 1] `forM_` \i -> judgeBind inferEnv nest i (liftNames + i)
 --lets <- use modBinds >>= \v -> V.freeze (MV.slice liftNames (V.length letBindings) v) -- freeze copies it
@@ -241,14 +246,15 @@ inferF inferEnv = let
        -- papFn p1 => λx y. papFn p1 x y
        CastApp _ac (Just pap) rc -> retCast rc (mkPap f args retTy pap castArgs biret)
        CastApp _ac Nothing    rc -> retCast rc (Core (App f (castArgs args biret)) retTy)
-       _ -> Core (App f args) retTy
+       BiEQ -> Core (App f args) retTy
+       x -> error $ show x
      t -> t
    -- TODO This will let slip some bieq casts on function arguments
    castArg (a :: Term) = \case { BiEQ -> a ; CastApp [BiEQ] Nothing BiEQ -> a ; cast -> Cast cast a }
    castArgs args' cast = case cast of
-     CastApp ac _maybePap _rc -> zipWith castArg args' (ac ++ repeat BiEQ)
+     CastApp ac _maybePap BiEQ -> zipWith castArg args' (ac ++ repeat BiEQ)
      BiEQ -> args'
-     _    -> _
+     x -> error $ show x
    in if any isPoisonExpr (f : args) then pure poisonExpr else do
      (biret , retTy) <- biUnifyApp (exprType f) (exprType <$> args)
      use tmpFails >>= \case
@@ -340,7 +346,8 @@ inferF inferEnv = let
            pure (argCast , rCast , outT , rI)
 
          let lensOverCast = case rc of
-               CastProduct _drops [(asmIdx , _cast)] -> Cast (CastOver asmIdx ac fn outT) object
+               -- TODO clean casts
+               CastProduct _drops bsm | [(asmIdx , _cast)] <- BSM.toList bsm -> Cast (CastOver asmIdx ac fn outT) object
                BiEQ -> object
                _ -> error $ "expected CastProduct: " <> show rc
 
@@ -365,11 +372,11 @@ inferF inferEnv = let
 --  pure $ Core (Ty (TyGround [THTyCon $ THSumTy $ BSM.fromListWith mkLabelCol sumArgsMap])) (TySet 0)
 
   -- Convert a declared label to a function TODO this is not pretty, should improve collecting labels from a data decl
-  P.LabelDeclF l iNm -> getModBind inferEnv True 0 0 iNm >>= \(Core term _ty) -> case term of
+  P.LabelDeclF l iNm -> getModBind inferEnv True 0 0 iNm <&> \(Core term _ty) -> case term of
     Ty (TyGround [THTyCon (THSumTy ts)]) | qL <- mkQName (eModIName inferEnv) l
-      , Just labTy@(TyGround [THTyCon (THTuple paramTys)]) <- ts BSM.!? qName2Key qL -> pure $
-         -- Term label apps are extensible
-         Core (Label qL []) (tHeadToTy $ THTyCon (THArrow (V.toList paramTys) labTy))
+      , Just labTy@(TyGround [THTyCon (THTuple paramTys)]) <- ts BSM.!? qName2Key qL -> let
+        labelTy = if V.null paramTys then labTy else tHeadToTy (THTyCon (THArrow (V.toList paramTys) labTy))
+        in Core (Label qL []) labelTy
     -- v eg. Maybe a = ..
 --  BruijnAbsTyped n (Ty fn) -> _
     x -> error $ show x
@@ -391,28 +398,24 @@ inferF inferEnv = let
             | qL <- qName2Key l , Just t <- ts BSM.!? qL -> (qL , t) <$ bisub t altFnTy
           x -> error $ show x
       pure ((l , (rhs , patTy)) , rhsTy)
-    let (branches , rhsTys) = unzip (altExprs :: [((Int , (Term , Type)) , Type)])
     def <- sequenceA catchAll
-    -- mvp: 2 bitsetmaps, for rhs and types
-    let altExprs = (BSM.fromList branches)
-        (alts , altTys) = BSM.unzip altExprs
+    let rhsTys = snd <$> (altExprs :: [((Int , (Term , Type)) , Type)])
+        altScrutTys = BSM.fromList $ altExprs <&> \((q , (_term , ty)) , _rhsTy) -> (q , ty)
         retTy   = mergeTypeList False $ maybe rhsTys ((: rhsTys) . exprType) def -- ? TODO why negative merge
-        scrutTy = TyGround [THTyCon $ if isJust def then THSumOpen altTys else THSumTy altTys]
-        -- TODO Cast any alts that need to subtype into retTy !
-        -- foreach rhsTys => (<: retTy)
---      altCasts = rhsTys <&> \t -> if t /= retTy then trace
+        scrutTy = TyGround [THTyCon if isJust def then THSumOpen altScrutTys else THSumTy altScrutTys]
+        altTerms = BSM.fromList $ altExprs <&> \((q , (term , _ty)) , rhsTy) -> (q , (term , rhsTy))
     (b , matchTy) <- biUnifyApp (TyGround (mkTyArrow [scrutTy] retTy)) [gotScrutTy]
     case b of { BiEQ -> pure () ; CastApp [BiEQ] Nothing BiEQ -> pure () ; c -> error $ "expected bieq; " <> show c }
-    pure $ Core (CaseB scrut scrutTy alts (exprTerm <$> def)) matchTy
---  scrutTyG <- generaliseType gotScrutTy
---  pure $ Core (mergeCaseBranches retTy scrut matchTy altExprs (exprTerm <$> def)) matchTy
+--  pure $ Core (CaseB scrut scrutTy alts (exprTerm <$> def)) matchTy
+    pure $ Core (mergeCaseBranches retTy scrut matchTy altTerms def) matchTy
 
-  P.TypedF t ty -> t >>= \(Core term gotT) -> ty >>= exprToTy >>= \annTy ->
-    generaliseType gotT
-      >>= \genGotTy -> Core term <$> checkAnnotation genGotTy annTy
+  P.TypedF t ty -> t >>= \(Core term gotT) -> do
+    genGotTy <- generaliseType gotT
+    annTy    <- ty >>= exprToTy
+    Core term <$> checkAnnotation genGotTy annTy
   P.InlineExprF e -> pure e
-  P.LitF l        -> pure $ Core (Lit l) (TyGround [typeOfLit l])
-  P.PLitArrayF ls -> pure $ Core (Lit $ LitArray ls) (TyGround [THTyCon $ THArray $ mergeTypeHeadList True (typeOfLit <$> ls)])
+  P.LitF l        -> pure $ Core (Lit l) (TyGround [THPrim (typeOfLit l)])
+  P.PLitArrayF ls -> pure $ Core (Lit (LitArray ls)) (TyGround [THTyCon $ THArray $ mergeTypeHeadList True (THPrim . typeOfLit <$> ls)])
   P.PArrayF ls    -> sequence ls <&> \exprs -> unzipExprs exprs & \(elems , tys) ->
     Core (Array (V.fromList elems)) (TyGround [THTyCon $ THArray $ mergeTypeList True tys])
   P.ScopePoisonF e   -> poisonExpr <$ (tmpFails .= []) <* (errors . scopeFails %= (e:))

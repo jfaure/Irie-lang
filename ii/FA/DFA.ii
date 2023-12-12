@@ -127,7 +127,7 @@ Convergence φ st input = let
  Acc = Id : States;
  in for [0 .. input.len-1] \i -> do
    S = S ⊗ (T ! (input ! i))
-   when conv_check $ do -- analyse conv characteristics; precalculate range of transition fn
+   when conv_check do -- analyse conv characteristics; precalculate range of transition fn
      (L , U) = Factor(S)
      S = U
      Acc = Acc ⊗ L

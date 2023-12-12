@@ -23,7 +23,7 @@ data TCEnvState s = TCEnvState {
 
  -- Inference state
  , _bindsBitSet   :: BitSet -- mark inferred modBinds
- , _letBinds      :: MV.MVector s (MV.MVector s P.FnDef)-- (Either P.FnDef Bind))
+ , _letBinds      :: MV.MVector s (MV.MVector s P.FnDef)
  , _letNest       :: Int -- TODO Need this only to track size of letBinds..
 
  , _inferStack    :: BitSet -- To detect infer cycles: recursion / mutuals
